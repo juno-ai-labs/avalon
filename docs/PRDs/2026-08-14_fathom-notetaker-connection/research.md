@@ -88,7 +88,7 @@ those pages on 2026-08-14.
   ChatGPT, and "any MCP-compatible tool"; Claude Code connects via
   `mcp-remote`, which implies the standard remote-MCP OAuth handshake.
   Whether the authorization server supports dynamic client registration is
-  not documented — [`prd.md`](prd.md) Open question 2.
+  not documented — [`prd.md`](prd.md) Open question 1.
   ([MCP overview](https://developers.fathom.ai/mcp-docs/index.md),
   [Claude setup](https://developers.fathom.ai/mcp-docs/claude.md))
 - The MCP can only reach meetings the authorizing user can already see in
@@ -118,7 +118,7 @@ those pages on 2026-08-14.
   for extracting a shared helper rather than copying it —
   [`design.md`](design.md) specifies the shared `verifyStandardWebhook`.
 - Retry behavior on failed delivery is not documented —
-  [`prd.md`](prd.md) Open question 3.
+  [`prd.md`](prd.md) Open question 2.
 
 ### What the public docs did not record
 

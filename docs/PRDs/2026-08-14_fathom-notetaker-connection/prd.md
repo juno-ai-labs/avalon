@@ -310,8 +310,10 @@ are authoritative when the build lands.
   `connector_connections` postdate 0048 (`slack_unfurled_links`,
   `digest_delivery_targets`, and `workstream_terminal_repositories`, the last
   with `ON DELETE RESTRICT`, which is not deferrable and must be staged
-  explicitly or the rebuild aborts), and `connector_oauth_attempts` gained
-  `telemetry_operation_id` and its index in 0074. The full derivation
+  explicitly or the rebuild aborts), and `connector_oauth_attempts` has
+  gained columns twice since — `telemetry_operation_id` and its index in
+  0074, and four more in 0077. Both rebuilds take their column sets from the
+  schema at head rather than from any list written here. The full derivation
   procedure and test obligations are in [`design.md`](design.md).
 - Two partial unique indexes, the Granola pair verbatim with `'fathom'`: at
   most one active workspace connection per workspace, and one active personal
@@ -353,10 +355,12 @@ ingress route.
   HMAC-SHA256 over `${id}.${timestamp}.${rawBody}` with the `whsec_`-prefixed
   secret — the same scheme Granola verifies, so the verifier is extracted and
   shared rather than copied (a second implementation of a signature check is
-  where a dropped guard hides). Verification is computed over the exact
-  received bytes — a fatal UTF-8 decode rejects non-UTF-8 bodies before
-  verification, and nothing is parsed or persisted until the signature, size
-  bound, and replay window pass. The per-delivery identity is the
+  where a dropped guard hides). The HMAC is computed over the exact received
+  body bytes **before** any UTF-8 decode or JSON parse, matching
+  `verifyGranolaWebhook`; the fatal UTF-8 decode runs only after the
+  signature is valid, so a decode fault can never pre-empt verification and
+  the bytes verified are always the bytes received. Nothing is parsed or
+  persisted until the size bound, replay window, and signature all pass. The per-delivery identity is the
   authenticated `webhook-id` header, never a payload field; a payload event
   identifier, if Fathom's payload carries one (Open question 7), is
   cross-checked against it as an extra guard, not relied on. The
@@ -472,7 +476,7 @@ Settings that live outside this repository, and what breaks without them:
 1. **Fathom MCP authorization (personal).** The hosted-MCP passthrough
    assumes OAuth protected-resource discovery and dynamic client registration
    at `https://api.fathom.ai/mcp`. Whether Fathom's authorization server
-   supports DCR is unconfirmed (Open question 2). If it does — as with
+   supports DCR is unconfirmed (Open question 1). If it does — as with
    Granola — no external registration and no new secrets are needed. If it
    does not, an application is registered at
    `fathom.video/marketplace_applications/new` with Avalon's region-specific
@@ -549,10 +553,12 @@ Settings that live outside this repository, and what breaks without them:
 4. Migration: applied to a database **populated at the prior migration**, the
    rebuild preserves a seeded row in every table with a foreign key to
    `connector_connections` — including `slack_unfurled_links`,
-   `digest_delivery_targets`, and `workstream_terminal_repositories` — keeps
-   `connector_oauth_attempts.telemetry_operation_id` and its index, and
-   leaves `PRAGMA foreign_key_check` empty; the fresh-database scope-
-   uniqueness case passes alongside.
+   `digest_delivery_targets`, and `workstream_terminal_repositories` — and
+   preserves the **complete** column set and indexes of both rebuilt tables,
+   asserted by comparing `PRAGMA table_info` before and after rather than by
+   naming individual columns (the set has grown twice since 0048, in 0074 and
+   0077, and will grow again), leaving `PRAGMA foreign_key_check` empty; the
+   fresh-database scope-uniqueness case passes alongside.
 5. Lifecycle: test reports health without writing; a 401 carrying provider
    details flips the connection to reconnect-required; a personal reconnect
    restores it; a workspace connection recovers by key replacement; disable
