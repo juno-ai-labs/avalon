@@ -9,7 +9,7 @@ import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import {
   materializeAttachmentDerivative,
@@ -646,11 +646,11 @@ export class ResourceService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    const scheduler = durableObjectStubForRegion(
+    const scheduler = await durableObjectStubForWorkspace(
+      this.env,
       this.env.WORKSPACE_SCHEDULERS,
-      this.env.AVALON_REGION,
+      this.auth.workspaceId,
       `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
-      this.env.APP_ENV,
     );
     await scheduler.fetch("https://scheduler.internal/refresh", {
       method: "POST", headers: { "content-type": "application/json" },

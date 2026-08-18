@@ -3,13 +3,16 @@ import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@avalon/contra
 import { ApiError } from "../src/lib/api-error";
 import {
   issueSocketTicket,
+  issueWorkstreamControlSocketTicket,
   issueWorkspaceSocketTicket,
   SocketService,
   socketTicketFromRequest,
   verifySocketTicket,
+  verifyWorkstreamControlSocketTicket,
   verifyWorkspaceSocketTicket,
   withNegotiatedSubprotocol,
   WorkspaceSocketService,
+  WorkstreamControlSocketService,
 } from "../src/services/socket-service";
 import type { Env } from "../src/env";
 import {
@@ -98,16 +101,15 @@ describe("socket ticket transport", () => {
     expect(roomFetch).toHaveBeenCalledOnce();
   });
 
-  it("routes a purpose-scoped command ticket to WorkspaceDO with the child target attached", async () => {
+  it("routes one workspace-scoped sync and command ticket to WorkspaceDO", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000711";
     const userId = "00000000-0000-7000-8000-000000000712";
     const workspaceId = "00000000-0000-7000-8000-000000000713";
-    const workstreamId = "00000000-0000-7000-8000-000000000714";
-    const substreamId = "00000000-0000-7000-8000-000000000715";
     const workspaceFetch = vi.fn(async (request: Request) => {
       expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
-      expect(request.headers.get("x-avalon-workstream-id")).toBe(workstreamId);
-      expect(request.headers.get("x-avalon-substream-id")).toBe(substreamId);
+      expect(request.headers.get("x-avalon-placement-affinity")).toBe("wnam");
+      expect(request.headers.get("x-avalon-workstream-id")).toBeNull();
+      expect(request.headers.get("x-avalon-substream-id")).toBeNull();
       expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
@@ -124,7 +126,7 @@ describe("socket ticket transport", () => {
       WORKSPACE_DOS: workspaceNamespace,
     });
     const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
-    const ticket = await issueWorkspaceSocketTicket(env, auth, workstreamId, substreamId);
+    const ticket = await issueWorkspaceSocketTicket(env, auth);
     const request = new Request(`https://api.avalon.test/workspaces/${workspaceId}`, {
       headers: {
         Origin: "app://avalon",
@@ -135,8 +137,6 @@ describe("socket ticket transport", () => {
 
     const response = await new WorkspaceSocketService(env).upgrade(
       workspaceId,
-      workstreamId,
-      substreamId,
       undefined,
       request,
     );
@@ -146,9 +146,55 @@ describe("socket ticket transport", () => {
     await expect(verifySocketTicket(env, ticket)).rejects.toMatchObject({ code: "invalid_socket_ticket" });
     await expect(verifyWorkspaceSocketTicket(env, ticket)).resolves.toMatchObject({
       workspaceId,
-      workstreamId,
-      substreamId,
     });
+  });
+
+  it("routes a separately scoped metadata ticket to WorkstreamDO", async () => {
+    const sessionId = "00000000-0000-7000-8000-000000000721";
+    const userId = "00000000-0000-7000-8000-000000000722";
+    const workspaceId = "00000000-0000-7000-8000-000000000723";
+    const workstreamId = "00000000-0000-7000-8000-000000000724";
+    const workstreamFetch = vi.fn(async (request: Request) => {
+      expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
+      expect(request.headers.get("x-avalon-workstream-id")).toBe(workstreamId);
+      expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
+      expect(request.headers.get("sec-websocket-protocol")).toBeNull();
+      return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
+    });
+    const env = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      ALLOWED_ORIGINS: "app://avalon",
+      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
+      WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+        idFromName: () => createTestDurableObjectId("workstream-do-id"),
+        get: () => ({ fetch: workstreamFetch }),
+      }),
+    });
+    const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
+    const ticket = await issueWorkstreamControlSocketTicket(env, auth, workstreamId);
+    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}`, {
+      headers: {
+        Origin: "app://avalon",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
+      },
+    });
+
+    const response = await new WorkstreamControlSocketService(env).upgrade(
+      workstreamId,
+      undefined,
+      request,
+    );
+
+    expect(response.status).toBe(401);
+    expect(workstreamFetch).toHaveBeenCalledOnce();
+    await expect(verifyWorkstreamControlSocketTicket(env, ticket)).resolves.toMatchObject({
+      workspaceId,
+      workstreamId,
+    });
+    await expect(verifyWorkspaceSocketTicket(env, ticket))
+      .rejects.toMatchObject({ code: "invalid_socket_ticket" });
   });
 
   it("reads the ticket from the handshake header a browser can actually set", () => {

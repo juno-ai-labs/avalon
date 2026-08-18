@@ -1,5 +1,7 @@
 import type { Env } from '../env';
-import { durableObjectStubForRegion } from '../lib/durable-object-namespace';
+import {
+  durableObjectStubForRegionalSingleton,
+} from '../lib/durable-object-namespace';
 
 interface PendingCrashRow {
   crash_id: string;
@@ -80,11 +82,10 @@ export async function processPendingCrashReports(env: Env): Promise<CrashProcess
         summary.processed += 1;
         continue;
       }
-      const stub = durableObjectStubForRegion(
+      const stub = durableObjectStubForRegionalSingleton(
+        env,
         env.CRASH_SYMBOLICATOR,
-        env.AVALON_REGION,
         row.crash_id,
-        env.APP_ENV,
       );
       const result = await stub.symbolicate(await dump.arrayBuffer(), await symbols.arrayBuffer());
       await saveResult(env, row, result.parserState, JSON.parse(result.reportJson) as unknown);

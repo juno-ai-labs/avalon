@@ -10,6 +10,7 @@ import {
 } from "../src/services/workstream-resource-inventory";
 import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
+import { contextCompactionCheckpointHash } from "../src/lib/context-compaction-fence";
 import {
   createTestD1Database,
   createTestD1PreparedStatement,
@@ -359,5 +360,74 @@ describe("work-stream compaction resource inventory", () => {
       compactedThroughSequence: 7,
       messages: [{ role: "user", content: "future-version base checkpoint" }],
     });
+  });
+
+  it("loads only the exact frozen compaction and detects changed checkpoint content", async () => {
+    const checkpointRunId = "00000000-0000-4000-8000-0000000000a1";
+    const stored = {
+      executionPrincipalKey: "workspace:workspace",
+      resourceVisibilityFingerprint: "inventory:0",
+      checkpointTemplateVersion: 1,
+      checkpointRunId,
+      compactedThroughSequence: 12,
+      messagesJson: JSON.stringify([{ role: "user", content: "old representation" }]),
+      summary: "# Request\nContinue from the frozen point.",
+      model: "test/model",
+    };
+    let compactionBindings: unknown[] = [];
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        return createTestD1PreparedStatement({
+          bind(...values: unknown[]) {
+            if (sql.includes("FROM workstream_context_compactions")) compactionBindings = values;
+            return this;
+          },
+          async first<T>() {
+            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 0 } as T;
+            return {
+              harness_run_id: checkpointRunId,
+              compacted_through_sequence: stored.compactedThroughSequence,
+              messages_json: stored.messagesJson,
+              summary: stored.summary,
+              checkpoint_template_version: stored.checkpointTemplateVersion,
+              execution_principal_key: stored.executionPrincipalKey,
+              resource_visibility_fingerprint: stored.resourceVisibilityFingerprint,
+              model: stored.model,
+            } as T;
+          },
+          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
+        });
+      },
+    });
+    const fence = {
+      checkpointRunId,
+      compactedThroughSequence: stored.compactedThroughSequence,
+      checkpointHash: contextCompactionCheckpointHash(stored),
+    };
+
+    await expect(__integrationTesting.loadWorkstreamContextCompaction(
+      database,
+      "workspace",
+      "workstream",
+      { type: "workspace", workspaceId: "workspace" },
+      AS_OF,
+      fence,
+    )).resolves.toMatchObject({ compactedThroughSequence: 12 });
+    expect(compactionBindings).toEqual([
+      "workspace",
+      "workstream",
+      "workspace:workspace",
+      checkpointRunId,
+      12,
+    ]);
+
+    await expect(__integrationTesting.loadWorkstreamContextCompaction(
+      database,
+      "workspace",
+      "workstream",
+      { type: "workspace", workspaceId: "workspace" },
+      AS_OF,
+      { ...fence, checkpointHash: "fnv1a64:0000000000000000" },
+    )).rejects.toMatchObject({ code: "compaction_fence_changed" });
   });
 });

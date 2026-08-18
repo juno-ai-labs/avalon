@@ -1193,26 +1193,43 @@ describe('socket ticket transport', () => {
     });
   });
 
-  it('requests a scoped workspace command socket ticket for the selected substream', async () => {
+  it('requests the one workspace-scoped sync and command socket ticket', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
       void init;
       return json({
-        url: `wss://api.avalon.test/workspaces/workspace-1/workstreams/${workstreamId}/substreams/substream-1?ticket=workspace-ticket`,
+        url: 'wss://api.avalon.test/socket/workspaces/workspace-1?ticket=workspace-ticket',
         ticket: 'workspace-ticket',
       });
     });
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getWorkspaceSocketTicket(workstreamId, 'substream-1')).resolves.toEqual({
-      url: `wss://api.avalon.test/workspaces/workspace-1/workstreams/${workstreamId}/substreams/substream-1`,
+    await expect(api.getWorkspaceSocketTicket()).resolves.toEqual({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      `/workstreams/${workstreamId}/substreams/substream-1/workspace-socket`,
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/socket');
+  });
+
+  it('requests a WorkstreamDO control socket ticket separately from its substream feed', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return json({
+        url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=control-ticket`,
+        ticket: 'control-ticket',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getWorkstreamControlSocketTicket(workstreamId)).resolves.toEqual({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/workstreams/${workstreamId}/control-socket`);
   });
 });
 

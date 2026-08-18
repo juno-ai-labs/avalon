@@ -24,6 +24,7 @@ import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
+import type { HyperSightBlockAgent } from "./durable-objects/hypersight-block-agent";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
 export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
@@ -43,6 +44,7 @@ export interface Env {
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
+  HYPERSIGHT_BLOCK_AGENTS: DurableObjectNamespace<HyperSightBlockAgent>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace<WorkspaceScheduler>;
@@ -227,6 +229,7 @@ const EnvContractSchema = z.object({
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
+  HYPERSIGHT_BLOCK_AGENTS: binding<DurableObjectNamespace<HyperSightBlockAgent>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace<WorkspaceScheduler>>(),

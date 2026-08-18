@@ -233,11 +233,22 @@ const WORKSTREAM_SCHEMA_V1 = [
     created_at INTEGER NOT NULL,
     closed_at INTEGER,
     CHECK ((status = 'open' AND closed_at IS NULL) OR (status = 'closed' AND closed_at IS NOT NULL)),
+    CHECK (inherit_from_substream_id IS NULL OR inherit_from_substream_id != id),
+    CHECK (
+      (inherit_mode = 'none' AND inherit_from_substream_id IS NULL AND inherit_fence_seq IS NULL)
+      OR (inherit_mode = 'fork' AND inherit_from_substream_id IS NOT NULL
+          AND inherit_fence_seq IS NOT NULL AND inherit_fence_seq >= 0)
+      OR (inherit_mode = 'document' AND inherit_from_substream_id IS NOT NULL
+          AND (inherit_fence_seq IS NULL OR inherit_fence_seq >= 0))
+    ),
+    CHECK (audience != 'owner' OR owner_user_id IS NOT NULL),
     CHECK (
       (id = '0' AND kind = 'main' AND inherit_mode = 'none' AND depth = 0
         AND return_mode = 'none' AND owner_user_id IS NULL AND audience = 'workspace'
-        AND tool_policy = 'full' AND origin_part_id IS NULL)
-      OR id != '0'
+        AND tool_policy = 'full' AND origin_part_id IS NULL
+        AND inherit_from_substream_id IS NULL AND inherit_fence_seq IS NULL
+        AND status = 'open' AND closed_at IS NULL)
+      OR (id != '0' AND kind != 'main')
     )
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS substreams_kind_status_idx ON substreams(kind, status, id)`,
@@ -384,11 +395,11 @@ const WORKSTREAM_SCHEMA_V1 = [
   `CREATE TABLE IF NOT EXISTS parts (
     id TEXT PRIMARY KEY,
     substream_id TEXT NOT NULL REFERENCES substreams(id),
-    sequence_number INTEGER NOT NULL UNIQUE,
-    attention_ordinal INTEGER UNIQUE,
+    sequence_number INTEGER NOT NULL UNIQUE CHECK (sequence_number > 0),
+    attention_ordinal INTEGER UNIQUE CHECK (attention_ordinal IS NULL OR attention_ordinal > 0),
     turn_id TEXT,
-    turn_open_sequence INTEGER,
-    part_index INTEGER,
+    turn_open_sequence INTEGER CHECK (turn_open_sequence IS NULL OR turn_open_sequence > 0),
+    part_index INTEGER CHECK (part_index IS NULL OR part_index >= 0),
     role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool', 'note')),
     kind TEXT NOT NULL CHECK (kind IN (
       'text', 'tool_call', 'tool_result', 'attachment', 'terminal', 'steer_request',
@@ -396,13 +407,20 @@ const WORKSTREAM_SCHEMA_V1 = [
     )),
     author_type TEXT NOT NULL CHECK (author_type IN ('member', 'agent', 'connector', 'system', 'external')),
     author_user_id TEXT,
-    external_actor_json TEXT,
-    content TEXT,
+    external_actor_json TEXT CHECK (
+      external_actor_json IS NULL
+      OR (json_valid(external_actor_json) AND length(external_actor_json) <= 16384)
+    ),
+    content TEXT CHECK (content IS NULL OR length(CAST(content AS BLOB)) <= 262144),
     content_ref_id TEXT REFERENCES content_refs(content_ref_id),
-    content_bytes INTEGER,
+    content_bytes INTEGER CHECK (content_bytes IS NULL OR content_bytes > 0),
     content_hash TEXT,
     answers_part_id TEXT REFERENCES parts(id),
-    input_part_ids_json TEXT,
+    input_part_ids_json TEXT CHECK (
+      input_part_ids_json IS NULL
+      OR (json_valid(input_part_ids_json) AND json_type(input_part_ids_json) = 'array'
+          AND length(input_part_ids_json) <= 262144)
+    ),
     client_message_id TEXT,
     effect_intent_id TEXT,
     occurrence_key TEXT,
@@ -421,8 +439,15 @@ const WORKSTREAM_SCHEMA_V1 = [
     compacts_through_turn_id TEXT,
     projected_input_hash TEXT,
     projection_key TEXT,
-    authorization_revisions_json TEXT,
-    lineage_fences_json TEXT,
+    authorization_revisions_json TEXT CHECK (
+      authorization_revisions_json IS NULL
+      OR (json_valid(authorization_revisions_json)
+          AND length(authorization_revisions_json) <= 262144)
+    ),
+    lineage_fences_json TEXT CHECK (
+      lineage_fences_json IS NULL
+      OR (json_valid(lineage_fences_json) AND length(lineage_fences_json) <= 262144)
+    ),
     terminal_reason TEXT CHECK (terminal_reason IN (
       'completed', 'needs_input', 'failed', 'cancelled', 'budget', 'superseded_active_output'
     )),
@@ -430,7 +455,8 @@ const WORKSTREAM_SCHEMA_V1 = [
     pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
     message_type TEXT NOT NULL DEFAULT 'text',
     structured_content_json TEXT CHECK (
-      structured_content_json IS NULL OR json_valid(structured_content_json)
+      structured_content_json IS NULL
+      OR (json_valid(structured_content_json) AND length(structured_content_json) <= 262144)
     ),
     edited_at INTEGER,
     created_at INTEGER NOT NULL,
@@ -441,6 +467,47 @@ const WORKSTREAM_SCHEMA_V1 = [
         'input_admission', 'input_cancelled', 'compaction_start', 'compaction_complete'
       ))
     ),
+    CHECK (content_ref_id IS NULL OR (content IS NULL AND content_bytes IS NOT NULL
+      AND content_hash IS NOT NULL)),
+    CHECK (attention_ordinal IS NULL OR (
+      substream_id = '0' AND visibility IN ('people', 'both')
+      AND kind NOT IN ('input_admission', 'input_cancelled', 'compaction_start', 'compaction_complete')
+    )),
+    CHECK (
+      (author_type = 'member' AND author_user_id IS NOT NULL AND external_actor_json IS NULL)
+      OR (author_type = 'external' AND author_user_id IS NULL AND external_actor_json IS NOT NULL)
+      OR (author_type IN ('agent', 'connector', 'system')
+          AND author_user_id IS NULL AND external_actor_json IS NULL)
+    ),
+    CHECK (kind NOT IN ('tool_call', 'tool_result') OR (
+      tool_name IS NOT NULL AND tool_mode IS NOT NULL AND tool_status IS NOT NULL
+    )),
+    CHECK (kind != 'tool_call' OR (role = 'assistant' AND answers_part_id IS NULL)),
+    CHECK (kind != 'tool_result' OR (
+      role = 'tool' AND answers_part_id IS NOT NULL AND tool_status != 'pending'
+    )),
+    CHECK (
+      kind IN ('tool_call', 'tool_result')
+      OR (tool_name IS NULL AND tool_mode IS NULL AND tool_status IS NULL)
+    ),
+    CHECK (
+      kind IN ('input_admission', 'input_cancelled')
+      OR (input_part_ids_json IS NULL AND input_batch_id IS NULL AND admission_cut_seq IS NULL)
+    ),
+    CHECK (kind NOT IN ('input_admission', 'input_cancelled') OR (
+      role = 'system' AND input_part_ids_json IS NOT NULL
+      AND input_batch_id IS NOT NULL AND admission_cut_seq IS NOT NULL
+    )),
+    CHECK (
+      kind IN ('compaction_start', 'compaction_complete')
+      OR (compacts_through_sequence IS NULL AND compacts_through_turn_id IS NULL
+          AND projected_input_hash IS NULL AND projection_key IS NULL
+          AND authorization_revisions_json IS NULL AND lineage_fences_json IS NULL)
+    ),
+    CHECK (kind != 'terminal' OR terminal_reason IS NOT NULL),
+    CHECK (kind = 'terminal' OR terminal_reason IS NULL),
+    CHECK (delivery_intent IS NULL OR (role = 'user' AND kind = 'text')),
+    CHECK (updated_at >= created_at),
     CHECK ((turn_id IS NULL AND turn_open_sequence IS NULL AND part_index IS NULL)
       OR (turn_id IS NOT NULL AND turn_open_sequence IS NOT NULL AND part_index IS NOT NULL)),
     UNIQUE (turn_id, part_index),
@@ -470,7 +537,9 @@ const WORKSTREAM_SCHEMA_V1 = [
     part_id TEXT NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
     resource_id TEXT NOT NULL,
     position INTEGER NOT NULL CHECK (position >= 0),
-    attachment_json TEXT NOT NULL CHECK (json_valid(attachment_json)),
+    attachment_json TEXT NOT NULL CHECK (
+      json_valid(attachment_json) AND length(attachment_json) <= 262144
+    ),
     PRIMARY KEY (part_id, resource_id),
     UNIQUE (part_id, position)
   ) STRICT`,
@@ -763,25 +832,31 @@ const WORKSTREAM_SCHEMA_V1 = [
   `CREATE INDEX IF NOT EXISTS compaction_jobs_substream_idx
      ON compaction_jobs(substream_id, updated_at)`,
   `CREATE TABLE IF NOT EXISTS compaction_checkpoints (
-    projection_key TEXT PRIMARY KEY,
+    projection_key TEXT NOT NULL,
     execution_principal_key TEXT NOT NULL,
     resource_visibility_fingerprint TEXT NOT NULL,
-    checkpoint_template_version INTEGER NOT NULL,
+    checkpoint_template_version INTEGER NOT NULL CHECK (checkpoint_template_version > 0),
     run_id TEXT NOT NULL REFERENCES runs(run_id),
-    compacted_through_sequence INTEGER NOT NULL,
-    messages_json TEXT NOT NULL CHECK (json_valid(messages_json)),
-    summary TEXT NOT NULL,
+    compacted_through_sequence INTEGER NOT NULL CHECK (compacted_through_sequence >= 0),
+    messages_json TEXT NOT NULL CHECK (
+      json_valid(messages_json) AND length(messages_json) <= 262144
+    ),
+    summary TEXT NOT NULL CHECK (length(CAST(summary AS BLOB)) <= 262144),
     model TEXT NOT NULL,
-    context_tokens_before_compaction INTEGER NOT NULL,
-    context_window_tokens INTEGER NOT NULL,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    cost_micros INTEGER NOT NULL,
+    context_tokens_before_compaction INTEGER NOT NULL CHECK (context_tokens_before_compaction >= 0),
+    context_window_tokens INTEGER NOT NULL CHECK (context_window_tokens > 0),
+    input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+    cost_micros INTEGER NOT NULL CHECK (cost_micros >= 0),
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+    PRIMARY KEY (projection_key, run_id, compacted_through_sequence)
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS compaction_checkpoints_fence_idx
-     ON compaction_checkpoints(compacted_through_sequence, projection_key)`,
+     ON compaction_checkpoints(
+       execution_principal_key, resource_visibility_fingerprint,
+       compacted_through_sequence DESC, updated_at DESC
+     )`,
   `CREATE TABLE IF NOT EXISTS workstream_wakeups (
     wakeup_id TEXT PRIMARY KEY,
     created_by_run_id TEXT REFERENCES runs(run_id) ON DELETE CASCADE,
@@ -915,12 +990,14 @@ const WORKSTREAM_SCHEMA_V1 = [
     delivery_id TEXT NOT NULL UNIQUE,
     audience_kind TEXT NOT NULL CHECK (audience_kind IN ('user', 'workstream')),
     audience_user_id TEXT,
-    provenance_ref TEXT NOT NULL,
-    authorization_selector_hash TEXT NOT NULL,
-    source_revisions_json TEXT NOT NULL CHECK (json_valid(source_revisions_json)),
-    source_authorization_epoch INTEGER NOT NULL,
-    display_title TEXT NOT NULL,
-    display_body TEXT NOT NULL,
+    provenance_ref TEXT NOT NULL CHECK (length(provenance_ref) <= 2048),
+    authorization_selector_hash TEXT NOT NULL CHECK (length(authorization_selector_hash) <= 512),
+    source_revisions_json TEXT NOT NULL CHECK (
+      json_valid(source_revisions_json) AND length(source_revisions_json) <= 262144
+    ),
+    source_authorization_epoch INTEGER NOT NULL CHECK (source_authorization_epoch >= 0),
+    display_title TEXT NOT NULL CHECK (length(display_title) <= 2048),
+    display_body TEXT NOT NULL CHECK (length(display_body) <= 16384),
     status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed', 'retracted', 'expired')),
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -928,15 +1005,36 @@ const WORKSTREAM_SCHEMA_V1 = [
     retracted_at INTEGER,
     resolved_by_user_id TEXT,
     resolution_client_id TEXT,
-    share_intent_json TEXT,
+    share_intent_json TEXT CHECK (
+      share_intent_json IS NULL
+      OR (json_valid(share_intent_json) AND length(share_intent_json) <= 262144)
+    ),
     authored_part_id TEXT REFERENCES parts(id),
     feedback_message_id TEXT UNIQUE,
     PRIMARY KEY (action_id, version),
     CHECK (
       (audience_kind = 'user' AND audience_user_id IS NOT NULL)
       OR (audience_kind = 'workstream' AND audience_user_id IS NULL)
+    ),
+    CHECK (expires_at >= created_at),
+    CHECK (
+      (status = 'pending' AND resolved_at IS NULL AND retracted_at IS NULL
+        AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
+      OR (status IN ('accepted', 'dismissed') AND resolved_at IS NOT NULL
+        AND retracted_at IS NULL AND resolved_by_user_id IS NOT NULL
+        AND resolution_client_id IS NOT NULL)
+      OR (status = 'retracted' AND resolved_at IS NULL AND retracted_at IS NOT NULL
+        AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
+      OR (status = 'expired' AND resolved_at IS NULL AND retracted_at IS NULL
+        AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
     )
   ) STRICT`,
+  `CREATE TRIGGER IF NOT EXISTS suggested_actions_terminal_status_immutable
+     BEFORE UPDATE OF status ON suggested_actions
+     WHEN OLD.status != 'pending' AND NEW.status != OLD.status
+     BEGIN
+       SELECT RAISE(ABORT, 'suggested_action_terminal_status_immutable');
+     END`,
   `CREATE UNIQUE INDEX IF NOT EXISTS suggested_actions_resolution_uq
      ON suggested_actions(action_id, resolution_client_id)
      WHERE resolution_client_id IS NOT NULL`,

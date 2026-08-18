@@ -314,7 +314,7 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### HyperSight blocks
 
-A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript of its own and nobody watching it. Three things follow.
+A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript of its own and nobody watching it. One stable `HyperSightBlockAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly for its Bind runtime SQL and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
 
 It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `hypersight_input_unavailable`, because there is no one to answer.
 
@@ -618,6 +618,48 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-18 — HyperSight input is a reproducible model-array interval
+
+**What changed:** Every block dispatch binds the exact eligible compaction
+checkpoint hash and a tool-safe upper sequence selected by main
+`SubstreamAgent("0")`. The block passes that checkpoint fence into the ordinary
+Bind run assembly rather than resolving “latest” at execution time.
+
+**Why:** HyperSight may begin after another turn or compaction. A message-ID
+waterline alone neither fixes the lossy prefix nor proves a provider-valid tool
+boundary.
+
+**Considered and rejected:** Copying the full array into WorkstreamDO and
+allowing the block to read the current transcript. One duplicates high-volume
+data in the control plane; the other changes inputs after dispatch.
+
+**Consequences:** Exact tool calls/results after compaction are retained,
+pre-compaction tools are represented only by the summary, and a stale fence
+fails before model inference.
+
+### 2026-08-18 — Each HyperSight block gets a durable Bind-loop owner
+
+**What changed:** Stable block IDs now resolve to `HyperSightBlockAgent`
+instances. WorkstreamDO durably fans out configured runs, each block agent uses
+main `SubstreamAgent("0")` as its fenced source/runtime ledger, and result
+versions settle back into WorkstreamDO. Both agent classes share Avalon's
+custom keep-alive and drain primitives; Bind remains the loop implementation.
+
+**Why:** HyperSight loops can be long and must recover independently, but a
+derived block is not a conversation substream and should not acquire a second
+message feed or serialize another block's execution.
+
+**Considered and rejected:** WorkstreamDO-owned inference, source-agent-owned
+fan-out, one agent for every block in the work stream, Workflows, and adopting
+the Agents SDK for the loop. They place compute in the control plane, duplicate
+configuration ownership, couple unrelated blocks, or add orchestration and
+harness abstractions without improving the existing Bind semantics.
+
+**Consequences:** The block agent owns execution/retry while source transcript
+and tool/run records remain transactionally beside the work-stream data they
+reference. Tests must prove fenced reads, dispatch/result idempotency, and
+eviction recovery.
 
 ### 2026-08-17 — Work-stream full loops move into `SubstreamAgent`
 
@@ -1415,7 +1457,8 @@ deriving the final run in Analytics Engine was rejected. Analytics Engine
 adaptively samples at write and query time, does not guarantee individual-row
 retrieval, cannot reconstruct exact sequences, and supports no joins. A
 terminal summary is cheaper, directly queryable, and uses Bind's already
-computed totals. Exact per-run investigation stays in the owning WorkstreamDO,
+computed totals. Exact per-run investigation stays in the owning
+`SubstreamAgent` runtime ledger,
 Workers Logs, and Workers Traces; a future per-tool latency dataset must use one fixed-schema
 point per completed tool execution rather than mixing event shapes here.
 

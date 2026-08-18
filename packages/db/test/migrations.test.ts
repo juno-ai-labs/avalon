@@ -22,6 +22,46 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("persists region-compatible immutable workspace placement affinity", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('placement-owner', 'placement-subject', 'placement@example.com',
+              'Placement Owner', '2026-08-17', '2026-08-17');
+      INSERT INTO workspaces
+        (id, name, slug, region, placement_affinity, created_by_user_id, created_at, updated_at)
+      VALUES ('placement-east', 'Placement East', 'placement-east', 'eu', 'eeur',
+              'placement-owner', '2026-08-17', '2026-08-17');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('placement-fallback', 'Placement Fallback', 'placement-fallback', 'eu',
+              'placement-owner', '2026-08-17', '2026-08-17');
+      INSERT INTO platform_workspace_bindings
+        (platform_user_id, region, workspace_id, placement_affinity, status,
+         operation_id, created_at, updated_at)
+      VALUES ('platform-placement', 'eu', 'placement-east', 'eeur', 'active',
+              'placement-operation', '2026-08-17', '2026-08-17');
+    `);
+
+    expect(database.prepare(
+      "SELECT id, placement_affinity FROM workspaces WHERE id LIKE 'placement-%' ORDER BY id",
+    ).all()).toEqual([
+      { id: "placement-east", placement_affinity: "eeur" },
+      { id: "placement-fallback", placement_affinity: "weur" },
+    ]);
+    expect(database.prepare(
+      "SELECT placement_affinity FROM platform_workspace_bindings WHERE platform_user_id = ?",
+    ).get("platform-placement")).toEqual({ placement_affinity: "eeur" });
+    expect(() => database.prepare(
+      "UPDATE workspaces SET placement_affinity = 'weur' WHERE id = 'placement-east'",
+    ).run()).toThrow(/workspace_placement_affinity_immutable/u);
+    expect(() => database.prepare(
+      `UPDATE platform_workspace_bindings SET placement_affinity = 'weur'
+       WHERE platform_user_id = 'platform-placement'`,
+    ).run()).toThrow(/workspace_placement_affinity_immutable/u);
+    database.close();
+  });
+
   it("fences the maintenance cutover and leaves only directory projections writable", () => {
     const database = migrateFreshDatabase();
     try {

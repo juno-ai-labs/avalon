@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Region, Session, Workspace } from "@avalon/contracts";
+import { WorkspaceSchema, type Region, type Session, type Workspace } from "@avalon/contracts";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { Env, IdentityAuthContext } from "../src/env";
@@ -32,6 +32,10 @@ const retryOperationId = "00000000-0000-7000-8000-000000000008";
 const preferenceSubjectHandle = "00000000-0000-7000-8000-000000000009";
 const at = "2026-08-01T12:00:00.000Z";
 
+function placementAffinity(region: Region): "wnam" | "weur" {
+  return region === "eu" ? "weur" : "wnam";
+}
+
 const auth: IdentityAuthContext = {
   sessionId: "bootstrap-session",
   userId: platformUserId,
@@ -50,7 +54,10 @@ const identity: PlatformIdentity = {
   createdAt: at,
 };
 
-function workspace(region: Region, id: string): Workspace {
+function workspace(
+  region: Region,
+  id: string,
+): Workspace & { placementAffinity: "wnam" | "weur" } {
   return {
     id,
     name: region === "eu" ? "Europe Research" : "Global Research",
@@ -60,6 +67,7 @@ function workspace(region: Region, id: string): Workspace {
     timezone: region === "eu" ? "Europe/London" : "America/Los_Angeles",
     logAgentInference: false,
     createdAt: at,
+    placementAffinity: placementAffinity(region),
   };
 }
 
@@ -77,7 +85,7 @@ function session(region: Region, workspaceId: string): Session {
       timezone: "America/Los_Angeles",
       createdAt: at,
     },
-    workspace: workspace(region, workspaceId),
+    workspace: WorkspaceSchema.parse(workspace(region, workspaceId)),
   };
 }
 
@@ -91,6 +99,7 @@ function invitation(region: Region = "eu") {
     role: "member" as const,
     invitedByName: "Owner",
     expiresAt: "2026-08-08T12:00:00.000Z",
+    placementAffinity: placementAffinity(region),
   };
 }
 
@@ -152,12 +161,19 @@ class MemoryBindingStore implements PlatformBindingStore {
     return this.row?.platform_user_id === platformId ? { ...this.row } : null;
   }
 
-  async reserve(platformId: string, region: Region, workspaceId: string, nextOperationId: string) {
+  async reserve(
+    platformId: string,
+    region: Region,
+    workspaceId: string,
+    affinity: "wnam" | "enam" | "weur" | "eeur",
+    nextOperationId: string,
+  ): Promise<PlatformBindingRow> {
     if (!this.row) {
       this.row = {
         platform_user_id: platformId,
         region,
         workspace_id: workspaceId,
+        placement_affinity: affinity,
         status: "pending",
         operation_id: nextOperationId,
         pending_expires_at: new Date(this.now().getTime() + 2 * 60_000).toISOString(),
@@ -328,8 +344,31 @@ describe("single-platform regional onboarding", () => {
       operationId,
       workspaceId: createdWorkspaceId,
       name: "Europe Lab",
+      placementAffinity: "weur",
     }));
-    expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: createdWorkspaceId, status: "active" });
+    expect(subject.bindings.row).toMatchObject({
+      region: "eu",
+      workspace_id: createdWorkspaceId,
+      placement_affinity: "weur",
+      status: "active",
+    });
+  });
+
+  it("persists an eastern request affinity through the Global reservation and regional create RPC", async () => {
+    const subject = service({ ids: [createdWorkspaceId, operationId] });
+
+    await expect(subject.value.createWorkspace("Eastern Europe Lab", "eu", { longitude: "30.5234" }))
+      .resolves.toEqual(session("eu", createdWorkspaceId));
+    expect(subject.eu.create).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: createdWorkspaceId,
+      placementAffinity: "eeur",
+    }));
+    expect(subject.bindings.row).toMatchObject({
+      region: "eu",
+      workspace_id: createdWorkspaceId,
+      placement_affinity: "eeur",
+      status: "active",
+    });
   });
 
   it("discovers then activates an existing EU membership without another Google login", async () => {
@@ -351,6 +390,7 @@ describe("single-platform regional onboarding", () => {
       platform_user_id: platformUserId,
       region: "global",
       workspace_id: globalWorkspaceId,
+      placement_affinity: "wnam",
       status: "active",
       operation_id: operationId,
       pending_expires_at: null,
@@ -372,6 +412,7 @@ describe("single-platform regional onboarding", () => {
       platform_user_id: platformUserId,
       region: "eu",
       workspace_id: euWorkspaceId,
+      placement_affinity: "weur",
       status: "pending",
       operation_id: "00000000-0000-7000-8000-000000000099",
       pending_expires_at: "2026-08-01T12:02:00.000Z",
@@ -507,6 +548,7 @@ describe("single-platform regional onboarding", () => {
         platform_user_id: platformUserId,
         region: "eu",
         workspace_id: euWorkspaceId,
+        placement_affinity: "weur",
         status: "active",
         operation_id: operationId,
         pending_expires_at: null,

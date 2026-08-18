@@ -359,18 +359,24 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     origin: workstream.originType,
+    ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
     ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
     ...(workstream.automationSubscriptionId
       ? { automationSubscriptionId: workstream.automationSubscriptionId }
       : {}),
+    ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
     readThroughSequenceNumber: workstream.readThroughSequenceNumber,
     manualUnreadFromSequenceNumber: workstream.manualUnreadFromSequenceNumber,
     manualUnreadGeneration: workstream.manualUnreadGeneration,
     hasUnread: workstream.hasUnread,
+    youAreMentioned: workstream.youAreMentioned,
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
+    createdAt: workstream.createdAt,
+    updatedAt: workstream.updatedAt,
+    ...(workstream.archivedAt ? { archivedAt: workstream.archivedAt } : {}),
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
@@ -1649,11 +1655,14 @@ export class AvalonApi {
     );
   }
 
-  getWorkspaceSocketTicket(id: string, substreamId = '0'): Promise<SocketTicket> {
-    return this.request(
-      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/workspace-socket`,
-      { schema: socketTicketSchema },
-    );
+  getWorkspaceSocketTicket(): Promise<SocketTicket> {
+    return this.request('/workspace/socket', { schema: socketTicketSchema });
+  }
+
+  getWorkstreamControlSocketTicket(id: string): Promise<SocketTicket> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+      schema: socketTicketSchema,
+    });
   }
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
