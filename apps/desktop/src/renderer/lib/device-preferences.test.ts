@@ -4,6 +4,7 @@ import {
   readDevicePreferences,
   setDeviceSelectedRegion,
   setDeviceMicrophoneId,
+  setDeviceTheme,
   setDeviceWorkspaceName,
 } from './device-preferences';
 
@@ -40,6 +41,34 @@ describe('device preferences', () => {
     });
     expect(window.localStorage.getItem('avalon:selected-region')).toBeNull();
     expect(window.localStorage.getItem('avalon:workspace-name')).toBeNull();
+  });
+
+  it('keeps the chosen theme beside the other preferences', () => {
+    setDeviceSelectedRegion('global');
+    setDeviceTheme('airy');
+
+    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'global', theme: 'airy' });
+  });
+
+  /**
+   * A theme a later build removed — or an older build reading a newer file —
+   * costs the person that one preference and nothing else. Rejecting the whole
+   * document would take their region and microphone with it, which is a far
+   * worse outcome than an appearance reverting to the default.
+   */
+  it('drops an unknown theme without discarding the rest of the record', () => {
+    window.localStorage.setItem(DEVICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      selectedRegion: 'eu',
+      microphoneDeviceId: 'microphone-42',
+      theme: 'sepia',
+    }));
+
+    expect(readDevicePreferences()).toEqual({
+      version: 1,
+      selectedRegion: 'eu',
+      microphoneDeviceId: 'microphone-42',
+    });
   });
 
   it('ignores incompatible preference versions and allows the region to be cleared', () => {

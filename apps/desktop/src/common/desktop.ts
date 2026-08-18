@@ -1,5 +1,6 @@
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
+import type { ResolvedTheme } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type { TelemetryEventProperties } from '@avalon/contracts';
 
@@ -304,6 +305,12 @@ export interface AvalonDesktopBridge {
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
   resetApplicationIcon: () => Promise<DesktopApplicationIconState>;
   onApplicationIconChanged: (listener: (state: DesktopApplicationIconState) => void) => () => void;
+  /**
+   * Records the appearance the renderer is drawing, so that the next window the
+   * main process constructs is given a matching `backgroundColor`. Write-only:
+   * the renderer is the authority on which theme is active.
+   */
+  setWindowTheme: (theme: ResolvedTheme) => Promise<void>;
   getSession: () => Promise<DesktopSession | null>;
   createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: AvalonRegion }) => Promise<DesktopAuthAttempt>;
   cancelDesktopAuthAttempt: (attemptId: string) => Promise<void>;
