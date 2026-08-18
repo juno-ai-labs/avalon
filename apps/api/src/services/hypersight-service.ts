@@ -21,6 +21,7 @@ import {
   telemetryCountBucket,
 } from "../telemetry/product-usage";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
@@ -44,13 +45,9 @@ async function hypersightControl(
     workspaceId,
     workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
   );
-  const response = await stub.fetch("https://workstream.internal/internal/hypersight", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(HyperSightControlRequestSchema.parse(body)),
-  });
-  const payload = await response.json().catch(() => null) as { error?: unknown } | null;
-  if (!response.ok) {
+  const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse(body));
+  const payload = rpcResultBody(response) as { error?: unknown } | null;
+  if (response.status < 200 || response.status >= 300) {
     const code = typeof payload?.error === "string" ? payload.error : "hypersight_control_unavailable";
     if (response.status === 409 && code === "hypersight_version_conflict") {
       throw new ApiError(409, code, "HyperSight changed in another session. Reload and try again.");

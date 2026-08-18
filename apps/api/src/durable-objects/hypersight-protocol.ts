@@ -103,8 +103,23 @@ export const HyperSightBlockDispatchSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 }).strict();
 
+export const HyperSightViewerAuthorizationRequestSchema = CoordinatesSchema.extend({
+  blockId: IdSchema,
+  userId: IdSchema,
+}).strict();
+
+export const HyperSightSocketRetractionRequestSchema = CoordinatesSchema.extend({
+  blockId: IdSchema,
+  region: RegionSchema,
+  userId: IdSchema.optional(),
+}).strict();
+
 export type HyperSightBlockDispatch = z.infer<typeof HyperSightBlockDispatchSchema>;
 export type HyperSightContextFence = z.infer<typeof HyperSightContextFenceSchema>;
+export type HyperSightControlRequest = z.infer<typeof HyperSightControlRequestSchema>;
+export type HyperSightSourceRefreshRequest = z.infer<typeof HyperSightSourceRefreshRequestSchema>;
+export type HyperSightSocketRetractionRequest = z.infer<typeof HyperSightSocketRetractionRequestSchema>;
+export type HyperSightViewerAuthorizationRequest = z.infer<typeof HyperSightViewerAuthorizationRequestSchema>;
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

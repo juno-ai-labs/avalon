@@ -4,6 +4,7 @@ import { IdSchema } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import {
+  HyperSightBlockSocketService,
   SocketService,
   WorkspaceSocketService,
   WorkstreamControlSocketService,
@@ -13,6 +14,7 @@ import { RealtimeTranscriptionService } from "../services/realtime-transcription
 const params = z.object({ id: IdSchema });
 const substreamParams = params.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
 const workspaceParams = z.object({ workspaceId: IdSchema });
+const hyperSightBlockParams = params.extend({ blockId: IdSchema });
 // Optional: a client that presents its ticket through `Sec-WebSocket-Protocol`
 // sends no query at all, and the service rejects a request that carries neither.
 const query = z.object({ ticket: z.string().min(20).max(4_000).optional() });
@@ -34,6 +36,20 @@ socketRoutes.get(
     const input = c.req.valid("param");
     return new WorkspaceSocketService(c.env).upgrade(
       input.workspaceId,
+      c.req.valid("query").ticket,
+      c.req.raw,
+    );
+  },
+);
+socketRoutes.get(
+  "/workstreams/:id/hypersight/blocks/:blockId",
+  zValidator("param", hyperSightBlockParams),
+  zValidator("query", query),
+  async (c) => {
+    const input = c.req.valid("param");
+    return new HyperSightBlockSocketService(c.env).upgrade(
+      input.id,
+      input.blockId,
       c.req.valid("query").ticket,
       c.req.raw,
     );

@@ -114,11 +114,11 @@ describe("the WorkstreamDO regional effect inbox", () => {
       sourceVersion: 1,
     });
     const wake = workstreamRegionalEffectWakeMessage(envelope);
-    const fetch = vi.fn(async () => Response.json(envelope));
+    const loadRegionalEffect = vi.fn(async () => envelope);
     const objectId = createTestDurableObjectId("effect-object");
     const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
       idFromName: vi.fn(() => objectId),
-      get: vi.fn(() => ({ fetch })),
+      get: vi.fn(() => ({ loadRegionalEffect })),
     });
     const env = createTestEnv({
       APP_ENV: "test",
@@ -128,7 +128,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
 
     expect(wake).not.toHaveProperty("effect");
     await expect(loadWorkstreamRegionalEffect(env, wake)).resolves.toEqual(envelope);
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(loadRegionalEffect).toHaveBeenCalledOnce();
   });
 
   it("keeps the newest common and user sidebar projections under unordered replay", async () => {
@@ -242,7 +242,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
       const objectId = createTestDurableObjectId("effect-ack-object");
       const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: vi.fn(() => objectId),
-        get: vi.fn(() => ({ fetch: vi.fn(async () => Response.json({ ok: true })) })),
+        get: vi.fn(() => ({ acknowledgeRegionalEffect: vi.fn(async () => undefined) })),
       });
       await acknowledgeWorkstreamRegionalEffect(createTestEnv({
         APP_ENV: "test",

@@ -1,6 +1,8 @@
 import {
+  AgentCompactionStateSchema,
   ActiveStreamCheckpointsSchema,
   ServerSocketEventSchema,
+  type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
 } from "@avalon/contracts";
@@ -52,6 +54,14 @@ interface ActiveOutputRow extends Record<string, SqlStorageValue> {
 
 interface ActiveOutputChunkRow extends Record<string, SqlStorageValue> {
   text: string;
+}
+
+interface ActiveCompactionRow extends Record<string, SqlStorageValue> {
+  run_id: string;
+  attempt_id: string;
+  compaction_index: number;
+  trigger: "manual" | "auto";
+  started_at: number;
 }
 
 interface DueWorkRow extends Record<string, SqlStorageValue> {
@@ -258,6 +268,72 @@ function readActiveStreamCheckpoints(storage: DurableObjectStorage): ActiveStrea
   });
   const parsed = ActiveStreamCheckpointsSchema.safeParse(checkpoints);
   return parsed.success ? parsed.data : [];
+}
+
+function readActiveCompaction(storage: DurableObjectStorage): AgentCompactionState | null {
+  const row = first(storage.sql.exec<ActiveCompactionRow>(
+    `SELECT run_id, attempt_id, compaction_index, trigger, started_at
+       FROM active_agent_compaction WHERE id = 1`,
+  ));
+  if (!row) return null;
+  const startedAt = new Date(row.started_at);
+  if (!Number.isFinite(startedAt.getTime())) return null;
+  const parsed = AgentCompactionStateSchema.safeParse({
+    harnessRunId: row.run_id,
+    attemptId: row.attempt_id,
+    compactionIndex: row.compaction_index,
+    trigger: row.trigger,
+    startedAt: startedAt.toISOString(),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+function applyActiveCompactionEvent(
+  storage: DurableObjectStorage,
+  event: ServerSocketEvent,
+): void {
+  if (event.type === "compaction_started") {
+    const startedAt = Date.parse(event.compaction.startedAt);
+    storage.sql.exec(
+      `INSERT INTO active_agent_compaction
+         (id, run_id, attempt_id, compaction_index, trigger, started_at, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         run_id = excluded.run_id,
+         attempt_id = excluded.attempt_id,
+         compaction_index = excluded.compaction_index,
+         trigger = excluded.trigger,
+         started_at = excluded.started_at,
+         updated_at = excluded.updated_at`,
+      event.compaction.harnessRunId,
+      event.compaction.attemptId,
+      event.compaction.compactionIndex,
+      event.compaction.trigger,
+      startedAt,
+      Date.now(),
+    );
+    return;
+  }
+  if (event.type === "compaction_finished") {
+    // A delayed finish for an earlier checkpoint must not erase a newer one.
+    storage.sql.exec(
+      `DELETE FROM active_agent_compaction
+        WHERE id = 1 AND run_id = ? AND attempt_id = ? AND compaction_index = ?`,
+      event.harnessRunId,
+      event.attemptId,
+      event.compactionIndex,
+    );
+    return;
+  }
+  if (
+    event.type === "harness_status_changed"
+    && (event.status === "needs_input"
+      || event.status === "completed"
+      || event.status === "failed"
+      || event.status === "idle")
+  ) {
+    storage.sql.exec(`DELETE FROM active_agent_compaction WHERE id = 1`);
+  }
 }
 
 function runTerminalState(event: ServerSocketEvent): "completed" | "failed" | "needs_input" | null {
@@ -536,12 +612,17 @@ export class WorkstreamObjectStore {
         const next = applyActiveStreamCheckpointEvent(checkpoints, event);
         if (next !== checkpoints) writeActiveStreamCheckpoints(this.storage, next, event);
       }
+      applyActiveCompactionEvent(this.storage, event);
       return event;
     });
   }
 
   activeStreamCheckpoints(): ActiveStreamCheckpoint[] {
     return readActiveStreamCheckpoints(this.storage);
+  }
+
+  activeCompaction(): AgentCompactionState | null {
+    return readActiveCompaction(this.storage);
   }
 
   consumeSocketTicket(

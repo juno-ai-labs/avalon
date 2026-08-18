@@ -197,6 +197,148 @@ describe('useWorkstreamSocket', () => {
     }));
   });
 
+  it('shows durable compaction activity and ignores a stale finish', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000611';
+    const harnessRunId = '00000000-0000-7000-8000-000000000612';
+    const attemptId = '00000000-0000-7000-8000-000000000613';
+    const recoveredAttemptId = '00000000-0000-7000-8000-000000000614';
+    const startedAt = '2026-08-18T12:00:00.000Z';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'compaction_started',
+      sequence: 1,
+      occurredAt: startedAt,
+      compaction: {
+        harnessRunId,
+        attemptId,
+        compactionIndex: 1,
+        trigger: 'auto',
+        startedAt,
+      },
+    }));
+    expect(result.current.activeCompaction).toEqual({
+      harnessRunId,
+      attemptId,
+      compactionIndex: 1,
+      trigger: 'auto',
+      startedAt,
+    });
+
+    act(() => socket.message({
+      type: 'compaction_started',
+      sequence: 2,
+      occurredAt: startedAt,
+      compaction: {
+        harnessRunId,
+        attemptId: recoveredAttemptId,
+        compactionIndex: 1,
+        trigger: 'manual',
+        startedAt,
+      },
+    }));
+    act(() => socket.message({
+      type: 'compaction_finished',
+      sequence: 3,
+      occurredAt: startedAt,
+      harnessRunId,
+      attemptId,
+      compactionIndex: 1,
+      outcome: 'completed',
+    }));
+    expect(result.current.activeCompaction).toMatchObject({
+      attemptId: recoveredAttemptId,
+      compactionIndex: 1,
+    });
+
+    act(() => socket.message({
+      type: 'compaction_finished',
+      sequence: 4,
+      occurredAt: startedAt,
+      harnessRunId,
+      attemptId: recoveredAttemptId,
+      compactionIndex: 1,
+      outcome: 'failed',
+    }));
+    expect(result.current.activeCompaction).toBeNull();
+  });
+
+  it('loads an older message page through a correlated SubstreamAgent socket read', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000621';
+    const messageId = '00000000-0000-7000-8000-000000000622';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const pagePromise = result.current.loadMessagePage({ before: '42', limit: 25 });
+    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
+      type: string;
+      requestId: string;
+      limit: number;
+      cursor: { direction: string; value: string };
+    };
+    expect(command).toMatchObject({
+      type: 'load_message_page',
+      limit: 25,
+      cursor: { direction: 'before', value: '42' },
+    });
+
+    act(() => socket.message({
+      type: 'message_page',
+      requestId: command.requestId,
+      occurredAt: '2026-08-18T12:00:00.000Z',
+      page: {
+        items: [{
+          id: messageId,
+          clientMessageId: null,
+          workspaceId: '00000000-0000-7000-8000-000000000623',
+          workstreamId,
+          sequenceNumber: 21,
+          author: { type: 'agent' },
+          messageType: 'text',
+          textContent: 'An older message',
+          structuredContent: null,
+          mentions: [],
+          attachments: [],
+          createdAt: '2026-08-18T11:00:00.000Z',
+          editedAt: null,
+        }],
+        nextCursor: '21',
+        newerCursor: null,
+      },
+    }));
+
+    await expect(pagePromise).resolves.toMatchObject({
+      items: [{ id: messageId, text: 'An older message' }],
+      nextCursor: '21',
+      newerCursor: null,
+    });
+  });
+
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
@@ -1825,7 +1967,9 @@ describe('useWorkstreamSocket', () => {
       getMessages,
       getWorkstreams,
     });
-    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]?.open());
@@ -1847,7 +1991,15 @@ describe('useWorkstreamSocket', () => {
         roomSequence: 14,
         createdAt: '2026-07-31T19:59:59.000Z',
       }],
+      activeCompaction: {
+        harnessRunId,
+        attemptId: '00000000-0000-7000-8000-000000000504',
+        compactionIndex: 2,
+        trigger: 'auto',
+        startedAt: '2026-07-31T19:59:58.000Z',
+      },
     }));
+    expect(result.current.activeCompaction).toMatchObject({ harnessRunId, compactionIndex: 2 });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
     expect(getMessages).toHaveBeenCalledOnce();
@@ -1871,8 +2023,15 @@ describe('useWorkstreamSocket', () => {
     ]);
     expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
     act(() => FakeWebSocket.instances[1]?.message({
-      type: 'stream_delta',
+      type: 'harness_status_changed',
       sequence: 15,
+      occurredAt: '2026-07-31T20:00:01.000Z',
+      status: 'completed',
+    }));
+    expect(result.current.activeCompaction).toBeNull();
+    act(() => FakeWebSocket.instances[1]?.message({
+      type: 'stream_delta',
+      sequence: 16,
       occurredAt: '2026-07-31T20:00:01.000Z',
       messageId,
       harnessRunId,

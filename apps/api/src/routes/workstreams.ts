@@ -359,3 +359,13 @@ workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async 
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
     .workstreamControlSocketTicket(c.req.valid("param").id))),
 );
+workstreamRoutes.get(
+  "/:id/hypersight/blocks/:blockId/socket",
+  zValidator("param", idParam.extend({ blockId: IdSchema })),
+  async (c) => c.json(SocketTicketSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).hyperSightBlockSocketTicket(
+      c.req.valid("param").id,
+      c.req.valid("param").blockId,
+    ),
+  )),
+);

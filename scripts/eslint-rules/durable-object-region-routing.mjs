@@ -1,5 +1,6 @@
 const durableObjectBindings = new Set([
   "CRASH_SYMBOLICATOR",
+  "HYPERSIGHT_BLOCK_AGENTS",
   "SUBSTREAM_AGENTS",
   "WORKSPACE_DOS",
   "WORKSPACE_SCHEDULERS",

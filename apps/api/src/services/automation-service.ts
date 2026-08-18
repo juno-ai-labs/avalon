@@ -2114,8 +2114,7 @@ export class AutomationService {
       this.auth.workspaceId,
       `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
     );
-    const response = await scheduler.fetch("https://scheduler.internal/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }) });
-    if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
+    await scheduler.refresh(this.auth.workspaceId);
   }
 }
 

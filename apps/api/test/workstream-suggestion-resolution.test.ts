@@ -181,14 +181,14 @@ function recordingRooms(published: unknown[]): DurableObjectNamespace {
     jurisdiction: () => recordingRooms(published),
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
-      fetch: (_url: string, init: { body: string }) => {
-        const payload: unknown = JSON.parse(init.body);
+      publishEvent: (input: { event: unknown }) => {
+        const payload: unknown = input.event;
         published.push(
           payload && typeof payload === "object" && "type" in payload
             ? (payload as { type: unknown }).type
             : null,
         );
-        return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.resolve({ status: 204, bodyJson: "null" });
       },
     }),
   });

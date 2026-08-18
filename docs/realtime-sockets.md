@@ -1,14 +1,15 @@
 # Realtime socket admission
 
 Every Avalon WebSocket — workspace synchronization/commands, work-stream
-metadata, the direct substream feed, and the dictation bridge to Azure — is
+metadata, the direct substream feed, derived HyperSight block output, and the
+dictation bridge to Azure — is
 opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
 What happens *on* an open socket belongs elsewhere: workspace invalidation and
 command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
-feed fan-out/replay/presence is `SubstreamAgent`'s, and the dictation bridge's
-audio rules are in
+feed fan-out/replay/presence is `SubstreamAgent`'s, derived block streaming is
+`HyperSightBlockAgent`'s, and the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
@@ -20,15 +21,17 @@ is recorded.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the four helpers both sides share. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, and substream-feed ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
+| `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and HyperSight-block ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
+| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete revisioned WorkstreamDO metadata snapshots to detail and sidebar caches. |
+| `apps/desktop/src/renderer/lib/use-hypersight-block-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
@@ -42,6 +45,7 @@ admission is split in two.
    `GET /workspace/socket` for workspace sync/commands,
    `GET /workstreams/:id/control-socket` for aggregate metadata,
    `GET /workstreams/:id/substreams/:substreamId/socket` for the feed, or
+   `GET /workstreams/:id/hypersight/blocks/:blockId/socket` for a block agent, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
@@ -62,6 +66,10 @@ admission is split in two.
    serializes the verified session identity; every subscribe or later command
    rechecks the current D1 session and membership. Neither object receives the
    signed bearer ticket.
+   A HyperSight upgrade reaches the exact block agent after the edge verifies
+   D1 membership and WorkstreamDO authorizes the block/viewer pair. The block
+   consumes its own ticket receipt and persists only the bounded authorization
+   timestamp in the hibernation attachment.
    Dictation consumes its `jti` in D1 and reserves a session lease before
    opening Azure.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
@@ -70,7 +78,7 @@ admission is split in two.
 
 ### Hibernation lifecycle
 
-All three product objects follow Cloudflare's [WebSocket Hibernation
+All four product objects follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -101,9 +109,12 @@ socket for the active workspace. It is not recreated when the user changes work
 streams. Main, standalone Settings, and Meeting windows therefore converge
 independently without routing product data through main-process IPC. For
 each selected or still-running work stream, the desktop also maintains one
-WorkstreamDO metadata socket and one SubstreamAgent feed socket. Switching away
-from an idle work stream closes its two child-scoped sockets; background-running
-work streams keep them so state, completion, and output continue converging.
+WorkstreamDO metadata socket and one SubstreamAgent feed socket. While the
+HyperSight panel is visible it additionally maintains one direct socket per
+configured block. Switching away from an idle work stream closes its
+work-stream-scoped sockets; background-running conversation streams keep their
+metadata/feed sockets, while block sockets close with the panel and recover
+from durable checkpoints when it is opened again.
 
 The workspace socket carries durable topic invalidations rather than duplicate
 D1 rows. Its complete topic catalog is:
@@ -134,25 +145,78 @@ next Terminal action. Its viewer overlay is participation/listability, unread
 count, mention status, read-through waterline, manual-unread fence/generation,
 and latest mention sequence. Sending null clears a prior value.
 
-The same WorkstreamDO socket carries shared HyperSight configuration changes,
-versioned block-run state, and the current viewer's HyperSight preference.
-There is no `HyperSightBlockAgent` socket: a block agent has no user-visible
-message feed. It settles increasing hash-checked results into WorkstreamDO,
-which publishes them on the authority channel Electron already keeps for the
-selected or running work stream.
+The WorkstreamDO socket carries shared HyperSight configuration and the current
+viewer's HyperSight preference. Each configured block has a direct
+`HyperSightBlockAgent` socket for queued/running/terminal state, token output,
+and reconnect snapshots. This is a block-result channel, not a conversation
+feed: it accepts no user messages and exposes no source transcript.
+
+The block agent commits the same `ActiveStreamCheckpoint` shape used by
+`SubstreamAgent` before it sends a frame. Its initial snapshot always includes
+the checkpoint field. That field is a complete text, turn/epoch, stream
+sequence, and checkpoint revision only for the matching committed in-flight
+run; it is `null` for queued/terminal runs or when no checkpoint has committed,
+and the run state/result is then authoritative.
+Live frames carry complete checkpoints rather than token-sized rows. Electron
+replaces visible text from a newer checkpoint and rejects an older revision;
+it never concatenates a reconnect snapshot to cached text. The shared harness
+batcher limits publication to the 100 ms/2,048-character boundary (at most the
+10 fps tier), so 100 tokens/second does not mean 100 socket frames or SQL rows
+per second.
+
+Authorization is not on that high-frequency path. A block socket attachment
+caches its successful session/user decision for at most 60 seconds, then the
+agent groups live sockets by session and viewer for revalidation. WorkstreamDO
+also commands immediate block-socket sweeps when a block is removed, hidden, or
+its product visibility changes. Thus every checkpoint broadcast remains local
+to the execution owner, while revocation is bounded even if the explicit sweep
+is delayed.
+
+Checkpoint, queued/running, and terminal publications enter one per-agent
+serial queue only after their SQLite transition commits. Adjacent unsent
+cumulative checkpoints coalesce to the newest value; queued/running/terminal
+events remain ordering barriers and are never replaced. The queue catches and
+logs authorization or send failures under `waitUntil`; the Bind callback and
+result settlement never await optional socket delivery. A reconnect snapshot
+therefore repairs a dropped or coalesced frame, serialization prevents a slow
+queued publication from arriving after the matching running state, and a slow
+viewer revalidation cannot retain one ever-growing text value per token batch.
 
 `SubstreamAgent` remains the only socket for transcript parts, attachments,
-tool/elicitation/suggestion blocks, active token frames/checkpoints, presence,
-replay cursors, and resync/download. No workspace or work-stream metadata is
-inferred from token frames.
+tool/elicitation/suggestion blocks, active token frames/checkpoints, explicit
+compaction activity, presence, replay cursors, and resync/download. A
+compaction start is durable object-local state included in snapshots and resync
+frames; the matching finish or a terminal run status clears it. No workspace or
+work-stream metadata is inferred from token frames or token silence.
+
+Older/newer transcript pagination is a correlated, viewer-specific request on
+that same SubstreamAgent socket. Electron sends `load_message_page` with an
+opaque before/after cursor, request UUID, and bounded limit (200 by default,
+250 maximum). The agent revalidates the socket's session and product visibility,
+reads its local `parts` authority, and returns `message_page` or a correlated
+error. Page replies do **not** allocate a shared room sequence and are neither
+broadcast nor replayed: they answer one reader's query and must not move every
+other reader's resume cursor.
+
+The initial socket snapshot still carries the newest page and both cursors.
+When a user scrolls within 160 px of the top, Electron requests the preceding
+page, merges by stable message identity, and restores `scrollTop` by the exact
+height inserted above the viewport. Newer-page and jump-to-latest recovery use
+the same socket path. Requests exist only while the user navigates history; an
+idle/background window produces no pagination traffic, and the accepted socket
+continues to hibernate. A page frame is capped at 900 KB; the agent reduces the
+page toward the requested cursor and returns the adjusted continuation cursor
+rather than splitting one message or emitting an oversized frame.
 
 ### The deprecated query transport
 
-The issuing endpoints still return a URL containing `?ticket=`, and both upgrade
-paths still accept it, because a desktop build released before the subprotocol
-scheme reads exactly that field. The header wins when both are present. The
-renderer strips the query at the point it parses a ticket, so no current client
-sends one.
+The legacy workspace, work-stream, substream, and dictation issuers still return
+a URL containing `?ticket=` because a desktop build released before the
+subprotocol scheme reads exactly that field. The HyperSight issuer is new and
+returns only a clean URL. The shared upgrade service still accepts the query on
+legacy-compatible routes; the header wins when both are present. The current
+renderer strips any legacy query at the point it parses a ticket, so no current
+client sends one and no block-ticket bearer is ever issued in a URL.
 
 ## Invariants
 
@@ -171,11 +235,11 @@ sends one.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; WorkspaceDO and WorkstreamDO consume theirs in
-  their own socket receipt tables. Workspace membership remains in D1 while
+  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO, and
+  HyperSightBlockAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
   work-stream participation/revocation is projected locally.
 - **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
-  and feed tickets cannot open one another's sockets. Otherwise a narrow read
+  feed, and block-agent tickets cannot open one another's sockets. Otherwise a narrow read
   credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
@@ -205,7 +269,7 @@ namespace helper.
 - **Bad signature, wrong audience, expired** — 401 `invalid_socket_ticket`. The
   ticket lives 60 seconds; a client that stalls between issue and open must ask
   for another.
-- **Wrong audience, region, workspace, work stream, or substream** — 403 `socket_ticket_scope_mismatch`.
+- **Wrong audience, region, workspace, work stream, substream, or block** — 403 `socket_ticket_scope_mismatch`.
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
@@ -225,10 +289,11 @@ keeping correct for whoever reads the logs.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO and WorkstreamDO attachments/snapshots, eviction, ticket replay, and read-only child feeds on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and HyperSightBlockAgent attachments/snapshots; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, full topic invalidation, version resume, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale revision rejection, nullable-field clearing, revocation, and reconnect. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/use-hypersight-block-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -260,6 +325,74 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — Transcript history pages come from SubstreamAgent on demand
+
+**What changed:** The feed socket now supports correlated before/after cursor
+reads from object-local message authority. Electron's upward infinite scroll,
+newer recovery, and jump-to-latest use those reads while preserving viewport
+position.
+
+**Why:** Once SubstreamAgent owns the message feed, fetching older pages through
+a separate regional transport duplicates authorization and can race the live
+snapshot. A room-sequenced page reply would be worse: one reader scrolling
+would advance every reader's replay cursor.
+
+**Considered and rejected:** Broadcasting page results, allocating a room
+sequence per page, loading the whole transcript in the initial snapshot, and
+polling REST while scrolling. They respectively leak viewer work, corrupt
+resume semantics, exceed frame/memory bounds, or restore a split serving path.
+
+**Consequences:** Pagination is request/reply, per-reader, reauthorized, capped
+at 250 rows and 900 KB, and wakes only the target agent when a user asks for
+history. The loading row/button remains as progress and retry UI; ordinary
+scrolling starts the request automatically.
+
+### 2026-08-18 — Compaction activity survives socket reconnect
+
+**What changed:** SubstreamAgent feed events and snapshots now carry the active
+Bind compaction run/attempt/index/trigger/start time. Electron renders that phase
+directly and restores it after replay history is unavailable.
+
+**Why:** A silent token interval is not a protocol. The user needs to
+distinguish context summarization from slow inference, tools, and a disconnected
+socket even after switching away and back.
+
+**Considered and rejected:** Heuristics based on elapsed time and an in-memory
+only event. Neither has a durable boundary, and both glitch on reconnect.
+
+**Consequences:** Compaction lifecycle frames share the ordered SubstreamAgent
+room sequence; only the matching run/attempt/index may finish the phase, and
+terminal status is a defensive clear. HyperSight does not send the event because
+its runs do not enable context compaction today.
+
+### 2026-08-18 — Every agent socket streams and resumes from a durable checkpoint
+
+**What changed:** Each visible HyperSight block now opens a purpose-scoped,
+single-use, hibernating socket directly to its `HyperSightBlockAgent`. The block
+agent commits and emits the same active-stream checkpoint contract as
+SubstreamAgent; WorkstreamDO continues to publish configuration/preferences but
+no longer relays per-block run output.
+
+**Why:** The block DO owns the complete loop, so routing token output through
+WorkstreamDO created a second publication hop and could not resume an in-flight
+answer from the execution owner's checkpoint. Direct block sockets make every
+agent authority independently streamable and recoverable after eviction or UI
+navigation.
+
+**Considered and rejected:** Terminal-result-only block sockets, relaying block
+tokens through WorkstreamDO, and polling. They respectively hide long progress,
+load the control object, or cannot preserve smooth live output.
+
+**Consequences:** This decision supersedes the earlier no-block-socket
+consequence below. Electron opens block sockets only while the HyperSight panel
+is visible, closes removed blocks, replaces from full checkpoints, and ignores
+stale revisions. Idle accepted sockets hibernate; block socket tickets have a
+fourth audience and their own SQL replay receipts. Committed block frames pass
+through a caught serial publication queue that coalesces adjacent unsent
+checkpoints, so delivery order is preserved and a viewer-side or authorization
+dependency can neither fail the owned agent loop nor build an unbounded stream
+backlog.
 
 ### 2026-08-18 — HyperSight converges on the WorkstreamDO socket
 

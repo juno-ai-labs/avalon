@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 4;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 1;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -313,7 +313,7 @@ const WORKSTREAM_SCHEMA_V1 = [
   `CREATE INDEX IF NOT EXISTS runs_substream_idx ON runs(substream_id, updated_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS runs_mutating_substream_uq
      ON runs(substream_id)
-     WHERE status IN ('admitted', 'running', 'waiting', 'steering')`,
+     WHERE status IN ('running', 'waiting', 'steering')`,
   `CREATE TABLE IF NOT EXISTS run_scopes (
     run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
     attempt_id TEXT NOT NULL,
@@ -1078,13 +1078,9 @@ const WORKSTREAM_SCHEMA_V1 = [
   ) STRICT`,
 ] as const;
 
-const WORKSTREAM_SCHEMA_V3 = [
+const WORKSTREAM_SUBSTREAM_AGENT_SCHEMA = [
   // Admitted rows are the durable FIFO. Only an executing row holds the
   // single-mutator fence for the local substream.
-  `DROP INDEX IF EXISTS runs_mutating_substream_uq`,
-  `CREATE UNIQUE INDEX runs_mutating_substream_uq
-     ON runs(substream_id)
-     WHERE status IN ('running', 'waiting', 'steering')`,
   `CREATE TABLE IF NOT EXISTS run_steering (
     run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
     steering_part_id TEXT NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
@@ -1110,28 +1106,39 @@ const WORKSTREAM_SCHEMA_V3 = [
     started_at INTEGER,
     completed_at INTEGER,
     last_error_code TEXT,
+    terminal_outcome_json TEXT
+      CHECK (terminal_outcome_json IS NULL OR json_valid(terminal_outcome_json)),
+    settled_at INTEGER,
+    last_settlement_error_code TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS agent_run_dispatches_ready_idx
      ON agent_run_dispatches(state, available_at, created_at, run_id)`,
-] as const;
-
-const WORKSTREAM_SCHEMA_V4 = [
-  `ALTER TABLE agent_run_dispatches
-     ADD COLUMN terminal_outcome_json TEXT
-       CHECK (terminal_outcome_json IS NULL OR json_valid(terminal_outcome_json))`,
-  `ALTER TABLE agent_run_dispatches
-     ADD COLUMN settled_at INTEGER`,
-  `ALTER TABLE agent_run_dispatches
-     ADD COLUMN last_settlement_error_code TEXT`,
+  // One SubstreamAgent owns one independently ordered loop. This singleton is
+  // only the reconnect-safe activity indicator; immutable compaction history
+  // remains in compaction_jobs/compaction_checkpoints.
+  `CREATE TABLE IF NOT EXISTS active_agent_compaction (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL,
+    compaction_index INTEGER NOT NULL CHECK (compaction_index > 0),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'auto')),
+    started_at INTEGER NOT NULL CHECK (started_at >= 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= started_at)
+  ) STRICT`,
 ] as const;
 
 export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchemaMigration[] = [
-  { version: 1, description: "normalized workstream product authority", statements: WORKSTREAM_SCHEMA_V1 },
-  { version: 2, description: "Bind runtime compatibility tables", statements: WORKSTREAM_RUNTIME_COMPAT_SCHEMA },
-  { version: 3, description: "SubstreamAgent identity, dispatch, and turn-boundary steering", statements: WORKSTREAM_SCHEMA_V3 },
-  { version: 4, description: "durable SubstreamAgent terminal effect settlement", statements: WORKSTREAM_SCHEMA_V4 },
+  {
+    version: 1,
+    description: "normalized SubstreamAgent product, runtime, and execution authority",
+    statements: [
+      ...WORKSTREAM_SCHEMA_V1,
+      ...WORKSTREAM_RUNTIME_COMPAT_SCHEMA,
+      ...WORKSTREAM_SUBSTREAM_AGENT_SCHEMA,
+    ],
+  },
 ];
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */

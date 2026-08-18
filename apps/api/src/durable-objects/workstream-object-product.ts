@@ -174,6 +174,31 @@ interface UserRow {
   created_at: string;
 }
 
+interface PartMentionRow extends SqlRow {
+  part_id: string;
+  mention_kind: "person" | "connector";
+  target_user_id: string | null;
+  connector_type: string | null;
+  start_offset: number;
+  end_offset: number;
+}
+
+interface PartAttachmentRow extends SqlRow {
+  part_id: string;
+  resource_id: string;
+  attachment_json: string;
+}
+
+const D1_ID_CHUNK_SIZE = 90;
+
+function chunks<T>(values: readonly T[], size = D1_ID_CHUNK_SIZE): T[][] {
+  const result: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += size) {
+    result.push(values.slice(offset, offset + size));
+  }
+  return result;
+}
+
 interface LocalMessageWrite {
   messageId: string;
   sequenceNumber: number;
@@ -895,30 +920,78 @@ export class WorkstreamObjectProductService {
       ...(cursor === undefined ? [limit] : [cursor, limit]),
     ).toArray();
     const ordered = direction === "before" ? rows.reverse() : rows;
-    return Promise.all(ordered.map((row) => this.messageFromRow(auth, row)));
+    return this.hydrateMessageRows(auth, ordered);
   }
 
-  private async messageFromRow(auth: AuthContext, row: PartRow): Promise<Message> {
-    const user = row.author_user_id
-      ? await this.env.DB.prepare(
-        `SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?`,
-      ).bind(row.author_user_id).first<UserRow>()
-      : null;
-    const mentions = this.storage.sql.exec<{
-      mention_kind: "person" | "connector"; target_user_id: string | null;
-      connector_type: string | null; start_offset: number; end_offset: number;
-    }>(
-      `SELECT mention_kind, target_user_id, connector_type, start_offset, end_offset
-         FROM part_mentions WHERE part_id = ? ORDER BY mention_index`,
-      row.id,
-    ).toArray().map((mention) => ({
+  private async hydrateMessageRows(auth: AuthContext, ordered: readonly PartRow[]): Promise<Message[]> {
+    if (ordered.length === 0) return [];
+    const partIds = ordered.map((row) => row.id);
+    const mentionRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartMentionRow>(
+      `SELECT part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+         FROM part_mentions WHERE part_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY part_id, mention_index`,
+      ...ids,
+    ).toArray());
+    const attachmentRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartAttachmentRow>(
+      `SELECT part_id, resource_id, attachment_json
+         FROM part_attachments WHERE part_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY part_id, position`,
+      ...ids,
+    ).toArray());
+    const authorIds = [...new Set(ordered.flatMap((row) => row.author_user_id ? [row.author_user_id] : []))];
+    const resourceIds = [...new Set(attachmentRows.map((row) => row.resource_id))];
+    const [users, resources] = await Promise.all([
+      this.messageUsers(authorIds),
+      this.messageResources(resourceIds),
+    ]);
+    const mentionsByPart = new Map<string, PartMentionRow[]>();
+    for (const mention of mentionRows) {
+      const grouped = mentionsByPart.get(mention.part_id) ?? [];
+      grouped.push(mention);
+      mentionsByPart.set(mention.part_id, grouped);
+    }
+    const attachmentsByPart = new Map<string, PartAttachmentRow[]>();
+    for (const attachment of attachmentRows) {
+      const grouped = attachmentsByPart.get(attachment.part_id) ?? [];
+      grouped.push(attachment);
+      attachmentsByPart.set(attachment.part_id, grouped);
+    }
+    const workstreamId = this.root().workstream_key;
+    return ordered.map((row) => this.messageFromRow(
+      auth,
+      workstreamId,
+      row,
+      users,
+      mentionsByPart.get(row.id) ?? [],
+      attachmentsByPart.get(row.id) ?? [],
+      resources,
+    ));
+  }
+
+  private async hydrateMessageRow(auth: AuthContext, row: PartRow): Promise<Message> {
+    const message = (await this.hydrateMessageRows(auth, [row]))[0];
+    if (!message) throw new Error("workstream_message_hydration_failed");
+    return message;
+  }
+
+  private messageFromRow(
+    auth: AuthContext,
+    workstreamId: string,
+    row: PartRow,
+    users: ReadonlyMap<string, UserRow>,
+    mentionRows: readonly PartMentionRow[],
+    attachmentRows: readonly PartAttachmentRow[],
+    resources: ReadonlyMap<string, Record<string, unknown>>,
+  ): Message {
+    const user = row.author_user_id ? users.get(row.author_user_id) ?? null : null;
+    const mentions = mentionRows.map((mention) => ({
       type: mention.mention_kind,
       userId: mention.target_user_id,
       connectorType: mention.connector_type,
       startOffset: mention.start_offset,
       endOffset: mention.end_offset,
     }));
-    const attachments = await this.messageAttachments(row.id);
+    const attachments = this.messageAttachments(attachmentRows, resources);
     const external = parseJson<Record<string, unknown> | null>(row.external_actor_json, null);
     const author = external
       ? { type: "external" as const, actor: external }
@@ -931,7 +1004,7 @@ export class WorkstreamObjectProductService {
       id: row.id,
       clientMessageId: row.client_message_id,
       workspaceId: auth.workspaceId,
-      workstreamId: this.root().workstream_key,
+      workstreamId,
       author,
       messageType: row.message_type,
       textContent: row.content ?? "",
@@ -944,22 +1017,12 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  private async messageAttachments(partId: string): Promise<Message["attachments"]> {
-    const links = this.storage.sql.exec<{ resource_id: string; attachment_json: string }>(
-      `SELECT resource_id, attachment_json FROM part_attachments
-        WHERE part_id = ? ORDER BY position`,
-      partId,
-    ).toArray();
-    if (links.length === 0) return [];
-    const placeholders = links.map(() => "?").join(",");
-    const rows = await this.env.DB.prepare(
-      `SELECT id, title, mime_type, metadata_json, content_ref, created_at
-         FROM resources WHERE workspace_id = ? AND id IN (${placeholders})`,
-    ).bind(this.root().parent_workspace_key, ...links.map((link) => link.resource_id))
-      .all<Record<string, unknown>>();
-    const byId = new Map((rows.results ?? []).map((row) => [String(row.id), row]));
+  private messageAttachments(
+    links: readonly PartAttachmentRow[],
+    resources: ReadonlyMap<string, Record<string, unknown>>,
+  ): Message["attachments"] {
     return links.flatMap((link) => {
-      const resource = byId.get(link.resource_id);
+      const resource = resources.get(link.resource_id);
       if (!resource) return [];
       const metadata = parseJson<{ attachedAt?: string }>(link.attachment_json, {});
       return [{
@@ -973,6 +1036,27 @@ export class WorkstreamObjectProductService {
         createdAt: metadata.attachedAt ?? String(resource.created_at),
       }];
     });
+  }
+
+  private async messageUsers(ids: readonly string[]): Promise<Map<string, UserRow>> {
+    if (ids.length === 0) return new Map();
+    const results = await this.env.DB.batch<UserRow>(chunks(ids).map((chunk) => this.env.DB.prepare(
+      `SELECT id, email, name, avatar_url, timezone, created_at
+         FROM users WHERE id IN (${chunk.map(() => "?").join(",")})`,
+    ).bind(...chunk)));
+    return new Map(results.flatMap((result) => result.results ?? []).map((user) => [user.id, user]));
+  }
+
+  private async messageResources(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>> {
+    if (ids.length === 0) return new Map();
+    const workspaceId = this.root().parent_workspace_key;
+    const results = await this.env.DB.batch<Record<string, unknown>>(chunks(ids, D1_ID_CHUNK_SIZE - 1)
+      .map((chunk) => this.env.DB.prepare(
+        `SELECT id, title, mime_type, metadata_json, content_ref, created_at
+           FROM resources WHERE workspace_id = ? AND id IN (${chunk.map(() => "?").join(",")})`,
+      ).bind(workspaceId, ...chunk)));
+    return new Map(results.flatMap((result) => result.results ?? [])
+      .map((resource) => [String(resource.id), resource]));
   }
 
   private async participants(): Promise<WorkstreamDetail["participants"]> {
@@ -1722,7 +1806,7 @@ export class WorkstreamObjectProductService {
     ));
     if (existing) {
       return {
-        message: await this.messageFromRow(auth, existing),
+        message: await this.hydrateMessageRow(auth, existing),
         agentInvoked: false,
         harnessRunId: null,
         workflowInput: null,
@@ -2049,7 +2133,7 @@ export class WorkstreamObjectProductService {
       committed.result.messageId,
     ));
     if (!row) throw new ApiError(500, "message_write_failed", "The message could not be stored");
-    const message = await this.messageFromRow(auth, row);
+    const message = await this.hydrateMessageRow(auth, row);
     const workflowInput: WorkstreamWorkflowInput | null = committed.result.runId ? {
       region: this.env.AVALON_REGION,
       workspaceId: auth.workspaceId,

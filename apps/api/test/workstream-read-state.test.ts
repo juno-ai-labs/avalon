@@ -232,12 +232,15 @@ describe("per-user work-stream read state", () => {
       principal: { type: "user", userId: USER_TWO_ID },
     }).then((result) => result.rows)).resolves.toEqual([]);
 
-    const roomFetch = vi.fn(async () => Response.json({ accepted: true }, { status: 202 }));
+    const publishEvent = vi.fn(async () => ({
+      status: 202,
+      bodyJson: JSON.stringify({ accepted: true }),
+    }));
     Object.assign(env, {
       AVALON_REGION: "global",
       SUBSTREAM_AGENTS: {
         idFromName: () => ({ toString: () => "room-id" }),
-        get: () => ({ fetch: roomFetch }),
+        get: () => ({ publishEvent }),
       },
     });
     database.prepare(
@@ -247,14 +250,14 @@ describe("per-user work-stream read state", () => {
       id: resourceId,
       title: "Renamed private planning note",
     });
-    expect(roomFetch).not.toHaveBeenCalled();
+    expect(publishEvent).not.toHaveBeenCalled();
 
     database.prepare("UPDATE notes SET scope = 'workspace' WHERE id = ?").run(noteId);
     database.prepare(
       "DELETE FROM workstream_resources WHERE workstream_id = ? AND resource_id = ?",
     ).run(WORKSTREAM_ID, resourceId);
     await owner.attachResource(WORKSTREAM_ID, resourceId);
-    expect(roomFetch).toHaveBeenCalledTimes(1);
+    expect(publishEvent).toHaveBeenCalledTimes(1);
   });
 
   it("keeps cursors independent and protects manual unread from stale device acknowledgements", async () => {

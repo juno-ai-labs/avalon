@@ -151,21 +151,6 @@ export function useWorkstreamControlSocket(
                 ['hypersight-preference', workstreamId],
                 event.data.preference,
               );
-            } else {
-              const run = event.data.run;
-              queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
-                if (!current || current.versionId !== run.configurationVersionId) return current;
-                return {
-                  ...current,
-                  blocks: current.blocks.map((block) => {
-                    if (block.id !== run.blockId) return block;
-                    if (block.latestRun
-                      && block.latestRun.id !== run.id
-                      && block.latestRun.triggerSequence > run.triggerSequence) return block;
-                    return { ...block, latestRun: run };
-                  }),
-                };
-              });
             }
           } catch {
             // A reconnect always returns a complete authoritative metadata snapshot.

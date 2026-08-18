@@ -632,12 +632,7 @@ export async function refreshWorkspaceSchedulerAlarm(
     workspaceId,
     `${env.AVALON_REGION}:${workspaceId}`,
   );
-  const response = await scheduler.fetch("https://scheduler.internal/refresh", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workspaceId, region: env.AVALON_REGION }),
-  });
-  if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
+  await scheduler.refresh(workspaceId);
 }
 
 /**
@@ -669,10 +664,5 @@ export async function refreshAgentTimerAlarm(
       substreamId,
     ),
   );
-  const response = await agent.fetch("https://substream-agent/internal/refresh-agent-alarm", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workspaceId, workstreamId, substreamId }),
-  });
-  if (!response.ok) throw new Error(`SubstreamAgent timer refresh failed (${response.status})`);
+  await agent.refreshTimerAlarm({ workspaceId, workstreamId, substreamId });
 }

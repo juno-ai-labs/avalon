@@ -26,7 +26,11 @@ import {
   workstreamRegionalEffectHash,
   type WorkstreamRegionalEffect,
 } from "../src/durable-objects/workstream-regional-effect";
-import { hyperSightBlockResultHash } from "../src/durable-objects/hypersight-protocol";
+import {
+  HyperSightBlockDispatchSchema,
+  hyperSightBlockResultHash,
+  type HyperSightBlockDispatch,
+} from "../src/durable-objects/hypersight-protocol";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000101";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000102";
@@ -91,6 +95,23 @@ function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
 }
 
+function nextClose(socket: WebSocket): Promise<CloseEvent> {
+  return new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
+}
+
+function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]> {
+  return new Promise((resolve) => {
+    const messages: MessageEvent[] = [];
+    const onMessage = (event: MessageEvent) => {
+      messages.push(event);
+      if (messages.length < count) return;
+      socket.removeEventListener("message", onMessage);
+      resolve(messages);
+    };
+    socket.addEventListener("message", onMessage);
+  });
+}
+
 function effectEnvelope(
   effect: WorkstreamRegionalEffect,
   messageId: string,
@@ -112,6 +133,25 @@ function effectEnvelope(
   };
 }
 
+type TestableHyperSightBlockAgent = {
+  recordStreamEvent(
+    dispatch: HyperSightBlockDispatch,
+    event: Record<string, unknown>,
+  ): Promise<void>;
+  persistAndSettle(
+    dispatch: HyperSightBlockDispatch,
+    outcome: { run: HyperSightBlockRun },
+  ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }>;
+};
+
+type TestableSubstreamAgent = {
+  publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
+};
+
+type TestableWorkstreamDO = {
+  deliverHyperSightDispatches(limit?: number): Promise<void>;
+};
+
 async function fetchAndDrain(
   stub: DurableObjectStub,
   input: RequestInfo | URL,
@@ -123,13 +163,68 @@ async function fetchAndDrain(
 }
 
 describe("Durable Objects in the Workers runtime", () => {
+  it("preserves HTTP-style success and conflict envelopes across native RPC", async () => {
+    await seedOpenAuthority();
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const bootstrapped = await child.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    });
+    expect(bootstrapped.status).toBe(200);
+    expect(JSON.parse(bootstrapped.bodyJson)).toEqual({ ok: true });
+    const fenced = await child.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 2,
+    });
+    expect(fenced.status).toBe(409);
+    expect(JSON.parse(fenced.bodyJson)).toEqual({ error: "workstream_runtime_bootstrap_fenced" });
+
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const common = effectEnvelope({
+      kind: "directory_common",
+      title: "Native RPC",
+      description: "Typed child-to-parent delivery",
+      preview: "RPC",
+      scope: "workspace",
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: "2026-08-18T12:00:00.000Z",
+      completedAt: null,
+      archivedAt: null,
+    }, "native-rpc-common");
+    const accepted = await parent.receiveSubstreamEffects({ substreamId: "0", envelopes: [common] });
+    expect(accepted.status).toBe(200);
+    expect(JSON.parse(accepted.bodyJson)).toEqual({ ok: true, accepted: 1 });
+    const mismatched = await parent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [{
+        ...common,
+        messageId: "native-rpc-mismatch",
+        workstreamId: "00000000-0000-7000-8000-000000000199",
+      }],
+    });
+    expect(mismatched.status).toBe(409);
+    expect(JSON.parse(mismatched.bodyJson)).toEqual({ error: "workstream_effect_identity_mismatch" });
+  });
+
   it("constructs every object through its SQL migration ledger", async () => {
     const cases = [
       {
         namespace: env.SUBSTREAM_AGENTS,
         name: substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: SubstreamAgent,
-        tables: ["_sql_schema_migrations", "parts", "agent_run_dispatches"],
+        tables: [
+          "_sql_schema_migrations",
+          "parts",
+          "agent_run_dispatches",
+          "active_agent_compaction",
+        ],
       },
       {
         namespace: env.HYPERSIGHT_BLOCK_AGENTS,
@@ -140,7 +235,12 @@ describe("Durable Objects in the Workers runtime", () => {
           HYPERSIGHT_BLOCK_ID,
         ),
         constructor: HyperSightBlockAgent,
-        tables: ["_sql_schema_migrations", "hypersight_block_identity", "agent_run_dispatches"],
+        tables: [
+          "_sql_schema_migrations",
+          "hypersight_block_identity",
+          "agent_run_dispatches",
+          "latest_dispatch_freshness",
+        ],
       },
       {
         namespace: env.WORKSTREAM_DOS,
@@ -183,7 +283,7 @@ describe("Durable Objects in the Workers runtime", () => {
         expect(tableNames(state)).toEqual(expect.arrayContaining([...entry.tables]));
         expect(state.storage.sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM _sql_schema_migrations`,
-        ).one().count).toBeGreaterThan(0);
+        ).one().count).toBe(1);
         const nonStrict = state.storage.sql.exec<{ name: string; type: string; strict: number }>(
           `PRAGMA table_list`,
         ).toArray().filter((table) => (
@@ -595,6 +695,7 @@ describe("Durable Objects in the Workers runtime", () => {
   });
 
   it("dispatches a block to its named agent and applies versioned results idempotently", async () => {
+    await seedOpenAuthority();
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -698,6 +799,346 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT status, started_at FROM hypersight_block_runs WHERE block_run_id = ?`,
         queued.id,
       ).one()).toEqual({ status: "running", started_at: Date.parse(running.startedAt) });
+    });
+
+    const checkpointText = "Streaming HyperSight output survives eviction";
+    await runInDurableObject(blockStub, async (instance, state) => {
+      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+        state.storage.sql.exec<{ dispatch_json: string }>(
+          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+          queued.id,
+        ).one().dispatch_json,
+      ));
+      const checkpoint = {
+        messageId: "00000000-0000-7000-8000-000000000116",
+        harnessRunId: dispatch.harnessRunId,
+        turnId: "turn-runtime-resume",
+        epoch: 0,
+        streamSeq: 4,
+        seenTurnIds: ["turn-runtime-resume"],
+        text: checkpointText,
+        turnStartOffset: 0,
+        roomSequence: 4,
+        createdAt: "2026-08-17T20:00:02.000Z",
+      };
+      state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET state = 'running', terminal_outcome_json = NULL,
+           started_at = ?, completed_at = NULL WHERE block_run_id = ?`,
+        Date.parse("2026-08-17T20:00:01.000Z"),
+        queued.id,
+      );
+      const testable = instance as unknown as TestableHyperSightBlockAgent;
+      await testable.recordStreamEvent(dispatch, {
+        type: "stream_started",
+        messageId: checkpoint.messageId,
+        harnessRunId: dispatch.harnessRunId,
+        turnId: checkpoint.turnId,
+        epoch: checkpoint.epoch,
+        streamSeq: 0,
+        reset: false,
+      });
+      await testable.recordStreamEvent(dispatch, {
+        type: "stream_delta",
+        messageId: checkpoint.messageId,
+        harnessRunId: dispatch.harnessRunId,
+        turnId: checkpoint.turnId,
+        epoch: checkpoint.epoch,
+        streamSeq: 1,
+        reset: false,
+        delta: checkpointText,
+      });
+      expect(state.storage.sql.exec<{ revision: number }>(
+        `SELECT revision FROM agent_stream_checkpoint WHERE id = 1`,
+      ).one().revision).toBe(2);
+    });
+    const blockSocketResponse = await blockStub.fetch("https://hypersight.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-region": "global",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    if (blockSocketResponse.status !== 101) {
+      throw new Error(`HyperSight socket rejected: ${blockSocketResponse.status} ${await blockSocketResponse.text()}`);
+    }
+    const blockSocket = blockSocketResponse.webSocket!;
+    blockSocket.accept();
+    const replayed = await fetchAndDrain(blockStub, "https://hypersight.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-region": "global",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(replayed.status).toBe(401);
+    const expired = await fetchAndDrain(blockStub, "https://hypersight.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-region": "global",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000118",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
+      },
+    });
+    expect(expired.status).toBe(401);
+    await evictDurableObject(blockStub);
+    const pong = nextMessage(blockSocket);
+    blockSocket.send("ping");
+    expect((await pong).data).toBe("pong");
+    const snapshot = nextMessage(blockSocket);
+    blockSocket.send(JSON.stringify({ type: "subscribe" }));
+    expect(JSON.parse(String((await snapshot).data))).toMatchObject({
+      type: "hypersight_block_snapshot",
+      blockId: HYPERSIGHT_BLOCK_ID,
+      run: { id: queued.id, status: "running", markdown: checkpointText },
+      streamCheckpoint: { roomSequence: 2, text: checkpointText },
+    });
+
+    const continuedText = " and continues without a visual reset";
+    const continued = nextMessage(blockSocket);
+    await runInDurableObject(blockStub, async (instance, state) => {
+      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+        state.storage.sql.exec<{ dispatch_json: string }>(
+          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+          queued.id,
+        ).one().dispatch_json,
+      ));
+      await (instance as unknown as TestableHyperSightBlockAgent).recordStreamEvent(dispatch, {
+        type: "stream_delta",
+        messageId: "00000000-0000-7000-8000-000000000116",
+        harnessRunId: dispatch.harnessRunId,
+        turnId: "turn-runtime-resume",
+        epoch: 0,
+        streamSeq: 2,
+        reset: false,
+        delta: continuedText,
+      });
+      const persisted = JSON.parse(state.storage.sql.exec<{ checkpoint_json: string }>(
+        `SELECT checkpoint_json FROM agent_stream_checkpoint WHERE id = 1`,
+      ).one().checkpoint_json) as { roomSequence: number; text: string };
+      expect(persisted).toMatchObject({
+        roomSequence: 3,
+        text: checkpointText + continuedText,
+      });
+    });
+    expect(JSON.parse(String((await continued).data))).toMatchObject({
+      type: "hypersight_block_stream_checkpoint",
+      blockRunId: queued.id,
+      streamCheckpoint: { roomSequence: 3, text: checkpointText + continuedText },
+    });
+
+    const terminalFrames = nextMessages(blockSocket, 2);
+    await runInDurableObject(blockStub, async (instance, state) => {
+      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+        state.storage.sql.exec<{ dispatch_json: string }>(
+          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+          queued.id,
+        ).one().dispatch_json,
+      ));
+      const completed = {
+        ...running,
+        status: "completed" as const,
+        markdown: checkpointText + continuedText,
+        completedAt: "2026-08-17T20:00:03.000Z",
+      };
+      await (instance as unknown as TestableHyperSightBlockAgent).persistAndSettle(dispatch, {
+        run: completed,
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
+      ).one().count).toBe(0);
+    });
+    const terminalEvents = (await terminalFrames).map((event) => JSON.parse(String(event.data)));
+    expect(terminalEvents.find((event) => event.type === "hypersight_block_stream_checkpoint"))
+      .toMatchObject({
+      type: "hypersight_block_stream_checkpoint",
+      blockRunId: queued.id,
+      streamCheckpoint: null,
+    });
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+      .bind(new Date().toISOString(), SESSION_ID).run();
+    const blockClosed = nextClose(blockSocket);
+    await blockStub.revalidateViewerAccess({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      blockId: HYPERSIGHT_BLOCK_ID,
+      userId: USER_ID,
+    });
+    expect((await blockClosed).code).toBe(1008);
+  });
+
+  it("coalesces obsolete queued HyperSight dispatches while preserving an in-flight run", async () => {
+    await seedOpenAuthority();
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+    ).run();
+    const blockStub = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
+      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    ));
+    const versionId = "00000000-0000-7000-8000-000000000131";
+    const dispatch = (ordinal: number) => HyperSightBlockDispatchSchema.parse({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      blockId: HYPERSIGHT_BLOCK_ID,
+      blockRunId: `00000000-0000-7000-8000-${String(132 + ordinal).padStart(12, "0")}`,
+      harnessRunId: `00000000-0000-7000-8000-${String(142 + ordinal).padStart(12, "0")}`,
+      configurationVersionId: versionId,
+      configurationVersionNumber: 1,
+      prompt: "Summarize the newest state",
+      triggerSequence: ordinal,
+      contextFence: { throughSequence: ordinal, compaction: null },
+      createdAt: new Date(Date.parse("2026-08-18T12:00:00.000Z") + ordinal).toISOString(),
+    });
+    const first = dispatch(1);
+    const second = dispatch(2);
+    const newest = dispatch(3);
+    const staleRetry = dispatch(0);
+    await blockStub.dispatchRun(first);
+    await blockStub.dispatchRun(second);
+    await blockStub.dispatchRun(newest);
+    await blockStub.dispatchRun(staleRetry);
+
+    await runInDurableObject(blockStub, (_instance, state) => {
+      const rows = state.storage.sql.exec<{
+        block_run_id: string;
+        state: string;
+        terminal_outcome_json: string | null;
+      }>(
+        `SELECT block_run_id, state, terminal_outcome_json
+           FROM agent_run_dispatches ORDER BY created_at, block_run_id`,
+      ).toArray();
+      expect(rows).toHaveLength(4);
+      expect(rows.find((row) => row.block_run_id === newest.blockRunId)?.terminal_outcome_json).toBeNull();
+      expect(rows.find((row) => row.block_run_id === staleRetry.blockRunId)).toMatchObject({
+        state: "completed",
+      });
+      expect(JSON.parse(rows.find((row) =>
+        row.block_run_id === staleRetry.blockRunId)!.terminal_outcome_json!)).toMatchObject({
+        run: { status: "stopped", error: { code: "hypersight_run_superseded" } },
+      });
+      for (const row of rows.filter((candidate) => candidate.block_run_id !== newest.blockRunId)) {
+        if (row.terminal_outcome_json === null) expect(row.state).toBe("running");
+        else expect(JSON.parse(row.terminal_outcome_json)).toMatchObject({
+          run: { status: "stopped", error: { code: "hypersight_run_superseded" } },
+        });
+      }
+      expect(rows.filter((row) => row.block_run_id !== newest.blockRunId
+        && row.state === "queued" && row.terminal_outcome_json === null)).toHaveLength(0);
+      expect(rows.filter((row) => row.state === "running" && row.terminal_outcome_json === null).length)
+        .toBeLessThanOrEqual(1);
+    });
+  });
+
+  it("holds later same-block dispatches behind an older parent outbox retry", async () => {
+    await seedOpenAuthority();
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+    ).run();
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await fetchAndDrain(parent, "https://workstream.test/health");
+    const configurationVersionId = "00000000-0000-7000-8000-000000000151";
+    const makeDispatch = (ordinal: number) => HyperSightBlockDispatchSchema.parse({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      blockId: HYPERSIGHT_BLOCK_ID,
+      blockRunId: `00000000-0000-7000-8000-${String(151 + ordinal).padStart(12, "0")}`,
+      harnessRunId: `00000000-0000-7000-8000-${String(161 + ordinal).padStart(12, "0")}`,
+      configurationVersionId,
+      configurationVersionNumber: 1,
+      prompt: "Respect per-block head-of-line delivery",
+      triggerSequence: ordinal,
+      contextFence: { throughSequence: ordinal, compaction: null },
+      createdAt: new Date(Date.parse("2026-08-18T12:00:00.000Z") + ordinal).toISOString(),
+    });
+    const older = makeDispatch(1);
+    const newer = makeDispatch(2);
+    const notBefore = Date.now() + 60_000;
+    await runInDurableObject(parent, async (instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO hypersight_configuration_versions
+           (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
+         VALUES (?, 1, ?, ?, 1)`,
+        configurationVersionId,
+        JSON.stringify([{ id: HYPERSIGHT_BLOCK_ID, prompt: older.prompt }]),
+        USER_ID,
+      );
+      for (const [dispatch, createdAt, dueAt] of [
+        [older, 1, notBefore],
+        [newer, 2, Date.now()],
+      ] as const) {
+        state.storage.sql.exec(
+          `INSERT INTO hypersight_block_runs
+             (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
+              harness_run_id, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+          dispatch.blockRunId,
+          configurationVersionId,
+          HYPERSIGHT_BLOCK_ID,
+          dispatch.prompt,
+          dispatch.triggerSequence,
+          dispatch.harnessRunId,
+          createdAt,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO hypersight_dispatch_outbox
+             (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
+           VALUES (?, ?, ?, 0, ?, ?)`,
+          dispatch.blockRunId,
+          HYPERSIGHT_BLOCK_ID,
+          JSON.stringify(dispatch),
+          dueAt,
+          createdAt,
+        );
+      }
+      await (instance as unknown as TestableWorkstreamDO).deliverHyperSightDispatches();
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM hypersight_dispatch_outbox`,
+      ).one().count).toBe(2);
+    });
+    await runInDurableObject(parent, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE hypersight_dispatch_outbox SET not_before = 0 WHERE block_run_id = ?`,
+        older.blockRunId,
+      );
+      const testable = instance as unknown as TestableWorkstreamDO;
+      await testable.deliverHyperSightDispatches();
+      expect(state.storage.sql.exec<{ block_run_id: string }>(
+        `SELECT block_run_id FROM hypersight_dispatch_outbox`,
+      ).one().block_run_id).toBe(newer.blockRunId);
+      await testable.deliverHyperSightDispatches();
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM hypersight_dispatch_outbox`,
+      ).one().count).toBe(0);
+    });
+    const child = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
+      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    ));
+    await runInDurableObject(child, (_instance, state) => {
+      const rows = state.storage.sql.exec<{ block_run_id: string }>(
+        `SELECT block_run_id FROM agent_run_dispatches ORDER BY created_at, block_run_id`,
+      ).toArray();
+      expect(rows.map((row) => row.block_run_id)).toEqual([older.blockRunId, newer.blockRunId]);
     });
   });
 
@@ -868,6 +1309,365 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.close(1000, "done");
   });
 
+  it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000121",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    let roomSequence = 0;
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+      for (let sequence = 1; sequence <= 6; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8000-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `message ${sequence}`,
+          1_000 + sequence,
+          1_000 + sequence,
+        );
+      }
+      roomSequence = state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence;
+    });
+
+    const beforeReceipt = nextMessage(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000122",
+      limit: 2,
+      cursor: { direction: "before", value: "6" },
+    }));
+    expect(JSON.parse(String((await beforeReceipt).data))).toMatchObject({
+      type: "message_page",
+      requestId: "00000000-0000-7000-8000-000000000122",
+      page: {
+        items: [{ sequenceNumber: 4 }, { sequenceNumber: 5 }],
+        nextCursor: "4",
+        newerCursor: null,
+      },
+    });
+
+    const afterReceipt = nextMessage(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000123",
+      limit: 2,
+      cursor: { direction: "after", value: "2" },
+    }));
+    expect(JSON.parse(String((await afterReceipt).data))).toMatchObject({
+      type: "message_page",
+      requestId: "00000000-0000-7000-8000-000000000123",
+      page: {
+        items: [{ sequenceNumber: 3 }, { sequenceNumber: 4 }],
+        nextCursor: null,
+        newerCursor: "4",
+      },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence).toBe(roomSequence);
+      for (let sequence = 7; sequence <= 11; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8001-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `message ${sequence} ${"x".repeat(240_000)}`,
+          1_000 + sequence,
+          1_000 + sequence,
+        );
+      }
+    });
+
+    const cappedReceipt = nextMessage(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000125",
+      limit: 5,
+      cursor: { direction: "after", value: "6" },
+    }));
+    const cappedFrame = String((await cappedReceipt).data);
+    expect(new TextEncoder().encode(cappedFrame).byteLength).toBeLessThanOrEqual(900_000);
+    expect(JSON.parse(cappedFrame)).toMatchObject({
+      type: "message_page",
+      requestId: "00000000-0000-7000-8000-000000000125",
+      page: {
+        items: [{ sequenceNumber: 7 }, { sequenceNumber: 8 }, { sequenceNumber: 9 }],
+        newerCursor: "9",
+      },
+    });
+
+    const cappedBeforeReceipt = nextMessage(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000139",
+      limit: 5,
+      cursor: { direction: "before", value: "12" },
+    }));
+    const cappedBeforeFrame = String((await cappedBeforeReceipt).data);
+    expect(new TextEncoder().encode(cappedBeforeFrame).byteLength).toBeLessThanOrEqual(900_000);
+    expect(JSON.parse(cappedBeforeFrame)).toMatchObject({
+      type: "message_page",
+      requestId: "00000000-0000-7000-8000-000000000139",
+      page: {
+        items: [{ sequenceNumber: 9 }, { sequenceNumber: 10 }, { sequenceNumber: 11 }],
+        nextCursor: "9",
+      },
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      const oversizedPartId = "00000000-0000-7000-8001-000000000012";
+      state.storage.sql.exec(
+        `INSERT INTO parts
+           (id, substream_id, sequence_number, role, kind, author_type, content,
+            visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+         VALUES (?, '0', 12, 'assistant', 'text', 'agent', ?, 'people', 0, 'text', ?, 1012, 1012)`,
+        oversizedPartId,
+        "z".repeat(260_000),
+        JSON.stringify({ payload: "y".repeat(259_900) }),
+      );
+      for (let mentionIndex = 0; mentionIndex < 3_000; mentionIndex += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO part_mentions
+             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset, attention_ordinal)
+           VALUES (?, ?, 'connector', NULL, ?, 0, 1, ?)`,
+          oversizedPartId,
+          mentionIndex,
+          `connector-${String(mentionIndex).padStart(60, "x")}`,
+          mentionIndex + 1,
+        );
+      }
+    });
+    const oversizedReceipt = nextMessage(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000140",
+      cursor: { direction: "after", value: "11" },
+    }));
+    expect(JSON.parse(String((await oversizedReceipt).data))).toMatchObject({
+      type: "message_page_error",
+      requestId: "00000000-0000-7000-8000-000000000140",
+      code: "message_page_too_large",
+    });
+
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+      .bind(new Date().toISOString(), SESSION_ID).run();
+    const revokedReceipt = nextMessage(socket);
+    const closed = nextClose(socket);
+    socket.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000124",
+      cursor: { direction: "before", value: "4" },
+    }));
+    expect(JSON.parse(String((await revokedReceipt).data))).toMatchObject({
+      type: "message_page_error",
+      requestId: "00000000-0000-7000-8000-000000000124",
+      code: "socket_access_revoked",
+    });
+    expect((await closed).code).toBe(1008);
+  });
+
+  it("restores active compaction in a hibernating snapshot and suppresses it after terminal state", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const harnessRunId = "00000000-0000-7000-8000-000000000125";
+    const attemptId = "00000000-0000-7000-8000-000000000126";
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Compaction snapshot', exact_state = 'running', updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO runs
+           (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+            next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+            idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+            input_tokens, output_tokens, cost_micros, output_bytes, origin,
+            execution_principal_json, chain_depth, created_at, updated_at)
+         VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0,
+                 0, 0, 0, 0, 'user_message', '{}', 0, ?, ?)`,
+        harnessRunId,
+        Date.now(),
+        Date.now(),
+        Date.now(),
+      );
+      await (instance as unknown as TestableSubstreamAgent).publishAgentRuntimeEvent({
+        type: "compaction_started",
+        compaction: {
+          harnessRunId,
+          attemptId,
+          compactionIndex: 2,
+          trigger: "auto",
+          startedAt: "2026-08-17T20:00:02.000Z",
+        },
+      });
+    });
+    const detailResult = await stub.handleProductRequest({
+      operation: "get",
+      auth: {
+        sessionId: SESSION_ID,
+        userId: USER_ID,
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        role: "member",
+      },
+    });
+    expect(JSON.parse(detailResult.bodyJson)).toMatchObject({ id: WORKSTREAM_ID });
+    expect(detailResult.status).toBe(200);
+    const connect = async (ticketId: string): Promise<WebSocket> => {
+      const response = await stub.fetch("https://substream.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-avalon-workspace-id": WORKSPACE_ID,
+          "x-avalon-workstream-id": WORKSTREAM_ID,
+          "x-avalon-substream-id": "0",
+          "x-avalon-user-id": USER_ID,
+          "x-avalon-session-id": SESSION_ID,
+          "x-avalon-socket-ticket-id": ticketId,
+          "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      return socket;
+    };
+
+    const first = await connect("00000000-0000-7000-8000-000000000127");
+    await evictDurableObject(stub);
+    const firstSnapshot = nextMessage(first);
+    first.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    expect(JSON.parse(String((await firstSnapshot).data))).toMatchObject({
+      type: "snapshot",
+      workstream: { harnessStatus: "running", latestHarnessRunId: harnessRunId },
+      activeCompaction: { harnessRunId, attemptId, compactionIndex: 2, trigger: "auto" },
+    });
+    first.close(1000, "done");
+
+    const recoveredAttemptId = "00000000-0000-7000-8000-000000000129";
+    await runInDurableObject(stub, async (instance, state) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      await testable.publishAgentRuntimeEvent({
+        type: "compaction_started",
+        compaction: {
+          harnessRunId,
+          attemptId: recoveredAttemptId,
+          compactionIndex: 2,
+          trigger: "auto",
+          startedAt: "2026-08-17T20:00:03.000Z",
+        },
+      });
+      await testable.publishAgentRuntimeEvent({
+        type: "compaction_finished",
+        harnessRunId,
+        attemptId,
+        compactionIndex: 2,
+        outcome: "completed",
+      });
+      expect(state.storage.sql.exec<{ attempt_id: string }>(
+        `SELECT attempt_id FROM active_agent_compaction WHERE id = 1`,
+      ).one().attempt_id).toBe(recoveredAttemptId);
+    });
+    const recovered = await connect("00000000-0000-7000-8000-000000000128");
+    await evictDurableObject(stub);
+    const recoveredSnapshot = nextMessage(recovered);
+    recovered.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    expect(JSON.parse(String((await recoveredSnapshot).data))).toMatchObject({
+      type: "snapshot",
+      workstream: { harnessStatus: "running", latestHarnessRunId: harnessRunId },
+      activeCompaction: {
+        harnessRunId,
+        attemptId: recoveredAttemptId,
+        compactionIndex: 2,
+      },
+    });
+    recovered.close(1000, "done");
+
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET exact_state = 'completed', updated_at = ? WHERE id = 1`,
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `UPDATE runs SET status = 'completed', completed_at = ?, updated_at = ? WHERE run_id = ?`,
+        Date.now(),
+        Date.now(),
+        harnessRunId,
+      );
+      await (instance as unknown as TestableSubstreamAgent).publishAgentRuntimeEvent({
+        type: "harness_status_changed",
+        status: "completed",
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM active_agent_compaction`,
+      ).one().count).toBe(0);
+    });
+    const second = await connect("00000000-0000-7000-8000-000000000130");
+    await evictDurableObject(stub);
+    const secondSnapshot = nextMessage(second);
+    second.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    expect(JSON.parse(String((await secondSnapshot).data))).toMatchObject({
+      type: "snapshot",
+      workstream: { harnessStatus: "completed", latestHarnessRunId: harnessRunId },
+      activeCompaction: null,
+    });
+    second.close(1000, "done");
+  });
+
   it("makes the SubstreamAgent socket read-only for user commands", async () => {
     await seedOpenAuthority();
     const id = env.SUBSTREAM_AGENTS.idFromName(
@@ -907,6 +1707,17 @@ describe("Durable Objects in the Workers runtime", () => {
     const pong = nextMessage(socket!);
     socket!.send("ping");
     expect((await pong).data).toBe("pong");
+    const pageReceipt = nextMessage(socket!);
+    socket!.send(JSON.stringify({
+      type: "load_message_page",
+      requestId: "00000000-0000-7000-8000-000000000118",
+      cursor: { direction: "before", value: "10" },
+    }));
+    expect(JSON.parse(String((await pageReceipt).data))).toMatchObject({
+      type: "message_page_error",
+      requestId: "00000000-0000-7000-8000-000000000118",
+      code: "subscription_required",
+    });
     const receipt = nextMessage(socket!);
     socket!.send(JSON.stringify({
       type: "create_message",

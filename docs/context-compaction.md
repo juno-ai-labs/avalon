@@ -22,12 +22,12 @@ weeks ago.
 | Path | Responsibility |
 | --- | --- |
 | [`packages/agent-harness/src/bind-runtime.ts`](../packages/agent-harness/src/bind-runtime.ts) | All compaction policy: `COMPACTION_FRACTION`, the OpenRouter context-window lookup, `compact()`, `compactTerminalTurn()`, `COMPACTION_SUMMARY_PROMPT`, and `compactionCheckpointMessage()` — the one place the compacted transcript's shape is decided. |
-| [`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts) | `HarnessCompactionConfig` and `HarnessCompactionCheckpoint`: the host's opt-in and the checkpoint it is handed to persist. |
+| [`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts) | `HarnessCompactionConfig` and `HarnessCompactionCheckpoint`: the host's opt-in and the checkpoint it is handed to persist; plus the `HarnessEvent` `compaction_started`/`compaction_finished` lifecycle delivered around that durable boundary. |
 | [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
-| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_jobs`/`compaction_checkpoints` plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
+| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_jobs`/`compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
 
 ## How it works
 
@@ -116,6 +116,25 @@ tool calls and exact tool results in the suffix are reconstructed as inseparable
 provider pairs. Tool activity before the waterline is not replayed verbatim; it
 survives only to the extent captured by the lossy continuation summary.
 
+### Visible activity and reconnect
+
+Compaction is a first-class agent phase rather than an inference guessed from a
+pause in tokens. Bind emits `compaction_started` before authorization
+preparation and summarization, then emits `compaction_finished` only after the
+checkpoint persistence port succeeds or fails. `SubstreamAgent` advances the
+room sequence and updates its `active_agent_compaction` singleton in the same
+SQLite transaction. A live desktop replaces the generic working timer with
+“Compacting conversation context…”. A reconnect snapshot or
+`resync_required` frame carries the same active state, so switching work streams
+or losing the replay window cannot hide or invent the phase.
+
+The singleton is ephemeral recovery state, not compaction history. Completion
+deletes it only when run ID, harness attempt ID, and compaction index all match;
+a delayed finish from an abandoned attempt cannot clear a recovered attempt at
+the same index. Any terminal harness status also clears it defensively.
+Immutable compaction identity and replay remain the responsibility of
+`compaction_jobs` and `compaction_checkpoints`.
+
 ## Invariants
 
 - **A compaction carries nothing from the conversation verbatim.** The
@@ -174,9 +193,10 @@ sequence boundary, and the replay assembly.
 
 Compaction deliberately does **not** prune tool output, drop old messages
 individually, or trim attachments — it is all-or-nothing on the whole context
-(see [Open questions](#open-questions)). It produces nothing a person sees: the
-work stream transcript in the product is a separate durable record, unaffected by
-a compaction. Scheduling, receipts, and everything else about the run stay in
+(see [Open questions](#open-questions)). It adds no transcript message: the work
+stream transcript in the product is a separate durable record, unaffected by a
+compaction. The only user-visible surface is the transient, reconnect-safe
+activity indicator. Scheduling, receipts, and everything else about the run stay in
 [`agent-harness.md`](agent-harness.md).
 
 ## Failure modes and limits
@@ -202,7 +222,9 @@ stream and execution principal.
 compaction at the threshold and not at exactly 80%, the two-message compacted
 shape, the absence of the original text from the next request, a second
 compaction replacing rather than stacking on the first, the terminal-turn
-checkpoint, and the summary call inheriting the run's reasoning effort. They
+checkpoint, the summary call inheriting the run's reasoning effort, and matched
+start/finish lifecycle events for completed, summary-failed, and
+persistence-rejected compactions. They
 drive a stubbed `fetch` whose queued responses are consumed in order, so an added
 model turn shifts every later index in `requestBodies`.
 
@@ -210,7 +232,13 @@ model turn shifts every later index in `requestBodies`.
 pnpm --filter @avalon/agent-harness exec vitest run src/index.test.ts
 ```
 
-`packages/db/test/migrations.test.ts` asserts the table's columns.
+`apps/api/test/workstream-object-schema.test.ts` asserts both the object-local
+history tables and durable active-indicator lifecycle. The real-workerd Durable
+Object suite covers persistence through eviction and terminal suppression.
+Contract and desktop socket tests cover lifecycle validation, stale-attempt
+finish rejection, canonical reconciliation, reconnect state, and the accessible
+label. `packages/db/test/migrations.test.ts` asserts the pre-cutover source
+table's columns.
 `apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
 rendering, bounded metadata, principal-and-visibility-scoped persistence, and
 fail-closed replay after visibility changes. API protocol tests cover the
@@ -242,6 +270,29 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-18 — Compaction becomes explicit reconnect-safe agent activity
+
+**What changed:** Bind emits start/finish lifecycle events around the complete
+summary-and-persist boundary. The owning SubstreamAgent commits one active
+compaction singleton beside its room sequence and includes it in snapshots and
+resync frames; Electron shows a dedicated activity indicator.
+
+**Why:** During summarization the ordinary token stream is intentionally quiet.
+Inferring compaction from silence cannot distinguish it from model latency,
+tool execution, disconnect, or failure, and loses the state when a reader
+switches work streams.
+
+**Considered and rejected:** Adding a synthetic transcript part and keeping the
+state only in React or object memory. The former pollutes model/product history
+with runtime state; the latter disappears exactly during eviction and
+reconnect.
+
+**Consequences:** The indicator begins before preparation, clears only after a
+durable checkpoint or failure, survives replay-window loss, and cannot be
+cleared by a finish from a stale run, attempt, or compaction index. HyperSight
+currently opts out of context
+compaction, so its block sockets expose no fabricated compaction phase.
 
 ### 2026-08-18 — Derived runs bind an immutable compaction event
 

@@ -34,16 +34,20 @@ import {
 import {
   HyperSightBlockDispatchSchema,
   HyperSightControlRequestSchema,
+  HyperSightSocketRetractionRequestSchema,
   HyperSightSourceRefreshRequestSchema,
+  HyperSightViewerAuthorizationRequestSchema,
   hyperSightBlockResultHash,
   type HyperSightContextFence,
 } from "./hypersight-protocol";
 import { hyperSightBlockAgentName, substreamAgentName } from "./names";
+import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 
 const ForwardedEffectsSchema = z.object({
   substreamId: z.string().min(1).max(180),
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
 }).strict();
+export type ForwardedEffects = z.infer<typeof ForwardedEffectsSchema>;
 
 interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
   next_version: number;
@@ -132,7 +136,7 @@ const RETRY_MAX_MS = 5 * 60_000;
 
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
-  description: "workstream parent metadata, child projections, and regional outbox",
+  description: "workstream control-plane metadata, HyperSight coordination, and regional effects",
   statements: [
     `PRAGMA foreign_keys = ON`,
     `CREATE TABLE workstream_metadata (
@@ -141,19 +145,39 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       workstream_id TEXT NOT NULL UNIQUE,
       region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
       authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      revision INTEGER NOT NULL DEFAULT 0,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       preview TEXT NOT NULL,
+      email_address TEXT,
       scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
       exact_state TEXT NOT NULL CHECK (exact_state IN (
         'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',
         'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',
         'idle', 'archived', 'deleting', 'restoring'
       )),
+      origin_type TEXT NOT NULL DEFAULT 'ad_hoc'
+        CHECK (origin_type IN ('ad_hoc', 'automation')),
+      created_by_user_id TEXT,
+      automation_subscription_id TEXT,
+      automation_run_id TEXT,
+      planned_for INTEGER CHECK (planned_for IS NULL OR planned_for >= 0),
+      title_status TEXT NOT NULL DEFAULT 'settled'
+        CHECK (title_status IN ('naming', 'automatic', 'settled')),
       system_kind TEXT CHECK (system_kind IS NULL OR system_kind = 'digest'),
       last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= 0),
       completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
       archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+      latest_attention_ordinal INTEGER NOT NULL DEFAULT 0
+        CHECK (latest_attention_ordinal >= 0),
+      unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0
+        CHECK (unread_tracking_start_ordinal >= 0),
+      next_wakeup_due_at INTEGER CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0),
+      next_wakeup_prompt TEXT,
+      next_terminal_action_at INTEGER
+        CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0),
+      source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),
+      source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
@@ -202,35 +226,6 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     ) STRICT`,
     `CREATE INDEX durable_outbox_delivery_idx
       ON durable_outbox(state, not_before, created_at, message_id)`,
-  ],
-}, {
-  version: 2,
-  description: "workstream metadata sync socket and complete common projection",
-  statements: [
-    `ALTER TABLE workstream_metadata ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE workstream_metadata ADD COLUMN email_address TEXT`,
-    `ALTER TABLE workstream_metadata ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'ad_hoc'
-      CHECK (origin_type IN ('ad_hoc', 'automation'))`,
-    `ALTER TABLE workstream_metadata ADD COLUMN created_by_user_id TEXT`,
-    `ALTER TABLE workstream_metadata ADD COLUMN automation_subscription_id TEXT`,
-    `ALTER TABLE workstream_metadata ADD COLUMN automation_run_id TEXT`,
-    `ALTER TABLE workstream_metadata ADD COLUMN planned_for INTEGER
-      CHECK (planned_for IS NULL OR planned_for >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN title_status TEXT NOT NULL DEFAULT 'settled'
-      CHECK (title_status IN ('naming', 'automatic', 'settled'))`,
-    `ALTER TABLE workstream_metadata ADD COLUMN latest_attention_ordinal INTEGER NOT NULL DEFAULT 0
-      CHECK (latest_attention_ordinal >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0
-      CHECK (unread_tracking_start_ordinal >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN next_wakeup_due_at INTEGER
-      CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN next_wakeup_prompt TEXT`,
-    `ALTER TABLE workstream_metadata ADD COLUMN next_terminal_action_at INTEGER
-      CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN source_created_at INTEGER NOT NULL DEFAULT 0
-      CHECK (source_created_at >= 0)`,
-    `ALTER TABLE workstream_metadata ADD COLUMN source_updated_at INTEGER NOT NULL DEFAULT 0
-      CHECK (source_updated_at >= 0)`,
     `CREATE TABLE workstream_socket_ticket_receipts (
       ticket_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -239,11 +234,6 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     ) STRICT`,
     `CREATE INDEX workstream_socket_ticket_receipts_expiry_idx
       ON workstream_socket_ticket_receipts(expires_at, ticket_id)`,
-  ],
-}, {
-  version: 3,
-  description: "HyperSight configuration authority, block projections, and durable dispatch",
-  statements: [
     `CREATE TABLE hypersight_configuration_versions (
       configuration_version_id TEXT PRIMARY KEY,
       version_number INTEGER NOT NULL UNIQUE CHECK (version_number > 0),
@@ -291,11 +281,6 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       payload_hash TEXT NOT NULL,
       received_at INTEGER NOT NULL
     ) STRICT`,
-  ],
-}, {
-  version: 4,
-  description: "durable HyperSight source-refresh delivery to the main SubstreamAgent",
-  statements: [
     `CREATE TABLE hypersight_source_refresh_outbox (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
@@ -483,6 +468,59 @@ export class WorkstreamDO extends DurableObject<Env> {
       });
     }
     return json({ error: "not_found" }, 404);
+  }
+
+  /** Native-RPC entrypoint for ordered child projection delivery. */
+  async receiveSubstreamEffects(input: ForwardedEffects): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptSubstreamEffects(new Request(
+      "https://workstream.internal/internal/substream-effects",
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+    )));
+  }
+
+  /** Native-RPC entrypoint for all HyperSight control and settlement operations. */
+  async controlHyperSight(
+    input: z.input<typeof HyperSightControlRequestSchema>,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptHyperSightRequest(new Request(
+      "https://workstream.internal/internal/hypersight",
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+    )));
+  }
+
+  async loadRegionalEffect(
+    input: z.input<typeof WorkstreamRegionalEffectAckSchema>,
+  ): Promise<WorkstreamRegionalEffectEnvelope | null> {
+    await this.initialized;
+    const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
+    return this.regionalEffect(parsed.messageId, parsed.payloadHash);
+  }
+
+  async acknowledgeRegionalEffect(
+    input: z.input<typeof WorkstreamRegionalEffectAckSchema>,
+  ): Promise<boolean> {
+    await this.initialized;
+    const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
+    return this.ack(parsed.messageId, parsed.payloadHash);
+  }
+
+  /** Revalidates a block socket against the parent work-stream authority. */
+  async authorizeHyperSightBlockViewer(
+    input: z.input<typeof HyperSightViewerAuthorizationRequestSchema>,
+  ): Promise<boolean> {
+    await this.initialized;
+    const request = HyperSightViewerAuthorizationRequestSchema.parse(input);
+    const metadata = this.metadataRow();
+    if (!metadata
+      || metadata.workspace_id !== request.workspaceId
+      || metadata.workstream_id !== request.workstreamId
+      || !this.canRead(request.userId)) return false;
+    const configuration = this.latestHyperSightConfiguration();
+    return configuration
+      ? parseHyperSightBlocks(configuration.blocks_json).some((block) => block.id === request.blockId)
+      : false;
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -836,6 +874,10 @@ export class WorkstreamDO extends DurableObject<Env> {
         return json({ preference });
       }
       if (input.operation === "update_configuration") {
+        const previousConfiguration = this.latestHyperSightConfiguration();
+        const previousBlockIds = previousConfiguration
+          ? parseHyperSightBlocks(previousConfiguration.blocks_json).map((block) => block.id)
+          : [];
         const createdAt = Date.parse(input.createdAt);
         const inserted = this.state.storage.transactionSync(() => {
           const current = this.latestHyperSightConfiguration()?.version_number ?? 0;
@@ -860,6 +902,10 @@ export class WorkstreamDO extends DurableObject<Env> {
           occurredAt: input.createdAt,
           hypersight,
         });
+        const currentBlockIds = new Set(hypersight.blocks.map((block) => block.id));
+        await this.revalidateHyperSightBlockSockets(
+          previousBlockIds.filter((blockId) => !currentBlockIds.has(blockId)),
+        );
         this.state.waitUntil((async () => {
           await this.deliverHyperSightSourceRefresh();
           await this.armAlarm();
@@ -871,13 +917,6 @@ export class WorkstreamDO extends DurableObject<Env> {
           input.triggerSequence,
           input.contextFence,
         );
-        for (const run of runs) {
-          await this.broadcastHyperSightEvent({
-            type: "hypersight_block_run_updated",
-            occurredAt: new Date().toISOString(),
-            run,
-          });
-        }
         return json({ runs });
       }
 
@@ -1009,13 +1048,6 @@ export class WorkstreamDO extends DurableObject<Env> {
         );
         return true;
       });
-      if (accepted) {
-        await this.broadcastHyperSightEvent({
-          type: "hypersight_block_run_updated",
-          occurredAt: new Date().toISOString(),
-          run: input.run,
-        });
-      }
       return json({ accepted });
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "hypersight_request_failed" }, 409);
@@ -1059,6 +1091,34 @@ export class WorkstreamDO extends DurableObject<Env> {
     }
   }
 
+  private async revalidateHyperSightBlockSockets(
+    blockIds: readonly string[],
+    userId?: string,
+  ): Promise<void> {
+    const metadata = this.metadataRow();
+    if (!metadata || blockIds.length === 0) return;
+    await Promise.allSettled(blockIds.map(async (blockId) => {
+      const stub = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.HYPERSIGHT_BLOCK_AGENTS,
+        metadata.workspace_id,
+        hyperSightBlockAgentName(
+          this.env.AVALON_REGION,
+          metadata.workspace_id,
+          metadata.workstream_id,
+          blockId,
+        ),
+      );
+      await stub.revalidateViewerAccess(HyperSightSocketRetractionRequestSchema.parse({
+        workspaceId: metadata.workspace_id,
+        workstreamId: metadata.workstream_id,
+        blockId,
+        region: this.env.AVALON_REGION,
+        ...(userId ? { userId } : {}),
+      }));
+    }));
+  }
+
   private async deliverHyperSightDispatches(limit = 10): Promise<void> {
     const rows = this.state.storage.sql.exec<{
       block_run_id: string;
@@ -1066,9 +1126,17 @@ export class WorkstreamDO extends DurableObject<Env> {
       dispatch_json: string;
       attempts: number;
     }>(
-      `SELECT block_run_id, block_id, dispatch_json, attempts
-         FROM hypersight_dispatch_outbox WHERE not_before <= ?
-        ORDER BY created_at, block_run_id LIMIT ?`,
+      `SELECT pending.block_run_id, pending.block_id, pending.dispatch_json, pending.attempts
+         FROM hypersight_dispatch_outbox AS pending
+        WHERE pending.not_before <= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM hypersight_dispatch_outbox AS earlier
+             WHERE earlier.block_id = pending.block_id
+               AND (earlier.created_at < pending.created_at
+                 OR (earlier.created_at = pending.created_at
+                   AND earlier.block_run_id < pending.block_run_id))
+          )
+        ORDER BY pending.created_at, pending.block_run_id LIMIT ?`,
       Date.now(),
       limit,
     ).toArray();
@@ -1086,12 +1154,7 @@ export class WorkstreamDO extends DurableObject<Env> {
             dispatch.blockId,
           ),
         );
-        const response = await stub.fetch("https://hypersight.internal/internal/run-dispatch", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(dispatch),
-        });
-        if (!response.ok) throw new Error(`hypersight_dispatch_rejected:${response.status}`);
+        await stub.dispatchRun(dispatch);
         this.state.storage.sql.exec(
           `DELETE FROM hypersight_dispatch_outbox WHERE block_run_id = ?`,
           row.block_run_id,
@@ -1157,15 +1220,10 @@ export class WorkstreamDO extends DurableObject<Env> {
           metadata.workstream_id,
         ),
       );
-      const response = await stub.fetch(
-        "https://substream.internal/internal/hypersight-refresh-request",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(request),
-        },
-      );
-      if (!response.ok) throw new Error(`hypersight_source_refresh_rejected:${response.status}`);
+      const response = await stub.requestHyperSightRefresh(request);
+      if (!response.accepted) {
+        throw new Error(response.error ?? "hypersight_source_refresh_rejected");
+      }
       this.state.storage.sql.exec(
         `DELETE FROM hypersight_source_refresh_outbox
           WHERE id = 1 AND trigger_sequence = ?`,
@@ -1190,6 +1248,16 @@ export class WorkstreamDO extends DurableObject<Env> {
     const parsed = ForwardedEffectsSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return json({ error: "invalid_substream_effects" }, 400);
     try {
+      const previousMetadata = this.metadataRow();
+      const previousVisibility = previousMetadata
+        ? `${previousMetadata.scope}:${previousMetadata.archived_at === null ? "open" : "archived"}`
+        : null;
+      const affectedUsers = new Map<string, boolean>();
+      for (const envelope of parsed.data.envelopes) {
+        if (envelope.effect.kind === "directory_user" && !affectedUsers.has(envelope.effect.userId)) {
+          affectedUsers.set(envelope.effect.userId, this.canRead(envelope.effect.userId));
+        }
+      }
       let accepted = 0;
       for (const envelope of parsed.data.envelopes) {
         if (envelope.region !== this.env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
@@ -1198,6 +1266,23 @@ export class WorkstreamDO extends DurableObject<Env> {
       }
       await this.armAlarm();
       await this.broadcastMetadata();
+      const configuration = this.latestHyperSightConfiguration();
+      const blockIds = configuration
+        ? parseHyperSightBlocks(configuration.blocks_json).map((block) => block.id)
+        : [];
+      const currentMetadata = this.metadataRow();
+      const currentVisibility = currentMetadata
+        ? `${currentMetadata.scope}:${currentMetadata.archived_at === null ? "open" : "archived"}`
+        : null;
+      if (previousVisibility !== currentVisibility) {
+        await this.revalidateHyperSightBlockSockets(blockIds);
+      } else {
+        await Promise.all([...affectedUsers].map(async ([userId, couldRead]) => {
+          if (couldRead !== this.canRead(userId)) {
+            await this.revalidateHyperSightBlockSockets(blockIds, userId);
+          }
+        }));
+      }
       return json({ ok: true, accepted });
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "substream_effect_failed" }, 409);
