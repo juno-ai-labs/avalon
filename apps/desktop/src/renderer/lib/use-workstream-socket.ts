@@ -37,7 +37,7 @@ import {
   visibleTranscriptMessages,
 } from './transcript';
 import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
-import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
@@ -49,7 +49,7 @@ export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' |
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   AvalonApi,
-  'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'getWorkstreams' | 'messageMentionPayload'
+  'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
 >;
 
 export interface CreateWorkstreamMessageInput {
@@ -679,10 +679,9 @@ export function useWorkstreamSocket(
       const generation = ++canonicalReconcileGeneration;
       const sequenceAtStart = resumeState.lastSequence;
       try {
-        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
+        const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
           api.getWorkstream(workstreamId),
           api.getMessages(workstreamId),
-          api.getWorkstreams(),
         ]);
         const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
@@ -705,8 +704,10 @@ export function useWorkstreamSocket(
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
-        mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
         void Promise.all([
+          // The WorkspaceDO-backed list query owns cross-workstream serving.
+          // Reconciliation invalidates it instead of making a parallel REST
+          // list request and merging a second snapshot into the socket cache.
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
           syncBlockDashboardQueries(),
@@ -1039,10 +1040,9 @@ export function useWorkstreamSocket(
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
+          const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
-            api.getWorkstreams(),
           ]);
           const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
           if (closedByEffect) return;
@@ -1066,7 +1066,6 @@ export function useWorkstreamSocket(
               streamCursors,
             );
           });
-          mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),

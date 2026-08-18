@@ -2,8 +2,8 @@
 -- to the existing one-object-per-work-stream SQLite Durable Objects.
 --
 -- This is deliberately a control ledger, not a second product store. Existing
--- workstream rows remain as a rebuildable workspace-list/search projection
--- after cutover, while the matching Durable Object owns the product record.
+-- workstream rows become fenced identity anchors after cutover. WorkspaceDO
+-- owns the workspace directory and WorkstreamDO owns each product record.
 
 CREATE TABLE workstream_authority_control (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -108,53 +108,6 @@ BEGIN
   SELECT RAISE(ABORT, 'workstream_authority_runs_not_drained');
 END;
 
--- The sidebar survives the authority switch through rebuildable projections.
--- These rows are deliberately not product authority: the WorkstreamDO emits a
--- monotonically versioned common projection plus one viewer projection for
--- unread/mention state, and a stale delivery cannot overwrite a newer one.
-CREATE TABLE workstream_directory_projections (
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  workstream_id TEXT PRIMARY KEY,
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  version INTEGER NOT NULL CHECK (version >= 0),
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  preview TEXT NOT NULL,
-  scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
-  state TEXT NOT NULL,
-  system_kind TEXT,
-  last_activity_at TEXT NOT NULL,
-  completed_at TEXT,
-  archived_at TEXT,
-  payload_hash TEXT NOT NULL,
-  projected_at TEXT NOT NULL,
-  FOREIGN KEY (workstream_id) REFERENCES workstreams(id) ON DELETE CASCADE,
-  UNIQUE (workspace_id, workstream_id)
-);
-
-CREATE INDEX workstream_directory_projections_list_idx
-  ON workstream_directory_projections(workspace_id, archived_at, last_activity_at DESC, workstream_id);
-
-CREATE TABLE workstream_directory_user_projections (
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  version INTEGER NOT NULL CHECK (version >= 0),
-  is_participant INTEGER NOT NULL CHECK (is_participant IN (0, 1)),
-  unread_count INTEGER NOT NULL CHECK (unread_count >= 0),
-  you_are_mentioned INTEGER NOT NULL CHECK (you_are_mentioned IN (0, 1)),
-  listable INTEGER NOT NULL CHECK (listable IN (0, 1)),
-  payload_hash TEXT NOT NULL,
-  projected_at TEXT NOT NULL,
-  PRIMARY KEY (workstream_id, user_id)
-);
-
-CREATE INDEX workstream_directory_user_interest_idx
-  ON workstream_directory_user_projections(
-    workspace_id, user_id, listable, you_are_mentioned, unread_count, workstream_id
-  );
-
 CREATE TRIGGER workstream_authority_begin_import
 AFTER UPDATE OF phase ON workstream_authority_control
 WHEN OLD.phase = 'maintenance_draining' AND NEW.phase = 'maintenance_importing'
@@ -207,7 +160,8 @@ END;
 -- Once import starts, the source snapshot is immutable. After the region opens,
 -- the same fences prevent a silent second authority. Draining remains writable
 -- only so already-admitted runs can settle before the guarded import transition.
--- Projection updates use dedicated tables and never mutate these legacy rows.
+-- Workspace and Workstream Durable Objects hold all serving rows and never
+-- mutate these legacy D1 rows.
 CREATE TRIGGER workstreams_reject_post_cutover_insert
 BEFORE INSERT ON workstreams
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
@@ -229,10 +183,34 @@ BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
+-- Per-viewer pin order moves with the sidebar into WorkspaceDO. The migration
+-- reads these rows during the maintenance window, then this fence prevents D1
+-- from becoming a second writable preference store.
+CREATE TRIGGER workstream_pins_reject_do_authority_insert
+BEFORE INSERT ON workstream_pins
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_do_authoritative');
+END;
+
+CREATE TRIGGER workstream_pins_reject_do_authority_update
+BEFORE UPDATE ON workstream_pins
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_do_authoritative');
+END;
+
+CREATE TRIGGER workstream_pins_reject_do_authority_delete
+BEFORE DELETE ON workstream_pins
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_do_authoritative');
+END;
+
 -- Every legacy product table is fenced as a group during import, verification,
 -- open, and quarantine. Tables intentionally absent here remain regional/
--- workspace control data (routing, pins, schedules, connector delivery, audit,
--- telemetry, or rebuildable directory state).
+-- workspace control data (routing, schedules, connector delivery, audit, or
+-- telemetry).
 CREATE TRIGGER activity_suggestions_reject_do_authority_insert
 BEFORE INSERT ON activity_suggestions
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')

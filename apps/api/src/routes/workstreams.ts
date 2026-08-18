@@ -21,6 +21,7 @@ import {
   WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
+  WorkspaceWorkstreamCursorSchema,
   TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -45,7 +46,12 @@ const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
-  before: z.string().datetime({ offset: true }).optional(),
+  // Legacy authority emits timestamps; WorkspaceDO emits an opaque
+  // `(last_activity_at, workstream_id)` cursor so tied timestamps cannot skip.
+  before: z.union([
+    z.string().datetime({ offset: true }),
+    WorkspaceWorkstreamCursorSchema,
+  ]).optional(),
   // Opt-in, because these are machinery. It widens what is shown, never who may
   // see it: a system work stream still requires participation.
   includeSystem: z.enum(["true", "false"]).default("false"),

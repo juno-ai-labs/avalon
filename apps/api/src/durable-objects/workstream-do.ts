@@ -40,7 +40,8 @@ import {
   blockDashboardBlockResultHash,
   type BlockDashboardContextFence,
 } from "./block-dashboard-protocol";
-import { blockDashboardAgentName, substreamAgentName } from "./names";
+import { blockDashboardAgentName, substreamAgentName, workspaceDOName } from "./names";
+import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 
 const ForwardedEffectsSchema = z.object({
@@ -408,10 +409,10 @@ export { workstreamDOName } from "./names";
  * WorkstreamDO is the non-agent parent/control object.
  *
  * It owns no transcript and runs no model loop. SubstreamAgent children send
- * versioned projection RPCs here. This object aggregates those projections and
- * is the sole object allowed to wake the regional D1/sidebar/notification
- * bridge, which prevents one work stream with many substreams from exposing
- * conflicting sidebar versions.
+ * versioned state RPCs here. This object aggregates those facts and is the sole
+ * object allowed to publish authoritative directory changes to WorkspaceDO or
+ * enqueue external activity/notification effects. That prevents one work
+ * stream with many substreams from exposing conflicting sidebar versions.
  */
 export class WorkstreamDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
@@ -506,6 +507,25 @@ export class WorkstreamDO extends DurableObject<Env> {
     return this.ack(parsed.messageId, parsed.payloadHash);
   }
 
+  /** Maintenance activation fence: do not open a route before WorkspaceDO has its directory row. */
+  async flushWorkspaceDirectoryEffects(): Promise<number> {
+    await this.initialized;
+    let delivered = 0;
+    for (let batch = 0; batch < 400; batch += 1) {
+      // The WorkspaceDO RPC contract caps one atomic application at 25
+      // envelopes. Keep maintenance on that same production boundary rather
+      // than constructing a one-off oversized activation call.
+      const effects = this.dueWorkspaceDirectoryEffects(25);
+      if (effects.length === 0) break;
+      delivered += await this.deliverWorkspaceDirectoryEffects(effects);
+    }
+    if (this.dueWorkspaceDirectoryEffects(1).length > 0) {
+      throw new Error("workspace_directory_activation_flush_limit");
+    }
+    await this.armAlarm();
+    return delivered;
+  }
+
   /** Revalidates a block socket against the parent work-stream authority. */
   async authorizeBlockDashboardBlockViewer(
     input: z.input<typeof BlockDashboardViewerAuthorizationRequestSchema>,
@@ -572,14 +592,23 @@ export class WorkstreamDO extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     await this.initialized;
     const due = this.dueEffects();
-    if (due.length > 0) {
+    const workspaceEffects = due.filter((effect) => [
+      "directory_common",
+      "directory_user",
+      "suggestion_feedback",
+    ].includes(effect.effect.kind));
+    if (workspaceEffects.length > 0) {
+      await this.deliverWorkspaceDirectoryEffects(workspaceEffects).catch(() => undefined);
+    }
+    const regionalEffects = due.filter((effect) => !workspaceEffects.includes(effect));
+    if (regionalEffects.length > 0) {
       try {
-        await this.env.ACTIVITY_QUEUE.sendBatch(due.map((effect) => ({
+        await this.env.ACTIVITY_QUEUE.sendBatch(regionalEffects.map((effect) => ({
           body: workstreamRegionalEffectWakeMessage(effect),
         })));
         const now = Date.now();
         this.state.storage.transactionSync(() => {
-          for (const effect of due) {
+          for (const effect of regionalEffects) {
             const row = first(this.state.storage.sql.exec<{ attempts: number }>(
               `SELECT attempts FROM durable_outbox WHERE message_id = ? AND payload_hash = ?`,
               effect.messageId,
@@ -599,12 +628,18 @@ export class WorkstreamDO extends DurableObject<Env> {
           }
         });
       } catch {
-        this.state.storage.sql.exec(
-          `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
-            WHERE state IN ('pending', 'inflight') AND not_before <= ?`,
-          Date.now() + RETRY_BASE_MS,
-          Date.now(),
-        );
+        const retryAt = Date.now() + RETRY_BASE_MS;
+        this.state.storage.transactionSync(() => {
+          for (const effect of regionalEffects) {
+            this.state.storage.sql.exec(
+              `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
+                WHERE message_id = ? AND payload_hash = ?`,
+              retryAt,
+              effect.messageId,
+              effect.payloadHash,
+            );
+          }
+        });
       }
     }
     await this.deliverBlockDashboardSourceRefresh();
@@ -1755,8 +1790,30 @@ export class WorkstreamDO extends DurableObject<Env> {
     return this.state.storage.sql.exec<StoredEnvelopeRow>(
       `SELECT payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight') AND not_before <= ?
-        ORDER BY created_at, message_id LIMIT ?`,
+        ORDER BY CASE json_extract(payload_json, '$.effect.kind')
+                   WHEN 'directory_common' THEN 0
+                   WHEN 'directory_user' THEN 1
+                   ELSE 2
+                 END,
+                 created_at, message_id LIMIT ?`,
       Date.now(),
+      limit,
+    ).toArray().map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+  }
+
+  private dueWorkspaceDirectoryEffects(limit: number): WorkstreamRegionalEffectEnvelope[] {
+    return this.state.storage.sql.exec<StoredEnvelopeRow>(
+      `SELECT payload_json, payload_hash, attempts FROM durable_outbox
+        WHERE state IN ('pending', 'inflight')
+          AND json_extract(payload_json, '$.effect.kind') IN (
+            'directory_common', 'directory_user', 'suggestion_feedback'
+          )
+        ORDER BY CASE json_extract(payload_json, '$.effect.kind')
+                   WHEN 'directory_common' THEN 0
+                   WHEN 'directory_user' THEN 1
+                   ELSE 2
+                 END,
+                 created_at, message_id LIMIT ?`,
       limit,
     ).toArray().map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   }
@@ -1788,6 +1845,58 @@ export class WorkstreamDO extends DurableObject<Env> {
     }
     const existing = await this.state.storage.getAlarm();
     if (existing === null || existing > next) await this.state.storage.setAlarm(next);
+  }
+
+  private async deliverWorkspaceDirectoryEffects(
+    effects: WorkstreamRegionalEffectEnvelope[],
+  ): Promise<number> {
+    if (effects.length === 0) return 0;
+    const ordered = [...effects].sort((left, right) => {
+      const priority = (effect: WorkstreamRegionalEffectEnvelope) => (
+        effect.effect.kind === "directory_common" ? 0 : effect.effect.kind === "directory_user" ? 1 : 2
+      );
+      return priority(left) - priority(right);
+    });
+    try {
+      const metadata = this.metadataRow();
+      if (!metadata) throw new Error("workstream_metadata_missing");
+      const workspace = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.WORKSPACE_DOS,
+        metadata.workspace_id,
+        workspaceDOName(this.env.AVALON_REGION, metadata.workspace_id),
+      );
+      const result = WorkspaceDirectoryApplyResultSchema.parse(
+        await workspace.applyWorkstreamDirectoryEffects({
+          workspaceId: metadata.workspace_id,
+          envelopes: ordered,
+        }),
+      );
+      const accepted = new Map(result.accepted.map((entry) => [entry.messageId, entry.payloadHash]));
+      let delivered = 0;
+      this.state.storage.transactionSync(() => {
+        for (const effect of effects) {
+          if (accepted.get(effect.messageId) !== effect.payloadHash) continue;
+          if (this.ack(effect.messageId, effect.payloadHash)) delivered += 1;
+        }
+      });
+      if (delivered !== effects.length) throw new Error("workspace_directory_effect_ack_incomplete");
+      return delivered;
+    } catch (error) {
+      const retryAt = Date.now() + RETRY_BASE_MS;
+      this.state.storage.transactionSync(() => {
+        for (const effect of effects) {
+          this.state.storage.sql.exec(
+            `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
+              WHERE message_id = ? AND payload_hash = ?`,
+            retryAt,
+            effect.messageId,
+            effect.payloadHash,
+          );
+        }
+      });
+      throw error;
+    }
   }
 
   private nextAlarmAt(): number | null {

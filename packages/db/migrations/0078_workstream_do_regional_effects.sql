@@ -1,7 +1,6 @@
--- Durable inbox for effects emitted by authoritative Workstream Durable Objects.
--- Queue delivery is at-least-once and unordered; this receipt plus the
--- generation/version fields make replay safe without treating D1 as product
--- authority.
+-- Durable inbox for external/regional effects emitted by authoritative
+-- Workstream Durable Objects. Workspace directory effects travel directly to
+-- WorkspaceDO and never land in D1.
 CREATE TABLE workstream_regional_effect_receipts (
   message_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -9,9 +8,7 @@ CREATE TABLE workstream_regional_effect_receipts (
   generation INTEGER NOT NULL CHECK (generation > 0),
   partition_key TEXT NOT NULL,
   source_version INTEGER NOT NULL CHECK (source_version > 0),
-  effect_kind TEXT NOT NULL CHECK (effect_kind IN (
-    'directory_common', 'directory_user', 'activity_event', 'mention_notification'
-  )),
+  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('activity_event', 'mention_notification')),
   payload_hash TEXT NOT NULL,
   applied_at TEXT NOT NULL,
   acknowledged_at TEXT,
@@ -61,30 +58,3 @@ CREATE INDEX workstream_notification_intents_delivery_idx
 CREATE INDEX workstream_notification_intents_terminal_idx
   ON workstream_notification_intents(state, updated_at)
   WHERE state IN ('delivered', 'skipped');
-
--- Equal generation/version with a different hash is corruption, not a
--- last-writer-wins tie. These triggers defend the projection tables even if a
--- future caller bypasses the normal inbox service.
-CREATE TRIGGER workstream_directory_common_version_hash_guard
-BEFORE UPDATE ON workstream_directory_projections
-WHEN NEW.generation < OLD.generation
-  OR (NEW.generation = OLD.generation AND NEW.version < OLD.version)
-  OR (
-    NEW.generation = OLD.generation AND NEW.version = OLD.version
-    AND NEW.payload_hash != OLD.payload_hash
-  )
-BEGIN
-  SELECT RAISE(ABORT, 'workstream_projection_version_conflict');
-END;
-
-CREATE TRIGGER workstream_directory_user_version_hash_guard
-BEFORE UPDATE ON workstream_directory_user_projections
-WHEN NEW.generation < OLD.generation
-  OR (NEW.generation = OLD.generation AND NEW.version < OLD.version)
-  OR (
-    NEW.generation = OLD.generation AND NEW.version = OLD.version
-    AND NEW.payload_hash != OLD.payload_hash
-  )
-BEGIN
-  SELECT RAISE(ABORT, 'workstream_projection_version_conflict');
-END;

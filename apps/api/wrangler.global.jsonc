@@ -155,12 +155,17 @@
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
-    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
-    { "tag": "v3", "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }] },
-    { "tag": "v4", "new_sqlite_classes": ["WorkstreamDO"] },
-    { "tag": "v5", "new_sqlite_classes": ["WorkspaceDO"] },
-    { "tag": "v6", "new_sqlite_classes": ["BlockDashboardAgent"] }
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SubstreamAgent",
+        "BlockDashboardAgent",
+        "WorkstreamDO",
+        "WorkspaceDO",
+        "WorkspaceScheduler",
+        "CrashSymbolicatorContainer"
+      ]
+    }
   ],
   "queues": {
     "producers": [

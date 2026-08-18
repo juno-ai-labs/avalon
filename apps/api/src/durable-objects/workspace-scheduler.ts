@@ -12,7 +12,10 @@ import { newId } from "@avalon/db";
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
-import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
+import {
+  assertDurableObjectJurisdiction,
+  durableObjectStubForWorkspace,
+} from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
@@ -34,6 +37,7 @@ import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
+import { workspaceDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -280,29 +284,25 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     }
 
     const authority = await readWorkstreamAuthorityControl(this.env);
-    const targets = await this.env.DB.prepare(authority.phase === "durable_object_open"
-      ? `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
+    const regionalTargets = await this.env.DB.prepare(
+      `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
          FROM schedules
         WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL
        UNION ALL
        SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
          FROM resource_watches
-        WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
-       UNION ALL
-       SELECT 'terminal' AS target_kind, workstream_id AS id,
-              next_terminal_action_at AS due_at
-         FROM workstream_directory_projections
-        WHERE workspace_id = ?1 AND archived_at IS NULL
-          AND next_terminal_action_at IS NOT NULL`
-      : `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
-           FROM schedules
-          WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL
-         UNION ALL
-         SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
-           FROM resource_watches
-          WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
-         UNION ALL
-         SELECT 'wakeup' AS target_kind, id, due_at
+        WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL`,
+    ).bind(parsedWorkspaceId).all<AlarmTargetRow>();
+    const workstreamTargets: AlarmTargetRow[] = authority.phase === "durable_object_open"
+      ? (await (await this.workspaceDirectory(parsedWorkspaceId)).workstreamScheduleTargets({
+        workspaceId: parsedWorkspaceId,
+      })).items.map((target) => ({
+        target_kind: target.kind,
+        id: target.workstreamId,
+        due_at: target.dueAt,
+      }))
+      : (await this.env.DB.prepare(
+        `SELECT 'wakeup' AS target_kind, id, due_at
            FROM workstream_wakeups
           WHERE workspace_id = ?1 AND status = 'pending'
          UNION ALL
@@ -311,18 +311,18 @@ export class WorkspaceScheduler extends DurableObject<Env> {
            FROM workstream_sandboxes
           WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
             AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-            AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) IS NOT NULL`)
-      .bind(parsedWorkspaceId)
-      .all<AlarmTargetRow>();
+            AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) IS NOT NULL`,
+      ).bind(parsedWorkspaceId).all<AlarmTargetRow>()).results;
+    const targets = [...regionalTargets.results, ...workstreamTargets];
 
-    if (targets.results.length === 0) {
+    if (targets.length === 0) {
       await this.state.storage.deleteAlarm();
       this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
       return { alarmAt: null };
     }
 
     const retryStates = await this.loadRetryStates();
-    const activeKeys = new Set(targets.results.map((target) => retryStateKey(target.target_kind, target.id)));
+    const activeKeys = new Set(targets.map((target) => retryStateKey(target.target_kind, target.id)));
     let retryStatesChanged = false;
     for (const key of Object.keys(retryStates)) {
       if (activeKeys.has(key)) continue;
@@ -331,7 +331,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     }
 
     let earliestEffectiveAt = Number.POSITIVE_INFINITY;
-    for (const target of targets.results) {
+    for (const target of targets) {
       const dueAt = Date.parse(target.due_at);
       if (!Number.isFinite(dueAt)) throw new Error("invalid_next_run_at");
       const retryAt = retryStates[retryStateKey(target.target_kind, target.id)]?.retryAt ?? 0;
@@ -359,6 +359,9 @@ export class WorkspaceScheduler extends DurableObject<Env> {
       const now = new Date();
       const retryStates = await this.loadRetryStates();
       let retryStatesChanged = false;
+      const workspaceDirectory = authority.phase === "durable_object_open"
+        ? await this.workspaceDirectory(workspaceId)
+        : null;
       const [due, dueWatches, dueWakeups, dueTerminalSandboxes] = await Promise.all([
         this.env.DB.prepare(
           `SELECT *
@@ -384,24 +387,22 @@ export class WorkspaceScheduler extends DurableObject<Env> {
         )
           .bind(workspaceId, now.toISOString())
           .all<ResourceWatchRow>(),
-        this.env.DB.prepare(authority.phase === "durable_object_open"
-          ? `SELECT workstream_id
-             FROM workstream_directory_projections
-            WHERE workspace_id = ?1 AND 0 = 1`
-          : `SELECT workstream_id
+        authority.phase === "durable_object_open"
+          ? Promise.resolve({ results: [] as DueWakeupWorkstreamRow[] })
+          : this.env.DB.prepare(`SELECT workstream_id
                FROM workstream_wakeups
               WHERE workspace_id = ?1 AND status = 'pending' AND due_at <= ?2
               GROUP BY workstream_id ORDER BY MIN(due_at), workstream_id LIMIT 100`)
           .bind(workspaceId, now.toISOString())
           .all<DueWakeupWorkstreamRow>(),
-        this.env.DB.prepare(authority.phase === "durable_object_open"
-          ? `SELECT workstream_id
-             FROM workstream_directory_projections
-            WHERE workspace_id = ?1 AND archived_at IS NULL
-              AND next_terminal_action_at IS NOT NULL
-              AND next_terminal_action_at <= ?2
-            ORDER BY next_terminal_action_at, workstream_id LIMIT 100`
-          : `SELECT workstream_id
+        workspaceDirectory
+          ? workspaceDirectory.dueWorkstreamDirectory({
+            workspaceId,
+            kind: "terminal",
+            through: now.toISOString(),
+            limit: 100,
+          }).then((ids) => ({ results: ids.map((workstream_id) => ({ workstream_id })) }))
+          : this.env.DB.prepare(`SELECT workstream_id
                FROM workstream_sandboxes
               WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
                 AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
@@ -711,15 +712,17 @@ export class WorkspaceScheduler extends DurableObject<Env> {
       .first<AutomationRunRow>();
 
     if (!run) {
-      const planned = await this.env.DB.prepare(authority.phase === "durable_object_open"
-        ? `SELECT workstream_id AS id, automation_run_id
-           FROM workstream_directory_projections
-          WHERE workspace_id = ?1
-            AND automation_subscription_id = ?2
-            AND planned_for = ?3
-            AND archived_at IS NULL
-          LIMIT 1`
-        : `SELECT id, automation_run_id
+      const planned = authority.phase === "durable_object_open"
+        ? await (await this.workspaceDirectory(schedule.workspace_id)).plannedWorkstream({
+          workspaceId: schedule.workspace_id,
+          userId: null,
+          automationSubscriptionId: subscriptionId,
+          plannedFor: schedule.next_run_at,
+        }).then((workstream) => workstream ? ({
+          id: workstream.id,
+          automation_run_id: workstream.automationRunId,
+        }) : null)
+        : await this.env.DB.prepare(`SELECT id, automation_run_id
            FROM workstreams
           WHERE workspace_id = ?1
             AND automation_subscription_id = ?2
@@ -996,6 +999,15 @@ export class WorkspaceScheduler extends DurableObject<Env> {
         new Date().toISOString()
       )
       .run();
+  }
+
+  private workspaceDirectory(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+    );
   }
 
   private async recordWakeupFailure(wakeup: WorkstreamWakeupRow, error: unknown): Promise<void> {

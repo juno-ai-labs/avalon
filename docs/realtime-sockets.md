@@ -6,8 +6,8 @@ dictation bridge to Azure — is
 opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
-What happens *on* an open socket belongs elsewhere: workspace invalidation and
-command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
+What happens *on* an open socket belongs elsewhere: workspace directory serving,
+invalidation, and command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
 feed fan-out/replay/presence is `SubstreamAgent`'s, derived block streaming is
 `BlockDashboardAgent`'s, and the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
@@ -29,11 +29,12 @@ is recorded.
 | `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and HyperSight-block ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages and retains the last page while a reconnect retries its request. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete revisioned WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
@@ -120,8 +121,9 @@ work-stream-scoped sockets; background-running conversation streams keep their
 metadata/feed sockets, while block sockets close with the panel and recover
 from durable checkpoints when it is opened again.
 
-The workspace socket carries durable topic invalidations rather than duplicate
-D1 rows. Its complete topic catalog is:
+The workspace socket carries its authoritative work-stream directory rows plus
+durable topic invalidations for the other D1-owned workspace modules. Its
+complete topic catalog is:
 
 | Topic | Refetched authoritative surfaces |
 | --- | --- |
@@ -136,9 +138,17 @@ D1 rows. Its complete topic catalog is:
 | `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
-| `workstream_directory` | Sidebar membership/order plus global Active/In Progress/Completed groupings and per-viewer pinned, unread, and You Are Mentioned views. Row contents arrive directly from WorkstreamDO when that work stream is connected and from the D1 directory refetch otherwise. |
+| `workstream_directory` | Invalidates the authoritative WorkspaceDO cursor pages used for sidebar membership/order, global Active/In Progress/Completed groupings, and per-viewer pinned, unread, and You Are Mentioned views. A live WorkstreamDO complete snapshot may update the selected row sooner, but D1 is never a list fallback. |
 | `viewer_preferences` | Telemetry, HyperSight, and other current-user workspace preference surfaces. |
 | `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
+
+Electron sends `list_workstreams` with a stable request ID, bounded limit,
+optional opaque `(last_activity_at, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
+with `workspace_workstream_page`, the directory version, parsed work-stream
+rows, and the next cursor. Pending page requests survive a transient reconnect
+and reject only when the provider is disposed or the user/session changes. A
+`workstream_directory` sync invalidation refetches these pages; it never asks a
+REST/D1 list endpoint to reconstruct them.
 
 `WorkstreamDO` always sends a complete revisioned snapshot, not a partial patch.
 Common fields are identity, workspace ID, title/title status, description,
@@ -293,8 +303,8 @@ keeping correct for whoever reads the logs.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, full topic invalidation, version resume, and idempotent command resend. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages and pagination, full topic invalidation, version resume, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale revision rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
@@ -329,6 +339,29 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — Workspace socket serves the authoritative work-stream directory
+
+**What changed:** WorkspaceDO now answers correlated, cursor-paged
+`list_workstreams` messages from its own SQLite directory. Electron's infinite
+work-stream query uses this socket exclusively and retries an unresolved page
+after reconnect. The topic stream continues to invalidate D1-owned workspace
+modules and now invalidates the object-owned directory pages too.
+
+**Why:** Once WorkspaceDO owns cross-work-stream state, serving the sidebar
+through a REST/D1 projection would preserve the very second authority the move
+is intended to remove. The persistent socket already has the authenticated
+workspace/session context and reconnect lifecycle.
+
+**Considered and rejected:** A new directory-only socket, one WorkstreamDO
+socket per sidebar row, and REST fallback. They add connection count, unbounded
+fan-out, or split authority respectively.
+
+**Consequences:** The workspace protocol carries both invalidations and bounded
+directory responses; callers must correlate request IDs and retain requests
+across transient reconnects. WorkstreamDO sockets still provide fresher complete
+detail snapshots for selected/running rows but are not required to render a
+workspace list.
 
 ### 2026-08-18 — HyperSight sockets use the BlockDashboard protocol name
 

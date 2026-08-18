@@ -1,7 +1,10 @@
 import { newId, nowIso } from "@avalon/db";
 
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * The first-party activity log: what happened in Avalon, for whoever should
@@ -236,6 +239,27 @@ export async function listActivityEventsForUser(
   },
 ): Promise<ActivityEventRow[]> {
   const from = input.from ?? null;
+  const authority = await readWorkstreamAuthorityControl(env);
+  const visibleWorkstreamIds = authority.phase === "durable_object_open"
+    ? await (await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, input.workspaceId),
+    )).visibleWorkstreamIds({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      includeSystem: false,
+      participantsOnly: true,
+    })
+    : (await env.DB.prepare(
+      `SELECT participant.workstream_id
+         FROM workstream_participants participant
+         JOIN workstreams workstream ON workstream.id = participant.workstream_id
+        WHERE workstream.workspace_id = ? AND participant.user_id = ?
+          AND participant.removed_at IS NULL AND workstream.system_kind IS NULL`,
+    ).bind(input.workspaceId, input.userId).all<{ workstream_id: string }>()).results
+      .map((row) => row.workstream_id);
   const result = await env.DB.prepare(
     `SELECT e.log_sequence, e.id, e.event_type, e.subject_type, e.subject_id, e.subject_sequence_number,
             e.actor_type, e.actor_user_id, e.actor_label, e.title, e.body, e.canonical_url,
@@ -257,33 +281,9 @@ export async function listActivityEventsForUser(
         AND (
           e.audience_kind = 'workspace'
           OR (e.audience_kind = 'user' AND e.audience_user_id = ?2)
-          OR (e.audience_kind = 'workstream' AND EXISTS (
-                SELECT 1
-                  FROM workstream_authority_control authority
-                 WHERE authority.id = 1 AND (
-                   (authority.phase = 'durable_object_open' AND EXISTS (
-                     SELECT 1 FROM workstream_directory_user_projections viewer
-                      JOIN workstream_directory_projections common
-                        ON common.workstream_id = viewer.workstream_id
-                       AND common.workspace_id = viewer.workspace_id
-                      WHERE viewer.workstream_id = e.audience_workstream_id
-                        AND viewer.user_id = ?2
-                        AND viewer.is_participant = 1
-                        -- Machinery never feeds a digest, even for its own
-                        -- participant: a digest must not summarize itself.
-                        AND common.system_kind IS NULL
-                   ))
-                   OR (authority.phase != 'durable_object_open' AND EXISTS (
-                     SELECT 1
-                       FROM workstream_participants participant
-                       JOIN workstreams workstream ON workstream.id = participant.workstream_id
-                      WHERE participant.workstream_id = e.audience_workstream_id
-                        AND participant.user_id = ?2
-                        AND participant.removed_at IS NULL
-                        AND workstream.system_kind IS NULL
-                   ))
-                 )
-              ))
+          OR (e.audience_kind = 'workstream' AND e.audience_workstream_id IN (
+            SELECT value FROM json_each(?8)
+          ))
         )
         -- The reader must still be a member. A revoked membership stops the log
         -- at once rather than at the next configuration change.
@@ -301,6 +301,7 @@ export async function listActivityEventsForUser(
     input.notBefore ?? null,
     input.limit,
     input.digestibleOnly ? 1 : 0,
+    JSON.stringify(visibleWorkstreamIds),
   ).all<ActivityEventRow>();
   return result.results ?? [];
 }

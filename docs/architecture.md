@@ -96,7 +96,8 @@ flowchart LR
   H --> SA
   WD --> SA
   SA --> WS
-  WS --> Q
+  WS -->|"directory RPC"| WD
+  WS -->|"activity + mention effects"| Q
   H --> Q["Activity Queue"]
   GH["GitHub App"] -->|"signed webhook"| GI["Smart GitHub ingress"]
   GI -->|"installation route"| H
@@ -234,13 +235,16 @@ SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
 serves work-stream product rows;
 afterward each child owns its ordered parts, runs/tools, compaction, timers,
 suggestions, and Terminal state, while its parent aggregates common/user
-metadata. D1 retains workspace authority/routing and versioned query
-projections. The normalized schemas, fleet import, and authority states are in
+metadata and `WorkspaceDO` owns the authoritative cross-work-stream directory,
+viewer overlays, pins, resource inverted index, and suggestion-feedback index.
+D1 retains identity/membership, regional routing/migration, external delivery,
+and relational workspace modules that have not moved behind a DO; it has no
+rebuildable work-stream serving projections. The normalized schemas, fleet import, and authority states are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
 `WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
-sync/command admission, metadata, directory aggregation, HyperSight fan-out,
-and regional effects.
+sync/command admission, metadata, authoritative directory queries, HyperSight
+fan-out, and regional effects.
 Each authenticated Electron renderer maintains one WorkspaceDO socket for the active workspace and one
 WorkstreamDO metadata socket for each selected or background-running work
 stream. Feed sockets,
@@ -262,14 +266,17 @@ outbox, and the model-free parent never relays token traffic.
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
 The child RPCs it to `WorkstreamDO`, which deduplicates the source, recomputes
-the aggregate, and owns the sole regional outbox. Its alarm publishes only
-opaque object/message IDs and a hash through Cloudflare Queue. The consumer RPCs
-the regional parent for the payload,
-applies an idempotent D1 inbox transaction for sidebar projections, the
-first-party activity log, or a short-lived notification intent, then RPCs an
-acknowledgement to the source object. D1 resolves current membership, profile,
-Slack, and email state. Mention delivery waits for the exact causally required
-viewer-projection version, so Queue reordering cannot outrun a removal. The
+the aggregate, and owns the sole parent outbox. Its alarm sends directory,
+viewer, resource-link, and suggestion-feedback effects directly to the
+deterministic WorkspaceDO by typed RPC. WorkspaceDO commits each effect with a
+hash receipt, advances its directory version, and publishes the workspace
+socket invalidation. Only activity-log and mention-delivery effects publish
+opaque object/message IDs and a hash through Cloudflare Queue; the consumer
+fetches the payload from WorkstreamDO and commits the minimal D1 inbox/activity
+or notification-intent transaction before acknowledging the source object. D1
+resolves current membership, profile, Slack, and email state, while mention
+delivery asks WorkspaceDO for the causally required viewer version so Queue
+reordering cannot outrun a removal. The
 object therefore owns the fact that a mention or state change occurred without
 acquiring workspace credentials, placing product text in Queue storage, or
 turning a failed network call into a lost sidebar update.
@@ -288,7 +295,8 @@ on every token frame. The complete role-specific protocol lives in
 The socket responsibilities are deliberately not interchangeable:
 
 - `WorkspaceDO` accepts idempotent user commands, including new work-stream and
-  message creation, and publishes versioned workspace-topic invalidations.
+  message creation, serves cursor-paged authoritative work-stream lists, and
+  publishes versioned workspace-topic invalidations.
 - `WorkstreamDO` publishes complete increasing-revision metadata/viewer
   snapshots and HyperSight configuration, but carries neither transcript parts
   nor model tokens.
@@ -311,8 +319,7 @@ batched stream frame is eligible for publication. Initial snapshots and
 `history_unavailable` carry that full checkpoint, allowing a cold or
 post-hibernation subscriber to replace its partial text and continue without a
 gap or duplicate. Terminal persistence writes one canonical local-SQL part and
-removes the checkpoint; D1 receives only semantic regional projections, never
-token-cadence writes. If the replay gap cannot be proved complete, Electron
+removes the checkpoint; D1 receives no token or directory-cadence writes. If the replay gap cannot be proved complete, Electron
 reloads the agent's canonical page API rather than guessing.
 
 SubstreamAgent `sequence` orders replayable feed events. Model streaming has a second
@@ -323,15 +330,14 @@ turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
 feed and stream cursors across socket and route handoffs, keeps background
 subscribers only for listed running work streams, drops duplicate or stale
 frames, and reconciles to the agent's final local-SQL transcript page plus the
-matching terminal metadata revision. D1 projection queries can refresh regional
-lists, but never override canonical child transcript content.
+matching terminal metadata revision. WorkspaceDO directory queries refresh
+regional lists but never override canonical child transcript content.
 
 The desktop applies each complete increasing-revision WorkstreamDO viewer
 snapshot to both the open detail and sidebar caches, so the header and status dot
-cannot disagree across a stale fetch. WorkspaceDO topic invalidations and the
-regional projection query remain the backstop for work streams without a live
-child socket. A lower revision never rolls either cache backward, and no list
-response becomes transcript authority.
+cannot disagree across a stale fetch. WorkspaceDO directory pages are the
+backstop for work streams without a live child socket. A lower revision never
+rolls either cache backward, and no list response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
@@ -523,10 +529,12 @@ precede any LLM classification.
 ## Invariants
 
 - **Authority follows the declared storage boundary.** Regional D1 owns
-  workspace, connector, routing, schedule, audit, and projection state. After a
-  work-stream generation opens, each `SubstreamAgent` owns its substream product
-  state, the model-free `WorkstreamDO` owns aggregate metadata/outbox, and
-  legacy D1 product writers fail. R2 holds large payloads; the authority that names
+  membership/identity, connector/automation/activity modules, routing,
+  migration, external delivery, schedule, and audit state. `WorkspaceDO` owns
+  cross-work-stream serving indexes. After a work-stream generation opens, each
+  `SubstreamAgent` owns its substream product state, the model-free
+  `WorkstreamDO` owns aggregate metadata/outbox, and legacy D1 product and pin
+  writers fail. R2 holds large payloads; the authority that names
   each reference stays in the owning regional database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
@@ -702,6 +710,29 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-18 — WorkspaceDO replaces the D1 work-stream query plane
+
+**What changed:** The WorkstreamDO outbox now delivers directory, viewer,
+resource-link, and suggestion-feedback state directly to authoritative
+WorkspaceDO SQL. Electron pages the directory over the existing workspace
+socket. Queue and D1 are restricted to activity-log and mention-delivery
+effects, and maintenance activation verifies the WorkspaceDO row before routing
+opens.
+
+**Why:** Cross-work-stream product serving belongs with the workspace object.
+The previous D1 projection path duplicated authority and placed Queue/D1 on the
+critical path from a committed child fact to a correct sidebar.
+
+**Considered and rejected:** Per-list fan-out to WorkstreamDOs, D1 fallback
+reads, and Queue delivery to WorkspaceDO. They add an unbounded read graph,
+split-brain recovery semantics, or a Worker consumer hop where the destination
+object is already deterministic.
+
+**Consequences:** WorkspaceDO is now product state rather than invalidation-only
+control state. D1 is smaller but not empty: membership, connector/automation/
+activity modules, migration routing, and external destinations remain regional
+relational authorities until separately re-architected.
 
 ### 2026-08-18 — BlockDashboard names the internal HyperSight subsystem
 

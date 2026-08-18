@@ -1430,12 +1430,7 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
 ]);
 
-/**
- * Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket.
- * The socket carries durable invalidations rather than copying regional D1
- * rows into a second authority; the desktop refetches each named surface with
- * its existing authenticated REST contract.
- */
+/** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
 export const WORKSPACE_SYNC_TOPICS = [
   "workspace_profile",
   "member_directory",
@@ -1454,6 +1449,11 @@ export const WORKSPACE_SYNC_TOPICS = [
 ] as const;
 export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
 
+/** Opaque stable ordering cursor for WorkspaceDO's `(recency, id)` directory. */
+export const WorkspaceWorkstreamCursorSchema = z.string()
+  .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
+  .max(53);
+
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("subscribe"),
@@ -1466,6 +1466,13 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     operationId: IdSchema,
     payload: CreateMessageRequestSchema,
   }).strict(),
+  z.object({
+    type: z.literal("list_workstreams"),
+    requestId: IdSchema,
+    limit: z.number().int().min(1).max(250),
+    before: WorkspaceWorkstreamCursorSchema.optional(),
+    includeSystem: z.boolean(),
+  }).strict(),
 ]);
 
 export const WorkspaceSocketSyncEventSchema = z.object({
@@ -1474,6 +1481,15 @@ export const WorkspaceSocketSyncEventSchema = z.object({
   occurredAt: TimestampSchema,
   topics: z.array(WorkspaceSyncTopicSchema).min(1),
   reason: z.enum(["initial", "change", "history_unavailable"]),
+}).strict();
+
+/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
+export const WorkspaceWorkstreamPageEventSchema = z.object({
+  type: z.literal("workspace_workstream_page"),
+  requestId: IdSchema,
+  directoryVersion: z.number().int().nonnegative(),
+  items: z.array(WorkstreamSchema).max(1_250),
+  nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
 }).strict();
 
 /**
@@ -1548,6 +1564,7 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
 export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocketEventSchema>;
 

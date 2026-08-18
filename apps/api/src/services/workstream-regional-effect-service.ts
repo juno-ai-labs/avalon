@@ -11,21 +11,17 @@ import {
   type WorkstreamRegionalEffectEnvelope,
   type WorkstreamRegionalEffectQueueMessage,
 } from "../durable-objects/workstream-regional-effect";
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { WorkspaceDirectoryNotificationStateSchema } from "../durable-objects/workspace-directory-protocol";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 
 function workspaceTopicsForEffect(
   effect: WorkstreamRegionalEffectEnvelope["effect"],
 ) {
-  if (effect.kind === "directory_common" || effect.kind === "directory_user") {
-    return ["workstream_directory"] as const;
-  }
-  if (effect.kind === "activity_event" || effect.kind === "suggestion_feedback") {
+  if (effect.kind === "activity_event") {
     return ["activity", "work_opportunities"] as const;
   }
   return ["activity", "workstream_directory"] as const;
@@ -46,7 +42,6 @@ interface NotificationIntentRow {
   recipient_email: string;
   recipient_name: string;
   workspace_name: string;
-  workstream_email_address: string | null;
 }
 
 export interface WorkstreamRegionalEffectResult {
@@ -55,9 +50,9 @@ export interface WorkstreamRegionalEffectResult {
 }
 
 /**
- * Apply one WorkstreamDO effect to the regional query/delivery plane.
- * D1.batch is the inbox transaction: either the projection/intent and receipt
- * both commit, or neither does.
+ * Apply one WorkstreamDO activity/mention effect to the regional delivery plane.
+ * D1.batch is the inbox transaction: either the activity/intent and receipt
+ * both commit, or neither does. Workspace directory effects never enter here.
  */
 export async function applyWorkstreamRegionalEffect(
   env: Env,
@@ -70,6 +65,13 @@ export async function applyWorkstreamRegionalEffect(
     !== message.payloadHash
   ) {
     throw new Error("workstream_effect_payload_hash_mismatch");
+  }
+  if (
+    message.effect.kind === "directory_common"
+    || message.effect.kind === "directory_user"
+    || message.effect.kind === "suggestion_feedback"
+  ) {
+    throw new Error("workspace_owned_effect_misdirected_to_regional_queue");
   }
 
   const route = await env.DB.prepare(
@@ -84,13 +86,6 @@ export async function applyWorkstreamRegionalEffect(
   if (receipt) {
     if (receipt.payload_hash !== message.payloadHash) {
       throw new Error("workstream_effect_receipt_hash_conflict");
-    }
-    // The projection and receipt commit together, but refreshing the workspace
-    // alarm necessarily happens afterwards. Retrying a received directory
-    // effect must therefore retry that external side effect too; otherwise a
-    // transient scheduler RPC failure can strand a newly-due wakeup forever.
-    if (message.effect.kind === "directory_common" && env.WORKSPACE_SCHEDULERS) {
-      await refreshWorkspaceSchedulerAlarm(env, message.workspaceId);
     }
     await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
     return {
@@ -120,192 +115,6 @@ export async function applyWorkstreamRegionalEffect(
   );
 
   switch (message.effect.kind) {
-    case "directory_common": {
-      const effect = message.effect;
-      const current = await env.DB.prepare(
-        `SELECT generation, version FROM workstream_directory_projections
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(message.workspaceId, message.workstreamId).first<{
-        generation: number;
-        version: number;
-      }>();
-      const applies = !current
-        || message.generation > current.generation
-        || (message.generation === current.generation && message.sourceVersion >= current.version);
-      const resourceLinks = effect.resourceLinks ?? null;
-      const resourceLinksJson = resourceLinks === null ? null : JSON.stringify(resourceLinks);
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO workstream_directory_projections
-             (workspace_id, workstream_id, generation, version, title, description,
-              preview, scope, state, system_kind, last_activity_at, completed_at,
-              archived_at, email_address, origin_type, created_by_user_id,
-              automation_subscription_id, automation_run_id, planned_for, title_status,
-              latest_attention_ordinal, unread_tracking_start_ordinal,
-              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-              created_at, updated_at, payload_hash, projected_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(workstream_id) DO UPDATE SET
-             workspace_id = excluded.workspace_id, generation = excluded.generation,
-             version = excluded.version, title = excluded.title,
-             description = excluded.description, preview = excluded.preview,
-             scope = excluded.scope, state = excluded.state,
-             system_kind = excluded.system_kind,
-             last_activity_at = excluded.last_activity_at,
-             completed_at = excluded.completed_at, archived_at = excluded.archived_at,
-             email_address = excluded.email_address, origin_type = excluded.origin_type,
-             created_by_user_id = excluded.created_by_user_id,
-             automation_subscription_id = excluded.automation_subscription_id,
-             automation_run_id = excluded.automation_run_id, planned_for = excluded.planned_for,
-             title_status = excluded.title_status,
-             latest_attention_ordinal = excluded.latest_attention_ordinal,
-             unread_tracking_start_ordinal = excluded.unread_tracking_start_ordinal,
-             next_wakeup_due_at = excluded.next_wakeup_due_at,
-             next_wakeup_prompt = excluded.next_wakeup_prompt,
-             next_terminal_action_at = excluded.next_terminal_action_at,
-             created_at = excluded.created_at, updated_at = excluded.updated_at,
-             payload_hash = excluded.payload_hash, projected_at = excluded.projected_at
-           WHERE excluded.generation > workstream_directory_projections.generation
-              OR (excluded.generation = workstream_directory_projections.generation
-                  AND excluded.version > workstream_directory_projections.version)
-              OR (excluded.generation = workstream_directory_projections.generation
-                  AND excluded.version = workstream_directory_projections.version)`,
-        ).bind(
-          message.workspaceId,
-          message.workstreamId,
-          message.generation,
-          message.sourceVersion,
-          effect.title,
-          effect.description,
-          effect.preview,
-          effect.scope,
-          effect.state,
-          effect.systemKind,
-          effect.lastActivityAt,
-          effect.completedAt,
-          effect.archivedAt,
-          effect.emailAddress ?? null,
-          effect.originType ?? "ad_hoc",
-          effect.createdByUserId ?? null,
-          effect.automationSubscriptionId ?? null,
-          effect.automationRunId ?? null,
-          effect.plannedFor ?? null,
-          effect.titleStatus ?? "settled",
-          effect.latestAttentionOrdinal ?? 0,
-          effect.unreadTrackingStartOrdinal ?? 0,
-          effect.nextWakeupDueAt ?? null,
-          effect.nextWakeupPrompt ?? null,
-          effect.nextTerminalActionAt ?? null,
-          effect.createdAt ?? effect.lastActivityAt,
-          effect.updatedAt ?? effect.lastActivityAt,
-          message.payloadHash,
-          at,
-        ),
-        ...(applies && resourceLinksJson !== null ? [
-          env.DB.prepare(
-            `DELETE FROM workstream_resource_link_projections
-              WHERE workspace_id = ? AND workstream_id = ?
-                AND resource_id NOT IN (
-                  SELECT json_extract(value, '$.resourceId') FROM json_each(?)
-                )`,
-          ).bind(message.workspaceId, message.workstreamId, resourceLinksJson),
-          env.DB.prepare(
-            `INSERT INTO workstream_resource_link_projections
-               (workspace_id, workstream_id, resource_id, watch_enabled,
-                relationship_type, generation, version, projected_at)
-             SELECT ?, ?, json_extract(value, '$.resourceId'),
-                    CASE json_extract(value, '$.watchEnabled') WHEN 1 THEN 1 ELSE 0 END,
-                    json_extract(value, '$.relationshipType'), ?, ?, ?
-               FROM json_each(?)
-             ON CONFLICT(workstream_id, resource_id) DO UPDATE SET
-               workspace_id = excluded.workspace_id,
-               watch_enabled = excluded.watch_enabled,
-               relationship_type = excluded.relationship_type,
-               generation = excluded.generation,
-               version = excluded.version,
-               projected_at = excluded.projected_at`,
-          ).bind(
-            message.workspaceId,
-            message.workstreamId,
-            message.generation,
-            message.sourceVersion,
-            at,
-            resourceLinksJson,
-          ),
-        ] : []),
-        receiptStatement,
-      ]);
-      if (env.WORKSPACE_SCHEDULERS) {
-        await refreshWorkspaceSchedulerAlarm(env, message.workspaceId);
-      }
-      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
-      return { replayed: false, notificationIntentId: null };
-    }
-    case "directory_user": {
-      const effect = message.effect;
-      const activeMember = await env.DB.prepare(
-        `SELECT 1 FROM workspace_members
-          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-      ).bind(message.workspaceId, effect.userId).first();
-      if (!activeMember) {
-        await env.DB.batch([
-          env.DB.prepare(
-            `DELETE FROM workstream_directory_user_projections
-              WHERE workspace_id = ? AND workstream_id = ? AND user_id = ?`,
-          ).bind(message.workspaceId, message.workstreamId, effect.userId),
-          receiptStatement,
-        ]);
-        await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
-        return { replayed: false, notificationIntentId: null };
-      }
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO workstream_directory_user_projections
-             (workspace_id, workstream_id, user_id, generation, version,
-              is_participant, unread_count, you_are_mentioned, listable,
-              seen_attention_ordinal, manual_unread_from_ordinal,
-              manual_unread_generation, latest_mention_attention_ordinal,
-              payload_hash, projected_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-             workspace_id = excluded.workspace_id, generation = excluded.generation,
-             version = excluded.version, is_participant = excluded.is_participant,
-             unread_count = excluded.unread_count,
-             you_are_mentioned = excluded.you_are_mentioned,
-             listable = excluded.listable,
-             seen_attention_ordinal = excluded.seen_attention_ordinal,
-             manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
-             manual_unread_generation = excluded.manual_unread_generation,
-             latest_mention_attention_ordinal = excluded.latest_mention_attention_ordinal,
-             payload_hash = excluded.payload_hash,
-             projected_at = excluded.projected_at
-           WHERE excluded.generation > workstream_directory_user_projections.generation
-              OR (excluded.generation = workstream_directory_user_projections.generation
-                  AND excluded.version > workstream_directory_user_projections.version)
-              OR (excluded.generation = workstream_directory_user_projections.generation
-                  AND excluded.version = workstream_directory_user_projections.version)`,
-        ).bind(
-          message.workspaceId,
-          message.workstreamId,
-          effect.userId,
-          message.generation,
-          message.sourceVersion,
-          effect.isParticipant ? 1 : 0,
-          effect.unreadCount,
-          effect.youAreMentioned ? 1 : 0,
-          effect.listable ? 1 : 0,
-          effect.seenAttentionOrdinal ?? 0,
-          effect.manualUnreadFromOrdinal ?? null,
-          effect.manualUnreadGeneration ?? 0,
-          effect.latestMentionAttentionOrdinal ?? 0,
-          message.payloadHash,
-          at,
-        ),
-        receiptStatement,
-      ]);
-      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
-      return { replayed: false, notificationIntentId: null };
-    }
     case "activity_event": {
       const effect = message.effect;
       const existing = await env.DB.prepare(
@@ -374,41 +183,6 @@ export async function applyWorkstreamRegionalEffect(
         });
       }
       await env.DB.batch(statements);
-      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
-      return { replayed: false, notificationIntentId: null };
-    }
-    case "suggestion_feedback": {
-      const effect = message.effect;
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO workstream_suggestion_feedback_projections
-             (workspace_id, workstream_id, action_id, activity_id, source, status,
-              resolved_at, resolved_by_user_id, generation, version, projected_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(workstream_id, action_id) DO UPDATE SET
-             activity_id = excluded.activity_id, source = excluded.source,
-             status = excluded.status, resolved_at = excluded.resolved_at,
-             resolved_by_user_id = excluded.resolved_by_user_id,
-             generation = excluded.generation, version = excluded.version,
-             projected_at = excluded.projected_at
-           WHERE excluded.generation > workstream_suggestion_feedback_projections.generation
-              OR (excluded.generation = workstream_suggestion_feedback_projections.generation
-                  AND excluded.version >= workstream_suggestion_feedback_projections.version)`,
-        ).bind(
-          message.workspaceId,
-          message.workstreamId,
-          effect.actionId,
-          effect.activityId,
-          effect.source,
-          effect.status,
-          effect.resolvedAt,
-          effect.resolvedByUserId,
-          message.generation,
-          message.sourceVersion,
-          at,
-        ),
-        receiptStatement,
-      ]);
       await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
@@ -500,14 +274,12 @@ export async function processWorkstreamNotificationIntent(
     return settled.state === "delivered" ? "delivered" : "busy";
   }
 
-  const authority = await readWorkstreamAuthorityControl(env);
   const row = await env.DB.prepare(
       `SELECT intent.intent_id, intent.workspace_id, intent.workstream_id,
             intent.recipient_user_id, intent.source_generation,
             intent.required_directory_version, intent.payload_json,
             user.email AS recipient_email, user.name AS recipient_name,
-            workspace.name AS workspace_name,
-            workstream.email_address AS workstream_email_address
+            workspace.name AS workspace_name
        FROM workstream_notification_intents intent
        JOIN users user ON user.id = intent.recipient_user_id
        JOIN workspaces workspace ON workspace.id = intent.workspace_id
@@ -515,11 +287,6 @@ export async function processWorkstreamNotificationIntent(
          ON member.workspace_id = intent.workspace_id
         AND member.user_id = intent.recipient_user_id
         AND member.status = 'active'
-       JOIN ${authority.phase === "durable_object_open"
-         ? "workstream_directory_projections"
-         : "workstreams"} workstream
-         ON workstream.${authority.phase === "durable_object_open" ? "workstream_id" : "id"} = intent.workstream_id
-        AND workstream.workspace_id = intent.workspace_id
       WHERE intent.intent_id = ? AND intent.lease_id = ?`,
   ).bind(intentId, leaseId).first<NotificationIntentRow>();
   if (!row) {
@@ -527,21 +294,26 @@ export async function processWorkstreamNotificationIntent(
     return "skipped";
   }
 
-  const viewer = await env.DB.prepare(
-    `SELECT generation, version, listable
-       FROM workstream_directory_user_projections
-      WHERE workspace_id = ? AND workstream_id = ? AND user_id = ?`,
-  ).bind(row.workspace_id, row.workstream_id, row.recipient_user_id).first<{
-    generation: number;
-    version: number;
-    listable: number;
-  }>();
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    row.workspace_id,
+    workspaceDOName(env.AVALON_REGION, row.workspace_id),
+  );
+  const rawDirectoryState = await workspace.notificationDirectoryState({
+    workspaceId: row.workspace_id,
+    workstreamId: row.workstream_id,
+    userId: row.recipient_user_id,
+  });
+  const viewer = rawDirectoryState
+    ? WorkspaceDirectoryNotificationStateSchema.parse(rawDirectoryState)
+    : null;
   if (
     !viewer
-    || viewer.generation < row.source_generation
+    || viewer.authorityGeneration < row.source_generation
     || (
-      viewer.generation === row.source_generation
-      && viewer.version < row.required_directory_version
+      viewer.authorityGeneration === row.source_generation
+      && viewer.viewerVersion < row.required_directory_version
     )
   ) {
     await env.DB.prepare(
@@ -552,7 +324,7 @@ export async function processWorkstreamNotificationIntent(
     ).bind(nowIso(), intentId, leaseId).run();
     return "busy";
   }
-  if (viewer.listable !== 1) {
+  if (!viewer.listable) {
     await settleNotificationIntent(env, intentId, leaseId, "skipped");
     return "skipped";
   }
@@ -581,7 +353,7 @@ export async function processWorkstreamNotificationIntent(
       await sendWorkstreamMentionEmail(env, {
         ...common,
         recipientName: row.recipient_name,
-        workstreamEmailAddress: row.workstream_email_address,
+        workstreamEmailAddress: viewer.emailAddress,
         region: env.AVALON_REGION,
       });
     }

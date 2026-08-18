@@ -40,14 +40,15 @@ that feeds it.
 | `apps/api/src/lib/suggested-context.ts` | The pause switch shared by both producers and both work-stream read paths. |
 | `apps/api/src/queues/activity-consumer.ts` → `routeContextually` | The whole decision: the prior, the candidate query, the one inference, the write. The only caller. |
 | `apps/api/src/queues/activity-consumer.ts` → `declaredConfidenceFloor` | Reads the connector manifest's digestibility partition as a starting bar. The one place that translation is made. |
-| `apps/api/src/services/activity-routing-feedback.ts` | Every threshold and window, and both reads of past accept/dismiss decisions. The single source of what the feedback means. |
+| `apps/api/src/services/activity-routing-feedback.ts` | Every threshold and window. After cutover it reads WorkspaceDO feedback and joins only the referenced activity IDs to D1 provider/event identity. The single source of what the feedback means. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Authoritative post-cutover recent-candidate selection, dismissal-run filtering, and resolved-feedback index. |
 | `apps/api/src/services/activity-suggestion-service.ts` | Inserts the suggestion and publishes `activity_suggestion_created` to the work-stream room. Shared with the other producer, which is why it takes a required `source`. |
 | `apps/api/src/services/work-opportunity-service.ts` → `routeExistingDecision` | **The other producer of the same card.** Not part of this module; listed because every feedback read here has to exclude it. |
 | `packages/agent-harness/src/prompts/activity-routing.ts` | The classifier prompt and its output schema. |
 | `apps/api/src/services/workstream-service.ts` → `resolveSuggestion` | Records `accepted`/`dismissed` and who clicked. The only writer of the signal both feedback reads consume. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Defines the pause-time feed visibility rule that drops every legacy suggestion row. |
 | `apps/desktop/src/renderer/lib/api.ts`, `use-workstream-socket.ts` | Apply that rule to canonical and paginated responses, and ignore rollout-era suggestion events while the surface is paused. |
-| `packages/db/migrations/0066_activity_suggestion_feedback.sql` | The two indexes those reads seek on. |
+| `packages/db/migrations/0066_activity_suggestion_feedback.sql` | Legacy/pre-cutover D1 feedback indexes; post-cutover reads do not use them. |
 
 ## How it works
 
@@ -76,7 +77,7 @@ learned rather than declared; everything else moves a number.
    **empty** drew no line at all and gets no prior — see the invariant below,
    which is the subtlety in this whole area.
 2. **The workspace's own record, which replaces the prior.**
-   `suggestionAdmission` scores resolved suggestions for
+   `suggestionAdmission` scores WorkspaceDO's resolved-feedback index for
    `(workspace, provider, event type)` within ninety days. Under four
    resolutions there is no evidence and the prior stands. At four or more the
    accept rate takes over completely, in both directions: a type the workspace
@@ -88,7 +89,7 @@ learned rather than declared; everything else moves a number.
    the dismissals came from at least two distinct people. One person's
    dismissals raise the bar to its ceiling; closing the door for a whole
    workspace takes corroboration.
-4. **The candidate's own run of dismissals.** The candidate query takes the
+4. **The candidate's own run of dismissals.** One WorkspaceDO query takes the
    twelve most recently active, non-archived, visible work streams, skipping any
    already routed by a watch or automation, and any with `DISMISSAL_RUN_LIMIT`
    dismissals inside thirty days newer than its most recent acceptance. Both
@@ -272,29 +273,31 @@ the digestibility declaration being turned back into a veto.
 
 ## Data model
 
-No tables of its own. `activity_suggestions` (see
-[`data-model.md`](data-model.md)) is both the output and the training data: one
-row per card, `UNIQUE (activity_id, workstream_id)`, `status` carrying the label,
-`resolved_by_user_id` carrying who applied it, and `source` carrying which
-producer wrote it.
+The pending card is authoritative in the selected SubstreamAgent's
+`suggested_actions`. When resolved, WorkstreamDO sends the stable action/activity
+IDs, source, label, resolver, and time into
+`WorkspaceDO.workspace_workstream_suggestion_feedback`. That workspace-local
+index is the post-cutover training data for both feedback reads; D1
+`activity_suggestions` is frozen migration input only. D1 `activities` remains
+the authority for provider/event identity, so `suggestionAdmission` batches only
+the feedback's referenced activity IDs into that relational lookup rather than
+copying connector activity metadata into WorkspaceDO.
 
-**The table is not this module's alone, and that is the trap in it.**
-`createActivitySuggestion` has two callers — `routeContextually` here, and
+**The index is not this module's alone, and that is the trap in it.**
+The suggestion producer has two callers — `routeContextually` here, and
 `routeExistingDecision` on the suggested-work batching path — writing rows that
 are indistinguishable in the transcript and resolved by the same endpoint.
 `source` is what makes them distinguishable to a feedback read, and **every read
-of this table as evidence must filter on it**. Rows written before the column
-exists are `'unknown'` and count for nobody: the two producers cannot be told
-apart retroactively, and attributing them would seed these gates with another
-agent's record. A third producer must add its own value rather than borrowing one.
+of this index as evidence must filter on it**. Legacy rows written before the
+source existed are `'unknown'` and count for nobody: the two producers cannot be
+told apart retroactively, and attributing them would seed these gates with
+another agent's record. A third producer must add its own value rather than
+borrowing one.
 
-A row is written at the moment
-the card is published, so every row was seen by somebody and no separate
-impression count is needed — unlike `work_opportunity_user_states`, which tracks
-impressions because an opportunity can be ranked without ever being shown. Note
-that `resolved_by_user_id` is nulled when a user is deleted, so a departed
-colleague's dismissals stop counting toward corroboration; that fails toward the
-maximum floor rather than toward suppression, which is the safe direction.
+A feedback row is written when the user resolves a published card, while the
+local action row proves the impression. No separate impression count is needed
+— unlike `work_opportunity_user_states`, which tracks impressions because an
+opportunity can be ranked without ever being shown.
 
 ## Operations
 
@@ -303,7 +306,9 @@ re-enable, diagnose a missing card in this order: the event type's record, then
 the prior, then the model's own answer. The record is a query rather than a log
 line — suppression is evaluated once per ingested activity, and logging it at
 `info` would write thousands of identical lines a day for a suppressed
-high-volume type, so `contextual_routing_event_type_suppressed` is at `debug`:
+high-volume type, so `contextual_routing_event_type_suppressed` is at `debug`.
+After cutover inspect `WorkspaceDO.workspace_workstream_suggestion_feedback`;
+the following D1 query is only for legacy/pre-cutover diagnosis:
 
 ```sql
 SELECT a.provider,
@@ -337,6 +342,27 @@ suppressed type. The prior is `connector-digestibility.md` plus whether that
 connector declares any digestible type at all.
 
 ## Changelog
+
+### 2026-08-18 — Routing feedback and candidates use WorkspaceDO indexes
+
+**What changed:** Post-cutover candidate selection, dismissal-run exclusion, and
+resolved-action labels now come from authoritative WorkspaceDO SQL. The feedback
+reader joins only those indexed activity IDs to regional D1 to recover the
+connector provider/event classification.
+
+**Why:** Candidate and feedback selection are cross-work-stream product queries,
+so keeping their projections in D1 would preserve a second work-stream serving
+authority. Connector activities themselves remain a genuinely relational,
+workspace-owned D1 workload.
+
+**Considered and rejected:** Copying full connector events into WorkspaceDO and
+fan-out reads to each WorkstreamDO. The first duplicates the ingestion store;
+the second makes every classification depend on an unbounded object graph.
+
+**Consequences:** WorkstreamDO must deliver resolved feedback to WorkspaceDO
+before acknowledging its outbox. D1 activity retention must remain long enough
+for the feedback windows, but D1 no longer stores or serves the work-stream
+label/index after authority opens.
 
 ### 2026-08-12 — Suggested context was paused end to end
 
