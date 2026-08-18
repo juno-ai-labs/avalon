@@ -52,6 +52,8 @@ export interface Env {
   ACTIVITY_QUEUE: Queue;
   WORKSTREAM_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
+  CONNECTOR_EVENT_WORKFLOW: Workflow;
+  WORK_OPPORTUNITY_WORKFLOW: Workflow;
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
@@ -237,6 +239,8 @@ const EnvContractSchema = z.object({
   ACTIVITY_QUEUE: binding<Queue>(),
   WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
+  CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
+  WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: z.enum(["global", "eu"]),

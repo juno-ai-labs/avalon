@@ -1,18 +1,19 @@
 # Data model
 
 Avalon's regional data is split by declared authority. D1 owns identity,
-membership, connector/automation/activity modules, routing, migration, external
-delivery, schedule, and audit state. `WorkspaceDO` owns the authoritative
-cross-work-stream directory and query indexes; D1 keeps no rebuildable
-work-stream serving projections. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
+membership, connector credentials/control, routing, migration, external
+delivery, schedules, and audit state. `WorkspaceDO` owns the authoritative
+cross-work-stream directory, first-party activity log, work-opportunity graph,
+resolved suggestion state, and query indexes; D1 keeps no rebuildable
+workspace product serving projections. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
 regional effect outbox plus HyperSight configuration/published results. Each
 stable HyperSight block has a separate `BlockDashboardAgent` execution ledger,
 while its fenced transcript and Bind runtime rows remain in main
-`SubstreamAgent("0")`. Frozen
-legacy D1 product rows are migration input and writer tripwires, never a serving
-fallback. The checked-in migrations are the authoritative D1 schema and the
+`SubstreamAgent("0")`. Legacy D1 product rows are maintenance import input and
+are scrubbed before each verified WorkspaceDO route becomes active; the empty
+table shells remain writer tripwires, never a serving fallback. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
 rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
@@ -38,7 +39,7 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for the authoritative workspace directory/query index, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-product-storage.ts`, `workstream-do.ts` | SQL schemas and repositories for the authoritative workspace directory/activity/opportunity state, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
@@ -67,13 +68,14 @@ authorization.
 
 ### Realtime synchronization records
 
-Most workspace modules remain relational D1 authorities. `WorkspaceDO` is the
-deliberate exception for cross-work-stream serving: it stores the common
+Some workspace modules remain relational D1 authorities. `WorkspaceDO` is the
+product-data authority for cross-work-stream serving: it stores the common
 directory, per-viewer overlays, pins, resource-link inverted index, resolved
-suggestion-feedback index, hash receipts, consumed socket tickets, and a bounded
-monotonic `workspace_sync_events` log. A log row names typed query topics; it
-never embeds members, invitations, connector credentials/state, policies,
-notes, activity payloads, opportunities, or other D1-owned records. The
+suggestion-feedback index, first-party activity log and target edges, opportunity
+admission/ranking/provenance/user state, hash receipts, consumed socket tickets,
+and a bounded monotonic `workspace_sync_events` log. A sync row names typed query
+topics; it never embeds members, invitations, connector credentials/state,
+policies, or notes. The
 directory tables are primary workspace-object state, not D1 copies.
 
 `WorkstreamDO.workstream_metadata` is different: it is the authoritative
@@ -366,27 +368,29 @@ no projection fallback when that object is unavailable.
   terminal delivery or skip erases `payload_json` rather than retaining a second
   transcript. Acknowledged receipts and terminal intent shells are retained for
   30 days; pending/unacknowledged rows do not expire.
-- `activity_events` is the first-party record of what happened that someone should
-  hear about, separate from the `activities` ingest table below. `audience_kind`
+- `WorkspaceDO.workspace_activity_events` is the first-party derived record of what happened that someone should
+  hear about, separate from the WorkspaceDO-owned normalized provider event and
+  the short-lived `activities` handoff below. `audience_kind`
   stores a visibility *rule* — `workspace`, `user`, or `workstream` — resolved
   against the reader at read time, so a work stream gaining a participant
-  retroactively gains them its history. `activity_event_targets` is the different
+  retroactively gains them its history. `workspace_activity_event_targets` is the different
   question of who an event is *about* (`mentioned`, `involved`, …), which is what
   lets a consumer lead with it; a target outside the audience is stored but still
   filtered out on read. `event_type` and `subject_type` are open strings so a
   producer adds a value rather than a column.
-- `activity_events.digestible` is the separate question of whether anybody *wants*
+- `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
   to hear about an event, as opposed to who *may*. It is fixed when the row is
   written — from the connector's manifest for connector activity, at the call site
   for a first-party producer — because the question is asked far more often than it
   is answered, and re-deriving it on read would need a manifest that may have
   changed or that this region does not register. It carries no index: the reads
-  that use it are already anchored on `activity_events_cursor_idx`, and a two-value
+  that use it are already anchored on `workspace_activity_events_cursor_idx`, and a two-value
   column ahead of that range would only widen the index for every other reader.
   [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns the rule,
-  and its `DEFAULT 1` is a deliberate fail-open — see
-  [Failure modes and limits](#failure-modes-and-limits).
-- `activity_events.log_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
+  and the WorkspaceDO column deliberately has no default: every producer must
+  make the decision explicitly. Frozen D1 migration input retains its historical
+  `DEFAULT 1`, but no post-cutover writer can use it.
+- `workspace_activity_events.event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
   only cursor axis. Timestamps cannot order it: two events written in the same
   millisecond tie, and any tiebreak can place the second below a cursor taken after
   the first, dropping it permanently. `AUTOINCREMENT` is required rather than
@@ -450,11 +454,21 @@ no projection fallback when that object is unavailable.
   rewritten exactly when it would render differently. Slack reports a shared link
   only once, so a row that is not written as the card is posted can never be
   recovered — see [`workstream-links.md`](workstream-links.md).
-- `activities` stores normalized metadata and an optional R2 payload reference.
-  `target_user_ids_json` preserves explicit owner/mention routing separately from
-  visibility, while `external_people_json` retains bounded provider identities and
-  exact mention evidence for workspace-scoped resolution. Provider identity and
-  dedupe constraints make at-least-once delivery safe.
+- `WorkspaceDO.workspace_connector_events` stores the complete authoritative
+  normalized connector event. Its provider identity and connection-scoped dedupe
+  constraints select one canonical event; processing status, Workflow instance,
+  claim, error, and settlement timestamps stay beside the body. The separate
+  `workspace_connector_event_ingress_receipts` maps each Queue/provider ingress
+  UUID and content hash to that canonical event.
+- Regional D1 `activities` is a compatibility handoff, not durable event storage.
+  It supplies the compact Queue route and the remaining relational foreign-key
+  anchors while product processors materialize their own snapshots. After a
+  processed row is 24 hours old, the reaper clears actor, subject, title,
+  summary, snippet, payload reference, visibility, targets, entity keys,
+  external people, and metadata. Post-cutover suggestion batches reload the
+  canonical WorkspaceDO event and do not fence cleanup. D1 retains
+  provider/dedupe identity, state, and WorkspaceDO/Workflow pointers only. A new
+  reader must use the WorkspaceDO RPC rather than extend this retention window.
 - `resource_watches` records explicit direct relationships.
 - `webhook_receipts` prevents replay of signed generic-webhook deliveries.
 - `audit_events` records security- and side-effect-relevant actions without copying
@@ -544,9 +558,10 @@ collection, opt-out, and destination behavior.
     revocation nondeterministic.
 14. **A WorkstreamDO effect is acknowledged only after the owning receiver
     commits the effect and receipt together.** Directory/user/feedback effects
-    commit in WorkspaceDO; activity/mention effects commit in D1. RPC and Queue
-    order are never trusted, generation/version fences mutable state, and
-    immutable effects use stable IDs.
+    and first-party activity/mention effects commit in WorkspaceDO. D1 may retain
+    only the external notification intent/receipt needed to deliver email or
+    Slack. RPC and Queue order are never trusted, generation/version fences
+    mutable state, and immutable effects use stable IDs.
 
 ## Boundary
 
@@ -570,15 +585,11 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Failure modes and limits
 
-- **`activity_events.digestible` defaults to `1`, which fails open rather than
-  closed, and is deliberately left that way.** It governs only an insert that does
-  not name the column, which no production code path performs — a reaper test does,
-  and would silently change what it writes if the default ever flipped — and
-  changing it now costs a full rebuild of the log with `activity_event_targets`
-  staged around it. [The
-  runbook](runbook.md#the-window-between-a-migration-and-the-worker-that-needs-it)
-  records what that default cost during the deployment that added it, and why the
-  next such column should pick the fail-closed value up front.
+- **Frozen D1 `activity_events.digestible` defaults to `1`; WorkspaceDO does
+  not.** The historical default remains only because those tables are immutable
+  migration input after cutover. `workspace_activity_events.digestible` is
+  `NOT NULL` with no default, and the typed RPC requires it, so every live
+  producer must choose fail-open or fail-closed explicitly.
 - **`artifacts` is retired and no code reads or writes it.** The table is still
   present only because the Worker live during a migration is the previous one,
   which did read it; a later release drops it, and [the
@@ -627,6 +638,59 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-18 — Workspace activity and suggested work leave D1 product authority
+
+**What changed:** WorkspaceDO's single initial SQLite schema now owns the
+first-party activity log/targets and the complete work-opportunity lifecycle:
+batch windows, opportunity records, provenance graph, user links/resolutions,
+rankings, impressions/dismissals, and immutable start snapshots. D1 migration
+`0081` adds only a maintenance import ledger and permanent writer fences for the
+legacy source table shells. Route activation atomically scrubs imported rows;
+only redacted opportunity ID anchors needed by the unshipped D1 workstream
+foreign key survive. Opportunity-start RPCs return authorized activity roots
+from the same object so origin resources enter the new SubstreamAgent's initial
+SQL transaction before its first run dispatch.
+
+**Why:** Both datasets belong to exactly one workspace and are consumed beside
+the workspace directory. Keeping them in regional D1 made the nominal control
+plane a product serving plane and forced delayed connector processing to retain a
+second body source.
+
+**Considered and rejected:** Keeping D1 projections for relational convenience,
+dual-writing through rollout, and splitting opportunity provenance from its
+opportunity/user state. The maintenance window makes dual authority unnecessary,
+and splitting the graph loses the atomic boundary that makes a resolved
+suggestion explainable.
+
+**Consequences:** Activity visibility joins the WorkspaceDO directory locally;
+opportunity admission and ranking run in Workflows against fenced WorkspaceDO
+leases; dormant rankings create no polling loop; opportunity-origin attachment
+does not race the first agent context read. D1 retains membership and connector
+identity inputs, migration receipts, and opaque opportunity identity anchors,
+but no activity rows, opportunity content/provenance/user state, or active read
+or write path for these products.
+
+### 2026-08-18 — Connector event bodies move into WorkspaceDO
+
+**What changed:** The table catalog now makes
+`workspace_connector_events`/`workspace_connector_event_ingress_receipts` the
+normalized provider-event authority and reclassifies D1 `activities` as a
+24-hour processing handoff whose content is redacted once pending snapshot
+readers clear.
+
+**Why:** Connector events have exactly one workspace owner. Persisting their
+long-lived body in the regional relational control plane created a second
+authority without enabling a valid cross-workspace join.
+
+**Considered and rejected:** A provider-delivery row shared by multiple
+workspaces, and an indefinite D1 read projection. The former crosses visibility
+boundaries; the latter keeps D1 authoritative in practice regardless of what
+the object schema says.
+
+**Consequences:** Long-lived readers resolve events through WorkspaceDO.
+Relational rows may retain event IDs for idempotency and history but cannot
+assume the D1 handoff still contains product text after its bounded window.
 
 ### 2026-08-18 — Work-stream projections gain independent state waterlines
 

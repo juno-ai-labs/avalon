@@ -10,6 +10,7 @@ import { processMemoryIndexOutbox } from "./services/memory-service";
 import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
 import { reapDeletedResourceObjects } from "./services/resource-object-cleanup";
 import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
+import { reapProcessedActivityPayloads } from "./services/normalized-activity-service";
 import { SlackAgentService } from "./services/slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
@@ -102,6 +103,8 @@ export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
+export { ConnectorEventWorkflow } from "./workflows/connector-event";
+export { WorkOpportunityWorkflow } from "./workflows/work-opportunity";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
 export { GitHubRoutingBridge } from "./github-routing-bridge";
@@ -212,6 +215,7 @@ export default {
         processMemoryIndexOutbox(env),
         reapExpiredActivityEvents(env),
         reapSettledWorkstreamRegionalEffects(env),
+        reapProcessedActivityPayloads(env),
         processTelemetry(env),
       ];
       await Promise.all([

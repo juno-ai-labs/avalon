@@ -1965,7 +1965,7 @@ export const ActivityQueueMessageSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   activityId: IdSchema,
-  attempt: z.number().int().nonnegative().default(0)
+  attempt: z.number().int().min(0).max(5).default(0)
 });
 
 export const SlackIngressQueueMessageSchema = z.object({

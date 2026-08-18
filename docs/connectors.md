@@ -16,8 +16,10 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 | `apps/api/src/services/connector-actor-identity.ts` | `resolveConnectorActorIdentity` over `external_user_identities`. |
 | `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
 | `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
-| `apps/api/src/queues/activity-consumer.ts` | Routing, and `activityIsDigestible`. |
+| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO and the reusable routing processor, including `activityIsDigestible`. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
+| `apps/api/src/workflows/connector-event.ts` | One durable processing Workflow per canonical WorkspaceDO event. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Durable normalized connector-event authority, ingress receipts, Workflow claims, and settlement. |
 
 ## How it works
 
@@ -443,14 +445,29 @@ The manifest is read when the activity log is written, in `activityIsDigestible`
 
 Manifests and facets are cross-validated at registry construction: a connector that declares provider activity cannot claim webhook or polling support without the corresponding implementation. Slack keeps its dedicated signature-verified Agent ingress, but that ingress may normalize a bounded event into the shared activity pipeline when an exact active automation source is listening; it does not create a general Slack feed. X remains an on-demand read connector because a connection does not yet select a monitored user, list, or stream rule from which a safe feed could be constructed.
 
-1. Verify or poll the provider.
-2. Normalize compact metadata and store any large raw body in R2.
-3. Insert with provider/dedupe uniqueness.
-4. Enqueue only region, workspace ID, and activity ID.
-5. Evaluate explicit resource watches and deterministic automation triggers.
-6. Run semantic trigger matching only after deterministic prefilters.
-7. Create automation work idempotently; unclaimed activity proceeds to suggested-work batching while contextual routing is paused.
-8. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 7 offers next.
+1. The provider-facing Worker verifies a webhook or a poll Workflow reads the provider. Large raw bodies remain in regional R2.
+2. Resolve every authorized connector installation. A single raw provider delivery may fan out to multiple workspaces only when that account is independently installed in each one; normalization produces a separate event for every connection/workspace target.
+3. Normalize compact metadata and write the regional D1 `activities` handoff row. This is a crash-recovery staging record, not the event authority.
+4. Enqueue only region, workspace ID, and ingress event ID on that region's Cloudflare Queue.
+5. The Queue consumer loads the bounded handoff, resolves the workspace's jurisdiction and placement affinity, and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
+6. After the object commits, the consumer creates deterministic `connector-event:<canonical-event-id>:<attempt>` in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message. A duplicate Workflow-ID conflict means the earlier send won and is success.
+7. The Workflow claims the event from WorkspaceDO and evaluates explicit resource watches and deterministic automation triggers. Semantic trigger matching runs only after deterministic prefilters.
+8. Create automation work idempotently; unclaimed activity is enqueued into WorkspaceDO's opportunity batch tables while contextual routing is paused. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
+9. After 24 hours, `reapProcessedActivityPayloads` removes actor, subject, title, summary, snippet, visibility, target, entity, external-person, metadata, and R2-pointer content from a processed D1 handoff. No post-cutover product reader fences that cleanup: suggested-work admission reloads the canonical WorkspaceDO event. D1 retains only provider/dedupe identity, state, and the WorkspaceDO/Workflow pointers required by existing relational references.
+10. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 8 offers next.
+
+One normalized event is never sent to two WorkspaceDOs and is never shared
+between workspaces. Fan-out happens before normalization at the raw provider
+delivery boundary. Each target gets its own event identity, authorization,
+visibility, dedupe receipt, Workflow, and workspace-local durable row. A
+provider account installed twice in one workspace may likewise produce two
+connection-scoped events; collapsing those requires an explicit workspace-level
+product rule rather than an accidental cross-connection dedupe.
+
+“Global ingress” means Cloudflare's edge Worker fleet, not one US data plane.
+The global router may inspect routing metadata, but EU workspace content is
+forwarded to the EU regional Worker, EU Queue, EU-locked WorkspaceDO, and EU
+Workflow. Normalized content never crosses through the global D1 routing plane.
 
 Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
 speculative half is paused.** Its retained classifier, feedback gates, and the
@@ -461,7 +478,7 @@ there, not in this document.
 
 The dormant routing feedback endpoint remains idempotent in the direction it was given so a rolling-deploy client can settle a card it already held. Work-stream reads return no pending suggestions and current clients ignore suggestion events, so no new resolution control is exposed while the surface is paused. Repeating the same accept or dismissal reports the state the suggestion already reached; only a contradictory resolution is refused with `409 suggestion_already_resolved`.
 
-Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
+Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2. D1 stores an idempotent provider-delivery receipt and a bounded, redacted handoff record; WorkspaceDO is the durable normalized-event authority.
 
 #### Suggested work admission
 
@@ -609,6 +626,10 @@ about which providers can deliver is written into the API or the client.
   failed; deploying a schema or model fix does not replay it. Operators verify the
   corrected path first, then use an explicit, bounded replay rather than resetting
   every activity indiscriminately.
+- **Connector-event processing gets six deterministic Workflow attempts (0–5).**
+  An exhausted attempt settles the WorkspaceDO event `failed` before enqueueing
+  the next numbered Queue wake-up. Duplicate wake-ups converge on the same
+  Workflow ID; after attempt 5 the cron does not create an unbounded redrive loop.
 - **Everything unknown is withheld from a digest** — a connector this region does
   not register, an event type a manifest has dropped, an activity older than the
   declaration. None of those are somebody confirming a person wants this in their
@@ -649,6 +670,8 @@ about which providers can deliver is written into the API or the client.
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
 | `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
+| `apps/api/test/connector-event-authority.test.ts` | Bounded D1 handoff redaction, with frozen pre-cutover opportunity rows ignored once WorkspaceDO authority is open. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Workflow claim fencing, and terminal settlement. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 
@@ -662,6 +685,34 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-18 — Connector events become workspace-local durable authority
+
+**What changed:** Provider-facing Workers fan a raw delivery into separately
+authorized workspace targets, a regional Queue admits each normalized event to
+exactly one WorkspaceDO, and a deterministic Cloudflare Workflow owns routing,
+automation, digest projection, and suggested-work processing. WorkspaceDO now
+stores the complete normalized event and its replay/claim/settlement ledger.
+Processed D1 handoff content is redacted after 24 hours; post-cutover suggestion
+readers reload the WorkspaceDO event and therefore do not extend that retention.
+
+**Why:** Connector activity belongs to one workspace and is neither shared nor
+queried across workspace boundaries. Keeping its durable body in regional D1
+made the routing/control database a second product-data authority and left the
+Queue callback responsible for long-running inference and fan-out work.
+
+**Considered and rejected:** Sending the full event in Queue messages would
+make payload size part of Queue correctness, and starting product processing
+before the object commit would recreate a commit/send loss window. A shared
+event row for one provider delivery was also rejected because one account may
+be installed in workspaces with different membership and visibility.
+
+**Consequences:** A Queue message is only a workspace route and ingress ID; the
+event must commit in WorkspaceDO before its Workflow exists. Event replay uses
+provider/dedupe identity, not Queue order. Suggested-work windows, opportunities,
+provenance, rankings, and user resolutions are also WorkspaceDO-local. New
+downstream readers must load that event or materialize their own bounded local
+product snapshot rather than extending the D1 handoff retention.
 
 ### 2026-08-15 — Conversation audiences resolve in bulk and announce admissions
 
@@ -680,7 +731,6 @@ work nor preserves the participant service's existing live-update contract.
 **Consequences:** Known mappings cost no provider profile calls; email enrichment remains best
 effort within the shared deadline. Consumers must continue to handle replayed `participant_added`
 events idempotently.
-
 ### 2026-08-13 — Repository policy stays authoritative through drift and recovery
 
 **What changed:** A present malformed GitHub repository policy now denies all
