@@ -272,6 +272,9 @@ describe("runtime component invariants", () => {
           if (sql.includes("FROM workstream_wakeups")) {
             return { results: [] };
           }
+          if (sql.includes("FROM workstream_sandboxes")) {
+            return { results: [] };
+          }
           throw new Error(`Unexpected all query: ${sql}`);
         },
         run: async () => {

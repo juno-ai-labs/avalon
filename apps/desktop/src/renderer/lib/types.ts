@@ -5,11 +5,19 @@ import type {
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
+  GitHubRepositoryAccessSettings as ContractGitHubRepositoryAccessSettings,
+  TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
+  TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
+  TerminalWorkstreamState as ContractTerminalWorkstreamState,
 } from '@avalon/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
  *  renderer keeps one import site for the shapes it speaks to the API in. */
 export type { AgentModelOverride };
+export type TerminalWorkspaceSettings = ContractTerminalWorkspaceSettings;
+export type TerminalNetworkPolicyPreview = ContractTerminalNetworkPolicyPreview;
+export type TerminalWorkstreamState = ContractTerminalWorkstreamState;
+export type GitHubRepositoryAccessSettings = ContractGitHubRepositoryAccessSettings;
 
 export type Region = 'global' | 'eu';
 /** How a connection or automation is owned, in the words the UI uses for it. */
@@ -170,6 +178,7 @@ export interface WorkstreamConnection {
   ownerName?: string;
   status: 'healthy' | 'reconnect_required' | 'disabled';
   capabilities?: string[];
+  settingsKind?: 'github_repository_access';
   /** Set when this connection can hand automation results to the signed-in user. */
   userDelivery?: AutomationUserDelivery;
 }
@@ -391,6 +400,14 @@ export interface WorkstreamAutomationSubscription {
 
 export interface WorkstreamDetail extends WorkstreamSummary {
   createdAt: string;
+  /**
+   * The model this work stream is pinned to, or absent for the unpinned case
+   * the flag decides. Read by the composer's model pill as the answer of last
+   * resort — the latest run's model is what it prefers, because that is what
+   * actually ran — so that a pinned work stream whose only run failed before it
+   * streamed is never described as following the flag.
+   */
+  modelOverride?: AgentModelOverride | null;
   createdBy?: WorkspaceMember;
   participants: Participant[];
   viewers: Participant[];
@@ -484,6 +501,7 @@ export interface AutomationDetail extends AutomationSummary {
 
 export interface AutomationDraftQuestion {
   id: string;
+  presentedAt: string;
   prompt: string;
   placeholder?: string;
   responseType: 'free_text' | 'single_select' | 'multi_select';

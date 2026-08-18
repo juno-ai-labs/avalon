@@ -88,7 +88,7 @@ describe("API security utilities", () => {
     }));
     expect(providerFailure).toEqual({
       code: "provider_error",
-      message: "The model provider could not complete this run",
+      message: "A connected service returned an error, so this run stopped",
     });
     expect(JSON.stringify(providerFailure)).not.toContain("sk-secret");
 
@@ -99,10 +99,31 @@ describe("API security utilities", () => {
     ]) {
       expect(__workstreamServiceTesting.memberSafeHarnessError(unsafeValue)).toEqual({
         code: "harness_execution_failed",
-        message: "The Avalon harness could not complete this run",
+        message: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
       });
     }
     expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
+  });
+
+  it("resolves both provider failure codes to their own member-safe sentence", () => {
+    // A provider outage and a refused endpoint each get a sentence naming a next
+    // action, and neither falls through to the generic bucket — the whole point
+    // of adding the codes was that `harness_execution_failed` tells a member
+    // Avalon broke and gives them no reason to try again.
+    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+      code: "provider_unavailable",
+      message: "upstream body that must never be shown",
+    }))).toEqual({
+      code: "provider_unavailable",
+      message: "The model service could not complete this request. This usually clears on its own — try again in a moment",
+    });
+    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+      code: "provider_circuit_open",
+      message: "upstream body that must never be shown",
+    }))).toEqual({
+      code: "provider_circuit_open",
+      message: "Avalon has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
+    });
   });
 
   it("binds suggested and origin provider resources to their originating connection", () => {
@@ -587,6 +608,33 @@ describe("environment guardrails", () => {
     expect(allowedHeaders).toContain("idempotency-key");
     expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
+
+  it.each(['global', 'eu'] as const)(
+    "allows the deployed desktop correlation header on %s mutation preflights",
+    async (region) => {
+      const response = await createApp().request(
+        "https://api.example.com/workstreams",
+        {
+          method: "OPTIONS",
+          headers: {
+            origin: "app://avalon",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization,content-type,x-avalon-operation-id",
+          },
+        },
+        createTestEnv({
+          ALLOWED_ORIGINS: "app://avalon",
+          AVALON_REGION: region,
+          LOG_LEVEL: "error",
+        }),
+      );
+
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
+      const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
+      expect(allowedHeaders).toContain("x-avalon-operation-id");
+    },
+  );
 
   it("allows HyperSight PUT requests in CORS preflights", async () => {
     const response = await createApp().request(

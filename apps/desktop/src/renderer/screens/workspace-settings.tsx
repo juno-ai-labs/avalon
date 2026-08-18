@@ -34,18 +34,26 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
-import type { DesktopApplicationSettings } from '../../common/desktop';
+import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
+import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
-import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
+import type {
+  GitHubRepositoryAccessSettings,
+  TerminalNetworkPolicyPreview,
+  TerminalWorkspaceSettings,
+  Workspace,
+  WorkspaceInvitation,
+  WorkstreamConnection,
+} from '../lib/types';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
@@ -85,6 +93,7 @@ interface SettingsNavItem {
   label: string;
   searchTerms: string;
   icon: LucideIcon;
+  child?: boolean;
 }
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
@@ -102,7 +111,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security privacy analytics telemetry crash diagnostics lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime', icon: MonitorCog },
     ],
   },
 ];
@@ -315,6 +324,8 @@ function paneHoldsUnsavedText(pane: Element | null): boolean {
   return [...pane.querySelectorAll('input, textarea')].some((field) => {
     if (field instanceof HTMLInputElement && !TEXT_ENTRY_INPUT_TYPES.has(field.type)) return false;
     const editable = field as HTMLInputElement | HTMLTextAreaElement;
+    const savedValue = editable.dataset.savedValue;
+    if (savedValue !== undefined) return !editable.readOnly && !editable.disabled && editable.value !== savedValue;
     return !editable.readOnly && !editable.disabled && editable.value.trim() !== '';
   });
 }
@@ -359,6 +370,8 @@ export function WorkspaceSettingsScreen({
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('all');
+  const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);
+  const [githubRepositorySearch, setGitHubRepositorySearch] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
@@ -367,7 +380,15 @@ export function WorkspaceSettingsScreen({
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
+  const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
+  const [terminalDomains, setTerminalDomains] = useState('');
+  const [terminalPreview, setTerminalPreview] = useState<TerminalNetworkPolicyPreview | null>(null);
+  const terminalPolicyDirty = useRef(false);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
+  const [telemetryInspector, setTelemetryInspector] = useState<DesktopTelemetryInspectorEntry[]>([]);
+  const [telemetryInspectorLoading, setTelemetryInspectorLoading] = useState(false);
+  const [telemetryInspectorError, setTelemetryInspectorError] = useState<string | null>(null);
+  const telemetryInspectorRequest = useRef(0);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
@@ -410,6 +431,109 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
+  });
+  const githubSettingsConnections = useMemo(
+    () => (connections.data ?? []).filter((connection) => (
+      connection.settingsKind === 'github_repository_access'
+      && connection.status !== 'disabled'
+    )),
+    [connections.data],
+  );
+  useEffect(() => {
+    if (
+      githubSettingsConnectionId
+      && githubSettingsConnections.some((connection) => connection.id === githubSettingsConnectionId)
+    ) return;
+    setGitHubSettingsConnectionId(githubSettingsConnections[0]?.id ?? null);
+  }, [githubSettingsConnectionId, githubSettingsConnections]);
+  const githubRepositorySettings = useQuery({
+    queryKey: ['github-repository-access', githubSettingsConnectionId],
+    queryFn: ({ signal }) => api!.getGitHubRepositoryAccessSettings(githubSettingsConnectionId!, signal),
+    enabled: Boolean(api && activeSection === 'github' && githubSettingsConnectionId),
+    staleTime: 10_000,
+  });
+  const updateGitHubRepositorySettings = useMutation({
+    mutationFn: (next: Pick<GitHubRepositoryAccessSettings, 'mode' | 'defaultRemoteAccess' | 'repositories'>) => (
+      api!.updateGitHubRepositoryAccessSettings(githubSettingsConnectionId!, {
+        expectedRevision: githubRepositorySettings.data!.revision,
+        mode: next.mode,
+        defaultRemoteAccess: next.defaultRemoteAccess,
+        repositories: next.repositories,
+      })
+    ),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['github-repository-access', settings.connectionId], settings);
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['github-repository-access', githubSettingsConnectionId] });
+    },
+  });
+  const terminalSettings = useQuery({
+    queryKey: ['terminal-workspace-settings'],
+    queryFn: ({ signal }) => api!.getTerminalWorkspaceSettings(signal),
+    enabled: Boolean(api && activeSection === 'workspace'),
+    staleTime: 10_000,
+  });
+  useEffect(() => {
+    if (!terminalSettings.data || terminalPreview || terminalPolicyDirty.current) return;
+    setTerminalMode(terminalSettings.data.mode);
+    setTerminalDomains(terminalSettings.data.customDomains.join('\n'));
+  }, [terminalPreview, terminalSettings.data]);
+  const terminalCustomDomains = () => [...new Set(
+    terminalDomains.split(/[\s,]+/u).map((domain) => domain.trim().toLowerCase().replace(/\.$/u, '')).filter(Boolean),
+  )].sort();
+  const terminalPolicyChanged = Boolean(terminalSettings.data && (
+    terminalMode !== terminalSettings.data.mode
+    || terminalCustomDomains().join('\n') !== [...terminalSettings.data.customDomains].sort().join('\n')
+  ));
+  const terminalDraftRemainingSlots = terminalPreview?.remainingCustomSlots
+    ?? (!terminalPolicyChanged ? terminalSettings.data?.remainingCustomSlots : null);
+  const [terminalPolicyFailure, setTerminalPolicyFailure] = useState<Array<{
+    workstreamId: string;
+    title: string;
+    outcome: 'stopped' | 'deleted' | 'quarantined';
+  }>>([]);
+  const previewTerminalPolicy = useMutation({
+    mutationFn: () => api!.previewTerminalNetworkPolicy({
+      expectedRevision: terminalSettings.data!.revision,
+      mode: terminalMode,
+      customDomains: terminalCustomDomains(),
+    }),
+    onSuccess: (preview) => {
+      setTerminalPolicyFailure([]);
+      setTerminalPreview(preview);
+    },
+    onError: async () => {
+      setTerminalPreview(null);
+      await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
+    },
+  });
+  const applyTerminalPolicy = useMutation({
+    mutationFn: () => api!.applyTerminalNetworkPolicy({
+      mutationId: terminalPreview!.mutationId,
+      expectedRevision: terminalPreview!.expectedRevision,
+      confirmed: true,
+    }),
+    onSuccess: (settings: TerminalWorkspaceSettings) => {
+      queryClient.setQueryData(['terminal-workspace-settings'], settings);
+      terminalPolicyDirty.current = false;
+      setTerminalMode(settings.mode);
+      setTerminalDomains(settings.customDomains.join('\n'));
+      setTerminalPolicyFailure([]);
+      setTerminalPreview(null);
+    },
+    onError: async (error) => {
+      const outcomes = error instanceof ApiError
+        && typeof error.details === 'object'
+        && error.details !== null
+        && 'sandboxOutcomes' in error.details
+        && Array.isArray((error.details as { sandboxOutcomes?: unknown }).sandboxOutcomes)
+        ? (error.details as { sandboxOutcomes: Array<{ workstreamId: string; title: string; outcome: 'stopped' | 'deleted' | 'quarantined' }> }).sandboxOutcomes
+        : [];
+      setTerminalPolicyFailure(outcomes);
+      setTerminalPreview(null);
+      await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
+    },
   });
   const connectorCatalog = useQuery({
     queryKey: ['connector-catalog'],
@@ -469,7 +593,15 @@ export function WorkspaceSettingsScreen({
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id);
+      const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
+        ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
+        : undefined;
+      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(
+        connection.id,
+        provider,
+        connection.scope,
+        connection.capabilities?.length ?? 0,
+      );
       const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
       await desktopBridge().openExternal(authorization.url);
       return { authorization, provider: attempt.provider };
@@ -535,6 +667,10 @@ export function WorkspaceSettingsScreen({
     mutationFn: (enabled: boolean) => bridge.setLaunchAtLogin(enabled),
     onSuccess: setApplicationSettings,
   });
+  const updateProductAnalytics = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setProductAnalyticsEnabled(enabled),
+    onSuccess: setApplicationSettings,
+  });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
     [invitations.data],
@@ -544,10 +680,26 @@ export function WorkspaceSettingsScreen({
     [invitations.data],
   );
   const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
+  const settingsNavigationWithConnectors = useMemo(() => settingsNavigation.map((group) => (
+    group.label !== 'Settings' || githubSettingsConnections.length === 0
+      ? group
+      : {
+          ...group,
+          items: group.items.flatMap((item) => item.id === 'connections'
+            ? [item, {
+                id: 'github' as const,
+                label: 'GitHub',
+                searchTerms: 'github repositories remote read only full access push pull request',
+                icon: GitBranch,
+                child: true,
+              }]
+            : [item]),
+        }
+  )), [githubSettingsConnections.length]);
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
-    if (!query) return settingsNavigation;
-    return settingsNavigation
+    if (!query) return settingsNavigationWithConnectors;
+    return settingsNavigationWithConnectors
       .map((group) => ({
         ...group,
         items: group.items.filter((item) =>
@@ -556,7 +708,7 @@ export function WorkspaceSettingsScreen({
             .includes(query)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [navigationQuery, developerSettingsAvailable]);
+  }, [navigationQuery, developerSettingsAvailable, settingsNavigationWithConnectors]);
   const availableSections = useMemo(
     () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
     [filteredNavigation],
@@ -595,6 +747,36 @@ export function WorkspaceSettingsScreen({
     setNavigationQuery('');
     setActiveSection(nextSection);
   }), [bridge]);
+
+  const loadTelemetryInspector = useCallback(async (): Promise<void> => {
+    const request = telemetryInspectorRequest.current + 1;
+    telemetryInspectorRequest.current = request;
+    setTelemetryInspectorLoading(true);
+    setTelemetryInspectorError(null);
+    try {
+      const entries = await bridge.getTelemetryInspector();
+      if (telemetryInspectorRequest.current === request) setTelemetryInspector(entries);
+    } catch (error) {
+      if (telemetryInspectorRequest.current === request) {
+        setTelemetryInspectorError(
+          error instanceof Error ? error.message : 'Telemetry decisions could not be loaded.',
+        );
+      }
+    } finally {
+      if (telemetryInspectorRequest.current === request) setTelemetryInspectorLoading(false);
+    }
+  }, [bridge]);
+
+  useEffect(() => {
+    if (!applicationSettings?.developerSettingsAvailable) {
+      telemetryInspectorRequest.current += 1;
+      setTelemetryInspector([]);
+      setTelemetryInspectorError(null);
+      setTelemetryInspectorLoading(false);
+      return;
+    }
+    void loadTelemetryInspector();
+  }, [applicationSettings?.developerSettingsAvailable, loadTelemetryInspector]);
 
   useEffect(() => {
     let cancelled = false;
@@ -678,7 +860,51 @@ export function WorkspaceSettingsScreen({
     setCopied(true);
   };
 
-  const sectionTitle = settingsNavigation
+  const githubSettings = githubRepositorySettings.data;
+  const selectedGitHubSettingsConnection = githubSettingsConnections.find((connection) => (
+    connection.id === githubSettingsConnectionId
+  ));
+  const canEditGitHubSettings = selectedGitHubSettingsConnection?.scope === 'you' || isAdmin;
+  const visibleGitHubRepositories = useMemo(() => {
+    const query = githubRepositorySearch.trim().toLowerCase();
+    const repositories = githubSettings?.availableRepositories ?? [];
+    return query
+      ? repositories.filter((repository) => repository.repositoryFullName.toLowerCase().includes(query))
+      : repositories;
+  }, [githubRepositorySearch, githubSettings?.availableRepositories]);
+  const saveGitHubRepositoryPolicy = (
+    next: Pick<GitHubRepositoryAccessSettings, 'mode' | 'defaultRemoteAccess' | 'repositories'>,
+  ): void => {
+    if (canEditGitHubSettings && !updateGitHubRepositorySettings.isPending) {
+      updateGitHubRepositorySettings.mutate(next);
+    }
+  };
+  const setGitHubRepositoryRemoteAccess = (
+    repository: GitHubRepositoryAccessSettings['availableRepositories'][number],
+    remoteAccess: 'read_only' | 'full_access' | null,
+  ): void => {
+    if (!githubSettings) return;
+    const repositories = githubSettings.repositories.filter((candidate) => (
+      candidate.repositoryId !== repository.repositoryId
+    ));
+    if (remoteAccess && (
+      githubSettings.mode === 'selected_repositories'
+      || remoteAccess !== githubSettings.defaultRemoteAccess
+    )) {
+      repositories.push({
+        repositoryId: repository.repositoryId,
+        repositoryFullName: repository.repositoryFullName,
+        remoteAccess,
+      });
+    }
+    saveGitHubRepositoryPolicy({
+      mode: githubSettings.mode,
+      defaultRemoteAccess: githubSettings.defaultRemoteAccess,
+      repositories,
+    });
+  };
+
+  const sectionTitle = settingsNavigationWithConnectors
     .flatMap((group) => group.items)
     .find((item) => item.id === activeSection)?.label ?? 'Settings';
 
@@ -706,6 +932,7 @@ export function WorkspaceSettingsScreen({
                   return (
                     <button
                       aria-current={activeSection === item.id ? 'page' : undefined}
+                      className={item.child ? 'settings-navigation-child' : undefined}
                       key={item.id}
                       onClick={() => setActiveSection(item.id)}
                       type="button"
@@ -840,6 +1067,113 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 {updateLogAgentInference.error && <InlineError>{updateLogAgentInference.error.message}</InlineError>}
+                <div className="settings-pane-heading settings-pane-heading-spaced">
+                  <h2>Terminal network access</h2>
+                  <p>Choose where code running in Daytona may connect. Avalon-managed platform access is applied automatically.</p>
+                </div>
+                {terminalSettings.isLoading ? (
+                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
+                ) : terminalSettings.error ? (
+                  <InlineError>{terminalSettings.error.message}</InlineError>
+                ) : terminalSettings.data && (
+                  <div className="terminal-network-card settings-list-card">
+                    {terminalSettings.data.availability !== 'supported' && (
+                      <div className="terminal-network-notice" role="status">
+                        <ShieldCheck aria-hidden="true" size={17} />
+                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'This regional service has not enabled Daytona Terminal.'}</small></span>
+                      </div>
+                    )}
+                    <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}>
+                      <legend>Outbound access</legend>
+                      <label>
+                        <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); setTerminalPreview(null); }} type="radio" />
+                        <span><strong>Trusted only</strong><small>Avalon-managed platform access plus domains your workspace approves.</small></span>
+                      </label>
+                      <label>
+                        <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); setTerminalPreview(null); }} type="radio" />
+                        <span><strong>Full internet</strong><small>Allow arbitrary public destinations. Private network access remains blocked by Daytona.</small></span>
+                      </label>
+                    </fieldset>
+                    {terminalMode === 'trusted_only' && (
+                      <div className="terminal-network-domains">
+                        <label>
+                          <span>Workspace-approved domains</span>
+                          <textarea
+                            aria-label="Additional Terminal domains"
+                            data-saved-value={terminalSettings.data.customDomains.join('\n')}
+                            disabled={!isAdmin || terminalSettings.data.availability !== 'supported'}
+                            onChange={(event) => { terminalPolicyDirty.current = true; setTerminalDomains(event.target.value); setTerminalPreview(null); }}
+                            placeholder="packages.example.com&#10;*.downloads.example.com"
+                            rows={3}
+                            value={terminalDomains}
+                          />
+                          <small>{terminalDraftRemainingSlots === null
+                            ? 'Review the change to verify remaining workspace-domain capacity.'
+                            : `${terminalDraftRemainingSlots ?? 0} workspace domain slots remain.`} Enter domains only—no schemes, ports, paths, IPs, or CIDR blocks.</small>
+                        </label>
+                      </div>
+                    )}
+                    <div className="terminal-network-actions">
+                      <span><Badge>{terminalSettings.data.verificationState}</Badge> Revision {terminalSettings.data.revision}</span>
+                      <Button
+                        disabled={!isAdmin || !terminalPolicyChanged || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}
+                        onClick={() => previewTerminalPolicy.mutate()}
+                      >
+                        {previewTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                        Review network change
+                      </Button>
+                    </div>
+                    {previewTerminalPolicy.error && <InlineError>{previewTerminalPolicy.error.message}</InlineError>}
+                    {applyTerminalPolicy.error && <InlineError>{applyTerminalPolicy.error.message}</InlineError>}
+                    {terminalPolicyFailure.length > 0 && (
+                      <div className="terminal-network-failure-outcomes" role="status">
+                        <strong>Sandbox outcomes</strong>
+                        <ul>{terminalPolicyFailure.map((outcome) => (
+                          <li key={outcome.workstreamId}>{outcome.title}: {outcome.outcome}</li>
+                        ))}</ul>
+                      </div>
+                    )}
+                    {terminalPreview && (
+                      <div className="terminal-network-confirmation" role="alert">
+                        <Wifi aria-hidden="true" size={18} />
+                        <span>
+                          <strong>Confirm {terminalPreview.proposedMode === 'full_internet' ? 'Full internet' : 'Trusted only'}</strong>
+                          <small>{terminalPreview.warning} {terminalPreview.affectedWorkstreamIds.length} active sandbox{terminalPreview.affectedWorkstreamIds.length === 1 ? '' : 'es'} will be stopped.</small>
+                          <details>
+                            <summary>Review exact before and after targets</summary>
+                            <strong>Before</strong>
+                            <ul>{terminalSettings.data.customDomains.length > 0
+                              ? terminalSettings.data.customDomains.map((domain) => <li key={`before:${domain}`}><code>{domain}</code></li>)
+                              : <li>None</li>}</ul>
+                            <strong>After</strong>
+                            <ul>{terminalPreview.customDomains.length > 0
+                              ? terminalPreview.customDomains.map((domain) => <li key={`after:${domain}`}><code>{domain}</code></li>)
+                              : <li>None</li>}</ul>
+                            {terminalPreview.affectedWorkstreams.length > 0 && (
+                              <><strong>Work streams stopped</strong><ul>{terminalPreview.affectedWorkstreams.map((stream) => <li key={stream.id}>{stream.title}</li>)}</ul></>
+                            )}
+                          </details>
+                        </span>
+                        <div className="terminal-network-confirmation-actions">
+                          <Button onClick={() => {
+                            const contents = terminalPreview.customDomains.join('\n');
+                            const url = URL.createObjectURL(new Blob([`${contents}\n`], { type: 'text/plain' }));
+                            const anchor = document.createElement('a');
+                            anchor.href = url;
+                            anchor.download = `terminal-workspace-domains-revision-${terminalPreview.expectedRevision + 1}.txt`;
+                            anchor.click();
+                            URL.revokeObjectURL(url);
+                          }}>Download workspace domains</Button>
+                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => applyTerminalPolicy.mutate()}>
+                            {applyTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                            Confirm network change
+                          </Button>
+                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => setTerminalPreview(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2>Members</h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
@@ -1085,6 +1419,157 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
+            {activeSection === 'github' && (
+              <section aria-labelledby="settings-title" className="settings-pane settings-github-pane">
+                <div className="settings-pane-heading">
+                  <h2>Repository access</h2>
+                  <p>Choose which GitHub repositories Avalon may use and whether it may change the remote repository.</p>
+                </div>
+                {githubSettingsConnections.length > 1 && (
+                  <label className="settings-field settings-github-connection">
+                    <span>Connection</span>
+                    <select
+                      aria-label="GitHub connection"
+                      disabled={updateGitHubRepositorySettings.isPending}
+                      onChange={(event) => {
+                        setGitHubSettingsConnectionId(event.currentTarget.value);
+                        setGitHubRepositorySearch('');
+                      }}
+                      value={githubSettingsConnectionId ?? ''}
+                    >
+                      {githubSettingsConnections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Workspace'}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {githubRepositorySettings.isLoading ? (
+                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading GitHub repositories…</div>
+                ) : githubSettings ? (
+                  <>
+                    {!canEditGitHubSettings && (
+                      <p className="settings-section-copy">Workspace repository access is read-only here. Ask a workspace administrator to change it.</p>
+                    )}
+                    <div className="settings-list-card settings-github-policy">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><GitBranch aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Repository availability</strong>
+                          <small>All repositories follows the GitHub App installation. Selected repositories exposes only the entries you add below.</small>
+                        </span>
+                        <select
+                          aria-label="Repository availability"
+                          disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                          onChange={(event) => saveGitHubRepositoryPolicy({
+                            mode: event.currentTarget.value as GitHubRepositoryAccessSettings['mode'],
+                            defaultRemoteAccess: githubSettings.defaultRemoteAccess,
+                            repositories: githubSettings.repositories,
+                          })}
+                          value={githubSettings.mode}
+                        >
+                          <option value="all_repositories">All repositories</option>
+                          <option value="selected_repositories">Selected repositories</option>
+                        </select>
+                      </label>
+                      {githubSettings.mode === 'all_repositories' && (
+                        <label className="settings-preference-row">
+                          <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
+                          <span className="settings-row-copy">
+                            <strong>Default remote access</strong>
+                            <small>Read-only still allows Avalon to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.</small>
+                          </span>
+                          <select
+                            aria-label="Default remote access"
+                            disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                            onChange={(event) => saveGitHubRepositoryPolicy({
+                              mode: githubSettings.mode,
+                              defaultRemoteAccess: event.currentTarget.value as GitHubRepositoryAccessSettings['defaultRemoteAccess'],
+                              repositories: githubSettings.repositories,
+                            })}
+                            value={githubSettings.defaultRemoteAccess}
+                          >
+                            <option value="read_only">Read-only remote</option>
+                            <option value="full_access">Full remote access</option>
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <div className="settings-github-repository-heading">
+                      <div>
+                        <strong>Repositories</strong>
+                        <small>{githubSettings.availableRepositories.length} available through {githubSettings.connectionName}</small>
+                      </div>
+                      <label className="settings-search settings-github-search">
+                        <Search aria-hidden="true" size={15} />
+                        <span className="sr-only">Search GitHub repositories</span>
+                        <input
+                          data-saved-value={githubRepositorySearch}
+                          onChange={(event) => setGitHubRepositorySearch(event.currentTarget.value)}
+                          placeholder="Search repositories"
+                          type="search"
+                          value={githubRepositorySearch}
+                        />
+                      </label>
+                    </div>
+                    <div className="settings-list-card settings-github-repository-list">
+                      {visibleGitHubRepositories.map((repository) => {
+                        const configured = githubSettings.repositories.find((candidate) => (
+                          candidate.repositoryId === repository.repositoryId
+                        ));
+                        const selected = githubSettings.mode === 'all_repositories' || Boolean(configured);
+                        const effectiveAccess = configured?.remoteAccess
+                          ?? (githubSettings.mode === 'all_repositories' ? githubSettings.defaultRemoteAccess : 'read_only');
+                        return (
+                          <div className="settings-github-repository-row" key={repository.repositoryId}>
+                            <span>
+                              <strong>{repository.repositoryFullName}</strong>
+                              <small>{repository.private ? 'Private repository' : 'Public repository'}</small>
+                            </span>
+                            {selected ? (
+                              <>
+                                <select
+                                  aria-label={`Remote access for ${repository.repositoryFullName}`}
+                                  disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                  onChange={(event) => setGitHubRepositoryRemoteAccess(
+                                    repository,
+                                    event.currentTarget.value as 'read_only' | 'full_access',
+                                  )}
+                                  value={effectiveAccess}
+                                >
+                                  <option value="read_only">Read-only remote</option>
+                                  <option value="full_access">Full remote access</option>
+                                </select>
+                                {githubSettings.mode === 'selected_repositories' && (
+                                  <Button
+                                    disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                    onClick={() => setGitHubRepositoryRemoteAccess(repository, null)}
+                                  >Remove</Button>
+                                )}
+                              </>
+                            ) : (
+                              <Button
+                                disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                onClick={() => setGitHubRepositoryRemoteAccess(repository, 'read_only')}
+                              >Add</Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {visibleGitHubRepositories.length === 0 && (
+                        <EmptyState title="No repositories found" description="Try a different repository name." />
+                      )}
+                    </div>
+                    <p className="settings-section-copy settings-github-footnote">
+                      Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits; read-only blocks remote publication, while full access allows native Git and GitHub remote operations.
+                    </p>
+                  </>
+                ) : null}
+                {(githubRepositorySettings.error || updateGitHubRepositorySettings.error) && (
+                  <InlineError>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</InlineError>
+                )}
+              </section>
+            )}
+
             {activeSection === 'application' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Avalon protects the saved authentication session on this Mac.</p></div>
@@ -1121,6 +1606,43 @@ export function WorkspaceSettingsScreen({
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
                   <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
                 )}
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Product analytics</strong>
+                      <small>
+                        Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Avalon can contact you; EU telemetry stays in Avalon’s EU platform. Essential content-free reliability signals continue when this is off.
+                      </small>
+                    </span>
+                    <span className="settings-toggle">
+                      <input
+                        aria-label="Product analytics"
+                        checked={applicationSettings?.productAnalyticsEnabled ?? true}
+                        disabled={
+                          applicationSettings?.productAnalyticsAvailable === false
+                          || applicationSettings === null
+                          || updateProductAnalytics.isPending
+                        }
+                        onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
+                </div>
+                {applicationSettings?.productAnalyticsAvailable === false && (
+                  <p className="settings-oauth-status">Product analytics is managed in the Avalon desktop app.</p>
+                )}
+                {applicationSettings?.productAnalyticsPreferencePending && (
+                  <p className="settings-oauth-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={14} />Waiting to sync this account preference.</p>
+                )}
+                {applicationSettings?.nativeCrashRestartRequired && (
+                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Avalon to remove local native crash dumps and apply the current setting.</p>
+                )}
+                {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
                 {applicationSettings?.menuBarAvailable !== false && (
                   <>
@@ -1234,6 +1756,35 @@ export function WorkspaceSettingsScreen({
                       </label>
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
+                    <div className="settings-pane-heading settings-pane-heading-spaced">
+                      <div><h3>Telemetry inspector</h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
+                      <Button
+                        aria-label="Refresh telemetry inspector"
+                        disabled={telemetryInspectorLoading}
+                        onClick={() => void loadTelemetryInspector()}
+                      >
+                        <RefreshCcw aria-hidden="true" className={telemetryInspectorLoading ? 'spin' : undefined} size={14} />
+                        Refresh
+                      </Button>
+                    </div>
+                    {telemetryInspectorError && <InlineError>{telemetryInspectorError}</InlineError>}
+                    {telemetryInspectorLoading && telemetryInspector.length === 0 ? (
+                      <div className="settings-list-card"><p role="status">Loading telemetry decisions…</p></div>
+                    ) : telemetryInspector.length === 0 ? (
+                      <div className="settings-list-card"><p>No telemetry decisions in this process yet.</p></div>
+                    ) : (
+                      <dl className="settings-list-card settings-diagnostics">
+                        {telemetryInspector.map((entry, index) => (
+                          <div key={`${entry.name}-${index}`}>
+                            <dt>{entry.name}</dt>
+                            <dd>
+                              {entry.propertyNames.join(', ') || 'No properties'}
+                              <small>{entry.route === 'eu' ? 'EU' : 'Global'} · {entry.validation} · {entry.queueState}</small>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>

@@ -48,6 +48,9 @@ The rest:
 | `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
+| `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the work stream's read-only pill applies to an id the closed set does not admit. |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream being started, and the locked pill inside one that already exists. |
+| `apps/api/src/mappers/workstream.ts` | Where the stored pin is re-validated on the way out, so `modelOverride` on the wire is what the resolver would actually apply. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
 
 ## How it works
@@ -73,7 +76,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Automation architect | `agent-model-automation-compiler` | `OPENROUTER_AUTOMATION_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none |
+| HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none by default; a flag may add them |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -115,12 +118,12 @@ structured-inference gateway. The exhaustiveness checks on
 declared and not wired, but nothing catches a new service that never declared
 one.
 
-HyperSight deliberately has no fallbacks. Its blocks pin one model and never
-route onward, so a refresh cannot change voice partway through a configuration.
-That invariant is enforced in the resolver rather than left to the flag: a
-`fallbackModels` served to `agent-model-hypersight` is dropped and logged as
-`agent_model_flag_fallbacks_ignored`, so the flag can retarget the model but
-cannot turn routing on.
+HyperSight has no fallbacks by default. A block that routes onward can change
+voice between refreshes of one configuration, so routing is something an
+operator turns on for it deliberately rather than the state it starts in. That
+is now a **default rather than an invariant**: `agent-model-hypersight` may
+serve a `fallbackModels` and the resolver honours it exactly as it does for
+every other role.
 
 ### Flag value
 
@@ -180,6 +183,14 @@ The pin carries **no fallbacks**. It is a request to observe one specific model,
 and routing onward would answer a question nobody asked — the same reasoning
 that keeps HyperSight pinned rather than routed.
 
+That leaves a pinned run's route plan with nowhere to traverse when the provider
+faults, so recovery has to come from somewhere else: the harness re-executes the
+plan against **the same pinned model** after a retriable transport failure, which
+keeps the pin's promise while stopping one stalled request from discarding a
+whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
+the budget and the failure code. Do not answer a pinned run's provider outage by
+adding fallbacks here.
+
 It reaches only the work-stream agent. The inline subagent, the automation
 architect that drafts the automation, and HyperSight keep their own flags: each
 is a distinct agent, and the whole point of giving it a flag was that it can be
@@ -193,6 +204,62 @@ retired from the list without a migration: the work streams still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
+
+#### Reading it back inside the work stream
+
+The composer of a work stream that already exists shows the same control in the
+same place, behind the same **Debug enabled** preference — the identical
+dropdown, trigger and pill and chevron, with the trigger `disabled`. That is what
+stops it opening, and its menu is left unrendered because a disabled trigger can
+never reach one. Disabled rather than merely quiet is the honest shape here: the
+pin is written once, when the work stream is created, and nothing afterwards
+edits it, so a menu would offer a change the next run would not honour.
+
+The accessible name and the tooltip carry the full model id and say what may
+truthfully be said about it, **which is not the same sentence for every work
+stream**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
+never reads the flag, so every run uses it. An unpinned work stream re-evaluates
+`agent-model-workstream` on *every* launch, so the id shown is what the latest
+run happened to resolve and a later run may differ. What is immutable there is
+the setting, not the model — an earlier draft of this control said a work stream
+keeps the model it started on, which is a stability guarantee the server does
+not make for the unpinned majority. The renderer therefore takes `pinned`
+alongside the id and picks the claim from it.
+
+The tooltip survives the disable — checked in a real window rather than assumed,
+because the reverse is the intuitive guess: a disabled button swallows the click
+that would open the menu, but Radix's tooltip is driven by pointer movement that
+still reaches it. What the disable does cost is keyboard focus, since Tab skips a
+disabled button, which is why the id has to be in the accessible name and not
+only in the tooltip.
+
+What it names is **`latestHarnessRun.model` first, and the pin only as a
+fallback**. The pin alone would answer for almost nobody: an unpinned work
+stream is nearly all of them, and the flag's served variation is not visible to
+a client at all — but every parent run records a model, which is the pin where
+there is one and the flag's answer where there is not. That column is the only
+place a client can see which model a given work stream is actually running. It
+follows that the id shown need not be one `AGENT_MODEL_OVERRIDES` admits; the
+pill shortens an unknown id to its model segment and the tooltip carries it
+whole.
+
+The pin sits behind it because of one case the run cannot cover. The column is
+written twice: `launchWorkstreamHarness` records the model it resolved at
+schedule time, and the run host may overwrite it at settle — while its lease is
+live and before terminalization — with the model that actually streamed. A run
+that failed before its first token streams nothing, so that second write puts
+**null** there. On a pinned work stream that is exactly where a run-only pill
+would fall back to **Default** and describe it as following a flag it never
+consults. `WorkstreamDetail` therefore carries `modelOverride`, re-validated
+against the closed set on the way out exactly as `resolveWorkstreamModelRouting`
+re-validates it, and the pill reads it when the run has nothing to say. Only a
+work stream that is both unpinned and has no recorded model reads **Default**,
+for the same reason an untouched composer does.
+
+What the pill still cannot show is a run whose attempts did not agree: the
+column holds one id, and the inference ledger is what records the model behind
+every attempt. See the `harness_runs.model` entry under [Failure modes and
+limits](#failure-modes-and-limits).
 
 ### Evaluation
 
@@ -476,7 +543,9 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `createRun` looks correct under **Run now** and is silently ignored by every
   scheduled run — which is how it shipped in review.
 - **A pin carries no fallbacks.** It is a request to observe one specific model,
-  and routing onward would answer a question nobody asked.
+  and routing onward would answer a question nobody asked. A provider fault on a
+  pinned run is recovered by retrying that same model, never by widening the
+  route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 - **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
   write *and* on read, which is what lets a model be retired without a migration.
 - **Identity is spread over the loaded attributes, never under them**, so nothing
@@ -569,15 +638,17 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A `fallbackModels` served to `agent-model-hypersight` is dropped** and logged as
-  `agent_model_flag_fallbacks_ignored`. The flag can retarget the model but cannot
-  turn routing on.
+- **A `fallbackModels` served to `agent-model-hypersight` is honoured**, like every
+  other role's. HyperSight's empty fallback list is the checked-in default, not a
+  resolver invariant.
 - **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
   passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
   a scheduled run was expected to use, resolved at schedule time; a flag changed
-  between scheduling and execution makes it wrong. The inference ledger records what
-  each attempt actually used.
+  between scheduling and execution makes it wrong. The run host overwrites it at
+  settle with the model that actually streamed, but only while its lease is live
+  and the run is not yet terminalized — and a run that never streamed overwrites
+  it with **null**. The inference ledger records what each attempt actually used.
 - **A desktop poll that cannot reach the service leaves the last answer standing.**
   Only an answer, a sign-out, or a shutdown turns the Developer section off; a flag
   change takes up to `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` (one minute) to
@@ -597,11 +668,14 @@ correctly provisioned flag.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and the HyperSight fallback drop. |
+| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and that HyperSight honours its flag's fallbacks like every other role. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
+| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
+| `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a work stream: the same gate, the run's model ahead of the pin, the pin where a run recorded none, an id outside the closed set, and that it opens no menu. |
+| `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -850,12 +924,87 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). The reasoning behind
-each failure direction, the attribute boundary, and the pin's precedence is
-recorded inline above, but it was not kept as dated entries and was not
-reconstructed into them. The next substantial change to the flag surface starts the
-record, and that entry is that change, written in full.
+Entries before the one below were never written. This document predates the
+changelog rule in [`module-documents.md`](module-documents.md#starting-one), and
+the reasoning behind each failure direction, the attribute boundary, and the
+pin's precedence is recorded inline above rather than as dated entries; it was
+not reconstructed into them.
 
 Note that a *flag value* change is not a change to this module and gets no entry
 here — the Flagship console is the audit record for who was rolled out to and when.
+
+### 2026-08-16 — HyperSight's empty fallback list is a default, not an invariant
+
+**What changed:** `NO_FALLBACK_ROLES` and the `agent_model_flag_fallbacks_ignored`
+warning are gone. A `fallbackModels` served by `agent-model-hypersight` is now
+honoured exactly as every other role's is. HyperSight still has no fallbacks when
+no flag answers — `defaultAgentModelRouting` is unchanged — so nothing moves
+until someone edits that flag.
+
+**Why:** the invariant was real but it was enforced in the wrong place, and the
+enforcement was invisible. An operator set a three-model fallback list on
+`agent-model-hypersight`; the Flagship API accepted it, the console showed it,
+and the resolver silently discarded it on every evaluation. The only trace was a
+`warn` in Workers Logs that nobody has a reason to read, so the flag and the
+behaviour disagreed indefinitely with nothing surfacing the disagreement. A
+control that accepts a value and does not apply it is worse than one that has no
+value to set.
+
+The product reasoning it protected still holds — a block that routes onward can
+change voice between refreshes of one configuration — but that is an argument for
+the *default* being empty, which it still is, not for overriding an operator who
+has asked for something else. The resolver cannot tell a mistake from a
+deliberate choice, and the person editing the flag can. Rejected alternative:
+keeping the drop and making it loud (surfacing it in the console or failing the
+evaluation) — that still spends an operator's time discovering that a documented,
+API-accepted field does nothing, and the flag set is small enough that a
+per-role capability table earns nothing over honouring what is served. A future
+change that wants a role's plan constrained again should constrain it where it is
+*set* rather than where it is read, so the disagreement cannot exist.
+
+### 2026-08-13 — A work stream shows the model it is running on, read off its latest run
+
+**What changed:** The composer inside an existing work stream now shows the model
+control too, behind the same **Debug enabled** preference as the launch
+composers: the same dropdown, with its trigger `disabled` and its menu
+unrendered. It names `latestHarnessRun.model`, falling back to the pin — newly on
+`WorkstreamDetail` as `modelOverride` — when a run recorded none.
+
+**Why:** The selector existed only where a model could still be *chosen*, so the
+moment a work stream started, the answer to "which model wrote this?" left the
+screen — and that question is asked far more often than the pinning one, because
+it is asked about every work stream rather than the handful somebody pinned.
+Recovering it meant querying D1 by hand for a fact the client was already
+holding. The one control anybody had learned to read was the natural place to put
+it, so it is the same component, minus the input.
+
+**Considered and rejected:** Showing only the *pin*, the exact mirror of the
+composer. It answers for almost nobody: an unpinned work stream — nearly all of
+them — would read **Default** forever, which is true and useless, and the flag's
+served variation is not visible to a client at all. The run row is the one place
+the resolved model is legible from the renderer. Also rejected in the other
+direction: showing only the run, and leaving `WorkstreamDetail` alone. A run that
+fails before its first token settles with `model` null, and a pinned work stream
+described as following the flag is not an incomplete answer but a false one —
+which is what the pin fallback exists to prevent, and why it is worth a field on
+the wire.
+
+This first shipped as a distinct read-only pill — `aria-disabled`, a lock icon,
+no dropdown around it — and was rejected in review for the plainer thing: the
+launch composer's own dropdown with `disabled` set. Two renderings of one control
+drift, and `aria-disabled` is a control that only claims to be off. The argument
+for the first shape was that a disabled button cannot fire a tooltip, and that
+turned out to be false here — it does — so the cost was keyboard focus alone.
+`.model-selector-trigger.is-settled:disabled` lifts the global `.48` dim to
+`.74`, because a 10.5px model name at `.48` cannot be read and being read is the
+entire point of showing it.
+
+**Consequences:** The pill can now show an id that is not in
+`AGENT_MODEL_OVERRIDES`, because a flag variation may serve any OpenRouter model
+— anything reading that string must not assume the closed set. `modelOverride`
+is on `WorkstreamSchema`, so every work stream on the wire carries it, and the
+mapper narrows an unrecognized stored value to null rather than failing the
+response — a model retired from the list must not make the work streams pinned
+to it unopenable. Retiring one no longer only affects pins: the work streams that
+ran on it keep naming it in the pill, shortened to its model segment, which is
+correct — that is what they ran on.

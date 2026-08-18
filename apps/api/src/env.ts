@@ -17,16 +17,22 @@ import type {
   GlobalSlackRouterRpcBinding,
   SlackRegionalBridgeRpcBinding,
 } from "./services/slack-routing-service";
+import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bridge";
+import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
+import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
 export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
+  TELEMETRY_PAYLOADS: R2Bucket;
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
   RUN_ANALYTICS: AnalyticsEngineDataset;
+  TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -34,6 +40,7 @@ export interface Env {
   FLAGS?: Flagship;
   WORKSTREAM_ROOMS: DurableObjectNamespace;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace;
+  CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
   WORKSTREAM_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -43,11 +50,13 @@ export interface Env {
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
   EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
+  EU_TELEMETRY_BRIDGE?: RegionalTelemetryBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
+  GLOBAL_TELEMETRY_CONTROL?: GlobalTelemetryControlRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;
@@ -63,6 +72,13 @@ export interface Env {
   LINEAR_INGRESS_BASE_URL?: string;
   NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
+  POSTHOG_HOST?: string;
+  TERMINAL_REGION_CAPABILITY?: "supported" | "unsupported";
+  TERMINAL_EMERGENCY_DISABLED?: "true" | "false";
+  DAYTONA_API_KEY?: string;
+  DAYTONA_API_URL?: string;
+  DAYTONA_TARGET?: string;
+  DAYTONA_TERMINAL_SNAPSHOT?: string;
 
   OPENROUTER_API_KEY: string;
   OPENROUTER_PRIMARY_MODEL: string;
@@ -106,6 +122,13 @@ export interface Env {
   SLACK_CLIENT_SECRET?: string;
   SLACK_SIGNING_SECRET?: string;
   TWITTER_API_IO_API_KEY?: string;
+  POSTHOG_PROJECT_TOKEN?: string;
+  /** Global-only signer for onboarding telemetry capabilities. EU validates
+   * them through the narrow Global telemetry-control RPC. */
+  TELEMETRY_CAPABILITY_SIGNING_KEY?: string;
+  /** Per-region operator credentials for the restricted telemetry operations
+   * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
+  TELEMETRY_OPERATORS_JSON?: string;
   SESSION_SIGNING_KEY: string;
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;
@@ -116,6 +139,7 @@ export interface Env {
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS?: string;
   HARNESS_TTFT_TIMEOUT_MS?: string;
   HARNESS_STREAM_IDLE_TIMEOUT_MS?: string;
+  HARNESS_TRANSPORT_RETRIES?: string;
   HARNESS_CHILD_MAX_MODEL_ITERATIONS?: string;
   HARNESS_CHILD_MAX_TOOL_CALLS?: string;
   HARNESS_CHILD_MAX_WALL_CLOCK_MS?: string;
@@ -152,6 +176,7 @@ export interface AuthContext extends IdentityAuthContext {
 export interface AppVariables {
   requestId: string;
   auth: IdentityAuthContext | undefined;
+  telemetryOperator: TelemetryOperatorPrincipal | undefined;
 }
 
 export type HonoAppEnv = {
@@ -189,12 +214,15 @@ const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
+  TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
+  TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
+  CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
@@ -206,6 +234,11 @@ const EnvContractSchema = z.object({
   PUBLIC_WEB_BASE_URL: HttpUrlSchema,
   ALLOWED_ORIGINS: z.string().min(1),
   DESKTOP_DEEP_LINK_URI: AvalonUrlSchema,
+  TERMINAL_REGION_CAPABILITY: z.enum(["supported", "unsupported"]).optional(),
+  TERMINAL_EMERGENCY_DISABLED: z.enum(["true", "false"]).optional(),
+  DAYTONA_API_URL: z.string().optional(),
+  DAYTONA_TARGET: z.string().optional(),
+  DAYTONA_TERMINAL_SNAPSHOT: z.string().optional(),
 
   // `OPENROUTER_API_KEY` is deliberately not here; see `productionOnlySecrets`.
   OPENROUTER_PRIMARY_MODEL: z.string().min(1),
@@ -233,6 +266,7 @@ const EnvContractSchema = z.object({
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS: numericString.optional(),
   HARNESS_TTFT_TIMEOUT_MS: numericString.optional(),
   HARNESS_STREAM_IDLE_TIMEOUT_MS: numericString.optional(),
+  HARNESS_TRANSPORT_RETRIES: numericString.optional(),
   HARNESS_CHILD_MAX_MODEL_ITERATIONS: numericString.optional(),
   HARNESS_CHILD_MAX_TOOL_CALLS: numericString.optional(),
   HARNESS_CHILD_MAX_WALL_CLOCK_MS: numericString.optional(),
@@ -251,6 +285,7 @@ const EnvContractSchema = z.object({
   LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  POSTHOG_HOST: HttpUrlSchema.optional(),
 });
 
 /**
@@ -277,6 +312,14 @@ const EnvContractSchema = z.object({
  * unconditionally at the entrypoint turned that into a 503 on every route of
  * both regions, `/health` included, so the one endpoint whose job is to report
  * which key is missing was the one endpoint that could not answer.
+ *
+ * Telemetry's provider token, dedicated capability signer, and operator map
+ * are intentionally absent too. Collection is useful before PostHog delivery
+ * is enabled, capability signing has the existing Global session key as its
+ * rollout fallback, and an absent operator map makes only the restricted
+ * operator surface return 503. Treating any of those staged states as a Worker-
+ * wide fault takes both product regions offline while their D1/R2 bindings and
+ * collector are healthy.
  *
  * In production and staging it is a fault, and since `/health` began asserting
  * this contract the probe answers 503 there rather than `openRouter: not
@@ -337,7 +380,24 @@ export function assertEnvContract(env: Env): void {
           && !env[secret.key])
         .map((secret) => secret.key)
     : [];
-  if (result.success && missingSecrets.length === 0) {
+  const terminalRequiredKeys = ["DAYTONA_API_KEY", "DAYTONA_API_URL", "DAYTONA_TARGET", "DAYTONA_TERMINAL_SNAPSHOT"] as const;
+  const terminalConfigurationComplete = terminalRequiredKeys.every(
+    (key) => typeof env[key] === "string" && env[key]!.trim().length > 0,
+  );
+  const terminalConfigurationIssues = env.TERMINAL_REGION_CAPABILITY === "supported" && terminalConfigurationComplete
+    ? [
+        ...(typeof env.DAYTONA_API_URL === "string"
+          ? (() => {
+              try {
+                return new URL(env.DAYTONA_API_URL).protocol === "https:" ? [] : ["DAYTONA_API_URL is invalid"];
+              } catch {
+                return ["DAYTONA_API_URL is invalid"];
+              }
+            })()
+          : []),
+      ]
+    : [];
+  if (result.success && missingSecrets.length === 0 && terminalConfigurationIssues.length === 0) {
     validated.add(env);
     return;
   }
@@ -352,6 +412,7 @@ export function assertEnvContract(env: Env): void {
       return `${key} ${present ? "is invalid" : "is missing"}`;
     })),
     ...missingSecrets.map((key) => `${key} is missing`),
+    ...terminalConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());
 }
@@ -384,6 +445,28 @@ export function numericEnv(
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * A count whose meaningful range **includes zero**, read separately from
+ * `numericEnv` rather than by relaxing it.
+ *
+ * Every key `numericEnv` serves is a timeout, a byte ceiling, or a budget where
+ * zero is nonsense, so its `> 0` guard doubles as validation and must keep it.
+ * A retry budget is the first key here where zero is not only meaningful but the
+ * single most important value: it is the operator's lever for stopping the
+ * harness re-requesting into a provider that is already failing. Routing it
+ * through `numericEnv` silently substituted the fallback, so `=0` read as
+ * applied, changed nothing, and logged nothing — a dead switch found only by
+ * reading the helper.
+ */
+export function countEnv(
+  env: Env,
+  key: "HARNESS_TRANSPORT_RETRIES",
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(env[key] ?? "", 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 export function assertRegion(value: string): Region {

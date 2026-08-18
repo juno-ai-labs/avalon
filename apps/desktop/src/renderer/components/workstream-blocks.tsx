@@ -19,6 +19,8 @@ import {
   CircleAlert,
   Clipboard,
   Copy,
+  FileDown,
+  ImageDown,
   LoaderCircle,
   TerminalSquare,
 } from 'lucide-react';
@@ -27,8 +29,12 @@ import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-re
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { logError } from '../../common/logger';
+import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
-import { desktopBridge } from '../lib/platform';
+import { saveMessageExport } from '../lib/message-export';
+import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
 import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
@@ -85,7 +91,16 @@ const markdownLanguageAliases: Record<string, Language> = {
   zsh: 'bash',
 };
 
-function MarkdownCodeBlock({ code, language }: { code: string; language: string }): React.JSX.Element {
+interface MessageCopyTelemetry {
+  messageId: string;
+  workstreamId: string;
+}
+
+function MarkdownCodeBlock({ code, language, telemetry }: {
+  code: string;
+  language: string;
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const normalizedLanguage = language.trim().toLowerCase() || 'plain';
   const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
@@ -96,6 +111,10 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   const copy = async (): Promise<void> => {
     try {
       await desktopBridge().copyText(code);
+      if (telemetry) reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
+        resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+      });
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     } catch {
@@ -128,7 +147,9 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   );
 }
 
-function MarkdownCode({ children, className }: React.ComponentProps<'code'>): React.JSX.Element {
+function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'code'> & {
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   const source = String(children ?? '');
   const languageMatch = /(?:^|\s)language-([\w#+.-]+)/u.exec(className ?? '');
   const isBlock = Boolean(languageMatch) || source.endsWith('\n');
@@ -139,6 +160,7 @@ function MarkdownCode({ children, className }: React.ComponentProps<'code'>): Re
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
       language={languageMatch?.[1]?.toLowerCase() ?? 'plain'}
+      telemetry={telemetry}
     />
   );
 }
@@ -284,7 +306,11 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
+export function MarkdownBody({ children, mentions = [], telemetry }: {
+  children: string;
+  mentions?: MessageMention[];
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   const markdown = withConnectorMentionLinks(children, mentions, token);
@@ -318,7 +344,7 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
             }
             return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
           },
-          code: MarkdownCode,
+          code: (properties) => <MarkdownCode {...properties} telemetry={telemetry} />,
           pre: ({ children: preChildren }) => <>{preChildren}</>,
           table: MarkdownTable,
         }}
@@ -337,24 +363,124 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
   );
 }
 
+/**
+ * What a person can do with a finished turn: copy it, or keep it as a file.
+ *
+ * Both exports render the same `MarkdownBody` the turn above is made of, so the
+ * saved card cannot drift from what was on screen —
+ * [`docs/message-export.md`](../../../../../docs/message-export.md) owns the rest.
+ * A dismissed save dialog is not a failure and says nothing; a render or a write
+ * that failed replaces the label until the pointer leaves, because unlike a
+ * failed copy there is no other copy of the file to fall back on.
+ */
+function exportStatusMessage(saving: MessageExportFormat | null, failed: MessageExportFormat | null): string {
+  const noun = (format: MessageExportFormat): string => (format === 'image' ? 'image' : 'PDF');
+  if (saving) return `Preparing the ${noun(saving)}…`;
+  if (failed) return `The ${noun(failed)} could not be saved.`;
+  return '';
+}
+
+function AssistantMessageActions({ mentions, telemetry, text }: {
+  mentions: MessageMention[];
+  telemetry?: MessageCopyTelemetry;
+  text: string;
+}): React.JSX.Element {
+  const [saving, setSaving] = useState<MessageExportFormat | null>(null);
+  const [failed, setFailed] = useState<MessageExportFormat | null>(null);
+  const exportsAvailable = desktopServicesAvailable();
+
+  const copyResponse = async (): Promise<void> => {
+    await desktopBridge().copyText(text);
+    if (telemetry) reportTelemetryProductIntent({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+    });
+  };
+
+  const save = async (format: MessageExportFormat): Promise<void> => {
+    if (saving) return;
+    setSaving(format);
+    setFailed(null);
+    try {
+      await saveMessageExport({
+        content: <MarkdownBody mentions={mentions}>{text}</MarkdownBody>,
+        fileName: messageExportFileName(text, messageExportDate(new Date())),
+        format,
+      });
+    } catch (error) {
+      // The label says one attempt failed; the console is where the reason is,
+      // and it is the only trail a support conversation has to go on.
+      logError('avalon', `could not save this message as ${format === 'image' ? 'an image' : 'a PDF'}`, error);
+      setFailed(format);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <footer
+      className="agent-message-actions"
+      // The row itself is transient, so the failure on it should be too: it has
+      // been read by the time the pointer leaves, and a stale "Image failed"
+      // sitting under a turn the next day reads as a broken feature rather than
+      // as one attempt that did not work.
+      onPointerLeave={() => setFailed(null)}
+    >
+      <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
+      {exportsAvailable && (
+        <>
+          <button
+            aria-busy={saving === 'image' || undefined}
+            aria-label="Download response as an image"
+            disabled={saving !== null}
+            onClick={() => void save('image')}
+            type="button"
+          >
+            {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+            {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+            {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
+            {failed === 'image' ? 'Image failed' : 'Image'}
+          </button>
+          <button
+            aria-busy={saving === 'pdf' || undefined}
+            aria-label="Save response as a PDF"
+            disabled={saving !== null}
+            onClick={() => void save('pdf')}
+            type="button"
+          >
+            {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+            {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+            {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
+            {failed === 'pdf' ? 'PDF failed' : 'PDF'}
+          </button>
+          {/* Each button keeps a fixed accessible name so it stays findable, which
+              means neither the spinner nor the changed label announces anything on
+              its own. This is where the state is spoken. */}
+          <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
+        </>
+      )}
+    </footer>
+  );
+}
+
 export function AssistantMessageContent({
   mentions = [],
   showCopy = true,
   streaming = false,
   text,
+  telemetry,
 }: {
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
   text: string;
+  telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
+      {text ? <MarkdownBody mentions={mentions} telemetry={telemetry}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
-        <footer className="agent-message-actions">
-          <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
-        </footer>
+        <AssistantMessageActions mentions={mentions} telemetry={telemetry} text={text} />
       )}
       {streaming && <span className="streaming-caret" aria-hidden="true" />}
     </>
@@ -858,7 +984,10 @@ export function MessageBlock({
               ) : null}
               {message.text ? (
                 <div className="human-message-bubble">
-                  <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>
+                  <MarkdownBody
+                    mentions={message.mentions}
+                    telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                  >{message.text}</MarkdownBody>
                 </div>
               ) : null}
             </div>
@@ -875,6 +1004,7 @@ export function MessageBlock({
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
+                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
               />
             </>
           )}

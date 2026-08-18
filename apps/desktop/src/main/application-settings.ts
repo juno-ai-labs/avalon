@@ -16,6 +16,13 @@ export interface StoredApplicationSettings {
    * login item off does not get it switched back on by the next launch.
    */
   launchAtLoginDefaultApplied: boolean;
+  /** Desired account choice. Collection is effective only when this is true
+   * and the corresponding mutation is not pending acknowledgement. */
+  productAnalyticsEnabled: boolean;
+  /** Last canonical account version acknowledged by the regional API. */
+  productAnalyticsPreferenceVersion: number;
+  /** A durable offline mutation. Both enable and disable fail closed while set. */
+  productAnalyticsPreferencePending: boolean;
 }
 
 interface StoredApplicationSettingsFile extends StoredApplicationSettings {
@@ -27,6 +34,9 @@ export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   debugEnabled: false,
   menuBarEnabled: true,
   launchAtLoginDefaultApplied: false,
+  productAnalyticsEnabled: true,
+  productAnalyticsPreferenceVersion: 0,
+  productAnalyticsPreferencePending: false,
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
@@ -39,6 +49,9 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
     debugEnabled?: unknown;
     menuBarEnabled?: unknown;
     launchAtLoginDefaultApplied?: unknown;
+    productAnalyticsEnabled?: unknown;
+    productAnalyticsPreferenceVersion?: unknown;
+    productAnalyticsPreferencePending?: unknown;
   };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
     return defaultStoredApplicationSettings;
@@ -53,6 +66,15 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
     // withdraw the status item from every device that upgraded.
     menuBarEnabled: candidate.menuBarEnabled !== false,
     launchAtLoginDefaultApplied: candidate.launchAtLoginDefaultApplied === true,
+    productAnalyticsEnabled: typeof candidate.productAnalyticsEnabled === 'boolean'
+      ? candidate.productAnalyticsEnabled
+      : true,
+    productAnalyticsPreferenceVersion: typeof candidate.productAnalyticsPreferenceVersion === 'number'
+      && Number.isSafeInteger(candidate.productAnalyticsPreferenceVersion)
+      && candidate.productAnalyticsPreferenceVersion >= 0
+      ? candidate.productAnalyticsPreferenceVersion
+      : 0,
+    productAnalyticsPreferencePending: candidate.productAnalyticsPreferencePending === true,
   };
 }
 

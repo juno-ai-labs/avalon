@@ -3,6 +3,7 @@
   "name": "avalon-api-eu",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
@@ -16,6 +17,11 @@
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
     "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
     "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
+    "DAYTONA_API_URL": "https://app.daytona.io/api",
+    "DAYTONA_TARGET": "us",
+    "DAYTONA_TERMINAL_SNAPSHOT": "daytona-small",
+    "TERMINAL_REGION_CAPABILITY": "unsupported",
+    "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
@@ -38,6 +44,7 @@
     "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS": "20000",
     "HARNESS_TTFT_TIMEOUT_MS": "45000",
     "HARNESS_STREAM_IDLE_TIMEOUT_MS": "30000",
+    "HARNESS_TRANSPORT_RETRIES": "1",
     "TOOL_DEFAULT_TIMEOUT_MS": "30000",
     "CONNECTOR_POLL_TIMEOUT_MS": "20000",
     "WEB_SEARCH_MAX_RESULTS": "8",
@@ -96,23 +103,47 @@
       "binding": "GLOBAL_SLACK_ROUTER",
       "service": "avalon-api-global",
       "entrypoint": "SlackRoutingBridge"
+    },
+    {
+      "binding": "GLOBAL_TELEMETRY_CONTROL",
+      "service": "avalon-api-global",
+      "entrypoint": "TelemetryControlBridge"
     }
   ],
+  // These are one-time hosted EU resources: Wrangler deploy validates the
+  // binding shape but does not create the buckets. The deployment preflight
+  // reads this list and proves every name exists in the EU jurisdiction before
+  // migrations or deployment.
   "r2_buckets": [
-    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" }
+    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" },
+    { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }
   ],
   "analytics_engine_datasets": [
-    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
+    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
+    { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }
   ],
   "images": { "binding": "IMAGES" },
+  "containers": [
+    {
+      "name": "avalon-eu-crash-symbolicator",
+      "class_name": "CrashSymbolicatorContainer",
+      "image": "./crash-symbolicator/Dockerfile",
+      "max_instances": 5,
+      "instance_type": "basic",
+      "constraints": { "jurisdiction": "eu", "regions": ["EEUR", "WEUR"] },
+      "ssh": { "enabled": false }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
-      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" }
+      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
+      { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] }
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] }
   ],
   "queues": {
     "producers": [

@@ -1,4 +1,4 @@
-import { AgentModelOverrideSchema } from "@avalon/contracts";
+import { AgentModelOverrideSchema, type AgentModelOverride } from "@avalon/contracts";
 import { z } from "zod";
 import { HYPERSIGHT_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -65,15 +65,6 @@ const AgentModelRoutingSchema = z.object({
 });
 
 /**
- * Roles whose route plan a flag may retarget but not widen. A HyperSight block
- * pins one model and never routes onward so a refresh cannot change voice
- * partway through a configuration; that invariant belongs to the product, not
- * to whoever last edited the flag, so a served `fallbackModels` is dropped
- * rather than honoured.
- */
-const NO_FALLBACK_ROLES: ReadonlySet<AgentModelRole> = new Set<AgentModelRole>(["hypersight"]);
-
-/**
  * Who the evaluation is for. The identifiers are all a caller has to supply;
  * the attributes a rule matches on beyond them are looked up from these, in
  * `flag-targeting-attributes.ts`.
@@ -117,8 +108,11 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "workstream_description":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     case "hypersight":
-      // HyperSight blocks pin one model and never route onward, so a refreshed
-      // block cannot silently change voice partway through a configuration.
+      // No fallbacks by default: a block that routes onward mid-configuration
+      // can change voice between refreshes, so routing is something an operator
+      // turns on for HyperSight deliberately rather than the state it starts in.
+      // This is the checked-in default, not an invariant — a `fallbackModels`
+      // served by `agent-model-hypersight` is honoured like any other role's.
       return { model: HYPERSIGHT_MODEL, fallbackModels: [] };
     default: {
       const exhaustive: never = role;
@@ -238,16 +232,6 @@ export async function resolveAgentModelRouting(
     attributes: Object.keys(attributes).sort().join(","),
     model: parsed.data.model,
   });
-  if (NO_FALLBACK_ROLES.has(role) && parsed.data.fallbackModels.length > 0) {
-    logStructuredEvent(env, "warn", "agent_model_flag_fallbacks_ignored", {
-      agent: role,
-      flag_key: flagKey,
-      workspace_id: context.workspaceId,
-      model: parsed.data.model,
-      ignored_fallback_count: parsed.data.fallbackModels.length,
-    });
-    return { model: parsed.data.model, fallbackModels: [] };
-  }
   return { model: parsed.data.model, fallbackModels: parsed.data.fallbackModels };
 }
 
@@ -275,7 +259,7 @@ export async function scheduledWorkstreamModel(
  * model be retired from `AGENT_MODEL_OVERRIDES` without a migration: the work
  * streams pinned to it quietly return to the flag.
  */
-export function agentModelOverride(value: unknown): string | null {
+export function agentModelOverride(value: unknown): AgentModelOverride | null {
   const parsed = AgentModelOverrideSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }

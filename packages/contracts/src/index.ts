@@ -7,6 +7,49 @@ export * from "./attachment-contracts";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
+  TELEMETRY_BATCH_MAX_BYTES,
+  TELEMETRY_CATEGORIES,
+  TELEMETRY_APPLICATION_ICON_IDS,
+  TELEMETRY_EVENTS,
+  TELEMETRY_IDENTITY_SCOPES,
+  TELEMETRY_SOURCES,
+  AnonymousTelemetryBatchSchema,
+  CrashIngestResponseSchema,
+  LinkAnonymousTelemetryResponseSchema,
+  TelemetryAcceptanceBatchResponseSchema,
+  TelemetryAcceptanceResultSchema,
+  TelemetryBootstrapRequestSchema,
+  TelemetryBootstrapResponseSchema,
+  TelemetryRouteResponseSchema,
+  ProductAnalyticsPreferenceSchema,
+  UpdateProductAnalyticsPreferenceSchema,
+  TelemetryBatchSchema,
+  TelemetryBreadcrumbSchema,
+  TelemetryBreadcrumbSidecarSchema,
+  TelemetryEnvelopeSchema,
+  telemetryEventNames,
+  TELEMETRY_CONNECTOR_TYPES,
+  type TelemetryBatch,
+  type TelemetryApplicationIconId,
+  type TelemetryBreadcrumb,
+  type TelemetryBreadcrumbSidecar,
+  type AnonymousTelemetryBatch,
+  type CrashIngestResponse,
+  type LinkAnonymousTelemetryResponse,
+  type TelemetryAcceptanceBatchResponse,
+  type TelemetryAcceptanceResult,
+  type TelemetryBootstrapRequest,
+  type TelemetryBootstrapResponse,
+  type TelemetryRouteResponse,
+  type ProductAnalyticsPreference,
+  type TelemetryCategory,
+  type TelemetryEnvelope,
+  type TelemetryEventName,
+  type TelemetryEventProperties,
+  type TelemetryIdentityScope,
+  type TelemetrySource,
+} from "./telemetry";
+export {
   WORKSTREAM_LINK_PATH_PREFIX,
   isWorkstreamId,
   parseWorkstreamLink,
@@ -35,7 +78,22 @@ export const HarnessFailureCodeSchema = z.enum([
   "harness_execution_failed",
   "context_limit_exceeded",
   "tool_surface_too_large",
-  "ambiguous_external_write"
+  "ambiguous_external_write",
+  // Every route candidate answered with a transport fault the provider owns —
+  // no response, a 408/429, or a 5xx. Distinct from `harness_execution_failed`
+  // because the two send a reader to different places: this one is the
+  // provider's outage and is worth retrying, that one is Avalon's own defect
+  // and is not. Collapsing them cost an investigation once already; see
+  // `docs/agent-harness.md`.
+  "provider_unavailable",
+  // Avalon declined to call the endpoint at all: its circuit breaker had already
+  // opened, so the run was refused before a request went out. Separate from
+  // `provider_unavailable` because the breaker also opens on 401/402/403, which
+  // are Avalon's credential and credit rather than the provider's health — and
+  // naming those as the provider's is exactly what the sibling code forbids.
+  // The member-facing remedy is the same for both; the codes differ so an
+  // operator can tell "we tried and got nothing" from "we did not try".
+  "provider_circuit_open"
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 
@@ -256,6 +314,22 @@ export const WorkstreamSchema = z.object({
    * them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
+  /**
+   * The model this work stream is pinned to, ahead of `agent-model-workstream`,
+   * or null for the ordinary unpinned case. Decided once at creation and fixed
+   * for the work stream's life.
+   *
+   * On the wire so the composer's model pill can name the model a *pinned* work
+   * stream will run on even when no run has recorded one yet — a run that failed
+   * before its first token leaves `harness_runs.model` null, and a pill that
+   * answered **Default** there would be stating something false about a work
+   * stream that never consults the flag.
+   *
+   * Re-validated against the closed set on the way out, so a model retired from
+   * `AGENT_MODEL_OVERRIDES` reads as null here exactly as it resolves on the
+   * server: back to the flag.
+   */
+  modelOverride: AgentModelOverrideSchema.nullable().default(null),
   /** The first one-shot wake-up still waiting to fire, if there is one. */
   nextPendingWakeup: z.object({
     dueAt: TimestampSchema,
@@ -445,6 +519,7 @@ export const ConnectionSchema = z.object({
   displayName: z.string().min(1).max(180),
   grantedCapabilities: z.array(z.string()),
   status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
+  settingsKind: z.enum(["github_repository_access"]).nullable().default(null),
   /**
    * Set when this connection can deliver automation results to the requesting
    * user right now — the connector declares the surface and, where the
@@ -459,6 +534,34 @@ export const ConnectionSchema = z.object({
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+
+export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
+export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
+export const GitHubRepositoryAccessEntrySchema = z.object({
+  repositoryId: z.string().min(1).max(100),
+  repositoryFullName: z.string().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
+  remoteAccess: GitHubRepositoryRemoteAccessSchema,
+}).strict();
+export const GitHubRepositoryAccessSettingsSchema = z.object({
+  connectionId: IdSchema,
+  connectionName: z.string().min(1).max(180),
+  revision: z.number().int().nonnegative(),
+  mode: GitHubRepositoryAccessModeSchema,
+  defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
+  repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
+  availableRepositories: z.array(z.object({
+    repositoryId: z.string().min(1).max(100),
+    repositoryFullName: z.string().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
+    private: z.boolean(),
+    remoteAccess: GitHubRepositoryRemoteAccessSchema.nullable(),
+  }).strict()).max(1_000),
+}).strict();
+export const UpdateGitHubRepositoryAccessSettingsSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  mode: GitHubRepositoryAccessModeSchema,
+  defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
+  repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
+}).strict();
 
 export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
 export const ActivitySourceBindingKeySchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u);
@@ -900,6 +1003,8 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
      * keeping the key it opened the conversation with.
      */
     draftId: IdSchema,
+    elicitationId: IdSchema.nullable().default(null),
+    elicitationPresentedAt: TimestampSchema.nullable().default(null),
     draft: AutomationDraftSchema,
     assistantMessage: z.string().min(1)
   }),
@@ -930,6 +1035,8 @@ export const AutomationDraftStateSchema = z.object({
   draftId: IdSchema,
   messages: z.array(AutomationCompilerMessageSchema),
   attachmentIds: z.array(IdSchema).default([]),
+  elicitationId: IdSchema.nullable().default(null),
+  elicitationPresentedAt: TimestampSchema.nullable().default(null),
   draft: AutomationDraftSchema
 });
 
@@ -1143,10 +1250,13 @@ export const WorkOpportunityPageSchema = z.object({
 });
 export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
   opportunityIds: z.array(IdSchema).max(4),
+  surface: z.enum(["menu_bar", "workspace_home"]),
 });
 export const StartWorkOpportunityRequestSchema = z.object({
   version: z.number().int().positive(),
   idempotencyKey: z.string().trim().min(1).max(120),
+  surface: z.enum(["menu_bar", "workspace_home"]).optional(),
+  position: z.number().int().min(1).max(4).optional(),
 });
 
 export const UpdateWorkstreamRequestSchema = z.object({
@@ -1165,6 +1275,11 @@ export const UpdateWorkstreamRequestSchema = z.object({
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
+  entrypoint: z.enum([
+    'direct', 'sidebar_new', 'sidebar_pinned', 'sidebar_recent', 'sidebar_note', 'sidebar_automation',
+    'home_waiting', 'home_suggested', 'menu_bar', 'command_shortcut', 'deep_link', 'notification',
+    'automation_run_list', 'in_app_link', 'settings', 'unknown',
+  ]).optional(),
 });
 
 /**
@@ -1257,6 +1372,15 @@ export const CompileAutomationRequestSchema = z.object({
   messages: z.array(AutomationCompilerMessageSchema).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  inputMode: z.enum(['typed', 'suggested_prompt', 'elicitation_response', 'edit']).default('typed'),
+  connectorMentionCount: z.number().int().min(0).max(100).default(0),
+  resolvedElicitation: z.object({
+    id: IdSchema,
+    responseType: z.enum(['free_text', 'single_select', 'multi_select']),
+    resolution: z.enum(['answered', 'skipped']),
+    customResponseUsed: z.boolean(),
+    presentedAt: TimestampSchema,
+  }).optional(),
 });
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
@@ -1530,6 +1654,8 @@ export const SlackOriginNearbyMessageSchema = z.object({
 
 export const SlackOriginContextSchema = z.object({
   teamId: z.string().min(1).max(255),
+  /** Slack member whose message triggered this run; server-owned delivery routing metadata. */
+  actorSlackUserId: z.string().min(1).max(255).optional(),
   channelId: z.string().min(1).max(255).nullable(),
   channelName: z.string().min(1).max(255).nullable(),
   threadTs: z.string().min(1).max(80).nullable(),
@@ -1592,6 +1718,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
    */
   digestDeliveryId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
+  /** Server-injected correlation for a user-started semantic run journey. */
+  telemetryOperationId: IdSchema.optional(),
+  /** Regional user record that owns the correlated run; never accepted from the client body. */
+  telemetrySubjectUserId: IdSchema.optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   reason: z.string().min(1).max(500)
@@ -1663,7 +1793,7 @@ export const ToolDefinitionSchema = z.object({
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
-  timeoutMs: z.number().int().positive().max(300_000).optional()
+  timeoutMs: z.number().int().positive().max(1_050_000).optional()
 });
 
 /**
@@ -2000,6 +2130,11 @@ export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
 export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
 export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
+export type GitHubRepositoryRemoteAccess = z.infer<typeof GitHubRepositoryRemoteAccessSchema>;
+export type GitHubRepositoryAccessMode = z.infer<typeof GitHubRepositoryAccessModeSchema>;
+export type GitHubRepositoryAccessEntry = z.infer<typeof GitHubRepositoryAccessEntrySchema>;
+export type GitHubRepositoryAccessSettings = z.infer<typeof GitHubRepositoryAccessSettingsSchema>;
+export type UpdateGitHubRepositoryAccessSettings = z.infer<typeof UpdateGitHubRepositoryAccessSettingsSchema>;
 export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
 export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
@@ -2051,6 +2186,65 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+
+export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
+export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
+export const TerminalWorkspaceSettingsSchema = z.object({
+  availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
+  mode: TerminalNetworkModeSchema,
+  revision: z.number().int().positive(),
+  verificationState: TerminalNetworkVerificationStateSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  failureCode: z.string().min(1).max(160).nullable(),
+}).strict();
+export const PreviewTerminalNetworkPolicyRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  mode: TerminalNetworkModeSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+}).strict();
+export const TerminalNetworkPolicyPreviewSchema = z.object({
+  mutationId: IdSchema,
+  expectedRevision: z.number().int().positive(),
+  proposedMode: TerminalNetworkModeSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  affectedWorkstreamIds: z.array(IdSchema).max(1_000),
+  affectedWorkstreams: z.array(z.object({
+    id: IdSchema,
+    title: z.string().min(1).max(500),
+  }).strict()).max(1_000),
+  warning: z.string().min(1).max(1_000),
+}).strict();
+export const ApplyTerminalNetworkPolicyRequestSchema = z.object({
+  mutationId: IdSchema,
+  expectedRevision: z.number().int().positive(),
+  confirmed: z.literal(true),
+}).strict();
+export const TerminalSandboxStateSchema = z.enum([
+  "absent", "starting", "running", "stopped", "archived", "restoring", "expired", "failed",
+]);
+export const TerminalSelectedRepositorySchema = z.object({
+  id: z.number().int().positive(),
+  fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+  baseRef: z.string().min(1).max(240),
+  baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
+  headRef: z.string().min(1).max(240),
+}).strict();
+export const TerminalWorkstreamStateSchema = z.object({
+  availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
+  state: TerminalSandboxStateSchema,
+  lastActivityAt: TimestampSchema.nullable(),
+  expiresAt: TimestampSchema.nullable(),
+  retentionWarning: z.enum(["expires_within_7_days", "expires_within_24_hours"]).nullable(),
+  localFilesRetained: z.boolean(),
+  finalDiffResourceId: IdSchema.nullable(),
+  failureCode: z.string().min(1).max(160).nullable(),
+  repository: TerminalSelectedRepositorySchema.nullable(),
+}).strict();
+export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
+export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;
+export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSchema>;
 export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;

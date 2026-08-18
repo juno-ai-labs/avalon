@@ -32,12 +32,22 @@ Create independent resource sets for `global` and `eu`:
 
 - A D1 database
 - An R2 payload bucket
+- A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
+  EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
 - An activity Queue and dead-letter Queue
-- The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
+- The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
+  Container declared in the regional Wrangler file
 
 One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
+
+Wrangler validates an R2 binding without proving its named bucket exists. Run
+`pnpm cloudflare:resources:check` after provisioning or changing either regional
+Wrangler file; the API deployment runs the same read-only check before any
+remote migration or Worker deploy and logs every required region, binding,
+bucket, and jurisdiction. A missing bucket is an infrastructure failure even if
+the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
 
@@ -56,12 +66,145 @@ Set these shared Worker secrets separately in each regional deployment:
 - `OAUTH_STATE_ENCRYPTION_KEY`
 - `CONNECTOR_CREDENTIALS_KEY`
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
+- `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
+  principal accepted by that region's restricted telemetry operator surface
+
+Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker when PostHog delivery is
+enabled. The checked-in Global configuration fixes `POSTHOG_HOST` to the approved
+US ingest origin; EU must have neither value. Until the token is provisioned,
+regional collection remains healthy and Global accepted rows stay inside Avalon
+until their normal deadline. `TELEMETRY_CAPABILITY_SIGNING_KEY` is an optional
+Global-only hardening boundary: when absent, onboarding capabilities use the
+existing Global `SESSION_SIGNING_KEY`; EU always sends the capability to the
+narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and receives only a
+route/epoch control projection. An absent `TELEMETRY_OPERATORS_JSON` disables
+only that region's internal operator surface with a 503 and does not disable
+collection. Enabling the dedicated signer is an immediate key cutover: schedule
+it for low traffic or accept that capabilities issued under the session key in
+the preceding hour will fail verification and clients must bootstrap again.
+Rotating whichever key is active has the same one-hour boundary. The desktop
+release workflow also requires repository variables
+`AVALON_GLOBAL_TELEMETRY_R2_BUCKET` and `AVALON_EU_TELEMETRY_R2_BUCKET` so it can
+publish source maps and native symbols to both private regional buckets before
+distribution.
 
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
 
 To rotate connector credentials in one region, keep the old key, set `CONNECTOR_CREDENTIALS_KEY` to a newly generated key, increment `CONNECTOR_CREDENTIALS_KEY_VERSION`, and set `CONNECTOR_CREDENTIALS_KEYS_JSON` to a JSON object such as `{"1":"<old key>"}`. Deploy, exercise connector reads/health checks until every row reports the new version, then remove the old mapping. Never increment the version without retaining every key version still referenced by a row; those rows fail closed until that historical key is restored.
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
+
+### Terminal provider activation and recovery
+
+Terminal is fail-closed per region. Global is enabled for the configured Daytona
+`us` target and `daytona-small` snapshot; EU remains checked in with
+`TERMINAL_REGION_CAPABILITY=unsupported` even though its provider values are
+preconfigured. Presence of provider values never implies availability. Leave
+any unverified region unsupported until its Daytona data residency,
+private-sandbox isolation, managed snapshot bootstrap, native domain policy,
+secret-host restriction, stop/archive/restore, and deletion behavior have
+passed for that exact target and provider version. There is no cross-region
+fallback.
+
+An activated region requires:
+
+- `TERMINAL_REGION_CAPABILITY=supported` and
+  `TERMINAL_EMERGENCY_DISABLED=false`;
+- `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
+  `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
+- `DAYTONA_API_KEY` as a regional Worker secret. Never put the Daytona project
+  credential in a `VITE_` variable, D1, a sandbox environment value, or a
+  checked-in Wrangler file.
+
+If any required Daytona value is absent, Avalon treats that region as
+`unsupported` and continues starting without the Terminal plugin. This is the
+normal local-development state. Once every value is present, malformed values
+still fail the environment contract so an intended provider rollout cannot
+silently run against the wrong endpoint.
+
+The managed-snapshot compatibility contract is
+`apps/api/src/services/terminal/snapshot-manifest.ts`: Bash, Python,
+JavaScript/Node.js, TypeScript, SQLite, apt/dpkg, pip/uv, npm/pnpm, Git, `gh`,
+and passwordless sudo. First creation idempotently adds any missing launch tools
+through the Trusted-only apt/npm hosts and then executes every probe. A runtime
+or manager is not supported merely because it happens to exist in one image;
+add its functional probe and update the Terminal prompt in the same change.
+
+Before enabling a region, place the candidate configuration only in the local
+operator environment. The current configuration can be checked immediately:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider-interface
+```
+
+The interface probe needs only the six normal Terminal/Daytona variables and is
+appropriate for local credential, snapshot, filesystem, command-session,
+lifecycle, policy-update, and cleanup verification. It is destructive only to
+the private disposable sandbox it creates. It does not replace the full network
+acceptance gate or controlled DNS-rebinding evidence.
+
+For the full activation gate, also provide two controlled HTTPS endpoints:
+`TERMINAL_PROBE_REDIRECT_URL` must be an allowed public host that redirects to a
+blocked host, and `TERMINAL_PROBE_PRIVATE_DNS_URL` must be an allowed public name
+that resolves to a private/special-use address. Then run:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider
+```
+
+The automated acceptance probe creates one private Trusted-only sandbox,
+verifies the exact effective allowlist, a binary upload/download round-trip,
+every promised runtime/manager, allowed and denied domains, direct-IP, redirect,
+private-DNS, and metadata denial. It then checks stop/restart, archive/restore,
+deletion, and observed absence; cleanup failure is a failed probe and success is
+printed only afterward. It also prints create,
+policy-read-back, compatibility-install, manifest-verification, and start phase
+timings from that disposable sandbox. These are acceptance evidence, not the
+production distribution used for the image decision. The automated result is
+not sufficient by itself: the activation record must also contain controlled
+evidence for TTL-changing public-to-private DNS rebinding and host-scoped secret
+substitution against an alternate host. Preserve those results with the provider
+version, target, snapshot ID, region, and vendor residency evidence; never
+preserve configuration values, canary secret values, or endpoint credentials.
+Only after the complete record exists should the Wrangler region be changed to
+`supported`, the three non-secret values be configured, the API key be set, and
+that region deployed.
+
+Once enabled, query the durable aggregate measurements with:
+
+```text
+pnpm terminal:analytics -- --days 7
+pnpm terminal:analytics -- --days 30 --region eu --snapshot daytona-small
+```
+
+The command uses `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` restricted
+to **Account Analytics: Read**. Its start/end line is the actual first and last
+Analytics Engine observation in the requested window, not merely the requested
+date boundary.
+
+Use the structured events `terminal_tool_finished`,
+`terminal_sandbox_lifecycle_transition`, and
+`terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
+For regional durable diagnosis, query counts/ages and exact IDs from
+`workstream_sandboxes`, `sandbox_tasks`,
+`workspace_sandbox_network_policy_mutations`, and `repository_publications`;
+inspect generated logs/diffs only through Avalon's authorized resource surface.
+The oldest running `last_activity_at`, nonterminal task beyond
+`command_deadline_at`, expired lifecycle claim, failed policy verification, or
+`ambiguous` publication points to the owning reconciler rather than permission to
+repeat the provider write.
+
+For a provider-wide egress, isolation, or secret incident, set
+`TERMINAL_EMERGENCY_DISABLED=true` and deploy the affected region first. The
+plugin remains visible so its normal tool contract can explain the outage, but
+new sandbox leases and publication starts fail closed with
+`sandbox_unavailable`; regional receipts and generated resources remain intact.
+Revoke/rotate the Daytona project key and GitHub App
+credentials as the incident requires, reconcile retained provider sandboxes
+against `workstream_sandboxes`, and run the full real-provider probe before
+clearing the emergency switch. Do not bulk-delete provider sandboxes by label
+without matching the exact regional D1 workspace/work-stream/generation rows;
+final diffs and ambiguous publication state may still require preservation.
 
 Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
 
@@ -392,7 +535,7 @@ The production-approved connector scopes use `gmail.modify` for the Gmail capabi
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
-Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
+Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; public-site telemetry uses `https://with-avalon.com` and `https://www.with-avalon.com`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
 
 ## Realtime operations and cost controls
 
@@ -471,6 +614,7 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
+| Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
 
@@ -576,6 +720,63 @@ Every `writeDataPoint` is one billable write regardless of how many fields it
 contains, which is another reason to record one terminal summary rather than
 every churn.
 
+### Terminal platform analytics
+
+Both API Workers bind `TERMINAL_ANALYTICS` to the account-level
+`avalon_terminal_operations` dataset. This dataset has one point per Daytona
+platform operation and is intentionally separate from `avalon_agent_runs`: a
+provider create/bootstrap/start is a different grain from a completed model
+run. Writes are non-blocking and advisory. A failed analytics write cannot
+change sandbox state.
+
+The fixed `terminal_platform_v1` positions are:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `terminal:<region>` sampling cohort; snapshot remains a grouped blob |
+| `blob1` | schema version |
+| `blob2` | `sandbox_create`, `sandbox_bootstrap`, or `sandbox_start` |
+| `blob3` | `completed`, `failed`, or `policy_mismatch` |
+| `blob4` | Avalon region |
+| `blob5` | configured Daytona snapshot |
+| `blob6` | source lifecycle state (`absent`, `stopped`, `archived`, and so on) |
+| `blob7` | failed phase, or `none` |
+| `blob8` | sorted compatibility capabilities installed, or `none` |
+| `blob9` | Avalon app version |
+| `blob10` | build SHA |
+| `double1` | total operation milliseconds |
+| `double2` | provider create milliseconds |
+| `double3` | provider policy read-back milliseconds |
+| `double4` | workspace/package compatibility-install milliseconds |
+| `double5` | full capability-manifest verification milliseconds |
+| `double6` | number of compatibility capabilities installed |
+
+No point contains a workspace, work stream, run, user, sandbox, repository,
+resource, command, path, output, or credential identifier. The dataset therefore
+answers fleet/image questions, not exact-work-stream diagnosis. Exact state
+continues to come from regional D1 and structured Workers Logs.
+
+`pnpm terminal:analytics` sends sampling-aware SQL to Cloudflare's documented
+[Analytics Engine SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/).
+It reports the actual observed start/end, estimated operation counts, and
+average/p50/p95/max total latency. Create is decomposed into allocation and
+policy read-back; bootstrap into read-back, compatibility installation, and
+verification; start is labeled as stopped-sandbox warming or archived restore.
+It also expands the fixed installed-capability set into human-readable counts.
+Use `--days 1..90`, `--region global|eu|all`, and an optional safe snapshot name.
+Analytics Engine retains these points for three months.
+
+The report intentionally refuses to recommend an owned image before 100
+successful bootstraps in the selected cohort. At or beyond that sample, a
+compatibility-install p95 above ten seconds triggers a prebuilt-snapshot
+benchmark—not an automatic switch. Run paired disposable creates in the same
+Daytona target and retain manifest verification in both variants. Adopt an owned
+snapshot only when its first-ready improvement is material after including
+provider create/read-back, warming, archived restore, failure rate, image build
+and activation work, and the cost of following managed Daytona updates. A custom
+image cannot claim savings from verification, because Avalon keeps that phase
+for either image.
+
 Automatic tracing is enabled on both API Workers and on the retention Worker at
 a `traces` head sampling rate of 1. It is a separate switch from logs: the
 `enabled`/`head_sampling_rate` pair at the top of an `observability` block
@@ -639,7 +840,10 @@ did not happen, and it cannot be turned on retroactively.
    SELECT id, title, workspace_id FROM workstreams WHERE id = '<uuid>';
    ```
 3. **List the turns.** One row per model request, with its `turn_id`, model,
-   outcome, token counts, and the R2 `object_key`. Lead with the `workspace_id`
+   outcome, token counts, and the R2 `object_key`. A `turn_id` may repeat: each
+   row is one *attempt*, so a turn that fell back to another model or was
+   re-executed after a transport fault has several, and duplicates are the retry
+   trail rather than a data defect. Lead with the `workspace_id`
    from step 2 — the index is `(workspace_id, workstream_id, created_at DESC)`,
    so a filter on the work stream alone still answers but scans:
 
@@ -669,12 +873,170 @@ curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
 
+Add `-H "cf-r2-jurisdiction: eu"` to every REST object request for
+`avalon-eu-payloads` or `avalon-eu-telemetry`; omit it only for Global buckets.
+Without that header Cloudflare addresses the default jurisdiction and a real EU
+object appears to be missing.
+
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
 scratch directory, keep it out of logs, tickets, and commits, and delete it when
 the investigation is done. What the feature stores and why is
 [`agent-harness.md`](agent-harness.md#failure-modes-and-limits); this section is
 only how to read it back.
+
+## Regional telemetry
+
+The five-minute scheduled Worker pass is the normal telemetry operator. In each
+region it reaps expired rows and raw objects, suppresses opted-out attributable
+work, repairs stale crash-processing claims, processes crash and event/profile
+outboxes, and emits one content-free `telemetry_operations_snapshot`. The fixed
+fields are pending and terminal counts for accepted events, crashes, and profiles;
+rejection and open-circuit counts; and the age of each oldest pending queue. No
+event properties, person details, dump bytes, object keys, or stack report may be
+added to this log.
+
+Alert when any destination circuit is open, a terminal count is nonzero, a
+backlog remains older than 15 minutes, processing failures persist, matching
+symbols are unavailable for a current release, or a deletion pass leaves expired
+rows or objects. Always inspect Global and EU independently. EU has no PostHog or
+Analytics Engine telemetry destination, so a Global delivery graph says nothing
+about EU health.
+
+The public site makes `GET /telemetry/route`, then the ordinary anonymous
+bootstrap/ingest calls. The route response must be `Cache-Control: no-store` and
+must not create a `telemetry_onboarding_journeys` row. A Global route may reuse a
+first-party browser epoch; an EU route must remain page-scoped. Verify both paths
+after changing CORS, the site deployment, the Global custom domain, or
+`EU_TELEMETRY_BRIDGE`; see [`public-site-telemetry.md`](public-site-telemetry.md).
+
+### Operator access
+
+Each regional Worker receives its own `TELEMETRY_OPERATORS_JSON` secret. It is a
+JSON object with at most 25 entries; each key is a distinct 32–256 character
+bearer token and each value is a fixed principal:
+
+```json
+{
+  "<opaque-token>": {
+    "operatorId": "<operator-uuid>",
+    "role": "support"
+  }
+}
+```
+
+The other role is `security`. Use independent tokens in Global and EU, add a new
+token before removing its predecessor during rotation, and never put a token in a
+URL, log, ticket, or shell history. Requests use `Authorization: Bearer <token>`
+against the owning regional API under `/internal/telemetry`:
+
+- `GET /status` returns the fixed regional operational snapshot to either role.
+- `POST /replay` accepts `{ "eventId", "reason" }` only from a `security`
+  principal. Replay is Global-only; `reason` is `destination_recovery` or
+  `incident_response`.
+- `GET /crashes/<crash-id>/raw?reason=customer_support` is for `support`;
+  `reason=incident_response` is for `security`. It streams one regional dump and
+  records the principal, reason, and fixed result code in
+  `telemetry_crash_access_audit`.
+- EU additionally exposes `GET /eu/crash-issues?limit=<1-100>` and
+  `POST /eu/crash-free-launches` with canonical `{ "from", "to" }` timestamps.
+  The same paths return `404` from Global.
+
+Start with `/status` in both regions. Use replay only for a known terminal Global
+event, and request raw bytes only when the reason genuinely requires them; neither
+operation is an exploratory listing surface.
+
+### Destination outage or open circuit
+
+1. Confirm product requests are healthy; telemetry failure must not fail or retry
+   the observed product action.
+2. Inspect the fixed destination state and oldest Global backlog age. Do not log or
+   export accepted envelopes while diagnosing transport.
+3. Verify the configured PostHog origin and secret presence without printing the
+   token. Ordinary event/profile batches preserve HTTP status: a 408, 429, 5xx, or
+   network error retries within the original deadline, while another 4xx is
+   terminal. SDK-backed JavaScript/native exception delivery exposes only flush
+   success/failure to Avalon, so any flush failure retries within the original
+   deadline. Investigate a persistent exception retry as a provider or contract
+   incident rather than replaying it blindly.
+4. Let the five-minute circuit cool down after restoring the destination. Confirm
+   pending age falls and the next snapshot reports no open circuit.
+5. If a bounded replay is required, call Global
+   `POST /internal/telemetry/replay` with the `security` operator credential and a
+   `destination_recovery` or `incident_response` reason.
+   It preserves event ID, payload hash, route, and deletion deadline. Never replay
+   an expired, suppressed, wrong-region, or opt-out row.
+
+### Backlog, rejection, or abuse
+
+Compare accepted, crash, and profile backlogs before changing a limit. A growing
+accepted/profile queue points at destination delivery; a growing crash queue may
+instead be symbolication or artifact access. Rejection buckets contain only fixed
+violation codes, registered event names or `unregistered`, and counts. A crash
+upload subject is one-way hashed and limited to ten newly accepted reports per
+hour; duplicates do not consume the limit. Do not raise the 50-event/256-KiB batch,
+20-MiB dump, or per-subject limit during an incident without a reviewed contract
+and cost change.
+
+### Missing source maps or native symbols
+
+Confirm the private artifact exists under the affected region, release, build,
+platform, and architecture in `TELEMETRY_PAYLOADS`. The release workflow publishes
+to both regional buckets using the two `AVALON_*_TELEMETRY_R2_BUCKET` variables;
+the application bundle must not contain source maps or native symbol archives.
+Republish the exact immutable artifact for that build rather than substituting a
+new build under the old key. An unavailable artifact yields an unsymbolicated
+report and remains bounded by the original 90-day occurrence deadline.
+
+### Prohibited data or raw-crash access
+
+Disable the affected registered producer first; do not broaden logger redaction as
+a substitute for stopping collection. Preserve the route and original deadline
+while identifying affected event IDs through fixed metadata. Delete prohibited
+internal rows and objects in their owning region, confirm the next lifecycle pass
+finds no survivors, and follow the separate incident/legal process for any data
+already delivered to PostHog.
+
+Raw dumps are accessed only through regional
+`GET /internal/telemetry/crashes/<crash-id>/raw` by opaque crash ID,
+authenticated operator, and `customer_support` or `incident_response` reason.
+Every attempt writes `telemetry_crash_access_audit`; logs and audit rows never
+contain the R2 key or dump contents. Do not download a dump merely to inspect
+whether it exists.
+
+### Cross-region route failure
+
+Check the route stored on the event or crash generation and the routing basis. A
+workspace binding is authoritative; an onboarding route is the immediate coarse
+classification made when the epoch began. Never rewrite the route, copy the row,
+or fall EU telemetry back to Global. Restore the named `EU_TELEMETRY_BRIDGE`,
+regional D1/R2, or processor and allow the existing regional retry to continue
+within its original deadline. If an affirmative-EU pre-workspace dump was saved,
+treat that as prohibited-data handling, not as a delivery problem.
+
+### Preference inconsistency
+
+A disabled account must have nonessential local reporting and upload stopped,
+the current Crashpad generation invalidated, attributable undelivered regional
+event/profile/crash work suppressed or deleted, and no later profile delivery.
+The desktop enables only after the canonical compare-and-set succeeds and reads
+the preference fail-closed on each authenticated startup. Reconcile the canonical
+Global preference and opaque EU projection by version; never enable from a stale
+local `true`. Essential content-free reliability remains eligible.
+
+### Retention or deletion failure
+
+Deadlines are absolute: local material is eligible for at most 14 days; regional
+accepted/outbox/receipt/profile/audit/full-crash state and raw dumps for at most 90
+days; EU semantic and minimized crash contributions for at most 13 months. Retry
+the regional lifecycle job in bounded batches and verify both D1 and the dedicated
+telemetry bucket. Do not extend `delete_at`, renew a contribution from issue
+recurrence, or keep an object after its index is deleted. A dormant desktop
+physically purges expired Crashpad generations on its next launch before upload or
+starting the next generation.
+
+[`telemetry.md`](telemetry.md) owns the mechanisms and limits behind these
+procedures.
 
 ## Incident response
 
@@ -688,6 +1050,29 @@ iteration ceilings. If all models fail, the run becomes `failed`
 and the work stream retains its persisted context. Check redacted structured
 logs by request, workspace, work-stream, and harness-run IDs; never add prompt
 bodies or credentials to logs.
+
+When every candidate answers with a transport fault the provider owns, the
+harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
+times (declared as `1` in both regional Wrangler configs) after a backoff that
+honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
+be Avalon waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
+`0` and redeploy to stop it everywhere — work streams, inline children, the final
+meeting-notes pass, and the automation compiler all read it** — worth doing when a provider is failing broadly,
+because each re-execution charges another failure to the per-workspace circuit
+breaker whose threshold is 3.
+
+Two failure codes an operator will see, both distinct from
+`harness_execution_failed`, which means Avalon's own defect:
+
+| Code | Meaning | Triage |
+| --- | --- | --- |
+| `provider_unavailable` | Avalon called and got nothing — no response, a 408, a 429, or a 5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
+| `provider_circuit_open` | Avalon did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Avalon's credential or credit, so this code does not by itself accuse the provider. |
+
+A run failing with either while the provider is healthy points at credentials or
+at the breaker's cooldown (60–120 seconds), not at a model outage. The reasoning
+behind the split and the retry is
+[`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 
 ### Ambiguous external write
 

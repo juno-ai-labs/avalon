@@ -49,6 +49,9 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
+  // Avalon's turns in this conversation carry the same actions the work-stream
+  // feed does, including the two that save one to a file.
+  desktopServicesAvailable: () => true,
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
@@ -88,6 +91,7 @@ function renderScreen(entry: InitialEntry = '/automations/new'): void {
 describe('New automation composer', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    copyText.mockResolvedValue(undefined);
     // Restored here rather than at the end of the one test that changes it, so
     // a failure there cannot leak the role into every later test.
     session.workspace.role = 'owner';
@@ -172,6 +176,8 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({
       message: '',
       attachmentIds: ['resource-notes'],
+      inputMode: 'typed',
+      connectorMentionCount: 0,
     }, expect.any(Function)));
     expect(await screen.findByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
     expect(api.deleteDraftResource).not.toHaveBeenCalled();
@@ -188,7 +194,10 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
-      { message: 'A long automation description\nwith several lines' },
+      {
+        message: 'A long automation description\nwith several lines',
+        inputMode: 'typed', connectorMentionCount: 0,
+      },
       expect.any(Function),
     ));
     await waitFor(() => expect(composer).toHaveValue(''));
@@ -210,7 +219,10 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
       2,
-      { message: 'Only on weekdays', draftId: 'draft-1' },
+      {
+        message: 'Only on weekdays', draftId: 'draft-1',
+        inputMode: 'typed', connectorMentionCount: 0,
+      },
       expect.any(Function),
     ));
 
@@ -256,7 +268,10 @@ describe('New automation composer', () => {
 
     // Continuing writes back to the same draft rather than starting another.
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
-      { message: 'https://example.com/blog', draftId: 'draft-9' },
+      {
+        message: 'https://example.com/blog', draftId: 'draft-9',
+        inputMode: 'typed', connectorMentionCount: 0,
+      },
       expect.any(Function),
     ));
   });
@@ -538,7 +553,9 @@ describe('New automation composer', () => {
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }, expect.any(Function)));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({
+      message: example, inputMode: 'suggested_prompt', connectorMentionCount: 0,
+    }, expect.any(Function)));
     const humanMessage = (await screen.findByText(example)).closest('article');
     expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
     expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
@@ -1229,7 +1246,14 @@ describe('New automation composer', () => {
 
     await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
       2,
-      { message: 'email', draftId: 'draft-choice' },
+      expect.objectContaining({
+        message: 'email', draftId: 'draft-choice', inputMode: 'elicitation_response',
+        connectorMentionCount: 0,
+        resolvedElicitation: expect.objectContaining({
+          id: 'question-choice', responseType: 'single_select', resolution: 'answered',
+          customResponseUsed: false,
+        }),
+      }),
       expect.any(Function),
     ));
     const resolvedQuestion = await screen.findByLabelText('Elicitation response');

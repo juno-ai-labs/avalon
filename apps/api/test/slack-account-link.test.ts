@@ -192,19 +192,23 @@ describe("Slack account linking", () => {
     }
   });
 
-  it("queues a workspace claim raised by its action id", async () => {
+  it("matches a button on its action id, not the view it was raised from", async () => {
+    // The rule this protects outlived the button that first needed it. A block
+    // action raised inside a view carries that view's `callback_id`, and
+    // matching on it would send a connect button placed in a modal down the
+    // shortcut path — opening a task modal on top of the link the member came
+    // for. Every one of Avalon's buttons is matched on the action id instead.
     const database = await seededDatabase();
-    stubSlack();
+    const slack = stubSlack();
 
     await expect(new SlackAgentService(environment(database)).processInteraction({
       ...connectClick(),
       callback_id: "avalon_some_modal",
-      actions: [{ action_id: "avalon_claim_workstream", type: "button", value: "session-1" }],
-    }, "claim-hash")).resolves.toEqual({});
+    }, "foreign-callback-hash")).resolves.toEqual({});
 
-    expect(database.prepare(
-      "SELECT kind, status FROM slack_ingress_jobs WHERE id = 'interaction:claim-hash'",
-    ).get()).toMatchObject({ kind: "interaction", status: "queued" });
+    const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
+    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(challengeCount(database)).toBe(1);
   });
 
   it("refuses to mint a link for an installation a person disabled", async () => {

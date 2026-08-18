@@ -4,13 +4,13 @@ import {
   type MeetingNotesResponse,
 } from "@avalon/contracts";
 import {
-  memberSafeHarnessFailureMessage,
   runHarness,
   type RunHarnessInput,
 } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
-import { numericEnv } from "../env";
+import { countEnv, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
@@ -259,6 +259,14 @@ export class MeetingNotesService {
         ttftTimeoutMs: numericEnv(this.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(this.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
+        // The live pass owns a one-minute cadence, so it never waits and
+        // re-asks: a briefing that lands late is worth less than the next one
+        // landing on time, and the pass after it reads the same transcript
+        // window anyway. The final pass has no successor to defer to, so it
+        // takes the deployment's budget rather than a second copy of the
+        // default — an operator turning the retry off during an incident has to
+        // reach every caller, and a literal here would silently outrank them.
+        transportRetries: final ? countEnv(this.env, "HARNESS_TRANSPORT_RETRIES", 1) : 0,
         reasoningEffort: final ? "medium" : "low",
       },
       workspaceId: this.auth.workspaceId,
@@ -281,12 +289,31 @@ export class MeetingNotesService {
 
     const notes = outcome.content.trim();
     if (outcome.status !== "completed" || !notes) {
-      const message = outcome.failure
-        ? memberSafeHarnessFailureMessage(outcome.failure.code)
-        : final
-          ? "Avalon could not create the final meeting summary"
-          : "Avalon could not update Control Tower";
-      throw new ApiError(502, "meeting_notes_generation_failed", message);
+      // This surface has no "runs" — someone sitting in a meeting sees this in
+      // the Control Tower panel — so it keeps its own sentence rather than
+      // borrowing the harness's, which is written for a work stream and names a
+      // thing that has no meaning here. A live pass says what happens next,
+      // because something does: the refresh a minute from now.
+      const message = final
+        ? "Avalon could not create the final meeting summary"
+        : "Avalon could not update Control Tower. The next refresh will try again";
+      // The member sentence is surface-specific, but the *cause* still has to go
+      // somewhere. Only transport faults leave an `agent_inference_attempt_failed`
+      // row behind; the limit class — cost, context, wall clock — is thrown after
+      // attempts that succeeded, so without this line a summary lost to a
+      // provider outage and one lost to Avalon's own ceiling are indistinguishable
+      // to everyone, member and operator alike.
+      logStructuredEvent(this.env, "warn", "meeting_notes_generation_failed", {
+        request_id: requestId,
+        workspace_id: this.auth.workspaceId,
+        pass: final ? "final" : "live",
+        status: outcome.status,
+        code: outcome.failure?.code ?? "empty_completion",
+        failure_kind: outcome.failure?.kind,
+      });
+      throw new ApiError(502, "meeting_notes_generation_failed", message, {
+        ...(outcome.failure ? { harnessFailureCode: outcome.failure.code } : {}),
+      });
     }
     return { notes, generatedAt: new Date().toISOString() };
   }

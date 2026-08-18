@@ -1,12 +1,14 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
+import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import {
   desktopDmgUrl,
   discoverDesktopRelease,
   parseDesktopReleaseConfig,
   renderDesktopRelease,
 } from '../src/release-config';
+import { normalizedTelemetryPathname } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -445,13 +447,49 @@ describe('public Avalon site', () => {
       }
     }
 
-    expect(readProjectFile('privacy/index.html')).toContain('does not scrape, mirror');
-    expect(readProjectFile('privacy/index.html')).toContain('do not sell personal information');
+    const privacy = readProjectFile('privacy/index.html');
+    expect(privacy).toContain('Effective August 13, 2026');
+    expect(privacy).toContain('does not scrape, mirror');
+    expect(privacy).toContain('do not sell personal information');
+    expect(privacy).toContain('accepted product-event and delivery records expire within 90 days');
     expect(readProjectFile('dpa/index.html')).toContain('without undue delay');
     expect(readProjectFile('dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
-    expect(readProjectFile('cookies/index.html')).toContain('does not currently set non-essential cookies');
+    expect(readProjectFile('cookies/index.html')).toContain('uses bounded first-party product analytics');
+    expect(readProjectFile('cookies/index.html')).toContain('uses no persistent browser analytics identifier');
     expect(readProjectFile('security/index.html')).toContain('context isolation');
+  });
+
+  it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
+    const telemetry = readProjectFile('src/telemetry.ts');
+    const headers = readProjectFile('public/_headers');
+
+    expect(telemetry).toContain("'https://api.with-avalon.com'");
+    expect(telemetry).toContain('/telemetry/route');
+    expect(telemetry).toContain('/telemetry/bootstrap');
+    expect(telemetry).toContain('/telemetry/anonymous');
+    expect(telemetry).not.toContain('https://eu.api.with-avalon.com');
+    expect(telemetry).toContain("route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId");
+    expect(telemetry).toContain('routeToken: route.routeToken');
+    expect(telemetry).not.toContain('sessionStorage');
+    expect(telemetry).toContain("report('site_page_viewed'");
+    expect(telemetry).toContain("report('site_page_left'");
+    expect(headers).toMatch(/^\/\*\n {2}Content-Security-Policy:/u);
+    expect(headers).toContain("connect-src https://api.with-avalon.com");
+    expect(headers).not.toContain("connect-src 'none'");
+    expect(headers).not.toContain('connect-src https://eu.api.with-avalon.com');
+  });
+
+  it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
+    expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
+      .toBe('/app/workstreams/:id');
+    expect(normalizedTelemetryPathname('/privacy/')).toBe('/privacy/');
+    expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
+      handoffType: 'workstream', validity: 'invalid',
+    });
+    expect(classifyDesktopHandoffTarget(null)).toEqual({
+      handoffType: 'unknown', validity: 'invalid',
+    });
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {

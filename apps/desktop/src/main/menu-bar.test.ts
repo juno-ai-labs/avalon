@@ -6,6 +6,7 @@ import { emptyMenuBarContent, type MenuBarActions, type MenuBarContent } from '.
 
 function noopActions(): MenuBarActions {
   return {
+    selected: vi.fn(),
     newMeetingNote: vi.fn(),
     newWorkstream: vi.fn(),
     newAutomation: vi.fn(),

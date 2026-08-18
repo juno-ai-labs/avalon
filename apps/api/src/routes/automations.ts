@@ -35,6 +35,8 @@ const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) 
  * the draft subscription the turn wrote. */
 const CompiledDraftSchema = z.object({
   draftId: IdSchema,
+  elicitationId: IdSchema.nullable().default(null),
+  elicitationPresentedAt: TimestampSchema.nullable().default(null),
   draft: AutomationDraftSchema,
   assistantMessage: z.string().min(1),
 });
@@ -92,6 +94,8 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
       const completed = AutomationDraftStreamEventSchema.parse({
         type: "completed",
         draftId: compiled.draftId,
+        elicitationId: compiled.elicitationId,
+        elicitationPresentedAt: compiled.elicitationPresentedAt,
         draft: compiled.draft,
         assistantMessage: compiled.assistantMessage,
       });
@@ -120,6 +124,8 @@ automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchem
   const compiled = await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"));
   return c.json(CompiledDraftSchema.parse({
     draftId: compiled.draftId,
+    elicitationId: compiled.elicitationId,
+    elicitationPresentedAt: compiled.elicitationPresentedAt,
     draft: AutomationDraftSchema.parse(compiled.draft),
     assistantMessage: compiled.assistantMessage,
   }));

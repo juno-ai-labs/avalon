@@ -12,6 +12,7 @@ import {
   deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
+  githubRepositoryAccessPolicy,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -25,11 +26,14 @@ import type {
   ConnectorOAuthProvider,
   ConnectorOAuthStart,
   CreateWebhookConnectionRequestSchema,
+  GitHubRepositoryAccessSettings,
+  UpdateGitHubRepositoryAccessSettings,
   Scope,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import type { z } from "zod";
-import type { AuthContext, Env } from "../env";
+import type { AuthContext, Env, IdentityAuthContext } from "../env";
+import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
@@ -48,6 +52,11 @@ import { NotionRoutingService } from "./notion-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
 import { resolveUserDelivery } from "./user-delivery";
+import {
+  emitProductUsageTelemetry,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+} from "../telemetry/product-usage";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -79,6 +88,7 @@ interface StoredConnection extends Record<string, unknown> {
   scope: Scope;
   owner_user_id: string | null;
   model_plugin_id: string;
+  status?: string;
   encrypted_credentials?: string | null;
   credential_iv?: string | null;
   credential_key_version?: number;
@@ -93,6 +103,31 @@ interface ConnectorOAuthAttemptRow {
   connection_id: string | null;
   error_code: string | null;
   expires_at: string;
+  user_id: string;
+  workspace_id: string;
+  telemetry_operation_id: string | null;
+  telemetry_event_version: number;
+  telemetry_scope: Scope | null;
+  telemetry_capability_count: number | null;
+  telemetry_reconnect: number;
+  created_at: string;
+}
+
+const TELEMETRY_CONNECTOR_TYPES = new Set([
+  "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
+]);
+
+function telemetryConnector(value: unknown): "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x" | null {
+  const connector = String(value);
+  return TELEMETRY_CONNECTOR_TYPES.has(connector)
+    ? connector as "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x"
+    : null;
+}
+
+function telemetryConnectionHealth(value: unknown): "healthy" | "needs_reconnect" | "error" | "disabled" | "unknown" {
+  const status = String(value);
+  if (status === "healthy" || status === "needs_reconnect" || status === "error" || status === "disabled") return status;
+  return "unknown";
 }
 
 export interface GitHubSetupResult {
@@ -150,6 +185,78 @@ async function attemptConnectorRepair(
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
 
+  private async emitConnectorAction(
+    connection: StoredConnection,
+    action: "test" | "reconnect" | "disconnect" | "secret_rotate",
+    previousHealth: ReturnType<typeof telemetryConnectionHealth>,
+    appliedHealth: ReturnType<typeof telemetryConnectionHealth>,
+    result: "success" | "failed",
+  ): Promise<void> {
+    const connector = telemetryConnector(connection.connector_type);
+    const auth = this.requireAuth();
+    if (!connector) return;
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: auth.workspaceId,
+      userId: auth.userId,
+      name: "connector_action_completed",
+      properties: {
+        connectorId: connection.id,
+        connector,
+        scope: connection.scope,
+        action,
+        previousHealth,
+        appliedHealth,
+        result,
+      },
+      operationId: connection.id,
+      eventId: newId(),
+    });
+    if (previousHealth !== appliedHealth) {
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: auth.workspaceId,
+        userId: auth.userId,
+        name: "connector_health_changed",
+        properties: {
+          connectorId: connection.id,
+          connector,
+          scope: connection.scope,
+          previousHealth,
+          appliedHealth,
+          cause: action === "reconnect" ? "reconnect" : "user_action",
+        },
+        operationId: connection.id,
+        eventId: newId(),
+      });
+    }
+  }
+
+  private async emitConnectorSetupCompleted(
+    connection: StoredConnection,
+    method: "oauth" | "api_key" | "direct" | "webhook",
+    durationMs: number,
+    reconnect: boolean,
+  ): Promise<void> {
+    const connector = telemetryConnector(connection.connector_type);
+    const auth = this.requireAuth();
+    if (!connector) return;
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: auth.workspaceId,
+      userId: auth.userId,
+      name: "connector_setup_completed_v2",
+      properties: {
+        connector,
+        scope: connection.scope,
+        method,
+        result: "success",
+        duration: telemetryJourneyDuration(durationMs),
+        capabilityCount: telemetryCountBucket(parseJson(connection.granted_scopes_json, []).length),
+        reconnect,
+      },
+      operationId: connection.id,
+      eventId: newId(),
+    });
+  }
+
   availableConnectorTypes(): string[] {
     this.requireAuth();
     return this.registry().list().map((manifest) => manifest.type).sort();
@@ -170,6 +277,136 @@ export class ConnectionService {
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
     return rows.map((row) => connectionFromRow(row, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
+    const connection = await this.loadVisible(id);
+    if (connection.connector_type !== "github") {
+      throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
+    }
+    this.assertConnectionEnabled(connection);
+    return this.loadGitHubRepositoryAccessSettings(connection);
+  }
+
+  async updateGitHubRepositoryAccess(
+    id: string,
+    input: UpdateGitHubRepositoryAccessSettings,
+  ): Promise<GitHubRepositoryAccessSettings> {
+    const connection = await this.loadAuthorized(id);
+    if (connection.connector_type !== "github") {
+      throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
+    }
+    this.assertConnectionEnabled(connection);
+    const current = await this.loadGitHubRepositoryAccessSettings(connection);
+    if (current.revision !== input.expectedRevision) {
+      throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
+    }
+    const available = new Map(current.availableRepositories.map((repository) => [
+      `${repository.repositoryId}:${repository.repositoryFullName.toLowerCase()}`,
+      repository,
+    ]));
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+    for (const repository of input.repositories) {
+      const normalizedName = repository.repositoryFullName.toLowerCase();
+      if (seenIds.has(repository.repositoryId) || seenNames.has(normalizedName)) {
+        throw new ApiError(422, "github_repository_access_duplicate", "Each configured GitHub repository must appear exactly once.");
+      }
+      seenIds.add(repository.repositoryId);
+      seenNames.add(normalizedName);
+      if (!available.has(`${repository.repositoryId}:${normalizedName}`)) {
+        throw new ApiError(422, "github_repository_identity_changed", `${repository.repositoryFullName} is no longer available with the approved repository identity. Reload GitHub settings and choose it again.`);
+      }
+    }
+    const nextRevision = current.revision + 1;
+    const updatedAt = nowIso();
+    const nextPolicy = {
+      version: 1 as const,
+      revision: nextRevision,
+      mode: input.mode,
+      defaultAccess: input.defaultRemoteAccess,
+      repositories: input.repositories.map((repository) => ({
+        repositoryId: repository.repositoryId,
+        repositoryFullName: repository.repositoryFullName,
+        access: repository.remoteAccess,
+      })),
+    };
+    const nextPolicyJson = JSON.stringify(nextPolicy);
+    const [update] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE connector_connections
+            SET config_json = json_set(COALESCE(config_json, '{}'), '$.githubRepositoryAccess', json(?)),
+                updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
+            AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
+      ).bind(
+        nextPolicyJson,
+        updatedAt,
+        connection.id,
+        connection.workspace_id,
+        input.expectedRevision,
+      ),
+      // D1 batches are transactional. Credential expiry therefore changes in
+      // the same commit as the policy, and the EXISTS guard keeps a losing CAS
+      // from touching credentials refreshed by the winning writer.
+      this.env.DB.prepare(
+        `UPDATE workstream_terminal_repositories
+            SET read_token_expires_at = NULL, updated_at = ?
+          WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'
+            AND EXISTS (
+              SELECT 1 FROM connector_connections connection
+               WHERE connection.id = ? AND connection.workspace_id = ?
+                 AND json_extract(connection.config_json, '$.githubRepositoryAccess') = json(?)
+            )`,
+      ).bind(
+        updatedAt,
+        connection.workspace_id,
+        connection.id,
+        connection.id,
+        connection.workspace_id,
+        nextPolicyJson,
+      ),
+    ]);
+    if (Number(update?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
+    }
+    await this.recordConnectionAudit(
+      connection.workspace_id,
+      this.requireAuth().userId,
+      "connector.github_repository_access.updated",
+      connection.id,
+      {
+        revision: nextRevision,
+        mode: input.mode,
+        defaultRemoteAccess: input.defaultRemoteAccess,
+        repositoryCount: input.repositories.length,
+      },
+    );
+    return {
+      ...current,
+      revision: nextRevision,
+      mode: input.mode,
+      defaultRemoteAccess: input.defaultRemoteAccess,
+      repositories: input.repositories,
+      availableRepositories: current.availableRepositories.map((repository) => ({
+        ...repository,
+        remoteAccess: input.repositories.find((candidate) => (
+          candidate.repositoryId === repository.repositoryId
+        ))?.remoteAccess ?? (input.mode === "all_repositories" ? input.defaultRemoteAccess : null),
+      })),
+    };
+  }
+
+  async bindOAuthTelemetry(attemptId: string, operationId: string, eventVersion: 1 | 2): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE connector_oauth_attempts
+       SET telemetry_operation_id = COALESCE(telemetry_operation_id, ?),
+           telemetry_event_version = CASE
+             WHEN telemetry_operation_id IS NULL THEN ? ELSE telemetry_event_version END,
+           updated_at = ?
+       WHERE id = ? AND region = ?
+         AND provider IN ('google', 'github', 'granola', 'linear', 'notion', 'slack')`,
+    ).bind(operationId, eventVersion, nowIso(), attemptId, this.env.AVALON_REGION).run().catch(() => undefined);
   }
 
   async beginGoogle(input: {
@@ -203,6 +440,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     const adapter = this.registry().get("google");
     const authorization = await adapter.beginAuthorization?.({
@@ -397,6 +637,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     return { url: authorization.url, attemptId };
   }
@@ -437,6 +680,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     const url = new URL(`https://github.com/apps/${encodeURIComponent(this.env.GITHUB_APP_SLUG)}/installations/new`);
     url.searchParams.set("state", state);
@@ -1028,7 +1274,9 @@ export class ConnectionService {
       at,
     ).run();
     const row = await this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at
+      `SELECT id, provider, status, connection_id, error_code, expires_at,
+              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
+              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
        FROM connector_oauth_attempts
        WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?`,
     ).bind(
@@ -1038,6 +1286,7 @@ export class ConnectionService {
       this.env.AVALON_REGION,
     ).first<ConnectorOAuthAttemptRow>();
     if (!row) throw new ApiError(404, "oauth_attempt_not_found", "The connector authorization attempt was not found");
+    await this.emitOAuthOutcome(row).catch(() => undefined);
     return {
       attemptId: row.id,
       provider: row.provider,
@@ -1081,6 +1330,7 @@ export class ConnectionService {
 
   async test(id: string) {
     const connection = await this.loadAuthorized(id);
+    const previousHealth = telemetryConnectionHealth(connection.status);
     const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
@@ -1215,6 +1465,14 @@ export class ConnectionService {
       nowIso(),
       id,
     ).run();
+    const appliedHealth = result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error";
+    await this.emitConnectorAction(
+      connection,
+      "test",
+      previousHealth,
+      appliedHealth,
+      result.ok ? "success" : "failed",
+    ).catch(() => undefined);
     return result;
   }
 
@@ -1243,10 +1501,18 @@ export class ConnectionService {
     } catch {
       remoteRevocation = "failed";
     } finally {
-      await this.env.DB.prepare(
-        `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
-         credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
-      ).bind(nowIso(), id).run();
+      const disabledAt = nowIso();
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
+           credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
+        ).bind(disabledAt, id),
+        this.env.DB.prepare(
+          `UPDATE workstream_terminal_repositories
+              SET state = 'revoked', read_token_expires_at = NULL, updated_at = ?
+            WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
+        ).bind(disabledAt, connection.workspace_id, id),
+      ]);
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.refreshScheduler(connection.workspace_id);
@@ -1348,10 +1614,18 @@ export class ConnectionService {
         connection.id,
         { provider: connection.connector_type, scope: connection.scope, remoteRevocation },
       );
+      await this.emitConnectorAction(
+        connection,
+        "disconnect",
+        telemetryConnectionHealth(connection.status),
+        "disabled",
+        "success",
+      ).catch(() => undefined);
     }
   }
 
   async createWebhook(input: CreateWebhookInput) {
+    const telemetryStartedAt = Date.now();
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     if (input.idempotencyKey) {
@@ -1407,17 +1681,22 @@ export class ConnectionService {
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
-    return this.webhookConnectionResult({
+    const stored: StoredConnection = {
       id,
       workspace_id: auth.workspaceId,
       connector_type: "generic_webhook",
       scope: input.scope,
       owner_user_id: input.scope === "personal" ? auth.userId : null,
       model_plugin_id: modelPluginId,
+      status: "healthy",
+      granted_scopes_json: "[]",
       encrypted_credentials: encrypted.ciphertext,
       credential_iv: encrypted.iv,
       credential_key_version: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-    }, secret);
+    };
+    await this.emitConnectorSetupCompleted(stored, "webhook", Date.now() - telemetryStartedAt, false)
+      .catch(() => undefined);
+    return this.webhookConnectionResult(stored, secret);
   }
 
   async rotateWebhookSecret(id: string) {
@@ -1454,6 +1733,13 @@ export class ConnectionService {
       provider: "generic_webhook",
       scope: connection.scope,
     });
+    await this.emitConnectorAction(
+      connection,
+      "secret_rotate",
+      telemetryConnectionHealth(connection.status),
+      telemetryConnectionHealth(connection.status),
+      "success",
+    ).catch(() => undefined);
     return {
       endpoint: new URL(`/ingest/webhook/${id}`, this.env.PUBLIC_API_BASE_URL).toString(),
       signingSecret,
@@ -1462,6 +1748,7 @@ export class ConnectionService {
   }
 
   async createX(input: { scope: "workspace"; capabilities: string[] }) {
+    const telemetryStartedAt = Date.now();
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     const adapter = xConnectorConfig(this.env) ? this.registry().get("x") : null;
@@ -1527,10 +1814,17 @@ export class ConnectionService {
     });
     const connection = (await this.list()).find((item) => item.id === id);
     if (!connection) throw new ApiError(500, "connection_write_failed", "The X connection could not be loaded");
+    await this.emitConnectorSetupCompleted(
+      await this.loadAuthorized(id),
+      "api_key",
+      Date.now() - telemetryStartedAt,
+      false,
+    ).catch(() => undefined);
     return { connection };
   }
 
   async createGranolaWorkspace(input: { apiKey: string; capabilities: string[] }) {
+    const telemetryStartedAt = Date.now();
     const auth = this.requireAuth();
     this.assertScopeAllowed("workspace");
     const capabilities = [...new Set(input.capabilities)];
@@ -1611,6 +1905,12 @@ export class ConnectionService {
     }
     const connection = (await this.list()).find((item) => item.id === id);
     if (!connection) throw new ApiError(500, "connection_write_failed", "The Granola connection could not be loaded");
+    await this.emitConnectorSetupCompleted(
+      await this.loadAuthorized(id),
+      "api_key",
+      Date.now() - telemetryStartedAt,
+      false,
+    ).catch(() => undefined);
     return { connection };
   }
 
@@ -2009,14 +2309,18 @@ export class ConnectionService {
     statePayload: string;
     auth: AuthContext;
     expiresAt: string;
+    scope: Scope;
+    capabilityCount: number;
+    reconnect: boolean;
   }): Promise<void> {
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO connector_oauth_attempts
          (id, region, provider, user_id, workspace_id, status, connection_id,
-          error_code, expires_at, completed_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?)`,
+          error_code, expires_at, completed_at, created_at, updated_at,
+          telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?)`,
       ).bind(
         input.attemptId,
         this.env.AVALON_REGION,
@@ -2026,6 +2330,9 @@ export class ConnectionService {
         input.expiresAt,
         at,
         at,
+        input.scope,
+        input.capabilityCount,
+        input.reconnect ? 1 : 0,
       ),
       this.env.DB.prepare(
         `INSERT INTO oauth_states
@@ -2084,13 +2391,67 @@ export class ConnectionService {
         throw new ApiError(409, "oauth_attempt_already_completed", "The connector authorization attempt already completed");
       }
     }
+    const settled = await this.loadOAuthAttempt(attemptId);
+    if (settled) await this.emitOAuthOutcome(settled).catch(() => undefined);
   }
 
   private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {
     return this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at
+      `SELECT id, provider, status, connection_id, error_code, expires_at,
+              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
+              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
        FROM connector_oauth_attempts WHERE id = ? AND region = ?`,
     ).bind(attemptId, this.env.AVALON_REGION).first<ConnectorOAuthAttemptRow>();
+  }
+
+  private async emitOAuthOutcome(row: ConnectorOAuthAttemptRow): Promise<void> {
+    if (!row.telemetry_operation_id || row.status === 'pending'
+      || !['google', 'github', 'granola', 'linear', 'notion', 'slack'].includes(row.provider)) return;
+    const result = row.status === 'succeeded'
+      ? 'success'
+      : row.status === 'denied' ? 'denied'
+        : row.error_code === 'oauth_attempt_expired' ? 'unavailable' : 'failed';
+    const auth: IdentityAuthContext = {
+      sessionId: `telemetry:${row.id}`,
+      userId: row.user_id,
+      workspaceId: row.workspace_id,
+      region: this.env.AVALON_REGION,
+      role: null,
+    };
+    const connector = telemetryConnector(row.provider);
+    if (row.telemetry_event_version === 2
+      && connector !== null
+      && row.telemetry_scope !== null
+      && row.telemetry_capability_count !== null) {
+      await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
+        this.env,
+        'connector_setup_completed_v2',
+        {
+          connector,
+          scope: row.telemetry_scope,
+          method: 'oauth',
+          result,
+          duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(row.created_at))),
+          capabilityCount: telemetryCountBucket(row.telemetry_capability_count),
+          reconnect: row.telemetry_reconnect === 1,
+        },
+        row.telemetry_operation_id,
+        'workspace-user',
+        this.env.AVALON_REGION,
+        row.telemetry_operation_id,
+      ));
+      return;
+    }
+    if (row.provider === 'granola') return;
+    await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
+      this.env,
+      'connector_setup_completed',
+      { connector: row.provider, result },
+      row.telemetry_operation_id,
+      'workspace-user',
+      this.env.AVALON_REGION,
+      row.telemetry_operation_id,
+    ));
   }
 
   private connectorAttemptTarget(input: {
@@ -2242,16 +2603,88 @@ export class ConnectionService {
   }
 
   private async loadAuthorized(id: string): Promise<StoredConnection> {
+    const row = await this.loadVisible(id);
+    const auth = this.requireAuth();
+    if (row.scope === "workspace" && auth.role !== "owner" && auth.role !== "admin") {
+      throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
+    }
+    return row;
+  }
+
+  private assertConnectionEnabled(row: StoredConnection): void {
+    if (row.status === "disabled") {
+      throw new ApiError(
+        409,
+        "connection_disabled",
+        "This GitHub connection is disabled. Reconnect it before loading or changing repository access settings.",
+      );
+    }
+  }
+
+  private async loadVisible(id: string): Promise<StoredConnection> {
     const auth = this.requireAuth();
     const row = await this.env.DB.prepare(
       `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ?
        AND (scope = 'workspace' OR owner_user_id = ?)`,
     ).bind(id, auth.workspaceId, auth.userId).first<StoredConnection>();
     if (!row) throw new ApiError(404, "connection_not_found", "Connection not found");
-    if (row.scope === "workspace" && auth.role !== "owner" && auth.role !== "admin") {
-      throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
-    }
     return row;
+  }
+
+  private async loadGitHubRepositoryAccessSettings(
+    row: StoredConnection,
+  ): Promise<GitHubRepositoryAccessSettings> {
+    const context = await this.context(row);
+    const adapter = this.registry().get("github");
+    const connectorConfig = githubConnectorConfig(this.env);
+    if (!connectorConfig) {
+      throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured in this region");
+    }
+    const discovery = await withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(30_000) },
+      (authorized) => discoverGitHubConnectionRepositories(
+        connectorConfig,
+        authorized,
+        AbortSignal.timeout(30_000),
+        1_000,
+      ),
+    );
+    const policy = githubRepositoryAccessPolicy(context.config);
+    const configured = policy.repositories.map((repository) => ({
+      repositoryId: repository.repositoryId,
+      repositoryFullName: repository.repositoryFullName,
+      remoteAccess: repository.access,
+    }));
+    const configuredByIdentity = new Map(configured.map((repository) => [
+      `${repository.repositoryId}:${repository.repositoryFullName.toLowerCase()}`,
+      repository.remoteAccess,
+    ]));
+    const availableRepositories = discovery.resources.flatMap((resource) => {
+      const repositoryId = typeof resource.metadata.repositoryId === "string"
+        ? resource.metadata.repositoryId
+        : typeof resource.metadata.repositoryId === "number"
+          ? String(resource.metadata.repositoryId)
+          : null;
+      if (!repositoryId) return [];
+      const remoteAccess = configuredByIdentity.get(`${repositoryId}:${resource.providerResourceId.toLowerCase()}`)
+        ?? (policy.mode === "all_repositories" ? policy.defaultAccess : null);
+      return [{
+        repositoryId,
+        repositoryFullName: resource.providerResourceId,
+        private: resource.metadata.private === true,
+        remoteAccess,
+      }];
+    }).sort((left, right) => left.repositoryFullName.localeCompare(right.repositoryFullName));
+    return {
+      connectionId: row.id,
+      connectionName: typeof row.display_name === "string" ? row.display_name : "GitHub",
+      revision: policy.revision,
+      mode: policy.mode,
+      defaultRemoteAccess: policy.defaultAccess,
+      repositories: configured,
+      availableRepositories,
+    };
   }
 
   private async context(row: StoredConnection): Promise<ConnectorConnectionContext> {

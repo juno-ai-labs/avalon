@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -21,6 +21,7 @@ import {
   WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
+  TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -28,6 +29,10 @@ import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
 import { HyperSightService } from "../services/hypersight-service";
+import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
+import { TerminalWorkstreamService } from "../services/terminal/workstream-state";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -96,6 +101,18 @@ const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string()
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
 
+function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamService {
+  const configuration = parseTerminalRegionConfiguration(c.env);
+  const provider = configuration.capability === "supported"
+    ? createDaytonaTerminalProvider(configuration)
+    : null;
+  return new TerminalWorkstreamService(
+    c.env,
+    getAuth(c),
+    provider,
+  );
+}
+
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
   return c.json(WorkstreamPageSchema.parse(await new WorkstreamService(c.env, getAuth(c)).list(
@@ -106,12 +123,23 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
 });
 workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");
+  const auth = getAuth(c);
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   // This is the one create path where a person is at a keyboard, so it is the
   // only one that can claim an objective was authored rather than derived.
-  return c.json(CreatedWorkstreamSchema.parse(await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).create({
+  const created = CreatedWorkstreamSchema.parse(await new WorkstreamService(c.env, auth, requestDeferral(c)).create({
     ...body,
     descriptionSource: body.objective ? "authored" : "derived",
-  })), 201);
+    ...(operationId ? { telemetryOperationId: operationId } : {}),
+  }));
+  if (operationId) {
+    const event = apiTelemetryEnvelope(
+      c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
+      c.env.AVALON_REGION, operationId,
+    );
+    requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
+  }
+  return c.json(CreatedWorkstreamSchema.parse(created), 201);
 });
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
@@ -154,6 +182,16 @@ workstreamRoutes.put("/:id/hypersight", zValidator("param", idParam), zValidator
     c.req.valid("json"),
   ))),
 );
+workstreamRoutes.get("/:id/terminal", zValidator("param", idParam), async (c) =>
+  c.json(TerminalWorkstreamStateSchema.parse(
+    await terminalWorkstreamService(c).get(c.req.valid("param").id),
+  )),
+);
+workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam), async (c) =>
+  c.json(TerminalWorkstreamStateSchema.parse(
+    await terminalWorkstreamService(c).startFresh(c.req.valid("param").id),
+  )),
+);
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const detail = await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id);
   return c.json(WorkstreamDetailSchema.parse(detail));
@@ -180,8 +218,12 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
   )));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   const result = await new WorkstreamService(c.env, getAuth(c), requestDeferral(c))
-    .createMessage(c.req.valid("param").id, c.req.valid("json"));
+    .createMessage(c.req.valid("param").id, {
+      ...c.req.valid("json"),
+      ...(operationId ? { telemetryOperationId: operationId } : {}),
+    });
   return c.json(CreatedMessageSchema.parse(result), 201);
 });
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) =>

@@ -60,6 +60,61 @@ test('the app is health-gated against the regional APIs before it is distributed
   assert.ok(healthGate < published, 'Regional health must be checked before anything is published');
 });
 
+test('a real packaged Crashpad fixture gates every desktop release', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const fixture = workflow.indexOf('pnpm --filter @avalon/desktop test:crashpad');
+  const signingIdentity = workflow.indexOf('- name: Import the Developer ID identity');
+  const packagedRelease = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
+
+  assert.notEqual(fixture, -1, 'Release workflow must run the packaged Crashpad fixture');
+  assert.ok(fixture < signingIdentity, 'The unsigned fixture must not receive release signing credentials');
+  assert.ok(fixture < packagedRelease, 'A failed Crashpad fixture must stop the release build');
+});
+
+test('the packaged Crashpad fixture owns its clean-runner bundler dependency', async () => {
+  const packageJson = JSON.parse(await readFile(
+    join(repositoryDirectory, 'apps/desktop/package.json'),
+    'utf8',
+  ));
+  const fixture = await readFile(
+    join(repositoryDirectory, 'apps/desktop/scripts/telemetry-crashpad-fixture.mjs'),
+    'utf8',
+  );
+
+  assert.equal(
+    packageJson.devDependencies.esbuild,
+    '0.25.12',
+    'The desktop package must own the exact release esbuild version',
+  );
+  assert.match(
+    fixture,
+    /await run\('pnpm',\s*\[\s*'--filter',\s*'@avalon\/desktop',\s*'exec',\s*'esbuild',/u,
+    'The fixture must resolve esbuild from the desktop package',
+  );
+  assert.match(
+    fixture,
+    /if \(\(await stat\(bundledControllerPath\)\)\.size === 0\) throw new Error/u,
+    'A missing pnpm filter match must fail immediately instead of packaging without a controller',
+  );
+});
+
+test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
+  const built = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
+  const symbols = workflow.indexOf('- name: Publish private regional telemetry artifacts');
+  const distributed = workflow.indexOf('- name: Publish immutable payloads and promote the release manifest');
+
+  assert.match(builder, /- "!out\/\*\*\/\*\.map"/u);
+  assert.match(workflow, /AVALON_GLOBAL_TELEMETRY_R2_BUCKET:/u);
+  assert.match(workflow, /AVALON_EU_TELEMETRY_R2_BUCKET:/u);
+  assert.doesNotMatch(workflow, /AVALON_(?:GLOBAL|EU)_PAYLOADS_R2_BUCKET:/u);
+  assert.match(workflow, /cargo install dump_syms --version 2\.3\.7 --locked/u);
+  assert.match(workflow, /pnpm --filter @avalon\/desktop telemetry:publish-artifacts/u);
+  assert.ok(built < symbols, 'symbols must be extracted from the exact packaged application');
+  assert.ok(symbols < distributed, 'a release must not distribute before both regional artifacts exist');
+});
+
 // The `paths:` filter is the release trigger, so it is also the only place the
 // "what ships in the app" decision is written down. These tests are what stops
 // it drifting: a wrong entry here is invisible until a merge silently fails to

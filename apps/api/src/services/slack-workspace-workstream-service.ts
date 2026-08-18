@@ -1,6 +1,7 @@
 import {
   ExternalActorSchema,
   type ExternalActor,
+  type Scope,
   type SlackOriginContext,
   type SlackSearchAuthorization,
 } from "@avalon/contracts";
@@ -9,6 +10,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { publishWorkstreamEvent } from "./integrations";
 import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
@@ -63,6 +65,13 @@ export class SlackWorkspaceWorkstreamService {
     objective: string;
     creatorUserId?: string | null;
     originResource?: OriginResourceDescriptor;
+    /**
+     * The conversation's own audience, carried onto the work stream. A private
+     * Slack channel opens a private work stream whose room is
+     * `participantUserIds` — see `connector-workstream-audience.ts`.
+     */
+    scope?: Scope;
+    participantUserIds?: string[];
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
@@ -85,7 +94,17 @@ export class SlackWorkspaceWorkstreamService {
       openingAuthor: { type: "external", actor },
       openingMessage: input.text,
       clientMessageId: input.clientMessageId,
-      participantUserIds: [],
+      participantUserIds: input.participantUserIds ?? [],
+      ...(input.scope ? { scope: input.scope } : {}),
+    });
+    await recordWorkstreamCreatedTelemetry(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId: created.workstream.id,
+      creationSource: "slack_agent",
+      connectorTypes: ["slack"],
+      principal: input.creatorUserId
+        ? { type: "user", userId: input.creatorUserId }
+        : { type: "workspace" },
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const message = await this.database.workstreams.getMessageByClientId(

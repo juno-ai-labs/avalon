@@ -32,6 +32,7 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
+import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -66,7 +67,7 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
         ? "The run was superseded by another durable executor"
         : code === "run_cancelled"
           ? "The run was cancelled"
-          : "The Avalon harness could not complete this run",
+          : "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
   };
 }
@@ -74,8 +75,30 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
 function terminalSlackText(outcome: HarnessWorkflowOutcome): string {
   if (outcome.status === "stopped") return "Avalon stopped this task.";
   if (outcome.status === "needs_input") return "Avalon needs more information before it can continue this task.";
-  if (outcome.status === "failed") return outcome.error?.message ?? "Avalon could not complete this task.";
+  if (outcome.status === "failed") return slackSafeFailureText(outcome);
   return "Avalon completed the task without a text response.";
+}
+
+/**
+ * The failure sentence, with any remedy Slack cannot offer taken out.
+ *
+ * The member-safe strings are written for the work-stream surface, where a
+ * **Copy request ID** button sits beside them. Slack has no request id and no
+ * affordance, so forwarding that sentence verbatim names a next action that dead
+ * -ends there. Every other string travels fine — "try again in a moment" needs
+ * nothing from the surface — so this rewrites the one that does not, rather than
+ * giving Slack a parallel copy of the whole table to drift against.
+ */
+function slackSafeFailureText(outcome: HarnessWorkflowOutcome): string {
+  const message = outcome.error?.message;
+  if (!message) return "Avalon could not complete this task.";
+  return message.replace(
+    / Retrying is unlikely to help — copy the request ID for support\.?$/u,
+    " Retrying is unlikely to help; the work stream has the details for support.",
+  ).replace(
+    / — if it keeps happening, copy the request ID for support\.?$/u,
+    " — if it keeps happening, the work stream has the details for support.",
+  );
 }
 
 async function updateHyperSightRun(
@@ -143,7 +166,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         input,
         { ...identity, leaseSeconds: 300 },
       ));
-      if (claim.state === "terminal") return { status: claim.status };
+      if (claim.state === "terminal") {
+        await step.do("emit-recovered-run-outcome-telemetry", async () => {
+          await this.emitRunOutcomeBestEffort(input);
+        });
+        return { status: claim.status };
+      }
       if (claim.state === "cancelled") {
         const outcome: HarnessWorkflowOutcome = { status: "stopped" };
         await step.do("terminalize-cancelled-queued-run", async () => {
@@ -154,6 +182,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
             { code: "run_cancelled", message: "The run was stopped before it started" },
             "stopped",
           );
+        });
+        await step.do("emit-cancelled-run-outcome-telemetry", async () => {
+          await this.emitRunOutcomeBestEffort(input);
         });
         if (hyperSightRun) {
           await step.do("publish-hypersight-cancelled-before-start", async () => {
@@ -188,6 +219,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       };
       await step.do("terminalize-queued-admission-timeout", async () => {
         await terminalizeQueuedHarnessRun(this.env.DB, input, identity, outcome.error!);
+      });
+      await step.do("emit-timeout-run-outcome-telemetry", async () => {
+        await this.emitRunOutcomeBestEffort(input);
       });
       if (hyperSightRun) {
         await step.do("publish-hypersight-admission-timeout", async () => {
@@ -250,6 +284,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           : {},
       });
       if (!hyperSightRun) await this.finalizeAutomation(input, effectiveOutcome, lease!);
+    });
+    await step.do("emit-run-outcome-telemetry", async () => {
+      await this.emitRunOutcomeBestEffort(input);
     });
 
     const runMetrics = outcome.metrics;
@@ -331,6 +368,10 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     return effectiveOutcome;
   }
 
+  private async emitRunOutcomeBestEffort(input: WorkstreamWorkflowInput): Promise<void> {
+    await emitCorrelatedRunOutcome(this.env, input).catch(() => undefined);
+  }
+
   // The `deliver-slack-*` step names are durable workflow step identities and
   // stay as they are; the step itself now covers every frozen delivery target.
   private async deliverResultsDurably(
@@ -363,6 +404,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       text,
       deliveryKey,
       outcome.status,
+      input.slackOrigin?.actorSlackUserId ?? null,
     );
     if (input.automationSubscriptionId) {
       const automation = await this.env.DB.prepare(

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationDraft } from "@avalon/contracts";
 import { z } from "zod";
+import { TRANSPORT_RETRY_MAX_DELAY_MS, transportRetryDelayMs } from "./bind-runtime";
+import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
   canonicalToolInputHash,
@@ -23,6 +25,60 @@ import {
   type PluginAuthorization,
   type StructuredModelDiagnostic,
 } from "./index";
+
+describe("transport retry backoff", () => {
+  const httpFailure = (retryAfterMs: number | null): InferenceAttemptError => ({
+    kind: "http",
+    category: "rate_limit",
+    statusCode: 429,
+    retryAfterMs,
+    target: {
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      providerId: "openrouter",
+      canonicalModelId: "test/model",
+      providerInvocationModel: "test/model",
+      durationMs: 1,
+    },
+    cause: new Error("rate limited"),
+  } as InferenceAttemptError);
+
+  it("backs off exponentially and caps the curve", () => {
+    // `() => 1` is the top of the jitter window, so these pin the curve itself.
+    expect(transportRetryDelayMs(httpFailure(null), 1, () => 1)).toBe(500);
+    expect(transportRetryDelayMs(httpFailure(null), 2, () => 1)).toBe(1_000);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 1)).toBe(2_000);
+    expect(transportRetryDelayMs(httpFailure(null), 9, () => 1)).toBe(4_000);
+  });
+
+  it("prefers a stated Retry-After over the curve", () => {
+    expect(transportRetryDelayMs(httpFailure(2_000), 1, () => 1)).toBe(2_000);
+    // Never *below* the curve: a provider asking for less than the backoff does
+    // not get to shorten it.
+    expect(transportRetryDelayMs(httpFailure(10), 2, () => 1)).toBe(1_000);
+  });
+
+  it("spreads simultaneous retries instead of waking them together", () => {
+    // Every run that failed at the same instant would otherwise wake at the same
+    // instant, and a provider handing one `Retry-After` to all of them turns
+    // that from a coincidence into a guarantee.
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 0)).toBe(1_000);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 0.5)).toBe(1_500);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 1)).toBe(2_000);
+  });
+
+  it("clamps a hostile Retry-After", () => {
+    // Bind's own note on `retryAfterMsFromHeaders` says the value is
+    // attacker-influenceable, RFC 9110 puts no ceiling on it, and a host that
+    // sleeps on it must impose its own bound. This is that bound; without it a
+    // malfunctioning upstream parks a run for as long as it likes.
+    expect(transportRetryDelayMs(httpFailure(365 * 24 * 60 * 60 * 1_000), 1, () => 1))
+      .toBe(TRANSPORT_RETRY_MAX_DELAY_MS);
+    // Jitter only shortens, so it cannot carry a hostile header past the clamp.
+    expect(transportRetryDelayMs(httpFailure(365 * 24 * 60 * 60 * 1_000), 1, () => 0))
+      .toBe(TRANSPORT_RETRY_MAX_DELAY_MS / 2);
+    expect(TRANSPORT_RETRY_MAX_DELAY_MS).toBe(30_000);
+  });
+});
 
 describe("agent harness", () => {
   it("presents every automation attachment tool as visible compiler activity", () => {
@@ -1353,6 +1409,197 @@ describe("agent harness", () => {
     expect(stopped.failure).toBeUndefined();
   });
 
+  // A work stream pinned from the developer-mode model selector routes with no
+  // fallback models at all, which is deliberate — an override asks to observe
+  // one model, and traversing would answer a question nobody asked. What it
+  // also meant, until these three, was that a plan with nowhere to traverse had
+  // no recovery whatsoever: one stalled request discarded an entire run.
+  it("re-executes a fallback-less plan after a provider transport failure, re-sending identical bytes", async () => {
+    const bodies: string[] = [];
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return bodies.length === 1
+        ? Response.json({ error: { message: "upstream stalled" } }, { status: 503 })
+        : streamResponse([{ choices: [{ delta: { content: "recovered" }, finish_reason: "stop" }] }]);
+    }) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+    const events: HarnessEvent[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        maxWallClockMs: 200_000,
+        ttftTimeoutMs: 1_000,
+        workspaceId: "workspace-transport-recovers",
+      }),
+      onEvent: (event: HarnessEvent) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "recovered" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    // The retry re-sends the turn it failed on rather than re-rendering it.
+    // Identical bytes are what keeps the provider's cached prefix alive across
+    // the fault — on the run this was written for, 17 turns of context. Nothing
+    // else can see this break: the golden digests test renderers, not sends.
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toBe(bodies[0]);
+
+    // What the reader sees across a re-execution. The discarded attempt streamed
+    // nothing, so there is no wipe to deliver — a spurious reset here would
+    // blank a surface that never showed anything, and a duplicated delta would
+    // show the answer twice.
+    const streamed = events.filter((event) => event.type === "stream_delta");
+    expect(streamed.some((event) => event.reset)).toBe(false);
+    expect(streamed.map((event) => event.delta).join("")).toBe("recovered");
+  });
+
+  it("names an exhausted transport budget as the provider's failure, not the harness's", async () => {
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "upstream stalled" } },
+      { status: 503 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 200_000,
+      ttftTimeoutMs: 1_000,
+      transportRetries: 2,
+      workspaceId: "workspace-transport-exhausted",
+    }));
+
+    // `harness_execution_failed` here would tell a member Avalon broke and give
+    // them no reason to retry, which is what this run was told before.
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
+    // Three executions. The count is coupled to the breaker's failure threshold,
+    // also 3: the third execution is admitted only because the third failure
+    // opens the endpoint *after* it. Lower that threshold and this fails as a
+    // call count rather than as anything about breakers.
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("names a refused endpoint as the circuit being open, without blaming the provider", async () => {
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "upstream stalled" } },
+      { status: 503 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+    const workspaceId = "workspace-transport-circuit";
+    const first = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 200_000,
+      ttftTimeoutMs: 1_000,
+      transportRetries: 2,
+      workspaceId,
+    }));
+    expect(first).toMatchObject({ failure: { code: "provider_unavailable" } });
+    const callsBefore = fetcher.mock.calls.length;
+
+    const refused = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 200_000,
+      ttftTimeoutMs: 1_000,
+      workspaceId,
+    }));
+
+    // The breaker is open, so no request goes out at all. Before this was named,
+    // the emptiness fell through to `harness_execution_failed` — so during an
+    // outage the first run in a workspace was attributed correctly and every run
+    // behind it was blamed on Avalon.
+    expect(fetcher.mock.calls.length).toBe(callsBefore);
+    // `routing`, not `provider`: the breaker also opens on a credential or credit
+    // failure and does not record which opened it, so this must not tell a caller
+    // branching on `kind` that an operator-actionable problem is transient.
+    expect(refused).toMatchObject({
+      status: "failed",
+      failure: { kind: "routing", code: "provider_circuit_open" },
+    });
+  });
+
+  it("does not retry or reattribute a request-shaped rejection", async () => {
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "unsupported tool schema" } },
+      { status: 400 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 200_000,
+      ttftTimeoutMs: 1_000,
+      transportRetries: 2,
+      workspaceId: "workspace-transport-bad-request",
+    }));
+
+    // A 400 is our request, not the provider's health: repeating it verbatim
+    // cannot fix it, and calling it a provider outage would point whoever reads
+    // the failure at the wrong system. `transportRetries: 2` is set so the
+    // single call proves the refusal comes from classification, not an empty
+    // budget.
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("spends no retry when the budget is zero or the run has no room for one", async () => {
+    const stalled = () => Response.json({ error: { message: "upstream stalled" } }, { status: 503 });
+
+    // Meeting notes' live pass runs at zero: its one-minute cadence is the
+    // recovery, so a wait-and-re-ask would deliver a briefing the next tick
+    // supersedes.
+    const disabled = vi.fn(stalled) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+    const off = await runHarness(runInput(disabled, {
+      maxWallClockMs: 200_000,
+      ttftTimeoutMs: 1_000,
+      transportRetries: 0,
+      workspaceId: "workspace-transport-disabled",
+    }));
+    expect(off).toMatchObject({ failure: { code: "provider_unavailable" } });
+    expect(disabled).toHaveBeenCalledTimes(1);
+
+    // A bounded caller whose remaining wall clock cannot hold another
+    // time-to-first-token window skips the retry rather than sleeping into its
+    // own deadline — which would report the outage as `run_wall_time_limit_
+    // exceeded` and point the reader at Avalon's ceiling instead of the model.
+    const cramped = vi.fn(stalled) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+    const tight = await runHarness(runInput(cramped, {
+      maxWallClockMs: 3_000,
+      ttftTimeoutMs: 30_000,
+      transportRetries: 2,
+      workspaceId: "workspace-transport-cramped",
+    }));
+    expect(tight).toMatchObject({ failure: { code: "provider_unavailable" } });
+    expect(cramped).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves the whole plan, not one attempt, before spending a retry", async () => {
+    // A re-execution replays every candidate, and each one may spend its
+    // establishment timeout *and then* its time-to-first-token timeout — the
+    // watchdog only opens once the response head lands. Reserving one TTFT
+    // window let a two-candidate plan pass this guard and then overrun,
+    // reporting the outage as `run_wall_time_limit_exceeded`.
+    //
+    // Two candidates x (20s + 30s) = 100s of worst case against a 90s budget, so
+    // the retry is declined even though a single attempt would have fit.
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "upstream stalled" } },
+      { status: 503 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 90_000,
+      requestEstablishmentTimeoutMs: 20_000,
+      ttftTimeoutMs: 30_000,
+      fallbackModels: ["fallback/model"],
+      transportRetries: 2,
+      workspaceId: "workspace-transport-multi-candidate",
+    }));
+
+    // Both candidates tried once; the plan is not replayed.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
+  });
+
   it("supports model-only loops without any plugin or discovery tools", async () => {
     let body: Record<string, unknown> | undefined;
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
@@ -2336,6 +2583,62 @@ describe("agent harness", () => {
       outcome: "definitive_failure",
     });
     expect(onAmbiguousExternalWrite).not.toHaveBeenCalled();
+  });
+
+  it("halts and preserves a Terminal command whose provider observation was lost", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-command", "run_command")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const onAmbiguousExternalWrite = vi.fn();
+    const command: HarnessTool = {
+      definition: {
+        name: "run_command",
+        description: "Run a durable command",
+        inputSchema: { type: "object", additionalProperties: false },
+        capability: "terminal.command.run",
+        mode: "write",
+        idempotency: "record_before_execute",
+      },
+      execute: async () => {
+        throw Object.assign(new Error("Resume to reconcile the durable command."), {
+          code: "command_outcome_unknown",
+          details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+        });
+      },
+    };
+    const terminalPlugin: HarnessPlugin = {
+      canonicalId: "avalon:terminal",
+      modelId: "avalon_terminal",
+      shortWireName: "terminal",
+      description: "Terminal",
+      preload: true,
+      explicit: false,
+      tools: [command],
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [terminalPlugin],
+      onAmbiguousExternalWrite,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "ambiguous_external_write", code: "ambiguous_external_write" },
+    });
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      outcome: "ambiguous_external_write",
+      data: {
+        code: "command_outcome_unknown",
+        details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+      },
+    });
+    expect(onAmbiguousExternalWrite).toHaveBeenCalledOnce();
   });
 
   it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
@@ -3657,6 +3960,15 @@ function testCorePlugin(tools: HarnessTool[]): HarnessPlugin {
 function runInput(fetcher: typeof fetch, overrides: Partial<{
   maxWallClockMs: number;
   toolTimeoutMs: number;
+  transportRetries: number;
+  ttftTimeoutMs: number;
+  requestEstablishmentTimeoutMs: number;
+  fallbackModels: string[];
+  // The route circuit breaker is module-scoped and keyed by workspace and
+  // model, so a test that deliberately fails the same endpoint three times
+  // opens it for every test that runs after it. Give such a test its own
+  // workspace.
+  workspaceId: string;
 }> = {}) {
   return {
     config: {
@@ -3668,8 +3980,17 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
       maxWallClockMs: overrides.maxWallClockMs ?? 1_000,
       toolTimeoutMs: overrides.toolTimeoutMs ?? 100,
       maxWebResults: 4,
+      ...(overrides.transportRetries === undefined ? {} : { transportRetries: overrides.transportRetries }),
+      // The transport retry refuses to spend a wait that cannot fit another
+      // time-to-first-token window, so a test exercising the retry has to state
+      // both numbers rather than inherit a 120s default it never meant.
+      ...(overrides.ttftTimeoutMs === undefined ? {} : { ttftTimeoutMs: overrides.ttftTimeoutMs }),
+      ...(overrides.requestEstablishmentTimeoutMs === undefined
+        ? {}
+        : { requestEstablishmentTimeoutMs: overrides.requestEstablishmentTimeoutMs }),
+      ...(overrides.fallbackModels === undefined ? {} : { fallbackModels: overrides.fallbackModels }),
     },
-    workspaceId: "workspace-1",
+    workspaceId: overrides.workspaceId ?? "workspace-1",
     workstreamId: "workstream-1",
     harnessRunId: "run-1",
     executionPrincipal: { type: "user" as const, userId: "user-1" },

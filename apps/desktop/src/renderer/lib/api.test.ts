@@ -4,6 +4,14 @@ import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTr
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
+const reportJavascriptError = vi.hoisted(() => vi.fn());
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal(),
+  reportJavascriptError,
+  reportTelemetryProductIntent,
+}));
+
 const timestamp = '2026-07-31T20:00:00.000Z';
 const workspaceId = '00000000-0000-7000-8000-000000000001';
 const userId = '00000000-0000-7000-8000-000000000002';
@@ -53,6 +61,7 @@ const detail = {
   archivedAt: null,
   scope: 'workspace' as const,
   systemKind: null,
+  modelOverride: null,
   nextPendingWakeup: null,
   pinPosition: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
@@ -69,6 +78,7 @@ const detail = {
     displayName: 'Google Drive',
     grantedCapabilities: ['search'],
     status: 'needs_reconnect' as const,
+    settingsKind: null,
     userDelivery: null,
     lastSyncAt: null,
     createdAt: timestamp,
@@ -154,7 +164,11 @@ function sse(events: unknown[], splitAt?: number): Response {
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  reportJavascriptError.mockReset();
+  reportTelemetryProductIntent.mockReset();
+});
 
 describe('Avalon API wire adapter', () => {
   it('streams automation assistant tokens and returns the final typed draft', async () => {
@@ -262,6 +276,16 @@ describe('Avalon API wire adapter', () => {
         { role: 'user', content: 'Only report meaningful changes.' },
       ],
     });
+  });
+
+  it('carries a work stream’s model pin through to the renderer detail', () => {
+    // Every realtime snapshot replaces the cached detail through this mapper, so
+    // a pin dropped here is a pin that survives the first load and disappears on
+    // the next socket update — taking the composer's fallback with it for the
+    // work streams whose run recorded no model of its own.
+    expect(mapWorkstreamDetail({ ...detail, modelOverride: 'deepseek/deepseek-v4-pro' }))
+      .toMatchObject({ modelOverride: 'deepseek/deepseek-v4-pro' });
+    expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
   });
 
   it('maps representative work-stream and message wire records into renderer models', () => {
@@ -774,6 +798,11 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     await expect(api.runAutomation('automation-1')).rejects.toMatchObject({ code: 'network_error' });
+    expect(reportJavascriptError).toHaveBeenCalledOnce();
+    expect(reportJavascriptError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'network_error', status: 0 }),
+      'network_error',
+    );
     await expect(api.runAutomation('automation-1')).resolves.toMatchObject({ id: workstreamId });
 
     const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
@@ -1100,6 +1129,19 @@ describe('Avalon API wire adapter', () => {
       url: 'https://linear.app/oauth/authorize?state=opaque',
       attemptId,
     });
+    const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://api.avalon.test/connections/linear/start?telemetryVersion=2',
+    );
+    expect(startHeaders.get('X-Avalon-Operation-Id')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+    expect(startHeaders.has('X-Avalon-Telemetry-Version')).toBe(false);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledOnce();
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
+      method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Avalon-Operation-Id'),
+    }));
     await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,
@@ -1315,5 +1357,51 @@ describe('expired access-token recovery', () => {
     await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
       .resolves.toMatchObject({ id: resourceId });
     expect(StubUpload.instances).toHaveLength(2);
+  });
+
+  it('reports a caught upload transport failure through exception telemetry', async () => {
+    class FailedUpload {
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      open(): void { /* Test transport does not open a real connection. */ }
+      setRequestHeader(): void { /* Headers are irrelevant to the failure. */ }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { queueMicrotask(() => this.listeners.get('error')?.()); }
+    }
+    vi.stubGlobal('XMLHttpRequest', FailedUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
+      .rejects.toMatchObject({ status: 0, code: 'network_error' });
+    expect(reportJavascriptError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'network_error', status: 0 }),
+      'network_error',
+    );
+  });
+
+  it('does not report a late upload error after cancellation', async () => {
+    class CancelledUpload {
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      open(): void { /* Test transport does not open a real connection. */ }
+      setRequestHeader(): void { /* Headers are irrelevant to cancellation. */ }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { /* Cancellation drives the events. */ }
+      abort(): void {
+        this.listeners.get('abort')?.();
+        this.listeners.get('error')?.();
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', CancelledUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const controller = new AbortController();
+    const upload = api.uploadResource(new File(['body'], 'note.txt'), 'draft-1', undefined, controller.signal);
+
+    controller.abort();
+
+    await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reportJavascriptError).not.toHaveBeenCalled();
   });
 });

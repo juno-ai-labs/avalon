@@ -1,13 +1,23 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
-import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useState } from 'react';
-import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
+import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
+import {
+  installRendererErrorTelemetry,
+  consumeSurfaceEntrypoint,
+  reportJavascriptError,
+  reportTelemetryProductIntent,
+  reportTelemetryScreen,
+  telemetryScreenForPath,
+  telemetrySurfaceForPath,
+  uuidV7,
+} from './lib/telemetry';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
@@ -39,6 +49,7 @@ class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     logError('avalon', 'renderer error boundary caught an error', error, info.componentStack);
+    reportJavascriptError(error, 'react_boundary');
   }
 
   override render(): React.ReactNode {
@@ -109,6 +120,29 @@ function NotFoundScreen(): React.JSX.Element {
   );
 }
 
+function TelemetryRouteObserver(): null {
+  const location = useLocation();
+  const lastScreen = useRef<ReturnType<typeof telemetryScreenForPath>>(null);
+  const lastSurfacePath = useRef<string | null>(null);
+  useEffect(() => {
+    const screen = telemetryScreenForPath(location.pathname);
+    const surface = telemetrySurfaceForPath(location.pathname);
+    if (!surface && screen !== lastScreen.current) {
+      lastScreen.current = screen;
+      if (screen) reportTelemetryScreen(screen);
+    }
+    if (surface && lastSurfacePath.current !== location.pathname) {
+      lastSurfacePath.current = location.pathname;
+      reportTelemetryProductIntent({
+        kind: 'surface_viewed',
+        ...surface,
+        entrypoint: consumeSurfaceEntrypoint(),
+      });
+    }
+  }, [location.pathname]);
+  return null;
+}
+
 /** A rejected bearer may just be expired, so main decides whether the session
  * is over. Every other 401 — including ones the client synthesizes after a 200,
  * like `session_profile_missing` — is deterministic, and only signing out
@@ -150,6 +184,7 @@ function WorkspaceApp(): React.JSX.Element {
   if (settingsSurface) {
     return (
       <HashRouter>
+        <TelemetryRouteObserver />
         <Routes>
           <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace.data} />} path="/settings" />
           <Route element={<Navigate replace to="/settings" />} path="*" />
@@ -162,6 +197,7 @@ function WorkspaceApp(): React.JSX.Element {
   if (meetingSurface) {
     return (
       <HashRouter>
+        <TelemetryRouteObserver />
         <Routes>
           <Route element={<MeetingNotesScreen />} path="/meeting" />
           <Route element={<Navigate replace to="/meeting" />} path="*" />
@@ -172,6 +208,7 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <HashRouter>
+      <TelemetryRouteObserver />
       <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
         <AppShell workspace={workspace.data}>
           <Routes>
@@ -206,9 +243,16 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   useEffect(() => {
     const workspace = onboarding.data?.workspace;
     if (!workspace || activatingWorkspaceId !== null) return;
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({
+      kind: 'workspace_activation_requested',
+      selectedRegion: workspace.region,
+      entrypoint: 'workspace_switcher',
+      operationId,
+    });
     setActivatingWorkspaceId(workspace.id);
     setActivationError(null);
-    void activateWorkspace(workspace.region, workspace.id).catch((error: unknown) => {
+    void activateWorkspace(workspace.region, workspace.id, operationId).catch((error: unknown) => {
       setActivationError(error instanceof Error ? error : new Error('Avalon could not open this organization.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
@@ -216,6 +260,13 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   useEffect(() => {
     endSessionFor(onboarding.error, { signOut, signOutIfCredentialCleared });
   }, [onboarding.error, signOut, signOutIfCredentialCleared]);
+
+  useEffect(() => {
+    if (!onboarding.data) return;
+    reportTelemetryScreen(onboarding.data.workspace || onboarding.data.invitations.length > 0
+      ? 'onboarding_workspace'
+      : 'onboarding_region');
+  }, [onboarding.data]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
     return <LoadingState label="Checking your organizations…" />;
@@ -252,6 +303,9 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
 
 export function SessionGate(): React.JSX.Element {
   const { booting, session } = useAppSession();
+  useEffect(() => {
+    if (!booting && !session) reportTelemetryScreen('onboarding_welcome');
+  }, [booting, session]);
   if (booting) return <BootScreen />;
   if (!session) return <SignInScreen />;
   if (session.workspace) return <WorkspaceApp />;
@@ -259,6 +313,7 @@ export function SessionGate(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
+  useEffect(() => installRendererErrorTelemetry(), []);
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

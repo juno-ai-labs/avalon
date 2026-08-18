@@ -12,6 +12,10 @@ import {
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
 }));
+const telemetry = vi.hoisted(() => ({
+  operationId: '00000000-0000-7000-8000-000000000011',
+  reportTelemetryProductIntent: vi.fn(),
+}));
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -48,6 +52,10 @@ const sessionState = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => sessionState }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge }));
+vi.mock('../lib/telemetry', () => ({
+  reportTelemetryProductIntent: telemetry.reportTelemetryProductIntent,
+  uuidV7: () => telemetry.operationId,
+}));
 
 const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',
@@ -98,14 +106,42 @@ describe('identity-first onboarding screens', () => {
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
-    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith('Acme Research', 'eu'));
+    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
+      'Acme Research', 'eu', telemetry.operationId,
+    ));
+  });
+
+  it('shows Terminal as unavailable only while the European Union region is selected', () => {
+    render(<RegionOnboarding />);
+
+    expect(screen.getByText('US-Jurisdiction storage')).toBeVisible();
+    expect(screen.getByText('EU-jurisdiction storage')).toBeVisible();
+    expect(screen.getByText('This choice controls only where workspace data is stored and cannot be changed later.')).toBeVisible();
+    expect(screen.queryByText(/Cloudflare storage|regional routing|Your Avalon sign-in stays the same/u)).not.toBeInTheDocument();
+    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
+    expect(screen.getByText('Unavailable for EU region (at this time, subject to change based on providers)')).toBeVisible();
+    expect(screen.getByRole('list')).toHaveTextContent('Avalon agent: Terminal access');
+
+    fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
+    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });
 
   it('accepts a pending invitation through its own region without another login prompt', async () => {
     render(<InvitationOnboarding invitations={[invitation]} onChanged={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
-    await waitFor(() => expect(sessionState.acceptInvitation).toHaveBeenCalledWith('eu', invitation.id));
+    await waitFor(() => expect(sessionState.acceptInvitation).toHaveBeenCalledWith(
+      'eu', invitation.id, telemetry.operationId,
+    ));
+    expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workspace_activation_requested',
+      selectedRegion: 'eu',
+      entrypoint: 'invitation',
+      operationId: telemetry.operationId,
+    });
   });
 
   it('declines a pending invitation and reloads the remaining choices', async () => {

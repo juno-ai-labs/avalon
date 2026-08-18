@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { ApiError } from '../lib/api';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
 
@@ -11,6 +12,8 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  getGitHubRepositoryAccessSettings: vi.fn(),
+  updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
   createWebhookConnection: vi.fn(),
@@ -23,6 +26,9 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   updateWorkspaceLogAgentInference: vi.fn(),
+  getTerminalWorkspaceSettings: vi.fn(),
+  previewTerminalNetworkPolicy: vi.fn(),
+  applyTerminalNetworkPolicy: vi.fn(),
   getDigestSchedule: vi.fn(),
   updateDigestSchedule: vi.fn(),
 }));
@@ -36,6 +42,8 @@ const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
 const setLaunchAtLogin = vi.hoisted(() => vi.fn());
+const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
+const getTelemetryInspector = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
@@ -64,6 +72,8 @@ vi.mock('../lib/platform', () => ({
     setDebugEnabled,
     setMenuBarEnabled,
     setLaunchAtLogin,
+    setProductAnalyticsEnabled,
+    getTelemetryInspector,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -124,7 +134,7 @@ function renderSettings(
   );
 }
 
-function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'Application'): void {
+function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'GitHub' | 'Application'): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -143,6 +153,53 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getGitHubRepositoryAccessSettings.mockResolvedValue({
+      connectionId: '00000000-0000-7000-8000-000000000020',
+      connectionName: 'GitHub · Avalon',
+      revision: 3,
+      mode: 'all_repositories',
+      defaultRemoteAccess: 'full_access',
+      repositories: [],
+      availableRepositories: [
+        {
+          repositoryId: '101',
+          repositoryFullName: 'with-avalon/avalon',
+          private: true,
+          remoteAccess: 'full_access',
+        },
+        {
+          repositoryId: '102',
+          repositoryFullName: 'with-avalon/docs',
+          private: false,
+          remoteAccess: 'full_access',
+        },
+      ],
+    });
+    api.updateGitHubRepositoryAccessSettings.mockImplementation(async (_connectionId: string, input: {
+      expectedRevision: number;
+      mode: 'all_repositories' | 'selected_repositories';
+      defaultRemoteAccess: 'read_only' | 'full_access';
+      repositories: Array<{ repositoryId: string; repositoryFullName: string; remoteAccess: 'read_only' | 'full_access' }>;
+    }) => ({
+      connectionId: '00000000-0000-7000-8000-000000000020',
+      connectionName: 'GitHub · Avalon',
+      revision: input.expectedRevision + 1,
+      mode: input.mode,
+      defaultRemoteAccess: input.defaultRemoteAccess,
+      repositories: input.repositories,
+      availableRepositories: [
+        {
+          repositoryId: '101', repositoryFullName: 'with-avalon/avalon', private: true,
+          remoteAccess: input.repositories.find((entry) => entry.repositoryId === '101')?.remoteAccess
+            ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
+        },
+        {
+          repositoryId: '102', repositoryFullName: 'with-avalon/docs', private: false,
+          remoteAccess: input.repositories.find((entry) => entry.repositoryId === '102')?.remoteAccess
+            ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
+        },
+      ],
+    }));
     api.getAvailableConnectorTypes.mockResolvedValue([
       'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
     ]);
@@ -194,6 +251,21 @@ describe('Workspace settings', () => {
       ...workspace,
       logAgentInference: enabled,
     }));
+    api.getTerminalWorkspaceSettings.mockResolvedValue({
+      availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
+      customDomains: [], remainingCustomSlots: 7, failureCode: null,
+    });
+    api.previewTerminalNetworkPolicy.mockResolvedValue({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
+      proposedMode: 'full_internet', customDomains: [], remainingCustomSlots: 7,
+      affectedWorkstreamIds: ['00000000-0000-7000-8000-000000000091'],
+      affectedWorkstreams: [{ id: '00000000-0000-7000-8000-000000000091', title: 'Customer export' }],
+      warning: 'Full internet lets Terminal code contact arbitrary public destinations.',
+    });
+    api.applyTerminalNetworkPolicy.mockResolvedValue({
+      availability: 'supported', mode: 'full_internet', revision: 2, verificationState: 'verified',
+      customDomains: [], remainingCustomSlots: 7, failureCode: null,
+    });
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
@@ -207,6 +279,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
@@ -218,6 +294,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     }));
     setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
       lockdownMode: false,
@@ -229,6 +309,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     }));
     setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => ({
       lockdownMode: false,
@@ -252,6 +336,25 @@ describe('Workspace settings', () => {
       launchAtLogin,
       launchAtLoginAvailable: true,
     }));
+    setProductAnalyticsEnabled.mockImplementation(async (productAnalyticsEnabled: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+      productAnalyticsEnabled,
+      productAnalyticsEffective: productAnalyticsEnabled,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: !productAnalyticsEnabled,
+    }));
+    getTelemetryInspector.mockResolvedValue([{
+      name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
+      propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
+    }]);
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -272,6 +375,76 @@ describe('Workspace settings', () => {
     expect(toggle).toBeChecked();
   });
 
+  it('previews and confirms full Terminal internet access before applying it', async () => {
+    renderSettings();
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Terminal network access')).toBeVisible();
+    const fullInternet = screen.getByRole('radio', { name: /^Full internet/ });
+    fireEvent.click(fullInternet);
+    await waitFor(() => expect(fullInternet).toBeChecked());
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+
+    expect(await screen.findByText(/arbitrary public destinations/u)).toBeVisible();
+    expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
+      expectedRevision: 1, mode: 'full_internet', customDomains: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm network change' }));
+    await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenCalledWith({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
+    }));
+  });
+
+  it('keeps Avalon-managed Trusted-only domains out of the settings surface', async () => {
+    api.previewTerminalNetworkPolicy.mockResolvedValueOnce({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
+      proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
+      remainingCustomSlots: 6,
+      affectedWorkstreamIds: [], affectedWorkstreams: [],
+      warning: 'Trusted only applies managed and workspace-approved access.',
+    });
+    renderSettings();
+    openSettingsSection('Workspace');
+
+    expect(await screen.findByText('Workspace-approved domains')).toBeVisible();
+    expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
+    for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
+      expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByLabelText('Additional Terminal domains'), {
+      target: { value: 'packages.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+    fireEvent.click(await screen.findByText('Review exact before and after targets'));
+    expect(await screen.findAllByText('packages.example.com')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Download workspace domains' })).toBeVisible();
+    for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
+      expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
+    }
+  });
+
+  it('reports stopped and quarantined work streams after provider verification fails', async () => {
+    api.applyTerminalNetworkPolicy.mockRejectedValueOnce(new ApiError(
+      'Daytona did not confirm the requested network policy.',
+      502,
+      'terminal_policy_verification_failed',
+      {
+        sandboxOutcomes: [
+          { workstreamId: '00000000-0000-7000-8000-000000000091', title: 'Customer export', outcome: 'stopped' },
+          { workstreamId: '00000000-0000-7000-8000-000000000092', title: 'Weekly report', outcome: 'quarantined' },
+        ],
+      },
+    ));
+    renderSettings();
+    openSettingsSection('Workspace');
+    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }));
+
+    expect(await screen.findByText('Sandbox outcomes')).toBeVisible();
+    expect(screen.getByText('Customer export: stopped')).toBeVisible();
+    expect(screen.getByText('Weekly report: quarantined')).toBeVisible();
+  });
+
   it('opens the exact section requested by a native settings-window URL', async () => {
     window.history.replaceState({}, '', '/?surface=settings&settingsSection=workspace#/settings');
     renderSettings();
@@ -280,6 +453,135 @@ describe('Workspace settings', () => {
     expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
     expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('adds a nested GitHub settings page only for a configurable active connection', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read', 'github.contents.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    const githubNavigation = await within(navigation).findByRole('button', { name: 'GitHub' });
+    expect(githubNavigation).toHaveClass('settings-navigation-child');
+    fireEvent.click(githubNavigation);
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Repository access' })).toBeVisible();
+    expect(await screen.findByText('with-avalon/avalon')).toBeVisible();
+    expect(screen.getByText(/Read-only still allows Avalon to edit and commit locally/u)).toBeVisible();
+    expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('shows workspace GitHub policy read-only to non-admin members', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings({ ...workspace, currentUser: member });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    expect(await screen.findByText(/Ask a workspace administrator to change it/u)).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Default remote access' })).toBeDisabled();
+  });
+
+  it('lets a member switch from a workspace GitHub policy to personal settings', async () => {
+    const workspaceConnectionId = '00000000-0000-7000-8000-000000000020';
+    const personalConnectionId = '00000000-0000-7000-8000-000000000021';
+    api.getConnections.mockResolvedValue([{
+      id: workspaceConnectionId,
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }, {
+      id: personalConnectionId,
+      connectorType: 'github',
+      scope: 'you',
+      ownerUserId: member.id,
+      displayName: 'GitHub · Sam',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    api.getGitHubRepositoryAccessSettings.mockImplementation(async (connectionId: string) => ({
+      connectionId,
+      connectionName: connectionId === personalConnectionId ? 'GitHub · Sam' : 'GitHub · Avalon',
+      revision: 3,
+      mode: 'all_repositories',
+      defaultRemoteAccess: 'full_access',
+      repositories: [],
+      availableRepositories: [],
+    }));
+    renderSettings({ ...workspace, currentUser: member });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    const connection = await screen.findByRole('combobox', { name: 'GitHub connection' });
+    expect(connection).toBeEnabled();
+    fireEvent.change(connection, { target: { value: personalConnectionId } });
+
+    await waitFor(() => expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      personalConnectionId,
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeEnabled());
+  });
+
+  it('updates repository selection and remote access without restricting local edits', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read', 'github.contents.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    const availability = await screen.findByRole('combobox', { name: 'Repository availability' });
+    fireEvent.change(availability, { target: { value: 'selected_repositories' } });
+    await waitFor(() => expect(api.updateGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      { expectedRevision: 3, mode: 'selected_repositories', defaultRemoteAccess: 'full_access', repositories: [] },
+    ));
+    const add = await screen.findAllByRole('button', { name: 'Add' });
+    fireEvent.click(add[0]!);
+    await waitFor(() => expect(api.updateGitHubRepositoryAccessSettings).toHaveBeenLastCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      {
+        expectedRevision: 4,
+        mode: 'selected_repositories',
+        defaultRemoteAccess: 'full_access',
+        repositories: [{
+          repositoryId: '101',
+          repositoryFullName: 'with-avalon/avalon',
+          remoteAccess: 'read_only',
+        }],
+      },
+    ));
+    expect(screen.getByText(/Terminal harness always permits local edits and local commits/iu)).toBeVisible();
+    expect(screen.queryByText(/participant explicitly requested/iu)).not.toBeInTheDocument();
   });
 
   it('refreshes members whenever settings opens even when the cached list is fresh', async () => {
@@ -419,7 +721,12 @@ describe('Workspace settings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
 
     expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
-    expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010');
+    expect(api.reconnectConnection).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000010',
+      'google',
+      'you',
+      1,
+    );
     expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
   });
 
@@ -439,7 +746,12 @@ describe('Workspace settings', () => {
     const dialog = screen.getByRole('dialog', { name: 'Do you want to re-connect Google · adam@example.com?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
 
-    await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010'));
+    await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000010',
+      'google',
+      'you',
+      1,
+    ));
     expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
   });
 
@@ -704,7 +1016,9 @@ describe('Workspace settings', () => {
 
       const slackCard = (await screen.findByText('Slack')).closest('article');
       expect(slackCard).not.toBeNull();
-      expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      await waitFor(() => {
+        expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
       const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
       await waitFor(() => expect(workspaceButton).toBeDisabled());
@@ -887,11 +1201,12 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const installedHeading = await screen.findByRole('heading', { level: 2, name: 'Installed connections' });
+    const rotateButton = await screen.findByRole('button', { name: 'Rotate secret for Inbound webhook' });
+    const installedHeading = screen.getByRole('heading', { level: 2, name: 'Installed connections' });
     const headingGroup = installedHeading.closest<HTMLElement>('.settings-pane-heading');
     expect(within(headingGroup!).getByText('1')).toBeVisible();
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Rotate secret for Inbound webhook' })).toBeVisible();
+    expect(rotateButton).toBeVisible();
   });
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
@@ -997,6 +1312,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1019,6 +1338,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1066,6 +1389,79 @@ describe('Workspace settings', () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(true));
     expect(toggle).toBeChecked();
+  });
+
+  it('controls product analytics and explains regional crash behavior', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(/EU telemetry stays in Avalon’s EU platform/u)).toBeVisible();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setProductAnalyticsEnabled).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/Restart Avalon to remove local native crash dumps and apply the current setting/u)).toBeVisible();
+  });
+
+  it('shows a read-only redacted telemetry inspector only in Developer settings', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+    expect(await screen.findByRole('heading', { name: 'Telemetry inspector' })).toBeVisible();
+    expect(await screen.findByText('screen_viewed')).toBeVisible();
+    expect(screen.getByText('screen')).toBeVisible();
+    expect(screen.getByText(/EU · accepted · queued/u)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /replay|emit/u })).toBeNull();
+  });
+
+  it('shows telemetry inspector failures and lets the developer retry', async () => {
+    getTelemetryInspector
+      .mockRejectedValueOnce(new Error('Telemetry decisions could not be read.'))
+      .mockResolvedValueOnce([{
+        name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
+        propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
+      }]);
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByText('Telemetry decisions could not be read.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry inspector' }));
+    expect(await screen.findByText('screen_viewed')).toBeVisible();
+    expect(screen.queryByText('Telemetry decisions could not be read.')).toBeNull();
+  });
+
+  it('finds Privacy and diagnostics from telemetry-related settings searches', async () => {
+    renderSettings();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
+      target: { value: 'crash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Application' }));
+    expect(await screen.findByRole('heading', { name: 'Privacy & diagnostics' })).toBeVisible();
+  });
+
+  it('disables the account preference on a browser bridge that cannot persist it', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: false,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: false,
+      menuBarPresent: false,
+      launchAtLogin: false,
+      launchAtLoginAvailable: false,
+      productAnalyticsEnabled: true,
+      productAnalyticsAvailable: false,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Product analytics' })).toBeDisabled();
+    expect(screen.getByText('Product analytics is managed in the Avalon desktop app.')).toBeVisible();
   });
 
   it('reports what macOS holds rather than what was asked for', async () => {
@@ -1124,6 +1520,10 @@ describe('Workspace settings', () => {
       menuBarPresent: false,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1276,6 +1676,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeChecked();
 
@@ -1291,6 +1695,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });
@@ -1420,6 +1828,24 @@ describe('Closing the settings window with Escape', () => {
       expect(close, `Escape is dead in ${section}`).toHaveBeenCalled();
       close.mockClear();
     }
+  });
+
+  it('closes over persisted Terminal domains until the draft actually changes', async () => {
+    api.getTerminalWorkspaceSettings.mockResolvedValue({
+      availability: 'supported', mode: 'trusted_only', revision: 3, verificationState: 'verified',
+      customDomains: ['packages.example.com'], remainingCustomSlots: 6, failureCode: null,
+    });
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Workspace');
+    const domains = await screen.findByLabelText('Additional Terminal domains');
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+    close.mockClear();
+
+    fireEvent.change(domains, { target: { value: 'packages.example.com\nnew.example.com' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
   });
 
   it('dismisses an open dialog without taking the window with it', async () => {

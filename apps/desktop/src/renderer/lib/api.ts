@@ -7,6 +7,7 @@ import {
   AutomationSummarySchema as WireAutomationSummarySchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
+  GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
@@ -27,6 +28,9 @@ import {
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceSchema as WireWorkspaceSchema,
+  TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
+  TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
+  TerminalWorkstreamStateSchema as WireTerminalWorkstreamStateSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
   DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
@@ -45,6 +49,7 @@ import {
   type User as WireUser,
   type Workstream as WireWorkstream,
   type WorkstreamDetail as WireWorkstreamDetail,
+  type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
 } from '@avalon/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
 import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
@@ -53,6 +58,8 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
+import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
+import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -92,6 +99,9 @@ import type {
   WorkstreamResource,
   WorkstreamSummary,
   WorkOpportunity,
+  TerminalWorkspaceSettings,
+  TerminalNetworkPolicyPreview,
+  TerminalWorkstreamState,
 } from './types';
 
 export class ApiError extends Error {
@@ -108,6 +118,12 @@ export class ApiError extends Error {
     this.details = details;
     this.requestId = requestId;
   }
+}
+
+function networkApiError(message: string, cause?: unknown): ApiError {
+  const error = new ApiError(message, 0, 'network_error', cause);
+  reportJavascriptError(error, 'network_error');
+  return error;
 }
 
 /** The service answers 401 for plenty of things that are not a dead bearer —
@@ -332,6 +348,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
         ? 'disabled'
         : 'reconnect_required',
     capabilities: connection.grantedCapabilities,
+    ...(connection.settingsKind ? { settingsKind: connection.settingsKind } : {}),
     ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
   };
 }
@@ -475,6 +492,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     openElicitations: workstream.openElicitations.map(mapElicitation),
     suggestions: workstream.suggestions.map(mapSuggestion),
     automationRuns: [],
+    ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
     ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
     ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     ...(workstream.latestHarnessRunId ? { latestHarnessRunId: workstream.latestHarnessRunId } : {}),
@@ -666,7 +684,7 @@ export class AvalonApi {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      throw new ApiError('Avalon could not reach the selected regional service.', 0, 'network_error', error);
+      throw networkApiError('Avalon could not reach the selected regional service.', error);
     }
   }
 
@@ -801,6 +819,30 @@ export class AvalonApi {
       schema: WireWorkspaceSchema,
     });
     return this.getWorkspace();
+  }
+
+  async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {
+    return this.request('/workspace/terminal', { schema: WireTerminalWorkspaceSettingsSchema, signal });
+  }
+
+  async previewTerminalNetworkPolicy(input: {
+    expectedRevision: number;
+    mode: 'trusted_only' | 'full_internet';
+    customDomains: string[];
+  }): Promise<TerminalNetworkPolicyPreview> {
+    return this.request('/workspace/terminal/network-policy/preview', {
+      method: 'POST', body: input, schema: WireTerminalNetworkPolicyPreviewSchema,
+    });
+  }
+
+  async applyTerminalNetworkPolicy(input: {
+    mutationId: string;
+    expectedRevision: number;
+    confirmed: true;
+  }): Promise<TerminalWorkspaceSettings> {
+    return this.request('/workspace/terminal/network-policy/apply', {
+      method: 'POST', body: input, schema: WireTerminalWorkspaceSettingsSchema,
+    });
   }
 
   async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
@@ -1004,18 +1046,27 @@ export class AvalonApi {
   async recordWorkOpportunityImpressions(opportunityIds: string[]): Promise<void> {
     await this.requestVoid('/work-opportunities/impressions', {
       method: 'POST',
-      body: { opportunityIds },
+      body: { opportunityIds, surface: 'workspace_home' },
     });
   }
 
-  async dismissWorkOpportunity(id: string): Promise<void> {
-    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  async dismissWorkOpportunity(id: string, version?: number, position?: number): Promise<void> {
+    const query = new URLSearchParams({ surface: 'workspace_home' });
+    if (version != null) query.set('version', String(version));
+    if (position != null) query.set('position', String(position));
+    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}?${query.toString()}`, { method: 'DELETE' });
   }
 
-  async startWorkOpportunity(id: string, version: number, idempotencyKey: string): Promise<CreatedWorkstream> {
+  async startWorkOpportunity(
+    id: string,
+    version: number,
+    idempotencyKey: string,
+    surface: 'workspace_home',
+    position?: number,
+  ): Promise<CreatedWorkstream> {
     const response = await this.request(`/work-opportunities/${encodeURIComponent(id)}/start`, {
       method: 'POST',
-      body: { version, idempotencyKey },
+      body: { version, idempotencyKey, surface, ...(position == null ? {} : { position }) },
       schema: createWorkstreamResponseSchema,
     });
     return {
@@ -1146,10 +1197,11 @@ export class AvalonApi {
     id: string,
     readThroughSequenceNumber: number,
     observedManualUnreadGeneration: number,
+    entrypoint?: TelemetrySurfaceEntrypoint,
   ): Promise<WorkstreamSummary> {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state`, {
       method: 'PATCH',
-      body: { readThroughSequenceNumber, observedManualUnreadGeneration },
+      body: { readThroughSequenceNumber, observedManualUnreadGeneration, entrypoint },
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
@@ -1209,8 +1261,12 @@ export class AvalonApi {
     modelOverride?: AgentModelOverride;
   }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
+    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request('/workstreams', {
       method: 'POST',
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: {
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
@@ -1234,6 +1290,20 @@ export class AvalonApi {
   async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamDetail> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
     return mapWorkstreamDetail(raw);
+  }
+
+  async getTerminalWorkstreamState(id: string, signal?: AbortSignal): Promise<TerminalWorkstreamState> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal`, {
+      schema: WireTerminalWorkstreamStateSchema,
+      signal,
+    });
+  }
+
+  async startFreshTerminalWorkspace(id: string): Promise<TerminalWorkstreamState> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/start-fresh`, {
+      method: 'POST',
+      schema: WireTerminalWorkstreamStateSchema,
+    });
   }
 
   async getHyperSight(id: string, signal?: AbortSignal): Promise<HyperSight> {
@@ -1374,8 +1444,11 @@ export class AvalonApi {
     attachmentIds?: string[];
   }): Promise<Message> {
     const mentions = await this.mentionPayload(id, input.text, input.mentions);
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: {
         text: input.text,
         clientMessageId: input.clientId,
@@ -1422,7 +1495,10 @@ export class AvalonApi {
       request.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
       });
+      let settled = false;
       request.addEventListener('load', () => {
+        if (settled) return;
+        settled = true;
         if (request.status < 200 || request.status >= 300) {
           const nested = request.response && typeof request.response === 'object' && 'error' in request.response
             ? (request.response as { error?: { code?: string; message?: string; details?: unknown; requestId?: string } }).error
@@ -1444,8 +1520,16 @@ export class AvalonApi {
         onProgress?.(100);
         resolve(mapResource(parsed.data));
       });
-      request.addEventListener('error', () => reject(new ApiError('Avalon could not upload the attachment.', 0, 'network_error')));
-      request.addEventListener('abort', () => reject(new DOMException('The upload was cancelled.', 'AbortError')));
+      request.addEventListener('error', () => {
+        if (settled) return;
+        settled = true;
+        reject(networkApiError('Avalon could not upload the attachment.'));
+      });
+      request.addEventListener('abort', () => {
+        if (settled) return;
+        settled = true;
+        reject(new DOMException('The upload was cancelled.', 'AbortError'));
+      });
       if (signal) {
         if (signal.aborted) {
           request.abort();
@@ -1569,7 +1653,21 @@ export class AvalonApi {
   }
 
   async compileAutomation(
-    input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
+    input: {
+      message: string;
+      draftId?: string;
+      templateId?: string;
+      attachmentIds?: string[];
+      inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
+      connectorMentionCount?: number;
+      resolvedElicitation?: {
+        id: string;
+        responseType: 'free_text' | 'single_select' | 'multi_select';
+        resolution: 'answered' | 'skipped';
+        customResponseUsed: boolean;
+        presentedAt: string;
+      };
+    },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
     // The first turn has no draft to continue. Every later one names the draft
@@ -1592,6 +1690,9 @@ export class AvalonApi {
         messages,
         currentDraft: previous.draft,
         attachmentIds,
+        inputMode: input.inputMode ?? 'typed',
+        connectorMentionCount: input.connectorMentionCount ?? 0,
+        ...(input.resolvedElicitation ? { resolvedElicitation: input.resolvedElicitation } : {}),
       }),
     });
     if (!response.ok) return this.throwResponseError(response);
@@ -1637,7 +1738,13 @@ export class AvalonApi {
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
-    return this.automationDraftResponse(draftId, raw, assistantMessage);
+    return this.automationDraftResponse(
+      draftId,
+      raw,
+      assistantMessage,
+      completed.elicitationId ?? undefined,
+      completed.elicitationPresentedAt ?? undefined,
+    );
   }
 
   /** The one place a compiled draft becomes what the builder screen renders,
@@ -1647,6 +1754,8 @@ export class AvalonApi {
     draftId: string,
     raw: WireAutomationDraft,
     assistantMessage: string,
+    elicitationId?: string,
+    elicitationPresentedAt?: string,
   ): AutomationDraftResponse {
     const elicitation = raw.elicitation;
     return {
@@ -1655,7 +1764,8 @@ export class AvalonApi {
       ...(raw.followUpQuestion
         ? {
             question: {
-              id: crypto.randomUUID(),
+              id: elicitationId ?? crypto.randomUUID(),
+              presentedAt: elicitationPresentedAt ?? new Date().toISOString(),
               prompt: elicitation?.prompt ?? raw.followUpQuestion,
               ...(elicitation?.placeholder ? { placeholder: elicitation.placeholder } : {}),
               responseType: elicitation?.responseType ?? 'free_text',
@@ -1707,7 +1817,13 @@ export class AvalonApi {
     const assistantMessage = [...state.messages].reverse()
       .find((message) => message.role === 'assistant')?.content ?? '';
     return {
-      draft: this.automationDraftResponse(state.draftId, state.draft, assistantMessage),
+      draft: this.automationDraftResponse(
+        state.draftId,
+        state.draft,
+        assistantMessage,
+        state.elicitationId ?? undefined,
+        state.elicitationPresentedAt ?? undefined,
+      ),
       messages: state.messages,
     };
   }
@@ -1806,6 +1922,36 @@ export class AvalonApi {
     return result.availableConnectorTypes;
   }
 
+  async getGitHubRepositoryAccessSettings(
+    connectionId: string,
+    signal?: AbortSignal,
+  ): Promise<WireGitHubRepositoryAccessSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/github/repository-access`, {
+      schema: WireGitHubRepositoryAccessSettingsSchema,
+      signal,
+    });
+  }
+
+  async updateGitHubRepositoryAccessSettings(
+    connectionId: string,
+    input: {
+      expectedRevision: number;
+      mode: 'all_repositories' | 'selected_repositories';
+      defaultRemoteAccess: 'read_only' | 'full_access';
+      repositories: Array<{
+        repositoryId: string;
+        repositoryFullName: string;
+        remoteAccess: 'read_only' | 'full_access';
+      }>;
+    },
+  ): Promise<WireGitHubRepositoryAccessSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/github/repository-access`, {
+      method: 'PUT',
+      body: input,
+      schema: WireGitHubRepositoryAccessSettingsSchema,
+    });
+  }
+
   async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<ConnectorOAuthStart> {
     return this.startProviderConnection('google', scope, capabilities);
   }
@@ -1815,8 +1961,18 @@ export class AvalonApi {
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
-    return this.request(`/connections/${provider}/start`, {
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2',
+      connector: provider,
+      scope: scope === 'you' ? 'personal' : 'workspace',
+      method: 'oauth',
+      capabilityCount: telemetryCountBucket(capabilities.length),
+      operationId,
+    });
+    return this.request(`/connections/${provider}/start?telemetryVersion=2`, {
       method: 'POST',
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
       schema: WireConnectorOAuthStartSchema,
     });
@@ -1825,6 +1981,10 @@ export class AvalonApi {
   async createXConnection(
     capabilities: string[],
   ): Promise<WorkstreamConnection> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'x', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(capabilities.length),
+    });
     const response = await this.request('/connections/x', {
       method: 'POST',
       body: { scope: 'workspace', capabilities },
@@ -1834,6 +1994,10 @@ export class AvalonApi {
   }
 
   async createGranolaWorkspaceConnection(apiKey: string): Promise<WorkstreamConnection> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'granola', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(1),
+    });
     const response = await this.request('/connections/granola/workspace', {
       method: 'POST',
       body: { apiKey, capabilities: ['granola.workspace.read'] },
@@ -1853,6 +2017,10 @@ export class AvalonApi {
     signingSecret: string;
     signatureFormat: string;
   }> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'generic_webhook',
+      scope: scope === 'you' ? 'personal' : 'workspace', method: 'webhook', capabilityCount: telemetryCountBucket(0),
+    });
     const response = await this.request('/connections/webhook', {
       method: 'POST',
       body: {
@@ -1886,9 +2054,24 @@ export class AvalonApi {
     });
   }
 
-  async reconnectConnection(id: string): Promise<ConnectorOAuthStart> {
-    return this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
+  async reconnectConnection(
+    id: string,
+    provider?: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    scope: 'you' | 'workspace' = 'you',
+    capabilityCount = 0,
+  ): Promise<ConnectorOAuthStart> {
+    const operationId = provider ? uuidV7() : null;
+    if (provider && operationId) {
+      reportTelemetryProductIntent({
+        kind: 'connector_setup_requested_v2', connector: provider,
+        scope: scope === 'you' ? 'personal' : 'workspace', method: 'oauth',
+        capabilityCount: telemetryCountBucket(capabilityCount),
+        operationId,
+      });
+    }
+    return this.request(`/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2`, {
       method: 'POST',
+      ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
       schema: WireConnectorOAuthStartSchema,
     });
   }

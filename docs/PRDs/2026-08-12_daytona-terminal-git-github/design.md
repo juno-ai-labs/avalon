@@ -9,20 +9,22 @@
 flowchart LR
     M["Work-stream model"] -->|"typed file, command, resource, and publish tools"| H["Regional Bind harness"]
     H -->|"lease, lifecycle, toolbox"| D["Daytona sandbox"]
-    H -->|"read-scoped token behind placeholder"| S["Daytona Secrets"]
+    H -->|"repository-scoped policy token behind placeholder"| S["Daytona Secrets"]
     S -->|"host-scoped HTTPS substitution"| D
     D -->|"native domain policy"| GH["GitHub and package hosts"]
-    H -->|"download committed Git bundle"| P["Trusted regional publisher"]
+    H -.->|"optional committed Git bundle"| P["Trusted regional publisher"]
     P -->|"fresh GitHub App write token"| API["GitHub"]
     H -->|"state, audit, publication receipts"| DB["Regional D1"]
     H -->|"resource bytes, bounded output, final diff"| R2["Regional R2"]
 ```
 
-The model may choose root-relative paths, command text, a bounded timeout, and
-resource metadata. For publication it may choose only the PR title and body. It
-cannot choose sandbox identity or lifecycle, snapshot, network policy, GitHub
-repository, base or head ref, credentials, publisher operation, retention, or
-resource limits.
+The model may choose root-relative paths, command text, a bounded timeout,
+resource metadata, and one exact GitHub repository from connector-authorized
+discovery. With full repository access it may use standard `git` and `gh`
+commands. It cannot choose sandbox identity or lifecycle, snapshot, network
+policy, provider repository identity, credential permissions, retention, or
+resource limits. Avalon prepares the intended branch and the prompt directs the
+model to stay on it; GitHub does not technically scope the token to that ref.
 
 ## Plugin activation and prompt
 
@@ -46,10 +48,14 @@ while receipts and policy retain the local canonical name.
 
 Bind exposes every canonical tool in this document whenever the plugin loads; it
 does not construct scratch, repository, or publication subsets. Scratch code
-needs no GitHub connection. Repository calls revalidate an active App
-installation and exactly one authorized repository. The always-visible
-publication tool additionally requires explicit participant intent and current
-external-write authorization when called.
+needs no GitHub connection. `checkout_repository` lets the model select an exact
+authorized repository and exposes its effective remote access; before a change
+replaces retained filesystem state, the harness stores a verified recovery
+resource. Repository calls revalidate an active App installation, immutable
+repository ID, and connector policy. `read_only` and `full_access` determine the
+permissions of the mounted repository token. The always-visible typed
+publication tool is an optional convenience rather than a second
+participant-intent gate.
 
 The plugin contributes the exact, contract-tested system-prompt block in the
 PRD's [language support section](./prd.md#explicit-language-and-package-support),
@@ -71,6 +77,7 @@ The model receives production-harness-shaped primitives, not Daytona APIs:
 | `apply_patch` | `patch` | Atomic per-file operation and diff summary | `write` / `record_before_execute`; reconcile internal content hashes and resulting content |
 | `import_resource` | automatic: `resourceId`; explicit: `resourceId`, `destinationPath`, `overwrite?` | Authorized original at a sandbox path with source hash | `write` / `record_before_execute`; reconcile resource visibility, destination hash, and source hash |
 | `run_command` | `command`, `cwd?`, `timeoutMs?`, `description?` | One final exit result; Bind may suspend while it runs | `write` / `record_before_execute`; reconcile stable Daytona task |
+| `checkout_repository` | `repositoryFullName`, `requiredRemoteAccess?` | Immutable repository identity, fixed refs, effective remote access, and optional recovery resource | `write` / `record_before_execute`; reconcile completed receipt and recovery resource before sandbox replacement |
 | `publish_resource` | `filePath`, `displayName?`, `description?` | Attached Avalon resource identity, classification, hash, and canonical address | `write` / `provider_key`; stable receipt-derived resource ID and current visibility check |
 | `publish_branch_and_pr` | `title`, `body` | Published commit, PR number, canonical URL | `write` / `record_before_execute`; reconcile exact ref and head/base PR |
 
@@ -143,25 +150,26 @@ exact-match recovery, nonzero command exit, and publication repair.
 
 ## Snapshot contract and package behavior
 
-The immutable launch snapshot contains:
+The managed `daytona-small` snapshot plus Avalon's idempotent compatibility bootstrap contains:
 
 - Bash, POSIX `sh`, and standard Unix utilities;
-- one pinned Python 3 with `venv`, `pip`, and `uv`;
-- Node.js 22, `npm`, and `pnpm`;
-- pinned `typescript` and `tsx`;
+- Daytona's current Python 3 with `venv`, `pip`, and `uv`;
+- Daytona's current Node.js, `npm`, and `pnpm`;
+- `typescript` and `tsx`;
 - SQLite 3;
-- `git`, read-only `gh`, `rg`, and `jq`; and
-- the pinned `apt`/`dpkg` path and signed base-image sources.
+- `git`, `gh`, `rg`, and `jq`; and
+- the managed `apt`/`dpkg` path and signed base-image sources.
 
-The snapshot manifest records the exact runtime and manager versions, source
-image digest, compatible trusted-target manifest version, and smoke-fixture IDs.
-Snapshot publication runs one execute/revise/pass fixture for each language and
-one install fixture for each manager path. The snapshot and manifest advance
-together; production never refers to a mutable `latest` tag.
+The provider records and probes the effective runtime and manager versions,
+compatible trusted-target manifest version, and smoke-fixture IDs. First
+creation installs only missing SQLite/`gh`/pnpm/`tsx` capabilities, then runs one
+execute/revise/pass fixture for each language and one install fixture for each
+manager path. A breaking Daytona update fails closed instead of silently
+changing the advertised contract.
 
-Installs stay within the repository, virtual environment, task root, or current
-sandbox. The model cannot self-update a global manager or runtime. A narrow local
-elevation policy admits only the pinned system manager.
+Model-requested installs stay within the repository, virtual environment, task
+root, or current sandbox. The model cannot self-update a global manager or
+runtime. Passwordless sudo is available for the managed system package manager.
 
 There is no host-side manager resolver or tool activator. The model inspects the
 repository and uses a supported lockfile or JavaScript `packageManager`
@@ -234,31 +242,30 @@ adapter failure. It verifies that no descendant or listener remains before
 releasing the operation lock; failed verification stops the sandbox and returns
 `sandbox_unavailable` for later work.
 
-For a short command, the request can wait and return the final result. Otherwise:
+Bind persists its tool receipt and a stable `sandbox_tasks` row before provider
+submission. The Daytona adapter submits one asynchronous command in a session
+named from that receipt and observes it with bounded backoff until exit. The
+session is deliberately retained until the terminal D1 result is durable, then
+deleted. This closes the response-loss window between command exit and receipt
+persistence.
 
-1. Bind persists the pending tool call and suspends the workflow run on the stable
-   task ID.
-2. A regional `TerminalCommandWorkflow`, keyed by the stable task row, consumes
-   Daytona's WebSocket log stream, bounds and scrubs stdout/stderr, and observes
-   process exit.
-3. On exit it atomically stores the terminal state and emits one continuation
-   event for that task ID.
-4. Bind wakes, resolves the pending tool call with the final structured result,
-   and continues the same agent loop.
+If the Worker is interrupted, the regional harness Workflow retries the same
+Bind call. Bind makes two narrow exceptions to its normal incomplete-write rule.
+An exact, policy-matching Terminal `run_command` receipt re-enters the frozen
+tool executor: the runtime verifies the original command hash and sandbox
+generation, while the provider loads the named session and its sole command
+instead of submitting another. The convergent `publish_branch_and_pr` executor
+may also re-enter because its durable grant, repository/ref target, expected old
+SHA, publication row, and single PR identity are revalidated before a repeated
+provider action. A missing or mismatched identity remains
+`ambiguous_external_write`; it is never guessed safe.
 
-This is **workflow auto-resume**, not implicit sandbox auto-start. A stopped
-sandbox still starts only because a tool was called.
-
-Submission advances the D1 state machine `planned → submitting → running →
-terminal`. The host-derived Daytona session/task name is stable, so a retried
-Workflow step first reads provider state by that name and never resubmits merely
-because the original response was lost. The WebSocket is advisory acceleration.
-If it closes without a terminal event or the Workflow step restarts, the next
-durable step reconciles provider state, then waits with bounded backoff until exit
-or the recorded wall-clock deadline. This host control-plane reconciliation never
-exposes a poll tool or consumes a model turn. A unique continuation constraint on
-the task row suppresses duplicate exit events. Cancellation and timeout kill the
-provider task and resolve the same pending tool call once.
+This is **workflow auto-resume**, not implicit sandbox auto-start and not model
+polling. A stopped sandbox still starts only because a tool was called. The
+model receives one final result and no task identifier. A separate command
+Workflow, continuation table, and model-visible status protocol were rejected:
+the existing harness Workflow plus Daytona's named session already provide the
+durable retry boundary without a second orchestration subsystem.
 
 The adapter stores a bounded head and tail inline. The complete bounded result
 may live in the internal regional receipt object, which is not a user download.
@@ -415,7 +422,7 @@ access; approval policy decides when an attempted boundary crossing may proceed
 Codex cloud separates a networked setup phase from an offline-by-default agent
 phase. Agent internet access can be off, unrestricted, or constrained by domain
 and HTTP method, with a common-dependency preset. This separation is a direct
-precedent for Avalon's pinned snapshot plus workspace network policy
+precedent for Avalon's managed snapshot compatibility contract plus workspace network policy
 ([internet access](https://learn.chatgpt.com/docs/cloud/internet-access)).
 
 #### Avalon decision
@@ -892,50 +899,53 @@ Bootstrap performs:
 
 1. revalidate the regional GitHub connection, App installation, exact repository,
    base ref, and current base SHA;
-2. mint a one-hour installation token narrowed to the repository and read-only
-   permissions needed for contents, metadata, PR/check/action inspection, and any
-   already-authorized issue reads;
+2. mint a one-hour installation token narrowed to the repository and the
+   connector's current `read_only` or `full_access` contents/PR permissions;
 3. encode `x-access-token:<token>` outside the sandbox and store it as a
    per-sandbox Daytona secret allowed only for `github.com`;
 4. configure only the exact canonical repository URL with a URL-scoped
    `Authorization: Basic <placeholder>` extra header;
 5. clone/fetch without a token in the URL, environment, command, credential
    helper, or Git config; and
-6. record the base SHA and check out the server-derived Avalon branch.
+6. reuse Avalon's adjective-adjective-adjective-noun naming scheme, record the
+   branch, restore its remote head when present or create it at the recorded base
+   for full access, set its upstream, and check it out before returning control.
 
 Daytona substitutes literal placeholders in HTTPS headers. Git normally
 base64-encodes Basic credentials, which would hide the placeholder. Pre-encoding
 the real Basic value outside the sandbox and placing the placeholder directly in
 the header preserves substitution without revealing plaintext.
 
-Read-only `gh` receives an equivalent repository-scoped token through a Daytona
+`gh` receives the same repository-scoped token through a Daytona
 secret allowed only for `api.github.com`, exposed as the placeholder value of
-`GH_TOKEN`; `GH_REPO` is fixed. Secrets rotate before resume and disappear on
-revocation or deletion. The sandbox never receives contents-write or PR-write
-authority. Command validation rejects obvious `git push` and mutating `gh`
-commands, while read-only token permissions are the independent enforcement
-backstop.
+`GH_TOKEN`; `GH_REPO`, `AVALON_GIT_BRANCH`, `AVALON_GIT_BASE_BRANCH`, and
+`AVALON_REMOTE_ACCESS` describe the prepared environment. Secrets rotate before expiry, after connector-policy
+changes, and disappear on revocation or deletion. Read-only token permissions
+reject remote writes. Full access deliberately supports normal `git push` and
+`gh pr` commands; the plugin prompt tells the model to push only the prepared
+branch and target the prepared base.
 
 If direct private clone is unavailable, a trusted regional service may create a
 bounded Git bundle and let bootstrap download it from a host-scoped regional
 endpoint. It never copies a server working directory, hooks, config, sockets, or
 caches into the sandbox.
 
-## Host-side branch and PR publication
+## Optional host-side branch and PR publication
 
-`publish_branch_and_pr({title, body})` is the only GitHub write surface. It is
-always exposed with the other Terminal tools, then executes as follows:
+`publish_branch_and_pr({title, body})` remains an optional convergent write
+surface alongside native CLI use. It is always exposed with the other Terminal
+tools, then executes as follows:
 
-1. Revalidate the host-created participant grant, its source participant
-   message, principal/run/repository/ref binding, expiry and single-action use,
-   plus the connection, installation, repository, recorded base/head refs, and
-   current known remote head.
+1. Revalidate the run/principal provenance, current participation, connection,
+   installation, repository, recorded base/head refs, and current known remote
+   head. Provenance is not a single-action or prose-derived gate.
 2. Ask the sandbox for `git status --porcelain`, current branch and `HEAD`, base
    ancestry, changed paths, and a bounded Git bundle containing the committed
    branch. Reject a dirty tree, wrong branch, missing ancestry, size limit, or
    `.github/workflows/` change.
 3. Download the bundle through the Daytona file API. Do not grant the sandbox an
-   upload URL, bridge capability, or GitHub write token.
+   upload URL or bridge capability; its ordinary repository credential is not
+   used by this typed path.
 4. In the trusted regional publisher, verify the bundle in an isolated bare Git
    directory with hooks and ambient Git configuration disabled. Confirm every
    object/ref/commit against the frozen plan and expected old SHA.
@@ -959,9 +969,10 @@ branch, or create a second PR. A completed receipt still replays its original
 successful result after later PR closure because that receipt answers what its
 own invocation did.
 
-This design intentionally avoids a smart-HTTP receive-pack proxy. The untrusted
-sandbox only creates a local bundle; a bounded typed host operation performs and
-records the external write.
+This design intentionally avoids a smart-HTTP receive-pack proxy. Native CLI
+calls use the mounted repository token. When the optional typed path is chosen,
+the sandbox creates a local bundle and a bounded host operation performs and
+records that write.
 
 ## Workspace network policy
 
@@ -976,30 +987,32 @@ Avalon does not set `networkAllowList`, `outboundProxyUrl`, or a combined custom
 gateway. Domain and CIDR lists are mutually exclusive in Daytona; CIDR is deferred
 instead of emulating their union.
 
-The immutable target manifest has four names in the primary UI and exact domain
-expansions in audit/download output: GitHub and Avalon, System packages, Python
-packages, and JavaScript packages. The manifest excludes management and
-publishing endpoints. A version change follows the same stop/apply/next-start
-flow as a workspace domain change.
+The immutable target manifest is an internal provider detail. Its names, target
+count, and exact expansion are absent from participant UI, model context, and
+workspace downloads. The manifest excludes management and publishing endpoints.
+A version change follows the same stop/apply/next-start flow as a workspace
+domain change.
 
 The policy compiler canonicalizes domains, rejects schemes/paths/credentials and
 public-suffix wildcards, de-duplicates baseline and custom values, and fails before
 the provider call if the expansion exceeds Daytona's current 20-entry maximum.
-Settings reports total, reserved, and remaining slots.
+Settings reports only the remaining capacity for workspace-approved domains.
 
 Daytona describes GitHub, npm, PyPI, and system repositories as essential
 services, but their exact interaction with `domainAllowList` is a provider release
-gate rather than an assumption hidden in code. Production probes cover baseline
-reachability, an unlisted domain, wildcard boundaries, direct IP, redirects,
-metadata and private destinations, and alternate-host secret substitution. A
-failure leaves Trusted-only unavailable; it does not route around Daytona.
+gate rather than an assumption hidden in code. The checked-in automated probe
+covers baseline reachability, package installation, an unlisted domain, direct
+IP, redirects, metadata, private destinations, lifecycle, and confirmed deletion.
+The activation record separately carries controlled provider evidence for DNS
+rebinding and alternate-host secret substitution. A failure in either set leaves
+Trusted-only unavailable; it does not route around Daytona.
 The compiler compares the provider-read effective policy with its requested
 manifest. A Daytona-required destination is allowed only when named in the
-reviewed immutable manifest and disclosed in Settings; an undocumented or
-non-suppressible extra target fails verification.
+reviewed immutable manifest; an undocumented or non-suppressible extra target
+fails verification without disclosing the manifest in Settings.
 
-The same release probe resolves an allowed controlled hostname repeatedly across
-TTL changes and redirects it to private and special-use address classes. Native
+Controlled release evidence resolves an allowed hostname repeatedly across TTL
+changes and redirects it to private and special-use address classes. Native
 enforcement must re-check the resolved address for every connection and redirect,
 not just the original hostname string. Failure disables Trusted only and custom
 domains for that provider version rather than introducing a launch proxy.
@@ -1014,10 +1027,11 @@ stop results so Settings can preserve the proposed value without pretending it
 applied. Once verified, only a subsequent tool call starts work. A running
 sandbox never gains a widened policy; the policy change stops it first.
 
-Full internet changes destination reach, not secret authority. Daytona still
-substitutes each placeholder only on its configured HTTPS host, and the trusted
-publisher remains the sole GitHub writer. The UI warning states that non-secret
-sandbox data can nevertheless be exfiltrated.
+Full internet changes destination reach, not connector authority. Daytona still
+substitutes each placeholder only on its configured HTTPS host. A full-access
+repository token can write through native `git`/`gh`; read-only remains enforced
+by token permissions. The UI warning states that non-secret sandbox data can
+nevertheless be exfiltrated.
 
 ## Resource import and publication
 

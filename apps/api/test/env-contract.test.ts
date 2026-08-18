@@ -9,8 +9,9 @@ function binding(): never {
 
 function productionEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
-    DB: binding(), PAYLOADS: binding(), IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
-    RUN_ANALYTICS: binding(),
+    DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
+    IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
+    RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
     APP_ENV: "production",
@@ -30,6 +31,14 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",
     CONNECTOR_CREDENTIALS_KEY: "credentials-secret",
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    TELEMETRY_CAPABILITY_SIGNING_KEY: "telemetry-capability-secret",
+    TELEMETRY_OPERATORS_JSON: JSON.stringify({
+      "operator-token-at-least-thirty-two-characters": {
+        operatorId: "0198a229-ef99-7000-8000-000000000001",
+        role: "security",
+      },
+    }),
+    POSTHOG_PROJECT_TOKEN: "phc_test",
     GOOGLE_OAUTH_CLIENT_ID: "google-client",
     GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
     TOOL_DEFAULT_TIMEOUT_MS: "30000",
@@ -47,6 +56,57 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(productionEnv())).not.toThrow();
   });
 
+  it("refuses a malformed retry budget rather than parsing a prefix out of it", () => {
+    // `countEnv` reads this key with `Number.parseInt`, which would take `1` out
+    // of `"1oops"` and out of `"1.5"`. It never sees either: the contract holds
+    // the key to `/^\d+$/u` and the Worker answers a 503 naming it, so a typo
+    // fails loudly at boot instead of quietly enabling a retry budget nobody
+    // configured. Zero is the one value that must pass — it is the operator's
+    // lever for stopping the harness re-requesting into a failing provider.
+    expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: "0" }))).not.toThrow();
+    expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: "2" }))).not.toThrow();
+    for (const malformed of ["1oops", "1.5", "-1", " 1", ""]) {
+      expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: malformed })))
+        .toThrow(/HARNESS_TRANSPORT_RETRIES is invalid/u);
+    }
+  });
+
+  it("disables Terminal gracefully when Daytona configuration is incomplete", () => {
+    const incomplete = productionEnv({ TERMINAL_REGION_CAPABILITY: "supported" });
+    expect(() => assertEnvContract(incomplete)).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "not-a-url",
+    }))).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "http://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).toThrow(/DAYTONA_API_URL is invalid/u);
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "https://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).not.toThrow();
+  });
+
+  it("allows telemetry delivery and operator access to be provisioned after collection", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).POSTHOG_PROJECT_TOKEN;
+    delete (env as Partial<Env>).TELEMETRY_CAPABILITY_SIGNING_KEY;
+    delete (env as Partial<Env>).TELEMETRY_OPERATORS_JSON;
+
+    expect(() => assertEnvContract(env)).not.toThrow();
+  });
+
   it("names a missing required variable without echoing any value", () => {
     const env = productionEnv();
     delete (env as Partial<Env>).SESSION_SIGNING_KEY;
@@ -62,6 +122,13 @@ describe("environment contract", () => {
     for (const secret of ["sk-or-secret", "session-secret", "oauth-secret", "credentials-secret", "google-secret"]) {
       expect(message).not.toContain(secret);
     }
+  });
+
+  it("requires the isolated telemetry object store in production", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).TELEMETRY_PAYLOADS;
+
+    expect(() => assertEnvContract(env)).toThrow(/TELEMETRY_PAYLOADS is missing/u);
   });
 
   it("rejects a numeric deadline that would silently fall back to its default", () => {

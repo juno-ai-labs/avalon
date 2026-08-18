@@ -34,6 +34,12 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import {
+  markSurfaceEntrypoint,
+  markWorkstreamNavigation,
+  reportTelemetryProductIntent,
+  telemetryVisibility,
+} from '../lib/telemetry';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
@@ -187,11 +193,25 @@ function OnboardingChecklist(): React.JSX.Element {
 
 /** Application → Developer → Debug enabled reveals this on every resource
  * right-click menu, so a bug report can name the exact row it came from. */
-function CopyResourceIdItem({ id, label }: { id: string; label: string }): React.JSX.Element {
+function CopyResourceIdItem({
+  contentType,
+  id,
+  label,
+  resourceType,
+}: {
+  contentType: 'note_id' | 'automation_id';
+  id: string;
+  label: string;
+  resourceType: 'note' | 'automation';
+}): React.JSX.Element {
+  const copy = async (): Promise<void> => {
+    await desktopBridge().copyText(id);
+    reportTelemetryProductIntent({ kind: 'content_copied', contentType, resourceType, resourceId: id });
+  };
   return (
     <ContextMenu.Item
       className="menu-item"
-      onSelect={() => void desktopBridge().copyText(id).catch(() => undefined)}
+      onSelect={() => void copy().catch(() => undefined)}
     >
       <Copy aria-hidden="true" size={16} /> {label}
     </ContextMenu.Item>
@@ -210,6 +230,9 @@ function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): Rea
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
     await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstreamId));
+    reportTelemetryProductIntent({
+      kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstreamId,
+    });
   };
   return (
     <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
@@ -254,6 +277,7 @@ function AutomationRow({
               so its row goes back to the builder to carry on writing it. */}
           <NavLink
             className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={isDraft ? `/automations/new?draft=${encodeURIComponent(automation.id)}` : `/automations/${automation.id}`}
           >
             <span className="sidebar-row-icon" aria-hidden="true">
@@ -281,7 +305,14 @@ function AutomationRow({
           <ContextMenu.Item className="menu-item">
             <FileStack aria-hidden="true" size={16} /> Turn into template
           </ContextMenu.Item>
-          {debugEnabled && <CopyResourceIdItem id={automation.id} label="Copy automation id" />}
+          {debugEnabled && (
+            <CopyResourceIdItem
+              contentType="automation_id"
+              id={automation.id}
+              label="Copy automation id"
+              resourceType="automation"
+            />
+          )}
           <ContextMenu.Separator className="menu-separator" />
           {isDraft && (
             <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchiveDraft(automation)}>
@@ -357,6 +388,7 @@ function WorkstreamRow({
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
 }): React.JSX.Element {
+  const location = useLocation();
   const isPrivate = workstream.scope === 'personal';
   const isPinned = workstream.pinPosition !== null;
   const nextWakeupTime = workstream.nextPendingWakeup
@@ -435,6 +467,15 @@ function WorkstreamRow({
             // href, leaving the wrapper's handlers to fire on a link drag that
             // the sidebar has no way to reorder.
             draggable={false}
+            onClick={(event) => {
+              if (event.defaultPrevented || event.button !== 0
+                || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              markWorkstreamNavigation(
+                workstream.id,
+                /^\/workstreams\/[^/]+$/u.test(location.pathname) && location.pathname !== `/workstreams/${workstream.id}`,
+              );
+              markSurfaceEntrypoint(workstream.pinPosition === null ? 'sidebar_recent' : 'sidebar_pinned');
+            }}
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
@@ -577,6 +618,7 @@ function NoteRow({
           <NavLink
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
+            onClick={() => markSurfaceEntrypoint('sidebar_note')}
             to={`/notes/${note.id}`}
           >
             <span className="sidebar-row-icon">
@@ -607,7 +649,9 @@ function NoteRow({
               ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
               : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
           </ContextMenu.Item>
-          {debugEnabled && <CopyResourceIdItem id={note.id} label="Copy note id" />}
+          {debugEnabled && (
+            <CopyResourceIdItem contentType="note_id" id={note.id} label="Copy note id" resourceType="note" />
+          )}
           <ContextMenu.Separator className="menu-separator" />
           {/* Archiving a note the meeting window is still recording into would
               fail that window's next segment save — the recording continues
@@ -686,6 +730,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const openDraftId = useOpenDraftId();
+  const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
@@ -711,6 +756,7 @@ export function Sidebar({
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   const [commandShortcutsVisible, setCommandShortcutsVisible] = useState(false);
+  const commandHeld = useRef(false);
   // The work stream a pin or unpin has just moved, and which side of the
   // sidebar it was moved to, held until the list re-renders carrying that
   // change. Cleared the moment it is honoured, so a later render for any other
@@ -794,12 +840,14 @@ export function Sidebar({
     ...pinnedWorkstreams.map((workstream) => ({
       id: `workstream:${workstream.id}`,
       path: `/workstreams/${workstream.id}`,
+      destinationType: 'pinned_workstream' as const,
     })),
     ...recentItems.map((item) => ({
       id: item.id,
       path: item.type === 'note'
         ? `/notes/${item.note.id}`
         : `/workstreams/${item.workstream.id}`,
+      destinationType: item.type === 'note' ? 'recent_note' as const : 'recent_workstream' as const,
     })),
   ].slice(0, COMMAND_SHORTCUT_LIMIT), [pinnedWorkstreams, recentItems]);
   const commandShortcutById = useMemo(
@@ -816,6 +864,13 @@ export function Sidebar({
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Meta') {
         setCommandShortcutsVisible(true);
+        if (!commandHeld.current) {
+          commandHeld.current = true;
+          reportTelemetryProductIntent({
+            kind: 'command_shortcuts_revealed',
+            availableCount: commandShortcutTargets.length,
+          });
+        }
         return;
       }
       const digit = /^Digit([1-9])$/u.exec(event.code)?.[1];
@@ -834,13 +889,31 @@ export function Sidebar({
       const target = commandShortcutTargets[Number(digit) - 1];
       if (!target) return;
       event.preventDefault();
+      reportTelemetryProductIntent({
+        kind: 'command_shortcut_used',
+        shortcutNumber: Number(digit),
+        destinationType: target.destinationType,
+      });
+      markSurfaceEntrypoint('command_shortcut');
+      if (target.destinationType === 'pinned_workstream' || target.destinationType === 'recent_workstream') {
+        markWorkstreamNavigation(
+          target.id.slice('workstream:'.length),
+          /^\/workstreams\/[^/]+$/u.test(location.pathname) && location.pathname !== target.path,
+        );
+      }
       navigate(target.path);
       setSidebarOpen(false);
     };
     const onKeyUp = (event: KeyboardEvent): void => {
-      if (event.key === 'Meta') setCommandShortcutsVisible(false);
+      if (event.key === 'Meta') {
+        commandHeld.current = false;
+        setCommandShortcutsVisible(false);
+      }
     };
-    const hide = (): void => setCommandShortcutsVisible(false);
+    const hide = (): void => {
+      commandHeld.current = false;
+      setCommandShortcutsVisible(false);
+    };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', hide);
@@ -849,7 +922,7 @@ export function Sidebar({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', hide);
     };
-  }, [commandShortcutTargets, navigate, setSidebarOpen]);
+  }, [commandShortcutTargets, location.pathname, navigate, setSidebarOpen]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -890,6 +963,13 @@ export function Sidebar({
     setArchivingNote(true);
     try {
       await onArchiveNote(archiveNoteTarget);
+      reportTelemetryProductIntent({
+        kind: 'note_action_completed',
+        noteId: archiveNoteTarget.id,
+        action: 'archive',
+        visibility: telemetryVisibility(archiveNoteTarget.scope),
+        recordingState: archiveNoteTarget.recordingStatus,
+      });
       setArchiveNoteTarget(null);
     } catch (error) {
       setArchiveNoteTarget(null);
@@ -907,6 +987,13 @@ export function Sidebar({
     setScopePendingNoteId(note.id);
     try {
       await onChangeNoteScope(note, scope);
+      reportTelemetryProductIntent({
+        kind: 'note_action_completed',
+        noteId: note.id,
+        action: scope === 'workspace' ? 'make_public' : 'make_private',
+        visibility: telemetryVisibility(scope),
+        recordingState: note.recordingStatus,
+      });
     } catch (error) {
       setMenuError({
         title: 'Note visibility could not be changed',
@@ -927,6 +1014,14 @@ export function Sidebar({
     setScopePendingWorkstreamId(workstream.id);
     try {
       await onChangeWorkstreamScope(workstream, scope);
+      reportTelemetryProductIntent({
+        kind: 'workstream_action_completed',
+        workstreamId: workstream.id,
+        action: scope === 'workspace' ? 'make_public' : 'make_private',
+        visibility: telemetryVisibility(scope),
+        origin: workstream.systemKind ? 'system' : workstream.origin,
+        pinned: workstream.pinPosition !== null,
+      });
     } catch (error) {
       setMenuError({
         title: 'Work stream visibility could not be changed',
@@ -952,7 +1047,17 @@ export function Sidebar({
       // made close together resolve in either order, and the older one landing
       // last would otherwise drag the viewport back to the row the reader has
       // already finished with.
-      if (await onPinWorkstream(workstream, pinned)) setReveal({ id: workstream.id, pinned });
+      if (await onPinWorkstream(workstream, pinned)) {
+        setReveal({ id: workstream.id, pinned });
+        reportTelemetryProductIntent({
+          kind: 'workstream_action_completed',
+          workstreamId: workstream.id,
+          action: pinned ? 'pin' : 'unpin',
+          visibility: telemetryVisibility(workstream.scope),
+          origin: workstream.systemKind ? 'system' : workstream.origin,
+          pinned,
+        });
+      }
     } catch (error) {
       setMenuError({
         title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
@@ -964,6 +1069,18 @@ export function Sidebar({
     } finally {
       setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
+  };
+
+  const markWorkstreamUnread = async (workstream: WorkstreamSummary): Promise<void> => {
+    await onMarkWorkstreamUnread(workstream);
+    reportTelemetryProductIntent({
+      kind: 'workstream_action_completed',
+      workstreamId: workstream.id,
+      action: 'mark_unread',
+      visibility: telemetryVisibility(workstream.scope),
+      origin: workstream.systemKind ? 'system' : workstream.origin,
+      pinned: workstream.pinPosition !== null,
+    });
   };
 
   // A dropped arrangement is sent whole. If the server refuses it, the local
@@ -1043,6 +1160,14 @@ export function Sidebar({
     setRenameError(null);
     try {
       await onRenameWorkstream(renameTarget, title);
+      reportTelemetryProductIntent({
+        kind: 'workstream_action_completed',
+        workstreamId: renameTarget.id,
+        action: 'rename',
+        visibility: telemetryVisibility(renameTarget.scope),
+        origin: renameTarget.systemKind ? 'system' : renameTarget.origin,
+        pinned: renameTarget.pinPosition !== null,
+      });
       setRenameTarget(null);
     } catch (error) {
       setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
@@ -1160,7 +1285,11 @@ export function Sidebar({
           ref={scrollRef}
         >
           <div className="sidebar-primary-actions">
-            <NavLink className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')} to="/workstreams/new">
+            <NavLink
+              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
+              to="/workstreams/new"
+            >
               <MessageSquarePlus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
@@ -1169,6 +1298,7 @@ export function Sidebar({
                 is both a new automation and that one. */}
             <NavLink
               className={({ isActive }) => clsx('sidebar-action', isActive && openDraftId === null && 'is-active')}
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
               to="/automations/new"
             >
               <Plus aria-hidden="true" size={15} />
@@ -1196,12 +1326,16 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     key={automation.id}
                     onArchiveDraft={(target) => {
-                      void onArchiveDraftAutomation(target).catch((error: unknown) => {
-                        setArchiveError(error instanceof Error ? error.message : 'The draft could not be archived.');
-                      });
+                      void onArchiveDraftAutomation(target)
+                        .catch((error: unknown) => {
+                          setArchiveError(error instanceof Error ? error.message : 'The draft could not be archived.');
+                        });
                     }}
                     onDelete={setDeleteTarget}
-                    onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
+                    onRunNow={(target) => {
+                      void onRunAutomation(target)
+                        .catch(() => undefined);
+                    }}
                   />
                 ))}
               </div>
@@ -1247,7 +1381,7 @@ export function Sidebar({
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
                     onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
-                    onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
+                    onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
                     onRename={openRename}
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
@@ -1291,7 +1425,7 @@ export function Sidebar({
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
-                        onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
+                        onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}

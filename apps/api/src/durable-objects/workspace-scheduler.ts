@@ -8,14 +8,21 @@ import {
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
+import { newId } from "@avalon/db";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
+import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "../services/terminal/lifecycle";
+import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const RETRY_STATES_KEY = "schedulerRetryStates";
@@ -31,9 +38,13 @@ const SchedulerRetryStatesSchema = z.record(z.string(), SchedulerRetryStateSchem
 type SchedulerRetryStates = z.infer<typeof SchedulerRetryStatesSchema>;
 
 interface AlarmTargetRow {
-  target_kind: "schedule" | "watch" | "wakeup";
+  target_kind: "schedule" | "watch" | "wakeup" | "terminal";
   id: string;
   due_at: string;
+}
+
+interface DueTerminalSandboxRow {
+  workstream_id: string;
 }
 
 interface ScheduleRow {
@@ -213,7 +224,32 @@ export class WorkspaceScheduler {
        UNION ALL
        SELECT 'wakeup' AS target_kind, id, due_at
          FROM workstream_wakeups
-        WHERE workspace_id = ?1 AND status = 'pending'`
+        WHERE workspace_id = ?1 AND status = 'pending'
+       UNION ALL
+       SELECT 'terminal' AS target_kind, workstream_id AS id,
+              CASE
+                WHEN state IN ('stopping', 'archiving', 'expiring')
+                  THEN lifecycle_claim_expires_at
+                WHEN expire_due_at IS NOT NULL AND (
+                  (state = 'running' AND (warm_stop_due_at IS NULL OR expire_due_at <= warm_stop_due_at))
+                  OR (state = 'stopped' AND (archive_due_at IS NULL OR expire_due_at <= archive_due_at))
+                  OR state = 'archived'
+                ) THEN expire_due_at
+                WHEN state = 'running' THEN warm_stop_due_at
+                WHEN state = 'stopped' THEN archive_due_at
+                ELSE expire_due_at
+              END AS due_at
+         FROM workstream_sandboxes
+        WHERE workspace_id = ?1
+          AND provider_sandbox_id IS NOT NULL
+          AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+          AND (
+            (state IN ('stopping', 'archiving', 'expiring') AND lifecycle_claim_expires_at IS NOT NULL)
+            OR
+            expire_due_at IS NOT NULL
+            OR (state = 'running' AND warm_stop_due_at IS NOT NULL)
+            OR (state = 'stopped' AND archive_due_at IS NOT NULL)
+          )`
     )
       .bind(parsedWorkspaceId)
       .all<AlarmTargetRow>();
@@ -255,7 +291,7 @@ export class WorkspaceScheduler {
       const now = new Date();
       const retryStates = await this.loadRetryStates();
       let retryStatesChanged = false;
-      const [due, dueWatches, dueWakeups] = await Promise.all([
+      const [due, dueWatches, dueWakeups, dueTerminalSandboxes] = await Promise.all([
         this.env.DB.prepare(
           `SELECT *
              FROM schedules
@@ -291,7 +327,27 @@ export class WorkspaceScheduler {
             LIMIT 100`
         )
           .bind(workspaceId, now.toISOString())
-          .all<WorkstreamWakeupRow>()
+          .all<WorkstreamWakeupRow>(),
+        this.env.DB.prepare(
+          `SELECT workstream_id
+             FROM workstream_sandboxes
+            WHERE workspace_id = ?1
+              AND provider_sandbox_id IS NOT NULL
+              AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+              AND (
+                (state IN ('stopping', 'archiving', 'expiring')
+                  AND lifecycle_claim_expires_at IS NOT NULL
+                  AND lifecycle_claim_expires_at <= ?2)
+                OR
+                (state = 'running' AND warm_stop_due_at IS NOT NULL AND warm_stop_due_at <= ?2)
+                OR (state = 'stopped' AND archive_due_at IS NOT NULL AND archive_due_at <= ?2)
+                OR (expire_due_at IS NOT NULL AND expire_due_at <= ?2)
+              )
+            ORDER BY COALESCE(expire_due_at, archive_due_at, warm_stop_due_at) ASC
+            LIMIT 100`,
+        )
+          .bind(workspaceId, now.toISOString())
+          .all<DueTerminalSandboxRow>()
       ]);
 
       for (const schedule of due.results) {
@@ -356,6 +412,79 @@ export class WorkspaceScheduler {
           await this.saveRetryStates(retryStates);
           retryStatesChanged = false;
           await this.recordWakeupFailure(wakeup, error);
+        }
+      }
+
+      const terminalConfiguration = parseTerminalRegionConfiguration(this.env);
+      const terminalProvider = terminalConfiguration.capability === "supported"
+        ? createDaytonaTerminalProvider(terminalConfiguration)
+        : null;
+      for (const sandbox of dueTerminalSandboxes.results) {
+        const key = retryStateKey("terminal", sandbox.workstream_id);
+        if ((retryStates[key]?.retryAt ?? 0) > now.getTime()) continue;
+        try {
+          if (!terminalProvider) {
+            throw new Error("terminal_provider_unavailable");
+          }
+          const result = await reconcileDueTerminalSandbox(
+            this.env.DB,
+            terminalProvider,
+            workspaceId,
+            sandbox.workstream_id,
+            now,
+            createTerminalFinalDiffPreserver(
+              this.env,
+              terminalProvider,
+              workspaceId,
+              sandbox.workstream_id,
+            ),
+          );
+          if (result.transition !== "none") {
+            logStructuredEvent(this.env, "info", "terminal_sandbox_lifecycle_transition", {
+              workspace_id: workspaceId,
+              workstream_id: sandbox.workstream_id,
+              transition: result.transition,
+            });
+          }
+          if (result.transition === "expired") {
+            const repository = await this.env.DB.prepare(
+              `SELECT 1 AS selected FROM workstream_terminal_repositories
+               WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'`,
+            ).bind(workspaceId, sandbox.workstream_id).first<{ selected: number }>();
+            await emitProductUsageTelemetry(this.env, {
+              workspaceId,
+              name: "terminal_workspace_terminal",
+              properties: {
+                workstreamId: sandbox.workstream_id,
+                action: "expire",
+                result: "success",
+                duration: "unknown",
+                repositorySelected: repository !== null,
+                connectorType: repository ? "github" : "none",
+                localFilesRetained: false,
+              },
+              operationId: sandbox.workstream_id,
+              eventId: newId(),
+            }).catch(() => undefined);
+          }
+          if (retryStates[key]) {
+            delete retryStates[key];
+            retryStatesChanged = true;
+          }
+        } catch (error) {
+          const attempt = (retryStates[key]?.attempt ?? 0) + 1;
+          retryStates[key] = {
+            attempt,
+            retryAt: now.getTime() + schedulerRetryDelay(attempt),
+          };
+          await this.saveRetryStates(retryStates);
+          retryStatesChanged = false;
+          logStructuredEvent(this.env, "warn", "terminal_sandbox_lifecycle_failed", {
+            workspace_id: workspaceId,
+            workstream_id: sandbox.workstream_id,
+            attempt,
+            code: error instanceof Error ? error.message : "unknown_error",
+          });
         }
       }
 
@@ -466,6 +595,7 @@ export class WorkspaceScheduler {
       .bind(subscriptionId, schedule.workspace_id)
       .first<AutomationSourceRow>();
     if (!source) throw new Error("automation_subscription_unavailable");
+    const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
 
     let run = await this.env.DB.prepare(
       `SELECT id, workstream_id, status, workflow_instance_id
@@ -571,6 +701,16 @@ export class WorkspaceScheduler {
         )
           .bind(runId, timestamp, workstreamId, schedule.workspace_id)
           .run();
+        if (createdWorkstreamId) {
+          await recordWorkstreamCreatedTelemetry(this.env, {
+            workspaceId: schedule.workspace_id,
+            workstreamId: createdWorkstreamId,
+            creationSource: "automation_scheduled",
+            principal: principal.type === "user"
+              ? { type: "user", userId: principal.userId }
+              : { type: "workspace" },
+          });
+        }
       }
     }
 
@@ -582,7 +722,6 @@ export class WorkspaceScheduler {
     });
     if (["completed", "failed", "needs_input"].includes(run.status)) return;
 
-    const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
     const harnessRunId = await this.ensureHarnessRun(
       schedule.workspace_id,
       run.workstream_id,

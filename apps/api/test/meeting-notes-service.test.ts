@@ -78,6 +78,11 @@ describe("MeetingNotesService", () => {
         maxToolCalls: 0,
         reasoningEffort: "low",
         fallbackModels: ["fallback/one", "fallback/two"],
+        // The live pass declines the harness's transport retry: its one-minute
+        // cadence is the recovery, and the next tick reads the same transcript
+        // window. Flattening this to the deployment budget makes a briefing wait
+        // and re-ask inside a sixty-second wall clock.
+        transportRetries: 0,
       },
     });
     expect(captured!.messages).toHaveLength(5);
@@ -191,7 +196,14 @@ describe("MeetingNotesService", () => {
       refreshSeconds: null,
     }, "request-final");
 
-    expect(captured!.config).toMatchObject({ reasoningEffort: "medium", maxWallClockMs: 120_000 });
+    expect(captured!.config).toMatchObject({
+      reasoningEffort: "medium",
+      maxWallClockMs: 120_000,
+      // The final pass has no successor to defer to, so it takes the
+      // deployment's budget rather than a literal that would outrank an
+      // operator turning the retry off.
+      transportRetries: 1,
+    });
     expect(captured!.messages).toHaveLength(5);
     const request = String(captured!.messages.at(-1)!.content);
     expect(request).toContain("Complete ordered transcript");
@@ -229,7 +241,43 @@ describe("MeetingNotesService", () => {
     }, "request-2")).rejects.toMatchObject({
       status: 502,
       code: "meeting_notes_generation_failed",
-      message: "This run reached its time limit",
+      // Control Tower keeps its own sentence rather than forwarding the
+      // harness's. Someone reading this is sitting in a meeting, on a surface
+      // where nothing is called a run and they started no run — and for a live
+      // pass the true next step is one Avalon takes itself, a minute from now.
+      // The harness's own code and message stay in the logs, where the person
+      // who needs the cause is looking.
+      message: "Avalon could not update Control Tower. The next refresh will try again",
+    });
+  });
+
+  it("never forwards a harness failure message to the meeting surface", async () => {
+    const runner = vi.fn(async () => ({
+      ...completed(""),
+      status: "failed" as const,
+      failure: {
+        kind: "provider" as const,
+        code: "provider_unavailable" as const,
+        message: "OpenRouter rejected sk-secret with upstream body: private",
+      },
+    }));
+
+    await expect(new MeetingNotesService(env, auth, runner).generate({
+      mode: "final",
+      meetingTitle: "Meeting notes",
+      previousNotes: "",
+      userNotes: "",
+      transcript: "A valid transcript",
+      recentTranscript: "A valid transcript",
+      startedAt: null,
+      endedAt: null,
+      transcriptStatus: "complete",
+      refreshSeconds: null,
+    }, "request-3")).rejects.toMatchObject({
+      status: 502,
+      code: "meeting_notes_generation_failed",
+      // The final pass has no successor, so it does not promise one.
+      message: "Avalon could not create the final meeting summary",
     });
   });
 });

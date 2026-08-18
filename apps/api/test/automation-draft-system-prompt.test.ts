@@ -158,7 +158,14 @@ describe("automation draft system prompt", () => {
 
   it("serves the prompt for the draft the caller names, read through the service", async () => {
     const draftState = vi.spyOn(AutomationService.prototype, "draftState")
-      .mockResolvedValue({ draftId: "00000000-0000-7000-8000-000000000009", draft, messages: [], attachmentIds: [] });
+      .mockResolvedValue({
+        draftId: "00000000-0000-7000-8000-000000000009",
+        draft,
+        messages: [],
+        attachmentIds: [],
+        elicitationId: null,
+        elicitationPresentedAt: null,
+      });
 
     const response = await testApp().request(
       "/automations/draft/system-prompt",

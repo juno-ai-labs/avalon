@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 11.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -8,12 +8,13 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
+| `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
@@ -100,6 +101,17 @@ validation, and provider declaration are owned by
 
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
+In a provider-verified region, ordinary work-stream runs also register the
+deferred built-in `avalon:terminal` plugin. It has no connection row and loading
+it is allocation-free: activation exposes its static supported-language prompt
+and complete eight-tool family, while the first tool execution acquires the
+separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
+tool-filtered—when the region is unsupported or emergency-disabled. All eight
+tools stay visible together after activation; current principal/resource and
+repository/publication checks remain executor preconditions rather than scopes.
+The sandbox lifecycle and authority fence are owned by
+[`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
+
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Avalon's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
@@ -175,6 +187,31 @@ Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior
 write, or timed-out `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
 append-only, and terminalization is idempotent and lease-fenced.
+
+Receipt IDs are positional, so a re-executed pass of the same run mints the same
+coordinates again — that is what lets it replay the first pass's results instead
+of repeating them. A pass that restarts is given the transcript window up to its
+own trigger and cannot see the calls the earlier pass made, so it will not
+reliably reproduce them, and a *different* call landing on an occupied
+coordinate is the expected consequence. When both sides of such a collision are
+reads and the recorded receipt has settled, the receipt is **rebound** to the
+call in hand: nothing external moved, the recorded result belongs to a pass that
+is gone, and the row is replanned in place under an `execution_replanned`
+checkpoint. Identical input replays as before, a receipt whose recorded identity
+cannot be proven compatible still fails closed, and `record_before_execute`
+writes never rebind — for them the coordinate *is* the idempotency key.
+
+A receipt is not always the only record of its call, and one that owns durable
+state elsewhere does not rebind either: a delegated child run keyed by the
+parent's coordinate, or attachment dependency rows keyed by the invocation id.
+Those are asked as questions about state, not about tool names, so a tool that
+starts keying either is covered without being listed. Because a rebound receipt
+carries checkpoints past the static index its completion path passes, the
+completion derives its own index from the row rather than trusting that number —
+otherwise the replanned read executes and then cannot persist its result. An
+ambiguity that halts a run is recorded as an audit event and as the run's own
+error, because a collision with a settled receipt leaves the row itself
+untouched and would otherwise reach the person as a bare `needs_input`.
 
 Failed receipts preserve the same bounded structured recovery context that Bind
 showed the model when the tool failed. A `tool_failed` event carries the
@@ -338,6 +375,20 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 
 ## Invariants
 
+- **One predicate decides both the transport retry and the failure code**, so the
+  failures Avalon retries are exactly the ones it names as the provider's.
+  Splitting them lets a member be told Avalon broke for an outage Avalon had just
+  spent a retry on, which is the pairing that made the original incident hard to
+  read.
+- **A request Avalon owns is never named as the provider's.** A 400 is our
+  request shape and 401/402/403 are our credential and credit; they stay
+  `harness_execution_failed`, and `provider_circuit_open` says only that Avalon
+  stopped calling — never why — because the breaker opens on those too. Widening
+  the provider arm to cover them points an operator at the wrong system.
+- **A retry never replays output a reader has already seen.** The transport retry
+  checks the same `producedOutput` flag the route executor clamps traversal on;
+  re-rendering a turn someone is part-way through reading is worse than the
+  failure it recovers.
 - **At most one unexpired harness lease runs in a work stream**, and scope,
   activation, receipt-plan and completion, checkpoint, and terminal commits all
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
@@ -472,6 +523,10 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Avalon. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+
+Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected; a 90s inline child effectively declines the retry, which is the honest answer for a budget that cannot hold a second pass. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt writes its own `agent_inference_payload_logs` row, so a retried turn is visible as more than one row sharing a `turn_id`.
+
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
 When an executor throws a Zod error and its normalized arguments also fail the
@@ -489,6 +544,24 @@ The harness reads that half by shape through `readStructuredFailure` in `@avalon
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
+Separately, Product analytics records a content-free `agent_tool_started` only
+after the execution plan is durable and replay/ambiguity checks permit a new
+invocation. It carries the canonical tool, plugin, capability, mode, run kind,
+execution scope, and opaque work-stream/run/automation IDs. It never carries an
+argument, output, summary, provider payload, or error. User-owned runs retain
+person/workspace attribution; unattended workspace runs are grouped under a
+personless workspace analytics identity. Failure to record telemetry never
+changes tool execution.
+
+When the durable invocation receipt reaches `completed`, `failed`, or
+`ambiguous`, `agent_tool_terminal` adds only a bounded result, duration, and
+replay flag to the same canonical identity. A root harness run likewise emits
+`run_terminal` after its terminal commit with trigger, lifecycle result,
+time-to-first-output, turn/tool/write-call buckets, model route, and fallback
+state. Child runs are represented through their parent tool invocation rather
+than counted as root outcomes. Prompt/message text, error JSON, arguments,
+outputs, summaries, token content, and provider responses remain excluded.
+
 ## Testing
 
 | Suite | Covers |
@@ -497,6 +570,7 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
@@ -505,21 +579,453 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
-| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, and `toolActivityName`. |
+| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/harness-run-runtime.test.ts` — the
 path is package-relative.
 
-Three traps. The prompts are byte-stable and golden-hashed, so an edit fails the
+Four traps. The prompts are byte-stable and golden-hashed, so an edit fails the
 hash assertion by design — update it deliberately rather than regenerating it.
 Anything that leases or heartbeats compares against `Date.now()`, so stub the clock
-and assert on the stored attempt and expiry rather than on elapsed time. And the
+and assert on the stored attempt and expiry rather than on elapsed time. The
 harness package's portability boundary is enforced by ESLint, not by the type
 checker: a test that imports a database or Node-only module to build a fixture will
 pass locally and fail `pnpm lint`.
 
+And **the route circuit breaker is module-scoped**, keyed by provider, model,
+credential source, and workspace. A test that deliberately fails one endpoint
+three times opens it for every test that runs afterwards under the same
+`workspaceId`, which then receive `no_viable_endpoints` — a failure carrying no
+attempt error at all — in file order. Give any such test its own `workspaceId`;
+the transport-retry tests do, and one of them depends on a sibling having opened
+the breaker first, which is stated in the test rather than left to be inferred.
+Nothing pins `breakerScope`, so deleting that one property from `routePlan` would
+silently return every test to the shared key while each still passes alone.
+
 ## Changelog
+
+### 2026-08-16 — `@juno-ai/bind` 13, and the compensating layer steps back
+
+**What changed:** the pin moved from 12.0.0 to 13.0.0, which closes the one shape
+12 forwarded into a 400 — a root union branch carrying its own composition.
+`repairRootUnionForProviders` now defers to the sanitizer, returning the schema
+untouched unless `nonObjectRootUnionBranches` reports something still fatal after
+sanitization. `readableRootUnionBranch` is exported and asserted directly.
+
+**Why:** two things, and the second is the one worth remembering.
+
+The bump itself is the upstream fix specified from here, verified against the
+published package before pinning. The gap shape is now dropped; the over-reach
+that a careless version of that fix would have caused is absent — a composition
+under a branch's *property*, one and two levels down, survives untouched, which
+matters because all nine models accept it and destroying it would trade a real
+constraint for nothing. Every 12.0.0 behaviour re-verified: headline repair with
+`required` intact, idempotence, the Gemini dangling-`required` pruning, the
+unrepairable drop, root `allOf` as an intersection, and the copy-down ceiling
+still falling back to dropping. All fifteen emitted shapes accepted 9/9 live.
+
+The second thing is that **our own repair had become worse than doing nothing.**
+Bind 13 turns a remote `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]`
+into self-sufficient object branches every provider accepts and the model can
+read. Dropping that composition first — which is what this layer did
+unconditionally — threw the constraint away and told the model nothing. The layer
+was correct against Bind 11, where the drop was the only thing between a
+third-party schema and a 400 covering the whole request. It stopped being correct
+the moment the dependency started handling the shape properly, and nothing about
+the code would have said so; it would simply have kept quietly deleting
+constraints. Gating it on what the sanitizer actually emits fixes that and keeps
+the backstop, which a deletion would not: the gate re-engages by itself for any
+shape a future sanitizer stops handling, without anyone having to notice.
+
+The checks are now quiet — bind 13 repairs or drops every shape they were built
+to catch — which raised the question of whether they still earn their place. They
+do, but the reason moved: they are a regression detector on the dependency rather
+than a live defence, and that only works if the rules themselves stay asserted.
+So `readableRootUnionBranch` is exported and tested directly against every
+measured clause, including the over-reach guard. Without that, a sanitizer change
+underneath these checks could make them vacuous while they still passed. The
+clauses cost roughly two hundred live provider requests to establish and are the
+durable asset here; the checks that consume them are replaceable.
+
+A future bump should expect these test files to move again, and should ask why
+each expectation changed rather than making it green.
+
+Review caught two errors in the first cut of this, both of them the same mistake
+in opposite directions, and both fixed by measuring rather than arguing. The
+branch predicate rejected a branch carrying its own **`allOf`**, generalised from
+a measurement that only ever covered `anyOf`. An intersection is not a union: a
+branch with its own `allOf` is accepted by all nine models and Bind 13
+deliberately keeps it, so rejecting it would have made the repair delete a root
+union the sanitizer had preserved — the precise harm this change exists to stop.
+And `walkPair` assumed the sanitizer never removes a branch, which stopped being
+true in Bind 13: an unrepairable root union is now deleted whole, and the walk
+skipped it while `nonObjectRootUnionBranches` had nothing left to judge, so an
+erased constraint passed both checks. A vanished composition is now reported as
+`(composition dropped)`.
+
+### 2026-08-16 — `@juno-ai/bind` 12, which repairs most of what the guards were catching
+
+**What changed:** the pin moved from 11.0.0 to 12.0.0. Bind's sanitizer now
+resolves a composition branch's `required` against its parent's `properties` and
+copies the referenced subschemas down, so the "exactly one of these" idiom
+reaches the wire intact instead of as `oneOf: [{}, {}]`. Where a branch cannot be
+made usable it drops the whole root composition rather than emitting an
+unusable root. The guards did not change; their *tests* did, because most of
+their fixtures are no longer defective.
+
+**Why:** this is the upstream half of the 13 August incident, specified from
+here and measured against the same nine models. Verified against the published
+package before pinning: the headline case emits self-sufficient branches with
+`required` intact and is accepted 9/9; sanitization is idempotent; the Gemini
+dangling-`required` pruning that transform exists for is intact; unrepairable
+and conflicting-`type` branches drop the composition and are accepted 9/9; root
+`allOf` is still treated as an intersection; and at 2000 branches × 100
+properties the copy-down hits its ceiling and falls back to dropping rather than
+leaving a half-repaired branch.
+
+One shape is not fixed and is the reason both checks stay: a root union branch
+carrying **its own** composition — `{ type: "object", anyOf: [...] }` — is
+forwarded unchanged and is a hard 400 on grok-4.3/4.5/4.6. `nonObjectRootUnionBranches`
+is now the only thing in front of it, and `repairRootUnionForProviders` is the
+only thing in front of a hosted MCP server serving it. An upstream fix is
+specified; until it ships this repository is the backstop.
+
+The tests were rewritten rather than retargeted, because flipping eight
+expectations to `[]` would have left checks that pass for a function returning
+nothing. `weakenedCompositionBranches` keeps a positive case bind 12 still
+produces — a *nested* branch naming a property nothing in scope declares, which
+remains unrepairable — and the traversal test now uses unresolvable names in
+each position so it still asserts the walk reaches them. `repairRootUnionForProviders`
+never invokes the sanitizer, so its block is version-independent and is now the
+standing coverage for the measured branch rules themselves. Whoever next bumps
+bind should expect this file to move and should check *why* each expectation
+changed rather than making it green.
+
+**Note on the bump itself:** bind's versioning is a release counter, not semver
+— "each published release increments the major and resets the rest" — so 11 → 12
+implies no API break, and none was found. Resolving it did refresh five
+unrelated range dependencies, including `wrangler` and `miniflare`; a no-op
+install on the previous pin produces no drift, so that churn belongs to this
+change and not to a stale lockfile.
+
+### 2026-08-16 — The root-branch rule, tightened to what was actually measured
+
+**What changed:** `readableRootUnionBranch` is now one predicate shared by
+`nonObjectRootUnionBranches` and `repairRootUnionForProviders`, and it rejects
+two shapes the previous test accepted: a branch whose own `type` contradicts its
+`properties` (`{ type: "string", properties: {…} }`), and a branch carrying its
+own composition (`{ type: "object", anyOf: [...] }`). No authored tool has
+either shape, so nothing in the surface changed — this closes false negatives
+rather than fixing a live failure.
+
+**Why:** the original rule was written from a matrix that never tested a branch
+whose `type` and `properties` disagree. Both shapes 400 on grok-4.3/4.5/4.6 with
+the same root-union error as the incident, and both were being passed — by the
+guard *and* by the run-time repair, which is the worse half: a hosted MCP server
+serving either one would have had it forwarded untouched and failed the whole
+request, which is the exact outcome that repair exists to prevent.
+
+The two rules are worth stating plainly because both are the opposite of the
+intuition. A declared `type` decides **alone** — `properties` does not rescue a
+branch typed as something else, so the check cannot be a disjunction over "has
+either marker". And nesting a union one level down inside a root branch does not
+escape the constraint, so `{ type: "object", anyOf: […] }` is not a workaround
+for a root union; it is the same rejection.
+
+Both were found by the reviewer working the corresponding fix in
+`@juno-ai/bind`, whose sanitizer faces the identical rule, and both were
+re-measured here before being adopted rather than taken on report. The predicate
+is shared between the report and the repair for the reason the split nearly
+cost: a rule only half the codebase enforces is worse than one nobody does,
+because the guard goes green on precisely the schema the repair lets through. A
+future change must keep them reading the same function.
+
+### 2026-08-16 — A tool schema is what the sanitizer emits, and that is now tested
+
+**What changed:** The four tools that expressed an exclusive choice as a
+composition of bare `required` branches — `memory_search`, Notion
+`create_comment`, X `get_user_timeline`, Terminal `import_resource` — no longer
+declare it in `inputSchema`. Each states it in its `description` and enforces it
+where it always held, in the executor's zod parse.
+`packages/agent-harness/src/tool-schema-safety.ts` adds two checks over what
+Bind's real `sanitizeToolSchema` *emits*: `nonObjectRootUnionBranches` for a root
+`anyOf`/`oneOf` branch xAI will not read as an object, and
+`weakenedCompositionBranches`, which compares the authored schema against the
+sanitized one and reports any branch that lost a `required` or came out
+constraining nothing. `apps/api/test/tool-schema-sanitization.test.ts` walks
+every authored tool schema in the repository through both — core, discovery,
+skills, the automation architect's own four tools, the HyperSight submission
+tool, Terminal, and every connector — and asserts by name that the conditional
+and hand-assembled surfaces are actually in the walk.
+
+**Why:** one line on `memory_search` —
+`oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]` — carried two
+independent defects, and separating them took a live matrix across nine models
+(grok-4.3/4.5/4.6, gemini-3.5/3.6/3.7-flash, gpt-5.6-terra/sol/luna).
+
+The **fatal** one is the root-level union. Grok requires every branch of a root
+union to be recognizably an object — `type: "object"` or `properties`, either
+alone suffices — and answers `invalid-argument: … tool parameter root must be an
+object type (root schema is an anyOf/oneOf union with a non-object branch)`,
+which OpenRouter surfaces as a provider 400 covering the whole request, every
+tool. Because `memory_search` is core and present on every request, all 253 x-ai
+attempts in the three days after it shipped failed: default routes paid a dead
+~1s round trip per turn and fell back to Gemini, so the fleet looked healthy,
+while a work stream pinned to Grok from the composer's model picker got
+`pinnedModelRouting`'s empty `fallbackModels`, no second candidate, and a bare
+`harness_execution_failed` naming neither the tool nor the reason.
+
+The **silent** one is the sanitizer. It prunes a `required` against the same
+node's own `properties` — correct for Gemini, whose validator resolves neither
+composition nor parent scope — so a branch that is *only* a `required` prunes to
+`{}` and the constraint is gone on every provider. Gemini and OpenAI accept the
+emptied schema and let the model send both parameters or neither.
+
+The first cut of this change assumed the emptied branch was the xAI trigger. It
+is not, and the measurement is why the guard is now two checks rather than one:
+the authored branches 400 identically to the sanitized ones, restoring the
+`required` does not help, and the same union *nested* under a property is
+accepted by all nine models. A single "no empty branches" rule would have
+flagged harmless nested cases while missing an author who writes
+`oneOf: [{ required: [...] }]` at the root and never trips the sanitizer.
+
+Review of the first cut moved three more boundaries, each of them measured
+rather than argued. A root `allOf` is an **intersection**, not a union, and is
+accepted by all nine models including every Grok, so the root check reads only
+`anyOf`/`oneOf`; treating `allOf` as a union would have failed schemas nothing
+objects to. "Emptied" was too narrow in the other direction: `{ description,
+required }` prunes to `{ description }` and `{ type: "object", required }` to
+`{ type: "object" }`, so the check now compares authored against sanitized and
+reports a dropped `required` wherever it lands — the annotation form is *also* a
+hard 400 on Grok, while the `type: "object"` form is the silent one and would
+otherwise have passed both checks. And the walk missed `dependentSchemas`, the
+2019-09 successor to draft-07's `dependencies`, which Bind's sanitizer does
+descend into.
+
+Rejected alternatives, all measured: pinning a `provider` preference or dropping
+x-ai from the routes hides a schema defect behind routing while every other
+provider still loses the constraint; giving each branch `type: "object"` alone
+passes xAI but the sanitizer then strips the `required` anyway, so the constraint
+is lost silently — the only structural form that both passes and survives is a
+full object schema per branch, which is what the attachment tools already use;
+teaching Avalon to post-process Bind's output would fork the sanitizer. The
+weakened-branch check asserts *constraint removed* rather than *unsatisfiable*
+deliberately — satisfiability needs a solver, and a branch the sanitizer weakened
+is a discarded constraint whether or not some instance still validates.
+
+A future change must keep the guard walking the registries: the same defect in a
+tool added later is invisible to a hand-maintained list. It must also keep the
+two checks distinct — collapsing them loses exactly the distinction the
+measurement bought — and keep the named-surface assertion, because the walk's
+weak point is a tool it never reaches rather than one it judges wrongly. Three
+surfaces are not in any registry and were missing from the first cut: the
+Firecrawl web pair, which `createAvalonTools` omits entirely without a
+`FIRECRAWL_API_KEY`, and the automation architect's four tools and the HyperSight
+submission tool, both built against run state. A lower-bound count cannot notice
+any of them leaving; asserting the names can.
+
+Hosted-MCP tools arrive from remote servers at run time, so no build-time walk
+can reach them at all — and the exposure there is worse, because one third-party
+schema fails the whole request and every other tool in it. They are covered by
+`repairRootUnionForProviders` applied at `validateDynamicConnectorTools`, which
+enforces the same measured rule as a rewrite instead of a report; see
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md#changelog) for why it
+repairs rather than rejects.
+
+### 2026-08-15 — A settled read receipt rebinds instead of halting the run
+
+**What changed:** A completed *read* receipt whose positional coordinates are
+reused by a demonstrably different read is now replanned in place and executed,
+under an `execution_replanned` checkpoint, rather than classified
+`ambiguous_external_write`. A receipt that has already settled is never handed to
+`finalizeToolInvocationFailure`, which can only match a mutable row. When an
+ambiguity does halt a run it now records an audit event, a
+`tool_receipt_coordinate_conflict` log line, and an error on the run itself.
+
+**Why:** A production run stopped at `needs_input` with no question to answer,
+no failed tool row, no audit event, and a null error — nothing anywhere said
+why. The primary model 4xx'd on its second turn without falling back, the harness
+threw, and the Workflow's one retry of `run-authorized-bind-loop` re-entered the
+loop with the turn counter reset to 1. That pass sees only the transcript up to
+its own trigger, so it could not know two plugins had already been loaded; its
+first tool call landed on `…:turn:1:tool:0`, which a completed `load_plugin`
+receipt already held with different input. The receipt was read-mode on both
+sides — nothing external had moved — but the collision was classified as an
+ambiguous external write, and the finalize it attempted against that completed
+row matched no mutable status and raised `RunOwnershipLost`: a lease failure
+that had not happened, reported to the person as "waiting on an answer" on a run
+that could not be retried. The same fingerprint had already stranded a second
+work stream.
+
+Review of the first cut caught three ways the reused row is not as free as it
+looks, all now fenced: `run_subagent` declares `mode: "read"` but keys its child
+run by the coordinate and admits one objective there; an attachment read leaves
+dependency rows whose lifecycle triggers delete the invocation the rebind has
+since handed to a different call; and `persistSuccessfulToolResult` passes a
+static `checkpointIndex: 1`, which a replanned receipt is already past, so the
+completion inserted nothing and raised `RunOwnershipLost` — the same misreported
+failure this change exists to remove, one step later.
+
+**Considered and rejected:** Scoping receipt IDs per attempt, which is the
+obvious fix and removes the collision entirely — but positional stability across
+passes is exactly what lets a retried pass replay a completed write instead of
+repeating it, so this would trade a rare stall for duplicated external writes.
+Suffixing a colliding receipt to allocate a fresh row, which breaks the tool
+runtimes that correlate their own durable state by `tool_call_id`. Rebinding on
+any collision, which would let a write receipt be reused. And rebinding whenever
+the recorded policy cannot be proven compatible, which is the receipt-identity
+fence that stops one tool's result being served for another's call.
+
+**Consequences:** A rebound receipt discards the earlier pass's `output_ref`,
+so an R2 result object can be orphaned; the transcript row for that coordinate
+updates in place to describe the call that now owns it. Any future path that
+mints receipt coordinates must keep them stable within a pass and must not
+assume a coordinate is claimed by at most one call over a run's lifetime. The
+model-facing protocol is unaffected: rebinding is invisible to it, since the
+provider call ID never leaves the wire.
+
+### 2026-08-15 — Workspace runs ask for a member reply, not a task claim
+
+**What changed:** The workspace-authority policy now tells the model to request a reply from a
+relevant connected member when personal authority is required. That member's next message runs
+under their authority; the prompt no longer describes claiming the whole task.
+
+**Why:** Connector work streams resolve execution authority per message. Claim instructions
+described a removed per-thread authority pin and could send users looking for an interaction that
+no longer exists.
+
+**Considered and rejected:** Keeping “claim” as informal shorthand. It implies persistent task
+ownership, while the actual authorization boundary is the author of each message.
+
+**Consequences:** Agent-facing explanations must distinguish durable work-stream membership from
+the principal of a single run. A future connector cannot reintroduce a claim flow through prompt
+copy alone.
+
+### 2026-08-14 — A provider outage is retried once and named as the provider's
+
+**What changed:** A route plan that exhausts with a transport fault the provider
+owns is re-executed up to `HARNESS_TRANSPORT_RETRIES` times (default 1) after a
+clamped, `Retry-After`-aware backoff, and a run that still fails that way now
+reports `provider_unavailable` / kind `provider` instead of
+`harness_execution_failed`.
+
+**Why:** A pinned work stream spent eight and a half minutes and 17
+successful model turns checking out a repository, bootstrapping a sandbox,
+installing, and typechecking — and then discarded all of it because turn 18's
+single request produced no first token for 45 seconds. Bind classified that
+correctly as a retriable transport fault and its disposition said to traverse to
+the next provider or the fallback model. `pinnedModelRouting` gives an override
+no fallbacks on purpose, so there was neither, and the disposition matrix
+deliberately withholds a same-endpoint budget from a fault it expects to
+traverse away from. Nothing was left. The gap was not in Bind's ordering — it was
+that Avalon never implemented the host-side retry `isRetriableAttemptError`
+exists to prompt.
+
+The pin itself was not relaxed, and must not be: an override is a request to
+observe one specific model, and quietly answering from another would invalidate
+the comparison it was created to make. Retrying *the same pinned model* keeps
+that promise, which is why the retry lives at the plan level rather than in the
+route.
+
+The second half is a diagnostic debt the first half would otherwise have hidden.
+The exhaustion path rethrew the transport's own error verbatim — right for
+preserving a message, but it dropped the classification, so the outer catch saw
+an unrecognized error and filed an upstream outage as `harness_execution_failed`:
+*"The Avalon harness could not complete this run."* The member was told Avalon
+broke, and the only way to learn otherwise was the raw-inference runbook. One
+predicate now decides both the retry and the code, so the failures Avalon retries
+are exactly the failures it names as the provider's, and the two lists cannot
+drift apart.
+
+**Considered and rejected:** giving a pinned route fallback models, which would
+have fixed the outage in one line and destroyed the feature — an override exists
+to observe one specific model, so answering from another invalidates the
+comparison it was created to make. Also rejected: retrying at the Workflow step
+instead, which re-enters the whole run; the unit that failed was one request that
+had produced no output and committed nothing, and replaying 17 turns of completed
+side effects to recover it is the wrong granularity.
+
+**Consequences:** The retry budget is small because each re-execution records a
+failure against the per-workspace circuit breaker, whose threshold is 3 —
+**raising it to 2 or more lets a single unlucky run open the endpoint for the
+whole workspace**, since a budget of N means N+1 executions and N+1 consecutive
+failures. The breaker is also process-local (Bind's own `circuit-breaker.d.ts`
+says so), so that ceiling is per-isolate and the fleet-wide request volume during
+an outage is a multiple of it; real fleet-wide protection would need D1 or a
+Durable Object and is not what this is. Do not widen `isProviderTransportFailure` to cover 400,
+401, 402, or 403: those are Avalon's request shape and Avalon's credentials, a
+repeat cannot fix them, and naming them as the provider's would point an operator
+at the wrong system. Meeting notes' live pass sets the budget to 0 on purpose;
+its one-minute cadence is worth more than any single briefing.
+
+### 2026-08-13 — Telemetry attributes automation only to automation-origin runs
+
+**What changed:** Run and tool telemetry resolves an automation only when the
+root harness run declares an automation origin and its work stream points to the
+same durable automation run. A later person-initiated run in that work stream
+stays a work-stream run with no automation identifier.
+
+**Why:** Automation-created work streams remain usable by people. Joining any
+automation row by work-stream identity incorrectly relabeled their later manual
+messages and retries as unattended automation usage.
+
+**Considered and rejected:** Treating the work stream's creation origin as the
+owner of every future run. Container provenance is not execution provenance.
+
+**Consequences:** Any new run-owner or tool-owner dimension must come from the
+specific harness execution path, not merely from a related work stream.
+
+### 2026-08-13 — Durable tool and run receipts emit content-free product usage
+
+**What changed:** Root, HyperSight, automation, system, and inline-child runs now
+emit one typed `agent_tool_started` event after a new invocation plan is durable,
+then one terminal outcome from its receipt. Root runs emit a terminal lifecycle
+event with bounded value/performance dimensions. Events record canonical taxonomy
+and opaque resource correlations; unattended workspace execution uses a
+personless workspace analytics identity.
+
+**Why:** Tool catalogs show what a model could call, not what the product
+actually used or whether it succeeded. Product analysis needs capability
+adoption and run value tied to work streams and automations without turning
+prompts or provider payloads into analytics.
+
+**Considered and rejected:** Emitting when tools are loaded, capturing arguments
+or results, attributing workspace automations to their creator, and letting
+telemetry failure abort a tool. Those respectively inflate usage, expose content,
+misstate agency, or make observation part of product correctness.
+
+**Consequences:** Replay and ambiguous-write branches emit no new start, while a
+replayed terminal receipt is explicitly labeled. The regional runtime—not
+desktop ingest—owns workspace-only events. Any future run/tool dimension must
+remain a bounded canonical taxonomy and must not add content.
+
+### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
+
+**What changed:** Supported regional work-stream runtimes register
+`avalon:terminal` as a deferred built-in plugin. Loading exposes one static
+prompt and all eight typed tools but creates no sandbox; execution crosses into
+the Terminal coordinator, which keeps its own mutation lease and rechecks its
+frozen authority fingerprint.
+
+**Why:** Models need to discover code and CLI capability before choosing it, but
+discovery happens more often than execution. Allocating during activation would
+couple a cheap Bind routing decision to provider cost and persistent filesystem
+state. Splitting tools into inferred scopes would make a medium model reason
+about a host-selected subset instead of following visible preconditions.
+
+**Considered and rejected:** Preloading Terminal, allocating at `load_plugin`,
+and exposing separate scratch/repository/publication scopes. These respectively
+spend prompt/context on ordinary prose, start unused sandboxes, or make tool
+availability masquerade as authorization.
+
+**Consequences:** A region must omit the plugin until its provider gate passes;
+activation cannot be used as evidence that a sandbox exists. Future built-in
+sandbox plugins must keep allocation and authority checks outside Bind plugin
+loading.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — Revision recovery remains executable after races and resumes
 
@@ -967,6 +1473,7 @@ would duplicate an overlapping catch-up frame, and applying the cursor alone
 would truncate the visible response. Any future background-subscription policy
 must remain scoped to the signed-in workspace and bounded by active work rather
 than by total work-stream count.
+
 ### 2026-08-12 — Artifacts are gone; a run's output is its final message
 
 **What changed:** `workstream_create_artifact` was removed from
