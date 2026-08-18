@@ -436,10 +436,12 @@ prefix at the time of writing — **re-check against `main` immediately before
 merge**; the tree already carries duplicate-number collisions, migrations
 apply in filename order on merge, and this one is a destructive rebuild).
 
-**Coordination with the Fireflies PRD:** the parallel
-[`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md)
-also rebuilds `connector_connections` and `connector_oauth_attempts` for its
-own `connector_type`. Whichever implementation lands **second** must derive
+**Coordination with any second connector PRD:** the parallel Fireflies
+proposal ([#167](https://github.com/juno-ai-labs/avalon/pull/167), withdrawn
+in [#178](https://github.com/juno-ai-labs/avalon/pull/178)) also rebuilt
+`connector_connections` and `connector_oauth_attempts` for its own
+`connector_type`, and the same applies to any connector PRD that lands near
+this one. Whichever implementation lands **second** must derive
 from the schema the first one left — carrying the first connector's CHECK
 value and its two partial unique indexes forward — or the second rebuild
 silently reverts the first. The rebase-time re-check above is where this is

@@ -76,11 +76,13 @@ cost of the connector is low relative to what it unlocks.
 ## Non-goals
 
 1. **A Fireflies.ai connector.** Fireflies is a different notetaker with a
-   different (GraphQL) API, and it has its own PRD, written in parallel:
-   [`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md)
-   (Key design decision 1). Out of scope here by definition, not deferred —
-   the two connectors ship independently, with one migration-coordination
-   obligation between them ([`design.md`](design.md) §Migration sketch).
+   different (GraphQL) API, and it was proposed separately in its own PRD
+   ([#167](https://github.com/juno-ai-labs/avalon/pull/167), since withdrawn
+   in [#178](https://github.com/juno-ai-labs/avalon/pull/178)) — see Key
+   design decision 1. Out of scope here by definition, not deferred. If a
+   Fireflies connector is re-proposed, the two carry one
+   migration-coordination obligation between them
+   ([`design.md`](design.md) §Migration sketch).
 2. **Writes to Fathom through Avalon-authored tools.** The static catalog
    creates or edits nothing — no highlights, action items, meeting types, or
    team settings; the connector manages only its own webhook endpoint. (The
@@ -225,12 +227,13 @@ None yet.
 1. **This PRD targets Fathom; Fireflies gets its own.** The originating
    request wrote "fireflies.ai" but linked fathom.ai and asked for Fathom's
    technical documentation. The answer to the ambiguity turned out to be
-   *both*: the requester renamed this branch to `fathom-connection-prd` and a
-   parallel Fireflies PRD exists at
-   [`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md).
-   [`research.md`](research.md) records the provenance. *Rejected:* folding
-   both providers into one PRD — different APIs (REST/MCP vs GraphQL),
-   different designs, one folder per PRD.
+   *both*: the requester renamed this branch to `fathom-connection-prd`, and
+   a parallel Fireflies PRD was written
+   ([#167](https://github.com/juno-ai-labs/avalon/pull/167), withdrawn in
+   [#178](https://github.com/juno-ai-labs/avalon/pull/178) alongside this
+   one). [`research.md`](research.md) records the provenance. *Rejected:*
+   folding both providers into one PRD — different APIs (REST/MCP vs
+   GraphQL), different designs, one folder per PRD.
 2. **Ingestion admits a change signal; content is hydrated later, in the
    queue consumer.** `ingestFathomWebhook` mirrors what `ingestGranolaWebhook`
    actually does: size check, verify, persist the raw body to R2, normalize a

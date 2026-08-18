@@ -15,8 +15,9 @@ Fathom are different products: Fireflies exposes a GraphQL API
 REST/MCP surface documented below. This PRD follows the link and the
 documentation instruction and targets **Fathom**. The ambiguity resolved to
 *both*: the requester renamed this working branch to `fathom-connection-prd`,
-and a parallel Fireflies PRD was written in its own folder,
-[`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md).
+and a parallel Fireflies PRD was written
+([#167](https://github.com/juno-ai-labs/avalon/pull/167), since withdrawn in
+[#178](https://github.com/juno-ai-labs/avalon/pull/178)).
 The resolution is recorded as [`prd.md`](prd.md) Key design decision 1.
 
 ## Fathom's developer surface
@@ -171,9 +172,10 @@ that matter:
 
 ## Fireflies.ai, for the record
 
-Fireflies has its own PRD —
-[`../2026-08-14_fireflies-connector/`](../2026-08-14_fireflies-connector/prd.md)
-— whose `research.md` is the authority on that provider. In brief, and
+Fireflies was proposed in its own PRD
+([#167](https://github.com/juno-ai-labs/avalon/pull/167), withdrawn in
+[#178](https://github.com/juno-ai-labs/avalon/pull/178)), whose `research.md`
+is the authority on that provider. In brief, and
 corrected against it (an earlier revision of this section wrongly said
 Fireflies had no official MCP): Fireflies exposes a GraphQL API at
 `https://api.fireflies.ai/graphql` with per-user API keys
