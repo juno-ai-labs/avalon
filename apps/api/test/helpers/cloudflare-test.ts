@@ -103,3 +103,14 @@ export function createCloudflareTestBinding<
 export function createTestDurableObjectId(value: string): DurableObjectId {
   return value as unknown as DurableObjectId;
 }
+
+export function createTestJurisdictionalDurableObjectId(
+  value: string,
+  jurisdiction: "eu" | "us",
+): DurableObjectId {
+  return {
+    toString: () => value,
+    equals: (other) => other.toString() === value,
+    jurisdiction,
+  } as DurableObjectId;
+}

@@ -29,7 +29,7 @@ import type {
 import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const MessagePageSchema = z.object({
@@ -67,14 +67,12 @@ function objectStub(
   workstreamId: string,
   substreamId = "0",
 ): DurableObjectStub {
-  const namespace = durableObjectNamespaceForRegion(
+  return durableObjectStubForRegion(
     env.SUBSTREAM_AGENTS,
     env.AVALON_REGION,
+    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, substreamId),
     env.APP_ENV,
   );
-  return namespace.get(namespace.idFromName(
-    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, substreamId),
-  ));
 }
 
 export async function attachWorkstreamRuntimeResource(

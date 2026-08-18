@@ -7,7 +7,11 @@ import {
   reapExpiredCrashReports,
   reapExpiredOrphanedCrashObjects,
 } from '../src/telemetry/crash-delivery';
-import { createCloudflareTestBinding, createTestEnv } from './helpers/cloudflare-test';
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from './helpers/cloudflare-test';
 import type { CrashSymbolicatorContainer } from '../src/crash-symbolicator-container';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -42,7 +46,8 @@ describe('Global native crash delivery', () => {
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: bucket,
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
-        getByName: () => ({
+        idFromName: () => createTestDurableObjectId('crash-symbolicator'),
+        get: () => ({
           symbolicate: vi.fn(async () => ({
             parserState: 'symbolicated' as const,
             reportJson: JSON.stringify(report),

@@ -20,7 +20,7 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import { ApiError } from "../lib/api-error";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
@@ -357,17 +357,17 @@ export async function launchWorkstreamHarness(
   try {
     const authority = await readWorkstreamAuthorityControl(env);
     if (authority.phase === "durable_object_open") {
-      const agents = durableObjectNamespaceForRegion(
+      const agent = durableObjectStubForRegion(
         env.SUBSTREAM_AGENTS,
         env.AVALON_REGION,
+        substreamAgentName(
+          env.AVALON_REGION,
+          input.workspaceId,
+          input.workstreamId,
+        ),
         env.APP_ENV,
       );
-      const id = agents.idFromName(substreamAgentName(
-        env.AVALON_REGION,
-        input.workspaceId,
-        input.workstreamId,
-      ));
-      const response = await agents.get(id).fetch("https://substream-agent/internal/run-dispatch", {
+      const response = await agent.fetch("https://substream-agent/internal/run-dispatch", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...workflowInput, substreamId: "0" }),

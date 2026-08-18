@@ -19,6 +19,10 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  assertDurableObjectJurisdiction,
+  durableObjectStubForRegion,
+} from "../lib/durable-object-namespace";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import {
   HarnessRunMetricsSchema,
@@ -360,6 +364,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     env: Env
   ) {
     super(state, env);
+    assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.objectStore = new WorkstreamObjectStore(
       state.storage,
@@ -1676,12 +1681,16 @@ export class SubstreamAgent extends DurableObject<Env> {
       || effect.workstreamId !== firstEffect.workstreamId
       || effect.generation !== firstEffect.generation
     ))) throw new Error("substream_effect_batch_identity_mismatch");
-    const namespace = this.env.WORKSTREAM_DOS;
-    const stub = namespace.get(namespace.idFromName(workstreamDOName(
+    const stub = durableObjectStubForRegion(
+      this.env.WORKSTREAM_DOS,
       firstEffect.region,
-      firstEffect.workspaceId,
-      firstEffect.workstreamId,
-    )));
+      workstreamDOName(
+        firstEffect.region,
+        firstEffect.workspaceId,
+        firstEffect.workstreamId,
+      ),
+      this.env.APP_ENV,
+    );
     for (let offset = 0; offset < effects.length; offset += 25) {
       const response = await stub.fetch("https://workstream.internal/internal/substream-effects", {
         method: "POST",
@@ -1841,8 +1850,12 @@ export class SubstreamAgent extends DurableObject<Env> {
       subscribed: false
     };
 
-    server.serializeAttachment(attachment);
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
+    // Cloudflare's hibernation lifecycle registers the server end first, then
+    // persists the connection state that a replacement isolate deserializes.
+    // We keep no socket map to rebuild: handlers enumerate getWebSockets() and
+    // validate each attachment at the point of use.
+    server.serializeAttachment(attachment);
 
     return new Response(null, { status: 101, webSocket: client });
   }

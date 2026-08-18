@@ -19,7 +19,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { substreamAgentName } from "../durable-objects/names";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
@@ -626,13 +626,13 @@ export async function refreshWorkspaceSchedulerAlarm(
   env: Pick<Env, "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,
   workspaceId: string,
 ): Promise<void> {
-  const schedulers = durableObjectNamespaceForRegion(
+  const scheduler = durableObjectStubForRegion(
     env.WORKSPACE_SCHEDULERS,
     env.AVALON_REGION,
+    `${env.AVALON_REGION}:${workspaceId}`,
     env.APP_ENV,
   );
-  const id = schedulers.idFromName(`${env.AVALON_REGION}:${workspaceId}`);
-  const response = await schedulers.get(id).fetch("https://scheduler.internal/refresh", {
+  const response = await scheduler.fetch("https://scheduler.internal/refresh", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ workspaceId, region: env.AVALON_REGION }),
@@ -658,18 +658,18 @@ export async function refreshAgentTimerAlarm(
     await refreshWorkspaceSchedulerAlarm(env, workspaceId);
     return;
   }
-  const agents = durableObjectNamespaceForRegion(
+  const agent = durableObjectStubForRegion(
     env.SUBSTREAM_AGENTS,
     env.AVALON_REGION,
+    substreamAgentName(
+      env.AVALON_REGION,
+      workspaceId,
+      workstreamId,
+      substreamId,
+    ),
     env.APP_ENV,
   );
-  const id = agents.idFromName(substreamAgentName(
-    env.AVALON_REGION,
-    workspaceId,
-    workstreamId,
-    substreamId,
-  ));
-  const response = await agents.get(id).fetch("https://substream-agent/internal/refresh-agent-alarm", {
+  const response = await agent.fetch("https://substream-agent/internal/refresh-agent-alarm", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ workspaceId, workstreamId, substreamId }),

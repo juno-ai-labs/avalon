@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -516,22 +516,18 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
 
   private async publishBestEffort(input: WorkstreamWorkflowInput, event: unknown): Promise<void> {
     try {
-      const rooms = durableObjectNamespaceForRegion(
+      const agent = durableObjectStubForRegion(
         this.env.SUBSTREAM_AGENTS,
         input.region,
-        this.env.APP_ENV,
-      );
-      const id = rooms.idFromName(
-        // Workflow execution remains available for non-workstream loops and
-        // recovery, so retain exact child routing when it is used.
         substreamAgentName(
           input.region,
           input.workspaceId,
           input.workstreamId,
           input.substreamId,
         ),
+        this.env.APP_ENV,
       );
-      await rooms.get(id).fetch("https://substream-agent/internal/events", {
+      await agent.fetch("https://substream-agent/internal/events", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
