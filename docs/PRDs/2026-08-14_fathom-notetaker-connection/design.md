@@ -372,15 +372,18 @@ signature check is where a dropped guard hides). Provider-specific event
 schemas and cross-checks layer on top. The procedure:
 
 1. Reject bodies over `PROVIDER_WEBHOOK_MAX_BYTES` before reading further.
-2. Fatally decode UTF-8 (`TextDecoder("utf-8", { fatal: true })`), rejecting
-   non-UTF-8 bodies; verification is computed over the exact received bytes
-   (the decode/re-encode round-trips byte-exactly for valid UTF-8 — this is
-   the order the Granola path actually has, stated so a test can hold it).
-3. Read `webhook-id`, `webhook-timestamp`, `webhook-signature`; reject a
+2. Read `webhook-id`, `webhook-timestamp`, `webhook-signature`; reject a
+   missing header, a timestamp failing the `^\d{10}$` shape check, or a
    timestamp outside the 300-second replay window.
-4. Compute HMAC-SHA256 over `${id}.${timestamp}.${rawBody}` with the
+3. Compute HMAC-SHA256 over `${id}.${timestamp}.${rawBody}` — **over the raw
+   body bytes, before any UTF-8 decode or JSON parse** — with the
    base64-decoded post-`whsec_` secret; compare in constant time against each
-   space-delimited `v1,` signature.
+   space-delimited `v1,` signature. This is the order `verifyGranolaWebhook`
+   has, and the order matters: decoding first would both weaken the guarantee
+   (bytes verified are no longer the bytes received) and reject valid
+   deliveries on a decode fault before their signature was ever checked.
+4. Only once the signature is valid, fatally decode UTF-8
+   (`TextDecoder("utf-8", { fatal: true })`), rejecting non-UTF-8 bodies.
 5. Parse. The per-delivery identity is the authenticated `webhook-id`
    **header** — the public docs do not document a payload event-id field
    ([`prd.md`](prd.md) Open question 7), so the payload is never the source
@@ -431,10 +434,12 @@ doc test enforces the pairing):
 
 ## Migration sketch
 
-`packages/db/migrations/0077_fathom_connector.sql` (0077 is the next free
-prefix at the time of writing — **re-check against `main` immediately before
-merge**; the tree already carries duplicate-number collisions, migrations
-apply in filename order on merge, and this one is a destructive rebuild).
+`packages/db/migrations/0078_fathom_connector.sql` (0078 is the next free
+prefix at the time of writing — 0077 is taken by
+`0077_connector_oauth_telemetry_shape.sql`. **Re-check against `main`
+immediately before merge**: the tree already carries duplicate-number
+collisions, migrations apply in filename order on merge, and this one is a
+destructive rebuild).
 
 **Coordination with any second connector PRD:** the parallel Fireflies
 proposal ([#167](https://github.com/juno-ai-labs/avalon/pull/167), withdrawn
@@ -466,9 +471,14 @@ later migrations have invalidated:
    schema at head (0048's set plus later additions such as 0051's partial
    expression index), not from 0048's list.
 2. Rebuild `connector_oauth_attempts` with `'fathom'` in its `provider`
-   CHECK, using the **current** column set — including
-   `telemetry_operation_id` and its index from 0074, which 0048's definition
-   predates.
+   CHECK, using the **current** column set read off the schema at head, not
+   an enumerated list — 0048's definition predates `telemetry_operation_id`
+   and its index (0074) *and* the four columns 0077 added
+   (`telemetry_event_version`, `telemetry_scope`,
+   `telemetry_capability_count`, `telemetry_reconnect`), and more will
+   accrue. Enumerating columns here is the same staleness trap as
+   enumerating children: derive the set, and have the test assert the whole
+   pre-migration column set survives.
 3. Partial unique indexes, the Granola pair with the type swapped:
 
 ```sql
@@ -486,9 +496,11 @@ none of the data-loss modes above fail CI unless seeded):
 scope-uniqueness case, and (b) a populated-database case in the shape of the
 existing "preserves Slack pending prompts while adding Granola" test — seed
 one row in every child of `connector_connections` (the three post-0048
-children included), apply the migration, assert every row survives,
-`telemetry_operation_id` and its index survive, and
-`PRAGMA foreign_key_check` returns empty.
+children included), apply the migration, and assert every row survives, that the **complete**
+pre-migration column set of both rebuilt tables is present afterwards
+(compare `PRAGMA table_info` before and after rather than checking named
+columns), that their indexes survive, and that `PRAGMA foreign_key_check`
+returns empty.
 
 Contracts: `ConnectionSchema.connectorType` gains `"fathom"`
 (`packages/contracts/src/index.ts`), as does
@@ -544,11 +556,12 @@ pass — the build's checklist, not new design:
   exclusion** the Granola row carries — an API-key connection gets no
   Reconnect button (key replacement instead).
 - `lib/api.ts` — `startProviderConnection`'s provider union +
-  `createFathomWorkspaceConnection`; the telemetry decision:
-  `connector_setup_requested`'s connector enum excludes Granola today for a
-  reason that applies to Fathom verbatim — either extend the telemetry
-  contract or exclude Fathom the same way (name the choice in the
-  implementing PR).
+  `createFathomWorkspaceConnection`. Telemetry needs no dilemma: the live
+  event is `connector_setup_requested_v2`, whose connector field is
+  `TELEMETRY_CONNECTOR_TYPES` in `packages/contracts/src/telemetry.ts` and
+  already carries `"granola"` — add `"fathom"` to that array and the event
+  covers it. (The legacy `connector_setup_requested` enum, which the client
+  works around by dropping Granola, is not extended.)
 - The `connectProvider` mutation's inline provider union in
   `workspace-settings.tsx` (a separate literal from the `api.ts` union).
 - `lib/app-session.tsx` and `apps/site/src/auth-handoff.ts` provider-name
