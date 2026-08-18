@@ -59,6 +59,7 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import { parseResolvedTheme, themeWindowBackground, type ResolvedTheme } from '../common/themes';
 import {
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
@@ -640,6 +641,19 @@ app.setPath(
 
 function userDataDirectory(): string {
   return app.getPath('userData');
+}
+
+/**
+ * The appearance the last renderer reported, used for `backgroundColor` on
+ * every window this process opens. It is read from the preference file at
+ * startup so the very first window of a launch is already the right colour;
+ * before that read completes it is the dark theme, which is what Avalon
+ * shipped with.
+ */
+let windowTheme: ResolvedTheme = 'dark';
+
+function windowBackgroundColor(): string {
+  return themeWindowBackground[windowTheme];
 }
 
 const telemetryFetch: typeof globalThis.fetch = (input, init) => net.fetch(
@@ -2435,6 +2449,17 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return enqueueApplicationIconReset();
   });
+  // The renderer owns the theme; this only records which one, so the next
+  // window is constructed with a matching background instead of flashing the
+  // previous theme's canvas before the first paint. An unrecognised value is
+  // dropped rather than thrown on: nothing the caller does depends on it.
+  ipcMain.handle('theme:set-window', async (event, theme: unknown) => {
+    assertTrustedIpcSender(event);
+    const parsed = parseResolvedTheme(theme);
+    if (!parsed || parsed === windowTheme) return;
+    windowTheme = parsed;
+    await updateStoredApplicationSettings(userDataDirectory(), { windowTheme: parsed });
+  });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
     const stored = await loadStoredSession();
@@ -3070,7 +3095,7 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     minWidth: 720,
     minHeight: 560,
     show: false,
-    backgroundColor: '#111210',
+    backgroundColor: windowBackgroundColor(),
     title: 'Avalon Settings',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3107,7 +3132,7 @@ async function createMeetingWindow(
     minWidth: 540,
     minHeight: 640,
     show: false,
-    backgroundColor: '#1d1e1b',
+    backgroundColor: windowBackgroundColor(),
     title: 'Meeting notes — Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3200,7 +3225,7 @@ async function createMainWindow(): Promise<void> {
     minWidth: 860,
     minHeight: 640,
     show: false,
-    backgroundColor: '#111210',
+    backgroundColor: windowBackgroundColor(),
     title: 'Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3334,6 +3359,13 @@ if (!singleInstanceLock) {
       await debugSettingsController.initialize();
     } catch (error) {
       logWarn('avalon', 'could not read the Developer preference', error);
+    }
+    try {
+      // Before any window is constructed, so the first one of the launch opens
+      // on the theme's own canvas rather than flashing the previous default.
+      windowTheme = (await readStoredApplicationSettings(userDataDirectory())).windowTheme;
+    } catch (error) {
+      logWarn('avalon', 'could not read the stored window theme', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
