@@ -61,7 +61,7 @@ function roomNamespace(): DurableObjectNamespace {
 function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknown>> = {}): Env {
   return createTestEnv({
     DB: sqliteD1(database),
-    WORKSTREAM_ROOMS: roomNamespace(),
+    SUBSTREAM_AGENTS: roomNamespace(),
     AVALON_REGION: "global",
     APP_ENV: "test",
     LOG_LEVEL: "error",

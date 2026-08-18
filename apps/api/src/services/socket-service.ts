@@ -6,6 +6,7 @@ import {
 } from "@avalon/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 
 const encoder = new TextEncoder();
@@ -15,6 +16,7 @@ interface SocketClaims {
   userId: string;
   workspaceId: string;
   workstreamId: string;
+  substreamId: string;
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
@@ -36,13 +38,19 @@ function signingKey(env: Env): Uint8Array {
   throw new ApiError(503, "socket_auth_not_configured", "Realtime authentication is not configured");
 }
 
-export async function issueSocketTicket(env: Env, auth: AuthContext, workstreamId: string): Promise<string> {
+export async function issueSocketTicket(
+  env: Env,
+  auth: AuthContext,
+  workstreamId: string,
+  substreamId = "0",
+): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",
     sid: auth.sessionId,
     wid: auth.workspaceId,
     wsid: workstreamId,
+    ssid: substreamId,
     region: auth.region,
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -50,6 +58,31 @@ export async function issueSocketTicket(env: Env, auth: AuthContext, workstreamI
     .setJti(crypto.randomUUID())
     .setIssuer("avalon-api")
     .setAudience("avalon-workstream-socket")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(signingKey(env));
+}
+
+export async function issueWorkspaceSocketTicket(
+  env: Env,
+  auth: AuthContext,
+  workstreamId: string,
+  substreamId = "0",
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1_000);
+  return new SignJWT({
+    purpose: "workspace_command_socket",
+    sid: auth.sessionId,
+    wid: auth.workspaceId,
+    wsid: workstreamId,
+    ssid: substreamId,
+    region: auth.region,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(auth.userId)
+    .setJti(crypto.randomUUID())
+    .setIssuer("avalon-api")
+    .setAudience("avalon-workspace-socket")
     .setIssuedAt(now)
     .setExpirationTime(now + 60)
     .sign(signingKey(env));
@@ -63,7 +96,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
     if (
       payload.purpose !== "workstream_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
-      typeof payload.wid !== "string" || typeof payload.wsid !== "string" ||
+      typeof payload.wid !== "string" || typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       (payload.region !== "global" && payload.region !== "eu")
     ) throw new Error("Incomplete socket claims");
@@ -72,6 +105,34 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       userId: payload.sub,
       workspaceId: payload.wid,
       workstreamId: payload.wsid,
+      substreamId: payload.ssid,
+      region: payload.region,
+      ticketId: payload.jti,
+      expiresAt: payload.exp,
+    };
+  } catch {
+    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
+  }
+}
+
+export async function verifyWorkspaceSocketTicket(env: Env, ticket: string): Promise<SocketClaims> {
+  try {
+    const { payload } = await jwtVerify(ticket, signingKey(env), {
+      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-workspace-socket",
+    });
+    if (
+      payload.purpose !== "workspace_command_socket" || typeof payload.sub !== "string" ||
+      typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
+      typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
+      typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
+      (payload.region !== "global" && payload.region !== "eu")
+    ) throw new Error("Incomplete workspace socket claims");
+    return {
+      sessionId: payload.sid,
+      userId: payload.sub,
+      workspaceId: payload.wid,
+      workstreamId: payload.wsid,
+      substreamId: payload.ssid,
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
@@ -173,7 +234,12 @@ export function withNegotiatedSubprotocol(request: Request, response: Response):
 export class SocketService {
   constructor(private readonly env: Env) {}
 
-  async upgrade(workstreamId: string, queryTicket: string | undefined, request: Request): Promise<Response> {
+  async upgrade(
+    workstreamId: string,
+    substreamId: string,
+    queryTicket: string | undefined,
+    request: Request,
+  ): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
     }
@@ -181,17 +247,27 @@ export class SocketService {
       throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
     }
     const claims = await verifySocketTicket(this.env, socketTicketFromRequest(request, queryTicket));
-    if (claims.region !== this.env.AVALON_REGION || claims.workstreamId !== workstreamId) {
-      throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this work stream");
+    if (
+      claims.region !== this.env.AVALON_REGION
+      || claims.workstreamId !== workstreamId
+      || claims.substreamId !== substreamId
+    ) {
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this substream");
     }
-    const rooms = durableObjectNamespaceForRegion(this.env.WORKSTREAM_ROOMS, claims.region, this.env.APP_ENV);
-    const durableId = rooms.idFromName(`${this.env.AVALON_REGION}:${claims.workspaceId}:${claims.workstreamId}`);
+    const rooms = durableObjectNamespaceForRegion(this.env.SUBSTREAM_AGENTS, claims.region, this.env.APP_ENV);
+    const durableId = rooms.idFromName(substreamAgentName(
+      claims.region,
+      claims.workspaceId,
+      claims.workstreamId,
+      claims.substreamId,
+    ));
     const headers = new Headers(request.headers);
     // The ticket has been verified; the room has no use for it and should not
     // receive a live credential on a subrequest it does not authenticate with.
     headers.delete("sec-websocket-protocol");
     headers.set("x-avalon-workspace-id", claims.workspaceId);
     headers.set("x-avalon-workstream-id", claims.workstreamId);
+    headers.set("x-avalon-substream-id", claims.substreamId);
     headers.set("x-avalon-session-id", claims.sessionId);
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
@@ -200,6 +276,57 @@ export class SocketService {
       .fetch(new Request("https://room.internal/socket", { method: "GET", headers }));
     // The room answers the upgrade; the subprotocol is negotiated out here so
     // it stays a transport concern the room never has to know about.
+    return withNegotiatedSubprotocol(request, response);
+  }
+}
+
+/** Edge authentication and regional routing for workspace command sockets. */
+export class WorkspaceSocketService {
+  constructor(private readonly env: Env) {}
+
+  async upgrade(
+    workspaceId: string,
+    workstreamId: string,
+    substreamId: string,
+    queryTicket: string | undefined,
+    request: Request,
+  ): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
+    }
+    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
+      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
+    }
+    const claims = await verifyWorkspaceSocketTicket(
+      this.env,
+      socketTicketFromRequest(request, queryTicket),
+    );
+    if (
+      claims.region !== this.env.AVALON_REGION
+      || claims.workspaceId !== workspaceId
+      || claims.workstreamId !== workstreamId
+      || claims.substreamId !== substreamId
+    ) {
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this workspace command path");
+    }
+    const namespace = durableObjectNamespaceForRegion(
+      this.env.WORKSPACE_DOS,
+      claims.region,
+      this.env.APP_ENV,
+    );
+    const durableId = namespace.idFromName(workspaceDOName(claims.region, claims.workspaceId));
+    const headers = new Headers(request.headers);
+    headers.delete("sec-websocket-protocol");
+    headers.set("x-avalon-workspace-id", claims.workspaceId);
+    headers.set("x-avalon-workstream-id", claims.workstreamId);
+    headers.set("x-avalon-substream-id", claims.substreamId);
+    headers.set("x-avalon-session-id", claims.sessionId);
+    headers.set("x-avalon-user-id", claims.userId);
+    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
+    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+    const response = await namespace.get(durableId).fetch(
+      new Request("https://workspace.internal/socket", { method: "GET", headers }),
+    );
     return withNegotiatedSubprotocol(request, response);
   }
 }

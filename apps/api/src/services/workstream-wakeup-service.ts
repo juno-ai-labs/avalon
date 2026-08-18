@@ -18,7 +18,9 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { substreamAgentName } from "../durable-objects/names";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * One minute, applied to the resolved instant — so it binds an absolute `at`
@@ -636,4 +638,41 @@ export async function refreshWorkspaceSchedulerAlarm(
     body: JSON.stringify({ workspaceId, region: env.AVALON_REGION }),
   });
   if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
+}
+
+/**
+ * Arm the owner of an agent-created timer.
+ *
+ * After authority cutover that owner is the exact SubstreamAgent whose tool
+ * inserted the row. The workspace scheduler remains only for the legacy D1
+ * phase and for workspace-wide schedules/resource watches.
+ */
+export async function refreshAgentTimerAlarm(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  substreamId = "0",
+): Promise<void> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase !== "durable_object_open") {
+    await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+    return;
+  }
+  const agents = durableObjectNamespaceForRegion(
+    env.SUBSTREAM_AGENTS,
+    env.AVALON_REGION,
+    env.APP_ENV,
+  );
+  const id = agents.idFromName(substreamAgentName(
+    env.AVALON_REGION,
+    workspaceId,
+    workstreamId,
+    substreamId,
+  ));
+  const response = await agents.get(id).fetch("https://substream-agent/internal/refresh-agent-alarm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId, workstreamId, substreamId }),
+  });
+  if (!response.ok) throw new Error(`SubstreamAgent timer refresh failed (${response.status})`);
 }

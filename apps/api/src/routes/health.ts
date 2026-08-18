@@ -79,7 +79,7 @@ healthRoutes.get("/", async (c) => {
     checks.r2 = { ok: false, message: "unavailable" };
   }
   try {
-    const rooms = durableObjectNamespaceForRegion(c.env.WORKSTREAM_ROOMS, c.env.AVALON_REGION, c.env.APP_ENV);
+    const rooms = durableObjectNamespaceForRegion(c.env.SUBSTREAM_AGENTS, c.env.AVALON_REGION, c.env.APP_ENV);
     const id = rooms.idFromName(`health:${c.env.AVALON_REGION}`);
     const response = await rooms.get(id).fetch("https://room.internal/health");
     checks.durableObjects = { ok: response.ok, message: response.ok ? "available" : `returned ${response.status}` };

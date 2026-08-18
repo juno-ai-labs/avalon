@@ -397,7 +397,7 @@ The execution provider boundary does not change who owns Avalon's run state.
 
 **Consequences:** The workspace scheduler discovers only projected due work and
 then claims the exact lifecycle transition in the object. Daytona remains the
-sandbox provider, and no Daytona-to-Cloudflare migration is implied.
+sandbox provider.
 
 ### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
 

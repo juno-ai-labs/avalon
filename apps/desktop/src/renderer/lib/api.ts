@@ -1642,8 +1642,18 @@ export class AvalonApi {
     return { enabled: false };
   }
 
-  getSocketTicket(id: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/socket`, { schema: socketTicketSchema });
+  getSocketTicket(id: string, substreamId = '0'): Promise<SocketTicket> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket`,
+      { schema: socketTicketSchema },
+    );
+  }
+
+  getWorkspaceSocketTicket(id: string, substreamId = '0'): Promise<SocketTicket> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/workspace-socket`,
+      { schema: socketTicketSchema },
+    );
   }
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {

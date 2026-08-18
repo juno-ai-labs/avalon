@@ -23,7 +23,6 @@ const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
 const RUN_ID = "00000000-0000-7000-8000-0000000000a3";
 const MESSAGE_ID = "00000000-0000-7000-8000-0000000000a4";
-const TICKET_ID = "00000000-0000-7000-8000-0000000000a5";
 const RECIPIENT_ID = "00000000-0000-7000-8000-0000000000a6";
 const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
 
@@ -35,6 +34,7 @@ const EXPECTED_TABLES = [
   "active_output_chunks",
   "active_output_turns",
   "activity_delivery_receipts",
+  "agent_run_dispatches",
   "attachment_tool_receipts",
   "compaction_checkpoints",
   "compaction_jobs",
@@ -66,7 +66,9 @@ const EXPECTED_TABLES = [
   "run_memory_contexts",
   "run_plugin_activations",
   "run_scopes",
+  "run_steering",
   "runs",
+  "substream_agent_identity",
   "substreams",
   "suggested_actions",
   "terminal_commands",
@@ -85,27 +87,8 @@ const EXPECTED_TABLES = [
 
 function objectStorage(
   database: DatabaseSync,
-  values = new Map<string, unknown>(),
-  deleteHook?: (keys: string[], values: Map<string, unknown>) => void,
 ): DurableObjectStorage {
   return createCloudflareTestBinding<DurableObjectStorage>({
-    get: async (key: string | string[]) => Array.isArray(key)
-      ? new Map(key.flatMap((entry) => values.has(entry) ? [[entry, values.get(entry)]] : []))
-      : values.get(key),
-    put: async (key: string, value: unknown) => { values.set(key, value); },
-    list: async ({ prefix = "" }: { prefix?: string } = {}) => new Map(
-      [...values].filter(([key]) => key.startsWith(prefix)),
-    ),
-    delete: async (key: string | string[]) => {
-      const keys = Array.isArray(key) ? key : [key];
-      deleteHook?.(keys, values);
-      if (Array.isArray(key)) {
-        let deleted = 0;
-        for (const entry of key) if (values.delete(entry)) deleted += 1;
-        return deleted;
-      }
-      return values.delete(key);
-    },
     getAlarm: async () => null,
     setAlarm: async () => undefined,
     transactionSync: (body: () => unknown) => body(),
@@ -235,163 +218,6 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(database.prepare(
         "SELECT sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1",
       ).get()).toEqual({ sandbox_id: "daytona-1", lifecycle_state: "running" });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("migrates every legacy room key into SQL while awaiting the authority import", async () => {
-    const database = new DatabaseSync(":memory:");
-    const now = Date.now();
-    const values = new Map<string, unknown>([
-      ["roomIdentity", { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }],
-      ["eventSequence", 42],
-      ["activeStreamCheckpoints", {
-        messageId: MESSAGE_ID,
-        harnessRunId: RUN_ID,
-        turnId: "turn-one",
-        epoch: 2,
-        streamSeq: 9,
-        seenTurnIds: ["turn-one"],
-        textChunkCount: 2,
-        turnStartOffset: 0,
-        roomSequence: 42,
-        createdAt: new Date(now).toISOString(),
-      }],
-      ["activeStreamCheckpointText:00000000", "already "],
-      ["activeStreamCheckpointText:00000001", "streamed"],
-      ["pendingHyperSightRefresh", {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        triggerSequence: 42,
-        firstQueuedAt: now,
-      }],
-      [`socket-ticket:${TICKET_ID}`, Math.floor(now / 1_000) + 60],
-    ]);
-    const store = new WorkstreamObjectStore(objectStorage(database, values), "worker-one", "global");
-    try {
-      await store.waitUntilReady();
-
-      expect(store.identity()).toEqual({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
-      expect(store.currentSequence()).toBe(42);
-      expect(store.activeStreamCheckpoints()).toEqual([expect.objectContaining({
-        harnessRunId: RUN_ID,
-        messageId: MESSAGE_ID,
-        epoch: 2,
-        streamSeq: 9,
-        text: "already streamed",
-      })]);
-      expect(store.pendingHyperSightRefresh()).toEqual(expect.objectContaining({ triggerSequence: 42 }));
-      expect(database.prepare(
-        `SELECT authority_mode, state_reason_code FROM workstream WHERE id = 1`,
-      ).get()).toEqual({
-        authority_mode: "preparing",
-        state_reason_code: "awaiting_authoritative_import",
-      });
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM durable_inbox_receipts WHERE channel = 'socket_ticket'`,
-      ).get()).toEqual({ count: 1 });
-      expect(database.prepare(
-        `SELECT phase, status FROM _data_migrations WHERE campaign_id = 'workstream-room-kv-to-sql-v1'`,
-      ).get()).toEqual({ phase: "completed", status: "completed" });
-      expect(database.prepare("SELECT data_version FROM object_versions WHERE id = 1").get())
-        .toEqual({ data_version: 1 });
-      expect(values.size).toBe(0);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("resumes cleanup without reparsing a partially deleted legacy checkpoint", async () => {
-    const database = new DatabaseSync(":memory:");
-    const now = Date.now();
-    const values = new Map<string, unknown>([
-      ["roomIdentity", { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }],
-      ["activeStreamCheckpoints", {
-        messageId: MESSAGE_ID,
-        harnessRunId: RUN_ID,
-        turnId: "turn-one",
-        epoch: 0,
-        streamSeq: 1,
-        seenTurnIds: ["turn-one"],
-        textChunkCount: 2,
-        turnStartOffset: 0,
-        roomSequence: 1,
-        createdAt: new Date(now).toISOString(),
-      }],
-      ["activeStreamCheckpointText:00000000", "kept "],
-      ["activeStreamCheckpointText:00000001", "safely"],
-    ]);
-    let failCleanup = true;
-    const firstStore = new WorkstreamObjectStore(objectStorage(database, values, (keys, entries) => {
-      if (!failCleanup) return;
-      failCleanup = false;
-      entries.delete(keys[0] as string);
-      entries.delete(keys[1] as string);
-      throw new Error("simulated_cleanup_interruption");
-    }), "worker-one", "global");
-    try {
-      await expect(firstStore.waitUntilReady()).rejects.toThrow("simulated_cleanup_interruption");
-      expect(database.prepare(
-        `SELECT phase, status FROM _data_migrations WHERE campaign_id = 'workstream-room-kv-to-sql-v1'`,
-      ).get()).toEqual({ phase: "copied", status: "running" });
-
-      const resumed = new WorkstreamObjectStore(objectStorage(database, values), "worker-two", "global");
-      await resumed.waitUntilReady();
-
-      expect(resumed.activeStreamCheckpoints()[0]?.text).toBe("kept safely");
-      expect(values.size).toBe(0);
-      expect(database.prepare(
-        `SELECT phase, status FROM _data_migrations WHERE campaign_id = 'workstream-room-kv-to-sql-v1'`,
-      ).get()).toEqual({ phase: "completed", status: "completed" });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("marks a new empty object migrated so it does not rescan legacy key families", async () => {
-    const database = new DatabaseSync(":memory:");
-    let listCalls = 0;
-    const firstStorage = objectStorage(database);
-    const originalList = firstStorage.list.bind(firstStorage);
-    Object.defineProperty(firstStorage, "list", {
-      value: async (...args: Parameters<DurableObjectStorage["list"]>) => {
-        listCalls += 1;
-        return originalList(...args);
-      },
-    });
-    try {
-      await new WorkstreamObjectStore(firstStorage, "worker-one", "global").waitUntilReady();
-      expect(listCalls).toBe(2);
-
-      const secondStorage = objectStorage(database);
-      const secondList = secondStorage.list.bind(secondStorage);
-      Object.defineProperty(secondStorage, "list", {
-        value: async (...args: Parameters<DurableObjectStorage["list"]>) => {
-          listCalls += 1;
-          return secondList(...args);
-        },
-      });
-      await new WorkstreamObjectStore(secondStorage, "worker-two", "global").waitUntilReady();
-
-      expect(listCalls).toBe(2);
-      expect(database.prepare("SELECT data_version FROM object_versions WHERE id = 1").get())
-        .toEqual({ data_version: 1 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("fails closed without deleting an unreadable legacy checkpoint", async () => {
-    const database = new DatabaseSync(":memory:");
-    const values = new Map<string, unknown>([
-      ["roomIdentity", { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }],
-      ["activeStreamCheckpoints", { textChunkCount: "corrupt" }],
-    ]);
-    const store = new WorkstreamObjectStore(objectStorage(database, values), "worker-one", "global");
-    try {
-      await expect(store.waitUntilReady()).rejects.toThrow("legacy_active_checkpoint_invalid");
-      expect(values.has("activeStreamCheckpoints")).toBe(true);
     } finally {
       database.close();
     }

@@ -381,12 +381,12 @@ describe("suggested-work aggregation", () => {
       "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z",
     );
     const roomFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-    const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
+    const rooms = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: vi.fn().mockReturnValue({}),
       get: vi.fn().mockReturnValue({ fetch: roomFetch }),
     });
     const routed = await __workOpportunityTesting.routeExistingDecision(
-      environment(database, { WORKSTREAM_ROOMS: rooms }),
+      environment(database, { SUBSTREAM_AGENTS: rooms }),
       {
         id: "window-route",
         workspace_id: workspaceId,
@@ -429,7 +429,7 @@ describe("suggested-work aggregation", () => {
     expect(roomFetch).not.toHaveBeenCalled();
 
     await expect(__workOpportunityTesting.routeExistingDecision(
-      environment(database, { WORKSTREAM_ROOMS: rooms }),
+      environment(database, { SUBSTREAM_AGENTS: rooms }),
       {
         id: "window-private-route",
         workspace_id: workspaceId,

@@ -47,6 +47,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   })).default([]),
   confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  runMode: z.enum(["steer", "queue"]).optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   forcedHarnessOrigin: z.string().min(1).max(80).optional(),
   parentHarnessRunId: z.string().uuid().optional(),
@@ -849,6 +850,32 @@ export class WorkstreamObjectProductService {
     };
   }
 
+  /** Internal agent-host read; authorization was fenced when the run was admitted. */
+  async messagesForRuntime(
+    limit: number,
+  ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
+    const root = this.root();
+    const auth: AuthContext = {
+      sessionId: "substream-agent-runtime",
+      userId: root.created_by_user_id ?? root.workstream_key,
+      workspaceId: root.parent_workspace_key,
+      region: this.env.AVALON_REGION,
+      role: "owner",
+    };
+    const items = await this.messageRows(auth, Math.max(1, Math.min(limit, 250)) + 1, "before");
+    const hasMore = items.length > limit;
+    if (hasMore) items.shift();
+    return {
+      items,
+      nextCursor: hasMore ? String(items[0]?.sequenceNumber ?? "") : null,
+      newerCursor: null,
+    };
+  }
+
+  runtimeStatus(): Workstream["harnessStatus"] {
+    return harnessStatus(this.root().exact_state);
+  }
+
   private async messageRows(
     auth: AuthContext,
     limit: number,
@@ -1206,18 +1233,19 @@ export class WorkstreamObjectProductService {
     await this.authorize(auth);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
-      const removed = sql.exec(
-        `DELETE FROM workstream_resource_links WHERE resource_id = ?`,
+      const removed = sql.exec<{ resource_id: string }>(
+        `DELETE FROM workstream_resource_links WHERE resource_id = ?
+         RETURNING resource_id`,
         resourceId,
-      );
-      if (removed.rowsWritten > 0) {
+      ).toArray().length > 0;
+      if (removed) {
         sql.exec(
           `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
            ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
           Date.now(),
         );
       }
-        return removed.rowsWritten > 0;
+        return removed;
       },
       (removed) => removed
         ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }]
@@ -1322,7 +1350,7 @@ export class WorkstreamObjectProductService {
     }
     const input = WorkstreamObjectCreateSuggestionInputSchema.parse(rawInput);
     const now = Date.now();
-    const inserted = this.storage.sql.exec(
+    const inserted = this.storage.sql.exec<{ action_id: string }>(
       `INSERT OR IGNORE INTO suggested_actions
          (action_id, version, source_activity_id, delivery_id, audience_kind,
           audience_user_id, provenance_ref, authorization_selector_hash,
@@ -1332,7 +1360,8 @@ export class WorkstreamObjectProductService {
           authored_part_id, feedback_message_id)
        VALUES (?, 1, ?, ?, 'workstream', NULL, ?, 'regional-activity-authority',
                '[]', 0, ?, ?, 'pending', ?, 253402300799000, NULL, NULL,
-               NULL, NULL, ?, NULL, NULL)`,
+               NULL, NULL, ?, NULL, NULL)
+       RETURNING action_id`,
       input.id,
       input.activityId,
       `suggestion:${input.source}:${input.activityId}`,
@@ -1346,7 +1375,7 @@ export class WorkstreamObjectProductService {
         matchedEntities: input.matchedEntities,
         source: input.source,
       }),
-    ).rowsWritten > 0;
+    ).toArray().length > 0;
     const suggestion = this.suggestion(input.id);
     if (!suggestion) {
       const replay = first(this.storage.sql.exec<{ action_id: string }>(
@@ -1394,12 +1423,13 @@ export class WorkstreamObjectProductService {
       === "suggested_work" ? "suggested_work" as const : "contextual_routing" as const;
     const committed = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
-        const changed = sql.exec(
+        const changed = sql.exec<{ action_id: string }>(
         `UPDATE suggested_actions SET status = ?, resolved_at = ?,
                 resolved_by_user_id = ?, resolution_client_id = ?
-          WHERE action_id = ? AND status = 'pending'`,
+          WHERE action_id = ? AND status = 'pending'
+          RETURNING action_id`,
         action, now, auth.userId, `${auth.userId}:${action}`, actionId,
-      ).rowsWritten > 0;
+      ).toArray().length > 0;
       if (changed && resource) {
         sql.exec(
           `INSERT INTO workstream_resource_links
@@ -1902,15 +1932,31 @@ export class WorkstreamObjectProductService {
               throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
             }
           }
-          sql.exec(
-            `UPDATE runs SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
-                    cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up'),
-                    status = CASE WHEN status IN ('admitted', 'waiting') THEN 'cancelled' ELSE status END,
-                    updated_at = ?
-              WHERE substream_id = '0' AND origin != 'hypersight_block'
-                AND status IN ('admitted', 'running', 'waiting', 'steering')`,
-            now, now,
-          );
+          if ((input.runMode ?? "steer") === "steer") {
+            const inFlight = first(sql.exec<{ run_id: string }>(
+              `SELECT run_id FROM runs
+                WHERE substream_id = '0' AND origin != 'hypersight_block'
+                  AND status = 'running' AND terminalized_at IS NULL
+                ORDER BY started_at, run_id LIMIT 1`,
+            ));
+            if (inFlight) {
+              sql.exec(
+                `INSERT INTO run_steering
+                   (run_id, steering_part_id, requested_at, boundaries_observed,
+                    max_boundaries, consumed_at)
+                 VALUES (?, ?, ?, 0, 2, NULL)
+                 ON CONFLICT(run_id) DO UPDATE SET
+                   steering_part_id = excluded.steering_part_id,
+                   requested_at = excluded.requested_at,
+                   boundaries_observed = 0,
+                   max_boundaries = excluded.max_boundaries,
+                   consumed_at = NULL`,
+                inFlight.run_id,
+                messageId,
+                now,
+              );
+            }
+          }
           sql.exec(
             `INSERT INTO runs
                (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
@@ -2069,13 +2115,14 @@ export class WorkstreamObjectProductService {
       (sql) => {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
         if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-        const changed = sql.exec(
+        const changed = sql.exec<{ elicitation_id: string }>(
           `UPDATE elicitation_requests SET status = 'answered', answer_json = ?,
                   answered_by_user_id = ?, answered_at = ?
-            WHERE elicitation_id = ? AND status = 'pending'`,
+            WHERE elicitation_id = ? AND status = 'pending'
+            RETURNING elicitation_id`,
           answer === null ? null : JSON.stringify(answer), auth.userId, now, elicitationId,
         );
-        if (changed.rowsWritten !== 1) {
+        if (changed.toArray().length !== 1) {
           throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
         }
         const persisted: Elicitation = {
@@ -2311,13 +2358,14 @@ export class WorkstreamObjectProductService {
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         const now = Date.now();
-        const changed = sql.exec(
+        const changed = sql.exec<{ run_id: string }>(
           `UPDATE runs SET workflow_instance_id = ?, status = 'running',
                   started_at = MIN(started_at, ?), updated_at = ?
-            WHERE run_id = ? AND status IN ('admitted', 'running')`,
+            WHERE run_id = ? AND status IN ('admitted', 'running')
+            RETURNING run_id`,
           instanceId, now, now, runId,
         );
-        if (changed.rowsWritten === 0) throw new Error("workstream_run_start_fenced");
+        if (changed.toArray().length === 0) throw new Error("workstream_run_start_fenced");
         sql.exec(
           `UPDATE workstream SET exact_state = 'running', state_reason_code = 'workflow_started',
                   state_changed_at = ?, updated_at = ? WHERE id = 1`,
@@ -2373,5 +2421,22 @@ export class WorkstreamObjectProductService {
       },
     );
     return committed.result;
+  }
+
+  /** Seed or repair the parent WorkstreamDO after import/restore. */
+  async enqueueDirectorySnapshot(): Promise<void> {
+    await this.objectStore.commitWithRegionalEffects(
+      () => undefined,
+      () => {
+        const root = this.root();
+        return [
+          { partitionKey: "common", effect: this.commonEffect(root) },
+          ...this.activeParticipantIds().map((userId) => ({
+            partitionKey: `user:${userId}`,
+            effect: this.userEffect(root, userId),
+          })),
+        ];
+      },
+    );
   }
 }

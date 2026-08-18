@@ -91,6 +91,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
   return {
     getMessages: vi.fn(unexpected),
     getSocketTicket: vi.fn(unexpected),
+    getWorkspaceSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
     getWorkstreams: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
@@ -155,6 +156,11 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
+      getWorkspaceSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workspaces/${workspaceId}/workstreams/${workstreamId}/substreams/0`,
+        ticket: 'workspace-socket-ticket',
+        protocols: socketTicketProtocols('workspace-socket-ticket'),
+      })),
       messageMentionPayload: vi.fn(async () => []),
     });
     const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
@@ -162,8 +168,8 @@ describe('useWorkstreamSocket', () => {
     });
 
     await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => first.open());
+    const feed = FakeWebSocket.instances[0]!;
+    act(() => feed.open());
     let submitted!: Promise<Message>;
     await act(async () => {
       submitted = result.current.createMessage({
@@ -171,7 +177,11 @@ describe('useWorkstreamSocket', () => {
         clientId: clientMessageId,
       });
       await Promise.resolve();
+      await Promise.resolve();
     });
+    const first = FakeWebSocket.instances[1]!;
+    expect(first.url).toContain(`/workspaces/${workspaceId}/workstreams/${workstreamId}/substreams/0`);
+    act(() => first.open());
     const firstCommand = first.send.mock.calls
       .map(([frame]) => JSON.parse(String(frame)) as { type: string; clientMessageId?: string })
       .find((frame) => frame.type === 'create_message');
@@ -188,7 +198,7 @@ describe('useWorkstreamSocket', () => {
 
     act(() => first.close());
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
-    const second = FakeWebSocket.instances[1]!;
+    const second = FakeWebSocket.instances[2]!;
     act(() => second.open());
     const secondCommand = second.send.mock.calls
       .map(([frame]) => JSON.parse(String(frame)) as { type: string })

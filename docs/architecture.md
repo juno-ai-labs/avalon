@@ -33,8 +33,8 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkstreamRoom` and `WorkspaceScheduler`. |
-| `apps/api/src/workflows`, `apps/api/src/queues` | The generic work-stream Workflow and the idempotent activity consumer. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
+| `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
@@ -77,10 +77,15 @@ docs/                      Product, architecture, security, setup, runbooks
 ```mermaid
 flowchart LR
   E["Electron renderer"] -->|"typed HTTPS"| H["Hono API"]
-  E <-->|"hibernating WebSocket"| R["WorkstreamRoom DO"]
+  E -->|"user-command WebSocket"| WD["WorkspaceDO"]
+  E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
   H --> D[("Regional D1")]
   H --> B[("Regional R2")]
-  H --> R
+  H --> WD
+  H --> SA
+  WD --> SA
+  SA --> WS["WorkstreamDO (no agent)"]
+  WS --> Q
   H --> Q["Activity Queue"]
   GH["GitHub App"] -->|"signed webhook"| GI["Smart GitHub ingress"]
   GI -->|"installation route"| H
@@ -88,20 +93,21 @@ flowchart LR
   Q --> C["Idempotent activity consumer"]
   C --> D
   C --> S["WorkspaceScheduler DO"]
-  S --> W["Generic Workstream Workflow"]
-  W --> A["Avalon Bind adapter"]
+  S --> SA
+  SA --> A["Avalon Bind 13 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
   X --> DT["Private Daytona sandbox"]
-  W --> R
   T --> G["Google APIs"]
   T --> M["Signed webhook"]
 ```
 
-Canonical product state lives in D1. Large activity payloads, uploads, and
-snapshots live in R2 with relational metadata in D1. Durable Objects coordinate
-ordering, presence, sockets, and alarms but are not canonical stores.
+Authority follows the data boundary. Regional D1 owns workspace, membership,
+connector, automation, routing, schedule, activity-ingestion, and cross-work-stream
+projection state. After cutover, `SubstreamAgent` SQLite owns substream product
+state and the full work-stream agent loop; `WorkstreamDO` owns its aggregate
+metadata/outbox. Large activity payloads, uploads, and snapshots live in R2.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the
 local system timezone during native authentication, while browser or unavailable
@@ -197,21 +203,25 @@ identity, crash, and restricted operator flow.
 
 ### Work streams and live updates
 
-Within each regional workspace, every work stream maps deterministically to one
-`WorkstreamRoom` Durable Object named from region, workspace ID, and work-stream
-ID. EU calls resolve the namespace through `jurisdiction("eu")`. The existing
-namespace is SQLite-backed. Before its guarded maintenance cutover, D1 serves
-the work-stream product rows; afterward the object's named SQL tables own root
-metadata, transcript/substreams, viewer attention, runs/tools, compaction,
-suggestions, and Terminal state. D1 retains workspace authority/routing and
-versioned common/user directory projections. Its hidden KV migration, normalized
-schema, fleet import, and authority states are documented in
+Within each regional workspace, one `WorkspaceDO` routes user commands, every
+work stream maps to one model-free `WorkstreamDO`, and every independent model
+context maps to one `SubstreamAgent`. Main external substream `0` retains the
+historical room object identity during class rename; additional children append
+their substream ID. EU calls resolve each namespace through
+`jurisdiction("eu")`. All namespaces are SQLite-backed and use explicit SQL
+only. Before guarded maintenance cutover, D1 serves work-stream product rows;
+afterward each child owns its ordered parts, runs/tools, compaction, timers,
+suggestions, and Terminal state, while its parent aggregates common/user
+metadata. D1 retains workspace authority/routing and versioned query
+projections. The normalized schemas, fleet import, and authority states are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
-An authoritative mutation that changes workspace/user surfaces writes a
-versioned regional effect to the object's local outbox in the same SQLite
-transaction. The room alarm publishes only opaque object/message IDs and a hash
-through Cloudflare Queue. The consumer RPCs the regional object for the payload,
+An authoritative child mutation that changes workspace/user surfaces writes a
+versioned effect to the child's local outbox in the same SQLite transaction.
+The child RPCs it to `WorkstreamDO`, which deduplicates the source, recomputes
+the aggregate, and owns the sole regional outbox. Its alarm publishes only
+opaque object/message IDs and a hash through Cloudflare Queue. The consumer RPCs
+the regional parent for the payload,
 applies an idempotent D1 inbox transaction for sidebar projections, the
 first-party activity log, or a short-lived notification intent, then RPCs an
 acknowledgement to the source object. D1 resolves current membership, profile,
@@ -316,13 +326,16 @@ rejections come from the edge — is [`realtime-sockets.md`](realtime-sockets.md
 ### Agent harness
 
 A lightweight structured classifier decides whether a human message is
-`agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages start one
-generic Cloudflare Workflow instance parameterized by opaque IDs.
+`agent_action`, `human_only`, `both`, or `uncertain`. After cutover, eligible
+work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
+The durable child dispatch row, attempt lease, receipts, and checkpoints recover
+2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
+Cloudflare Workflows remain available for non-workstream loops and legacy drain.
 
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
-one private Daytona sandbox for that work stream. The owning WorkstreamDO is the
+one private Daytona sandbox for that work stream. The owning `SubstreamAgent` is the
 authority for generation, mutation leases, tasks, retention, resource links,
 and GitHub publication receipts; regional D1 owns workspace egress policy,
 connector authority, and resource metadata. The provider supplies isolation and process/
@@ -479,8 +492,9 @@ precede any LLM classification.
 
 - **Authority follows the declared storage boundary.** Regional D1 owns
   workspace, connector, routing, schedule, audit, and projection state. After a
-  work-stream generation opens, its WorkstreamDO owns work-stream product state
-  and legacy D1 writers fail. R2 holds large payloads; the authority that names
+  work-stream generation opens, each `SubstreamAgent` owns its substream product
+  state, the model-free `WorkstreamDO` owns aggregate metadata/outbox, and
+  legacy D1 product writers fail. R2 holds large payloads; the authority that names
   each reference stays in the owning regional database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
@@ -656,6 +670,25 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-08-17 — The stateful hierarchy becomes workspace, work stream, substream
+
+**What changed:** The regional graph is now `WorkspaceDO -> WorkstreamDO (no
+agent) -> SubstreamAgent`. The workspace socket accepts user commands, Electron
+streams directly from the child feed, the child runs the complete Bind loop and
+owns timers, and the parent aggregates child projections into the regional
+sidebar/activity/notification bridge.
+
+**Why:** Authorization/routing, aggregate metadata, and model-context ordering
+are three different serialization boundaries. Combining them makes either the
+workspace or the work stream a token-stream/agent bottleneck.
+
+**Considered and rejected:** A single workspace object, a single agent object
+per work stream, and proxying child feeds through either parent.
+
+**Consequences:** Every cross-object relationship is a typed RPC plus durable
+receipt/outbox rather than a SQL join. Main child `0` preserves the historical
+object during maintenance class rename.
+
 ### 2026-08-17 — WorkstreamDO is the complete work-stream-down authority
 
 **What changed:** The architecture boundary now places transcript, runs,
@@ -730,7 +763,7 @@ falls back, and the final regional open is an explicit operator action.
 
 ### 2026-08-16 — Work-stream rooms expose their existing SQLite storage
 
-**What changed:** `WorkstreamRoom` keeps its namespace and product boundary but
+**What changed:** `SubstreamAgent` keeps its namespace and product boundary but
 replaces free-form Durable Object key/value records with an explicit local SQL
 schema. The room imports identity, sequence, active output, pending HyperSight
 work, and ticket receipts in place before accepting an event or socket.
@@ -926,7 +959,7 @@ Shipped in #130.
 
 ### 2026-08-12 — Active streams cross initial joins, route changes, and replay gaps
 
-**What changed:** `WorkstreamRoom` gained one accumulated active-stream
+**What changed:** `SubstreamAgent` gained one accumulated active-stream
 checkpoint in Durable Object storage. Its metadata and storage-safe text chunks
 advance with the room sequence in one transaction; initial snapshots and
 `history_unavailable` resync frames carry it to the desktop. The checkpoint holds

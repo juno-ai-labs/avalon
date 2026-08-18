@@ -488,7 +488,7 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "",
     PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
-    WORKSTREAM_ROOMS: rooms,
+    SUBSTREAM_AGENTS: rooms,
   });
 }
 

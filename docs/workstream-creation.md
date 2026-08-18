@@ -22,7 +22,7 @@ attempt at the opposite that the changelog records.
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
-| `apps/api/src/durable-objects/workstream-room.ts` | `loadWorkstreamRoomSnapshot`, which has to describe the latest run because a snapshot replaces the client's whole detail. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `loadSubstreamAgentSnapshot`, which has to describe the latest run because a snapshot replaces the client's whole detail. |
 | `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
 | `apps/api/src/services/workstream-service.ts` | `create`, and `launchWorkstreamHarness` — the run row, the Workflows start, and what happens when it fails. |
 
@@ -262,7 +262,7 @@ see
   code for a request that violates both pre-flight checks. That last one loops
   five creates rather than asserting once — a fixed order that only held by luck
   would pass a single run.
-- `apps/api/test/workstream-room-snapshot.test.ts` — includes the case that the
+- `apps/api/test/substream-agent-snapshot.test.ts` — includes the case that the
   snapshot describes the latest run rather than naming its id. The snapshot
   replaces the client's whole detail, so a field dropped there is invisible until
   something notices a missing timer.

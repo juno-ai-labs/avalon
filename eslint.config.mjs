@@ -21,6 +21,7 @@ import {
   noDirectCloudflareTestCastRule,
   noProductionDoubleAssertionRule,
 } from "./scripts/eslint-rules/type-assertion-boundaries.mjs";
+import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-object-sql-storage.mjs";
 
 export default tseslint.config(
   {
@@ -55,6 +56,7 @@ export default tseslint.config(
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
+          "durable-object-sql-storage": durableObjectSqlStorageRule,
         },
       },
     },
@@ -64,6 +66,15 @@ export default tseslint.config(
       // separate copies of the helper that replaces it.
       "avalon/no-raw-entry-point-check": "error",
       "avalon/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    files: [
+      "apps/api/src/durable-objects/**/*.ts",
+      "apps/api/src/crash-symbolicator-container.ts",
+    ],
+    rules: {
+      "avalon/durable-object-sql-storage": "error",
     },
   },
   {
