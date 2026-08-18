@@ -11,6 +11,9 @@ import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+const markWorkstreamNavigation = vi.hoisted(() => vi.fn());
+const markSurfaceEntrypoint = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -34,6 +37,13 @@ vi.mock('../lib/platform', () => ({
       return () => applicationSettings.listeners.delete(listener);
     },
   }),
+}));
+
+vi.mock('../lib/telemetry', () => ({
+  markSurfaceEntrypoint,
+  markWorkstreamNavigation,
+  reportTelemetryProductIntent,
+  telemetryVisibility: (scope: string) => scope === 'workspace' ? 'public' : 'private',
 }));
 
 const workspace: Workspace = {
@@ -123,6 +133,8 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
+    markWorkstreamNavigation.mockReset();
+    reportTelemetryProductIntent.mockReset();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
@@ -409,6 +421,9 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
     await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'automation_action_completed' }),
+    );
   });
 
   it('sinks drafts under the automations that run, newest draft first, and archives one from its menu', async () => {
@@ -466,6 +481,9 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
     await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'automation_action_completed' }),
+    );
   });
 
   it('marks only the open draft, and not New automation, as the active entry', () => {
@@ -574,6 +592,9 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(onDeleteAutomation).toHaveBeenCalledWith(automation));
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'automation_action_completed' }),
+    );
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
   });
 
@@ -670,6 +691,10 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Make public to workspace' }));
     await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'workspace'));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'note_action_completed', noteId: target.id, action: 'make_public',
+      visibility: 'public', recordingState: 'complete',
+    }));
 
     // Archiving is not reversible from any surface, so it confirms first and
     // names the note it would take away.
@@ -687,6 +712,10 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive note' })).getByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(onArchiveNote).toHaveBeenCalledWith(target));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'note_action_completed', noteId: target.id, action: 'archive',
+      visibility: 'private', recordingState: 'complete',
+    }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive note' })).not.toBeInTheDocument());
   });
 
@@ -887,7 +916,7 @@ describe('Sidebar work-stream markers', () => {
 
     // The Settings window owns the preference; the sidebar learns about a
     // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true });
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
@@ -975,6 +1004,10 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
     await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_action_completed', workstreamId: target.id, action: 'mark_unread',
+      visibility: 'public', origin: 'ad_hoc', pinned: false,
+    }));
 
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
@@ -983,6 +1016,10 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
     await waitFor(() => expect(onRenameWorkstream).toHaveBeenCalledWith(target, 'Launch planning'));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_action_completed', workstreamId: target.id, action: 'rename',
+      visibility: 'public', origin: 'ad_hoc', pinned: false,
+    }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename work stream' })).not.toBeInTheDocument());
   });
 });
@@ -990,6 +1027,8 @@ describe('Sidebar work-stream markers', () => {
 describe('private work streams', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    markWorkstreamNavigation.mockReset();
+    reportTelemetryProductIntent.mockReset();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
@@ -1126,6 +1165,8 @@ describe('pinned work streams', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    markWorkstreamNavigation.mockReset();
+    reportTelemetryProductIntent.mockReset();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
     scrollIntoView.mockClear();
     Element.prototype.scrollIntoView = scrollIntoView;
@@ -1260,8 +1301,14 @@ describe('pinned work streams', () => {
     expect(screen.getByRole('link', { name: /Recent 6$/u })).not.toHaveAttribute('aria-keyshortcuts');
 
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
     expect([...document.querySelectorAll('.command-shortcut-pill')].map((pill) => pill.textContent))
       .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'command_shortcuts_revealed',
+      availableCount: 9,
+    });
 
     fireEvent.keyUp(window, { key: 'Meta' });
     expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
@@ -1282,6 +1329,11 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(window, { code: 'Digit2', key: 'é', metaKey: true });
 
     expect(bravo).toHaveClass('is-active');
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'command_shortcut_used',
+      shortcutNumber: 2,
+      destinationType: 'pinned_workstream',
+    });
 
     // Holding the key produces repeated keydowns. A repeat for any digit is
     // ignored rather than pushing another route onto history.
@@ -1304,6 +1356,11 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(window, { code: 'Digit4', key: '4', metaKey: true });
 
     expect(digest).toHaveClass('is-active');
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'command_shortcut_used',
+      shortcutNumber: 4,
+      destinationType: 'recent_workstream',
+    });
   });
 
   it('does not navigate behind an open modal dialog', async () => {
@@ -1556,6 +1613,10 @@ describe('pinned work streams', () => {
     const scrolled = scrollIntoView.mock.instances[0] as Element;
     expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-recent');
     expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(scrolled as HTMLElement);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_action_completed', workstreamId: 'ws-recent', action: 'pin',
+      visibility: 'public', origin: 'ad_hoc', pinned: true,
+    });
     // `nearest` is what keeps a row already on screen from being yanked around.
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
   });

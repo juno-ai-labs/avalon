@@ -76,4 +76,25 @@ describe("Bind host durability boundaries", () => {
       stoppedByUser: false,
     })).toEqual({ status: "needs_input", messageId });
   });
+
+  it("says why an ambiguous halt stopped the run, which nothing else may record", () => {
+    const messageId = "00000000-0000-4000-8000-000000000003";
+    // An elicitation leaves a question in the transcript to answer. An
+    // ambiguity that collided with an already-settled receipt leaves the row
+    // untouched, so the run is the only thing left that can explain itself.
+    expect(__integrationTesting.workstreamHarnessTerminalResult({
+      outcome: { status: "completed" },
+      streamedText: "I will locate the repository.",
+      messageId,
+      ambiguousToolOutcome: true,
+      stoppedByUser: false,
+    })).toEqual({
+      status: "needs_input",
+      messageId,
+      error: {
+        code: "ambiguous_external_write",
+        message: "An external action's outcome could not be confirmed, so Avalon stopped instead of repeating it",
+      },
+    });
+  });
 });

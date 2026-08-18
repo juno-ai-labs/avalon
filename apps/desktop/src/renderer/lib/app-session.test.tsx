@@ -1,7 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import type {
+  AvalonDesktopBridge,
+  DesktopDeepLinkEntrypoint,
+  DesktopDeepLinkNavigation,
+  DesktopSession,
+  RuntimeConfig,
+} from '../../common/desktop';
 import {
   AppSessionProvider,
   useAppSession,
@@ -11,8 +17,9 @@ import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { useDraftText } from './use-draft-text';
 import type { AvalonApi } from './api';
 import { readDevicePreferences } from './device-preferences';
+import { consumeSurfaceEntrypoint } from './telemetry';
 
-let deepLinkListener: ((url: string) => void) | null = null;
+let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: AvalonApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
@@ -35,7 +42,8 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
-}) satisfies AppSessionDesktopBridge);
+  reportTelemetryProductIntent: vi.fn(),
+}) satisfies AppSessionDesktopBridge & Pick<AvalonDesktopBridge, 'reportTelemetryProductIntent'>);
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
 
@@ -125,7 +133,8 @@ function resetDesktopBridge(): void {
   bridge.getSession.mockResolvedValue(null);
   bridge.hasStoredCredential.mockResolvedValue(false);
   bridge.consumePendingDeepLinks.mockResolvedValue([]);
-  bridge.onDeepLink.mockImplementation((listener: (url: string) => void) => {
+  bridge.reportTelemetryProductIntent.mockResolvedValue(undefined);
+  bridge.onDeepLink.mockImplementation((listener: (navigation: DesktopDeepLinkNavigation) => void) => {
     deepLinkListener = listener;
     return () => { deepLinkListener = null; };
   });
@@ -149,9 +158,12 @@ describe('single-platform desktop identity routing', () => {
   // asserted: every branch except auth reads the closure's `session` and `api`,
   // so a dispatch arriving before those settle takes the "Sign in before…" path.
   // Keep awaiting a session-bearing `findByText` before calling this.
-  async function dispatchDeepLink(url: string): Promise<void> {
+  async function dispatchDeepLink(
+    url: string,
+    entrypoint: DesktopDeepLinkEntrypoint = 'deep_link',
+  ): Promise<void> {
     await waitFor(() => expect(deepLinkListener).not.toBeNull());
-    act(() => deepLinkListener!(url));
+    act(() => deepLinkListener!({ url, entrypoint }));
   }
 
   afterEach(() => {
@@ -183,7 +195,10 @@ describe('single-platform desktop identity routing', () => {
       resolveRuntime = resolve;
     }));
     bridge.consumePendingDeepLinks.mockResolvedValueOnce([
-      `avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`,
+      {
+        url: `avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`,
+        entrypoint: 'deep_link',
+      },
     ]);
 
     renderProvider();
@@ -592,7 +607,7 @@ describe('single-platform desktop identity routing', () => {
     const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
     expect(previewUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link/preview');
     expect(linkUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link');
-    expect(startUrl).toBe('https://eu.api.with-avalon.com/connections/slack/start');
+    expect(startUrl).toBe('https://eu.api.with-avalon.com/connections/slack/start?telemetryVersion=2');
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
@@ -776,11 +791,12 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    await dispatchDeepLink('avalon://workstreams/new');
+    await dispatchDeepLink('avalon://workstreams/new', 'menu_bar');
 
     // `/new` has to be read before the identifier branch, which would otherwise
     // measure it against the UUID pattern and reject it.
     await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
+    expect(consumeSurfaceEntrypoint()).toBe('menu_bar');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 

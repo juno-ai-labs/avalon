@@ -5,11 +5,14 @@ import {
   ConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema,
   CreateWebhookConnectionRequestSchema,
+  GitHubRepositoryAccessSettingsSchema,
   IdSchema,
   ScopeSchema,
+  UpdateGitHubRepositoryAccessSettingsSchema,
 } from "@avalon/contracts";
 import type { ConnectorOAuthProvider } from "@avalon/contracts";
 import { z } from "zod";
+import { telemetryOperationId } from "../telemetry/api-emitter";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
@@ -165,37 +168,62 @@ const ConnectorWebhookIngestionSchema = z.object({
 
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
+async function bindConnectorTelemetry(
+  c: Context<HonoAppEnv>,
+  service: ConnectionService,
+  result: z.infer<typeof ConnectorOAuthStartSchema>,
+): Promise<z.infer<typeof ConnectorOAuthStartSchema>> {
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const telemetryVersion = c.req.query('telemetryVersion') === '2' ? 2 : 1;
+  if (operationId) await service.bindOAuthTelemetry(result.attemptId, operationId, telemetryVersion);
+  return result;
+}
+
 connectionRoutes.get("/", async (c) =>
   c.json(ConnectionPageSchema.parse({ items: await new ConnectionService(c.env, getAuth(c)).list() })));
 connectionRoutes.get("/catalog", async (c) => c.json(ConnectorCatalogSchema.parse({
   availableConnectorTypes: new ConnectionService(c.env, getAuth(c)).availableConnectorTypes(),
 })));
-connectionRoutes.post("/google/start", zValidator("json", googleStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).beginGoogle(c.req.valid("json")))),
-);
-connectionRoutes.post("/linear/start", zValidator("json", linearStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).beginProvider("linear", c.req.valid("json")))),
-);
-connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).beginGitHub(c.req.valid("json")))),
-);
-connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json")))),
-);
-connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json")))),
-);
+connectionRoutes.post("/google/start", zValidator("json", googleStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginGoogle(c.req.valid("json")),
+  )));
+});
+connectionRoutes.post("/linear/start", zValidator("json", linearStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("linear", c.req.valid("json")),
+  )));
+});
+connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginGitHub(c.req.valid("json")),
+  )));
+});
+connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("notion", c.req.valid("json")),
+  )));
+});
+connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("granola", c.req.valid("json")),
+  )));
+});
 connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
   c.json(CreatedConnectionSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json"))), 201),
 );
-connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json")))),
-);
+connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("slack", c.req.valid("json")),
+  )));
+});
 connectionRoutes.post("/x", zValidator("json", xCreate), async (c) =>
   c.json(CreatedConnectionSchema.parse(await new ConnectionService(c.env, getAuth(c)).createX(c.req.valid("json"))), 201),
 );
@@ -209,11 +237,30 @@ connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAtte
   c.json(ConnectorOAuthAttemptSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId))),
 );
-connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).reconnect(c.req.valid("param").id))),
-);
+connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.reconnect(c.req.valid("param").id),
+  )));
+});
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
   c.json(ConnectionTestSchema.parse(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id))),
+);
+connectionRoutes.get("/:id/github/repository-access", zValidator("param", idParam), async (c) =>
+  c.json(GitHubRepositoryAccessSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).getGitHubRepositoryAccess(c.req.valid("param").id),
+  )),
+);
+connectionRoutes.put(
+  "/:id/github/repository-access",
+  zValidator("param", idParam),
+  zValidator("json", UpdateGitHubRepositoryAccessSettingsSchema),
+  async (c) => c.json(GitHubRepositoryAccessSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).updateGitHubRepositoryAccess(
+      c.req.valid("param").id,
+      c.req.valid("json"),
+    ),
+  )),
 );
 connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);

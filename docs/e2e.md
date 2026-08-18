@@ -41,7 +41,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 
 ## Desktop signup, invitations, and settings
 
-1. Start from an empty desktop profile. Enter an organization name, verify both Global and European Union selectors change the target API, and create a development workspace or complete Google sign-in in a provider test account.
+1. Start from an empty desktop profile. Enter an organization name and verify the region choices use the descriptions **US-Jurisdiction storage** and **EU-jurisdiction storage**, with no routing or sign-in copy, and that both selectors change the target API. Select European Union and confirm the small secondary notice reads **Unavailable for EU region (at this time, subject to change based on providers)** and includes the bullet **Avalon agent: Terminal access**; select Global again and confirm the notice disappears. Create a development workspace or complete Google sign-in in a provider test account.
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Avalon** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 3. Open an invitation while signed out and confirm its organization, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 4. While signed into a Global organization, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
@@ -52,6 +52,94 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 9. Install a workspace Google Drive connection, open a fresh work stream as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 10. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Avalon**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Avalon before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 11. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
+
+## Regional telemetry acceptance
+
+Use disposable Global and EU accounts plus a private test PostHog project. Never
+use a customer dump for this acceptance run.
+
+1. Start from a fresh profile with product analytics on by default. Confirm
+   onboarding has no analytics choice. Complete a few onboarding screens, sign in,
+   and create or activate a Global workspace. In PostHog, confirm the anonymous
+   epoch's funnel events join automatically to the stable person using `$identify`,
+   that the profile has the verified name and email, and that the workspace group
+   has its current name. Confirm desktop events carry the random installation ID
+   as `$device_id`, the correct `$is_identified` value, app/OS/locale/timezone and
+   display context, and a stable `$window_id` plus viewport dimensions for one
+   renderer window. Confirm `$device_id` is not used as `$anon_distinct_id` and
+   that the anonymous history merge uses only the current login epoch.
+2. Exercise workspace creation, work-stream creation and a run, and connector
+   setup. Confirm the semantic client request and authoritative API outcome share
+   `operation_id`, and desktop events use `$session_id`. Reload and repeat an
+   accepted upload; confirm `$insert_id` prevents duplicate counts.
+   On a fresh disposable installation, confirm exactly one
+   `Application Installed`; on the next release, confirm one
+   `Application Updated` with the
+   current and previous version/build. A cold `Application Opened` must include
+   its current version/build, `from_background=false`, and the closed
+   `application_open_source`. Confirm a login-item launch is `system_start`; a
+   cold launch with neither login-item evidence nor a deep link is `user_launch`
+   rather than a guessed Dock open; clicking the Dock while Avalon is running is
+   `dock`; an accepted OS deep link is `deep_link`; and raising Avalon from its
+   status menu is `menu_bar`. Each must produce exactly one canonical
+   `Application Opened`, even when Electron also fires `activate`. A later native
+   push-notification fixture must prove `push_notification` before that producer
+   ships; email, Slack, and browser notification links remain `deep_link` without
+   such a native callback. Upgrading a profile created before this
+   instrumentation must establish a baseline without emitting
+   `Application Installed`.
+3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
+   analytics** is on and its disclosure says Global may include verified name and
+   email, EU stays in Avalon's EU platform, and essential content-free reliability
+   continues when off. Turn it off while offline, exercise product actions, and
+   restart before reconnecting. Confirm no product event, detailed JavaScript
+   exception, profile update, or native dump from that interval is delivered;
+   essential lifecycle/reliability may still be accepted. Turn it back on and
+   confirm collection starts only after the regional preference write succeeds.
+4. Disable analytics while Crashpad is active. Confirm Settings immediately says
+   crash upload stopped and restart is required to remove local dumps. Restart and
+   confirm the invalidated generation is purged before a new Crashpad handler can
+   start. A failure to write the local preference must leave the toggle disabled
+   and must not resume upload.
+5. With the staff-only Developer section enabled, open **Telemetry inspector**.
+   Generate accepted, sampled, disabled, and schema-rejected decisions. Confirm it
+   displays only contract decisions and fixed reason codes: no property values,
+   event/person/workspace identifiers, paths, URLs, email, names, or stack text.
+   Turn the developer flag off and confirm the inspector disappears without
+   changing telemetry policy.
+6. For a fresh pre-workspace session, test Cloudflare country inputs at the
+   bootstrap boundary. An affirmative EU country must route the anonymous epoch
+   immediately to EU and create no native crash generation. A non-EU, absent,
+   malformed, failed, or timed-out country signal must route immediately to
+   Global. Confirm neither IP nor country is retained and no pending holding row
+   exists. Select a different workspace region later and confirm prior events do
+   not move or relabel.
+7. Repeat the semantic flow in an explicit EU workspace. Confirm the events are
+   queryable from the EU internal projection with release/platform/channel and
+   operation/session correlation, but no event, profile, exception, dump, or
+   aggregate appears in PostHog or Analytics Engine. Confirm the raw dump,
+   artifacts, and processor remain in the EU-jurisdiction telemetry bucket and
+   EU-pinned compute.
+8. Run `pnpm --filter @avalon/desktop test:crashpad` on the supported macOS-arm64
+   release host. It must package the pinned Electron version, produce two real
+   renderer Crashpad reports, and prove that the first inactive database survives
+   whole-directory rotation before the second handler starts. Then exercise the
+   packaged Avalon release separately: confirm its production generation
+   controller rotates only on the following launch, authenticates upload to the
+   fixed route, and requests the private artifact identity published by the
+   release workflow. In Global, confirm PostHog receives the full sanitized structured exception with the same
+   `$session_id`, release, build, platform, architecture, process, channel, and
+   fingerprint, while raw bytes, absolute paths, memory fragments, and source
+   excerpts stay internal. In EU, confirm the occurrence and independently
+   expiring fingerprint contribution are internal-only.
+9. Configure disposable, different `support` and `security` operator tokens in
+   each region. Confirm unauthenticated and wrong-token requests to
+   `/internal/telemetry/status` fail, while each regional token sees only its own
+   fixed snapshot. Verify support can retrieve one synthetic dump only with
+   `customer_support`, security can retrieve it only with `incident_response`, and
+   each attempt creates the fixed regional audit row. Confirm only security can
+   replay a terminal Global event, and that the EU-only issue/crash-free paths are
+   `404` in Global. Remove the disposable tokens after the run.
 
 ## Desktop menu bar acceptance
 
@@ -68,6 +156,9 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 8. Open **System Settings → General → Login Items** and confirm Avalon is listed and enabled without anyone having added it. In **Settings → Application → Startup**, confirm **Open Avalon at login** is on, turn it off, and confirm Avalon disappears from the system list and that a relaunch does **not** re-add it. Turn it back on and confirm the toggle reflects what macOS actually holds — if macOS asks for approval, the toggle must stay off until it is given. Remove the login item from System Settings while Avalon runs, reopen Settings, and confirm the toggle reads off.
 9. With the login item enabled, restart the Mac. Confirm Avalon comes back with the menu bar item present and **no window on screen**, that the menu's recent list is already populated, and that **Open Avalon** or clicking the Dock icon opens the main window. Then quit and launch Avalon by hand and confirm the window opens as usual — a manual launch must never be treated as a login launch.
 10. Sign out. Confirm the menu keeps all three fixed actions, replaces the recent list with a disabled **Sign in to Avalon** row, drops the **Suggestions** and **Pinned** groups entirely, and shows no trace of the previous account's work-stream titles. Signed out the menu is exactly nine rows, and every one of them works.
+11. With Product analytics enabled in Global, open the menu once, select **New Work Stream**, reopen it, and successfully start one suggestion. Confirm PostHog receives one `menu_bar_opened` per visible open, the matching bounded `menu_bar_action_selected` values, and one API-originated `suggested_work_started_v2` with `surface=menu_bar` plus bounded exposure context. Make one suggested-work start fail and confirm it emits the selection but no successful-start event. Confirm no semantic event property contains the displayed suggestion or title; opportunity and work-stream UUIDs may appear only in their declared resource/correlation fields.
+12. In the sidebar, hold Command through repeated keydown events and confirm exactly one `command_shortcuts_revealed` with the visible target count. Press a valid Command+1–9 shortcut and confirm one `command_shortcut_used` with its number and destination class. Repeat a number key, press an unassigned number, and try behind a modal; confirm none produce a use event. Start suggested work from the home surface and confirm the authoritative API event instead carries `surface=workspace_home`.
+13. With Product analytics enabled in Global, launch once and confirm `application_settings_state_v2` contains the actual availability and enabled state for launch-at-login, Lockdown mode, and the menu bar plus the active closed icon identifier and automatic state. Toggle launch-at-login off and on; confirm each `application_setting_change_completed_v2` preserves previous, requested, and macOS read-back applied state, including `requestedEnabled=true` with `appliedEnabled=false` if approval remains pending. Toggle Lockdown mode and menu-bar visibility and confirm the same event uses the matching closed setting only after the native or migration operation succeeds. Select **Ruby**, then **Use the system icon**, and confirm `application_icon_changed` records the previous/applied identifier and automatic state only after each native operation succeeds. Confirm the identified PostHog person has matching `avalon_launch_at_login_*`, `avalon_lockdown_mode_*`, `avalon_application_icon_*`, and `avalon_menu_bar_*` current properties. Force each operation to fail and confirm no completion event is emitted; opt out and confirm neither snapshots, changes, nor person-property updates are sent.
 
 ## Realtime recovery acceptance
 
@@ -96,14 +187,17 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 
 ## Desktop model-selector acceptance
 
-1. With Application → Developer → **Debug enabled** off, open **New work stream** and **New automation** and confirm neither composer shows a model control. Confirm an existing work stream's composer never shows one in either state.
+1. With Application → Developer → **Debug enabled** off, open **New work stream**, **New automation**, and an existing work stream, and confirm none of the three composers shows a model control.
 2. Turn Debug enabled on in the Settings window and confirm the control appears in both composers, immediately to the right of the microphone's arrow menu, without reopening either screen. It reads **Default**, and its tooltip says that state follows the `agent-model-workstream` flag rather than naming a model.
 3. Open the menu and confirm **Default** leads, the nine models are grouped below it under xAI, Google, OpenAI, and DeepSeek, the check sits on **Default**, and the checked entry is exposed as the checked radio item to assistive technology.
 4. Without touching the selector, create a work stream. Confirm its `harness_runs.model` is what `agent-model-workstream` serves and `workstreams.model_override` is `NULL`.
 5. Choose a different model, confirm the trigger and tooltip both take its name, then create a work stream. Confirm `workstreams.model_override` holds the chosen id, the run's `harness_runs.model` matches it, and the inference ledger records that model with no fallbacks.
 6. Point `agent-model-workstream` at a variation other than the Worker-variable default, then confirm an untouched selector still reads **Default** rather than claiming a model — the served variation is not visible to the client and must not be guessed at.
 7. Pin explicitly to the first listed model, confirm the trigger changes from **Default** to **Grok 4.3**, and confirm the created work stream carries that id — an explicit pin to the flag's own default must be distinguishable from never having touched the control. Then choose **Default** again and confirm the next work stream is created with no override.
-8. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
+8. Open a work stream that has run and confirm its composer shows the same control in the same place, chevron and all, and that it is disabled: no menu on click or on Enter, skipped by Tab, reported as disabled to assistive technology, and carrying the run's full model id in its accessible name. Confirm it stays legible at its dimmed opacity, and that hovering still raises the tooltip with that same id — the disable stops the menu, not the tooltip. Check it against `harness_runs.model` for that work stream's latest parent run — on a pinned one that is the pinned id, on an unpinned one it is whatever the flag served, which must be named rather than shown as **Default**. Point the flag at a variation serving a model outside `AGENT_MODEL_OVERRIDES`, start a work stream, and confirm the pill names it (shortened past the vendor prefix) rather than falling back to **Default**. Confirm the two work streams make different claims: the pinned one's tooltip says every run uses that model, the unpinned one's says the flag decides each run and a later run may differ. Then move the flag to another variation, send a message to the unpinned work stream, and confirm the pill follows the new run — proving the unpinned wording rather than the pinned one.
+9. Pin a work stream and make its run fail before it streams a token — an invalid `OPENROUTER_API_KEY` does it — so `harness_runs.model` settles as `NULL`. Confirm the pill still names the pinned model rather than **Default**: a pinned work stream never consults the flag, so describing it as following one is wrong rather than merely vague.
+10. Create a work stream with a model pinned and confirm the pill on the work-stream screen it opens onto already reads that model, without a **Default** frame in between as the screens change hands.
+11. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
 
 ## Desktop automation system-prompt viewer acceptance
 
@@ -208,6 +302,7 @@ Pass evidence: the planned work-stream ID is reused, the uniqueness key on subsc
 4. Create a public Slack channel and confirm the `channel_created` ingress job makes Avalon join it. Send a new Agent DM, a threaded follow-up, and a channel mention. Confirm Avalon adds `👀` to each exact triggering message before a workstream or model run starts, each root maps to one `slack_agent_sessions` row, follow-ups reuse the workstream, status appears, and completion stops the stream or posts the fallback thread reply. Replay a claimed job after the reaction succeeds and confirm Slack's `already_reacted` response does not duplicate or fail the task.
 5. Mention one linked Avalon teammate and one unlinked teammate whose verified email matches exactly one active member across the installed Slack teams. Confirm both receive one bot-authored Agent DM and the unlinked teammate does not gain a `slack_user_links` record. Repeat with no match, matches in two teams, a cross-team result, and a missing `users:read.email` grant; confirm each falls back to the existing mention email, and the additive missing scope does not disable existing Agent features.
 6. Invoke both shortcuts and `/avalon`; confirm the modal opens in under three seconds, submissions create tasks, and malformed/replayed signatures are rejected.
+8. Mention Avalon in a **public** channel from a linked member, then reply in the same thread as (a) a second linked member, (b) a member with no Slack link whose verified email matches an active Avalon member, and (c) a member Avalon cannot map at all. Confirm every reply is taken — none is refused — that the first two are recorded under their own Avalon identities and the third under its Slack actor, and that the work stream is `public` in Avalon. Repeat the whole case in a **private** channel: confirm the work stream is `private`, that it opens already holding the channel's mappable members, that a member who was not in it when it started is seated by their first reply, and that a member of the workspace who is *not* in the Slack channel cannot open it in Avalon.
 7. Redeliver the same Events API `event_id` and body; confirm it is acknowledged once. Reuse the ID with different bytes and confirm the conflict is recorded. Force the first regional worker attempt to fail and confirm the durable queue retries the same ingress job instead of permanently deduplicating the failed receipt.
 9. From an Agent DM and an app mention, ask Avalon to find a message, identify a user/channel, read message/channel/thread/file/member context, and cite the returned permalink. Confirm `assistant.search.context` receives the event's `action_token`, public-only channel types, and a maximum of 20 results; confirm the token is absent from model prompts and tool arguments. Start the same search outside Slack with only the workspace connection and confirm it fails with a user-initiated-search explanation. Confirm specific reads still work without an action token when the bot can access the target conversation.
 10. Ask Avalon to send a message, add a reaction, and create a public channel, a private channel, a DM, and a group DM through the workspace installation. Confirm the normal write confirmation/receipt gate, bot attribution, stable `client_msg_id` on messages, idempotent `already_reacted` handling, and no duplicate provider mutation after a workflow retry.

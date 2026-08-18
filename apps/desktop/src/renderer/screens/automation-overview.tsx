@@ -29,6 +29,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import {
+  currentSurfaceEntrypoint,
+  reportTelemetryProductIntent,
+  telemetryCountBucket,
+  telemetryVisibility,
+} from '../lib/telemetry';
 import type { AutomationActivitySource, AutomationRunSummary, WorkstreamConnection } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
@@ -162,6 +168,21 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     }
   }, [automation.data]);
 
+  const reportedAutomationId = useRef<string | null>(null);
+  useEffect(() => {
+    const detail = automation.data;
+    if (!detail || reportedAutomationId.current === detail.id) return;
+    reportedAutomationId.current = detail.id;
+    reportTelemetryProductIntent({
+      kind: 'automation_opened',
+      automationId: detail.id,
+      visibility: telemetryVisibility(detail.scope),
+      status: detail.status,
+      entrypoint: currentSurfaceEntrypoint(),
+      runCount: telemetryCountBucket(detail.runs.length),
+    });
+  }, [automation.data]);
+
   useEffect(() => {
     const detail = automation.data;
     if (!detail?.templateUpdate || !connections.data) return;
@@ -265,6 +286,9 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     if (!automationEmailAddress) return;
     try {
       await desktopBridge().copyText(automationEmailAddress);
+      reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'automation_email', resourceType: 'automation', resourceId: detail.id,
+      });
       setAutomationEmailCopyState('copied');
     } catch {
       setAutomationEmailCopyState('failed');

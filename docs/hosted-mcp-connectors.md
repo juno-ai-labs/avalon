@@ -120,6 +120,27 @@ and use therefore fails closed instead of forwarding an unadvertised name.
   or a record-before-execute receipt. A future read classification must come
   from a separate Avalon-authored policy; guessing from names or trusting a
   provider hint can turn a newly introduced mutation into an unconfirmed action.
+- **A remote schema may not sink the request it arrives in.** A hosted server's
+  `inputSchema` reaches the model verbatim, and a root `anyOf`/`oneOf` branch xAI
+  will not read as an object makes that provider reject the **whole request,
+  every tool** — a run's core tools taken down by one third-party schema, on a
+  connection the person set up correctly. `validateDynamicConnectorTools` applies
+  `repairRootUnionForProviders` to every discovered definition, **but only where
+  the sanitizer's own output would still be fatal**. That gate is load-bearing:
+  Bind 13 repairs the common shape into readable branches and keeps the
+  constraint, so dropping the composition first would destroy something the model
+  could otherwise have used. Against Bind 11 and 12 the unconditional drop was
+  the only thing between a third-party schema and a 400; against a sanitizer that
+  handles the shape it is pure loss. Deferring rather than deleting keeps the
+  backstop honest — it re-engages by itself for any shape a future sanitizer
+  stops handling. When it does fire, the offending root composition is dropped,
+  the rest of the schema is kept, the tool stays available, and it logs
+  `dynamic_tool_root_union_repaired`. It repairs rather than rejects because
+  refusing the tool spends the person's capability on a judgement about a
+  provider's schema dialect, and the remote server validates its own arguments
+  regardless. This is deliberately the *only* schema rewrite Avalon performs;
+  Bind's sanitizer owns every other dialect difference. The measured rule and its limits live in
+  [`agent-tools.md`](agent-tools.md#mechanics--where-the-rules-are-enforced).
 - **The remote name is forwarded exactly.** Avalon may need a safe internal
   alias for a name outside its canonical-name grammar, but `tools/call` receives
   the original value retained at activation. A later operation whose raw name
@@ -217,6 +238,65 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Avalon.
 
 ## Changelog
+
+### 2026-08-16 — The remote-schema repair defers to the sanitizer
+
+**What changed:** `repairRootUnionForProviders` now returns the schema untouched
+unless `nonObjectRootUnionBranches` reports that the sanitizer's own output would
+still carry an unreadable root branch. In practice, under `@juno-ai/bind` 13,
+that means it never fires.
+
+**Why:** it had become worse than doing nothing. Bind 13 turns a remote
+`oneOf: [{required:["pageId"]}, {required:["discussionId"]}]` into
+self-sufficient object branches that all nine measured models accept and the
+model can read; dropping the composition first threw that constraint away and
+told the model nothing about the choice. The layer was written against Bind 11,
+where the same drop was the only thing standing between a third-party schema and
+a 400 covering the whole request. Both were correct for their dependency; the
+mistake would have been leaving it unconditional after the dependency improved.
+
+Gating rather than deleting is the point. A deleted backstop has to be noticed
+and rebuilt if a future sanitizer stops handling a shape; a gated one re-engages
+on its own, because the gate asks the sanitizer what it actually emitted rather
+than assuming a version. The test moved with it: it asserts the outcome — nothing
+a remote server serves reaches the wire with an unreadable root branch — across
+all four known-fatal shapes, rather than asserting that this particular layer is
+what fixed it. The mechanism has already moved once and should be free to move
+again.
+
+### 2026-08-16 — A remote schema can no longer fail the request it arrives in
+
+**What changed:** `validateDynamicConnectorTools` now runs every discovered
+definition's `inputSchema` through `repairRootUnionForProviders`. A root
+`anyOf`/`oneOf` whose branches xAI will not read as objects is dropped — the rest
+of the schema is kept and the tool stays available — and the repair logs
+`dynamic_tool_root_union_repaired`. Nothing else about a remote schema is
+rewritten.
+
+**Why:** the same defect that took every x-ai call in the fleet down for three
+days was reachable from any hosted MCP server, and worse from there. xAI answers
+a root union with a non-object branch with a 400 covering the **whole request**,
+so one third-party tool's schema fails every *other* tool in the run, Avalon's
+core tools included — on a connection the person set up correctly, from a server
+Avalon does not control. The first-party half of that fix is a build-time guard
+over authored schemas; it cannot see a schema that arrives at run time, and no
+test can. The rule had to be enforced where the schema enters instead.
+
+It repairs rather than rejects because rejecting spends the person's capability
+on a judgement about a *provider's* schema dialect rather than anything they did,
+and the remote server validates its own arguments regardless — so what is given
+up is a wire-level constraint Bind's `required` pruning was already erasing for
+every provider. Dropping the composition measured 27/27 accepted across nine
+models; adding `type: "object"` to the branches instead passes xAI but the
+sanitizer then strips their `required` anyway, so it buys nothing.
+
+It lives in `validateDynamicConnectorTools` rather than in the connector adapter
+because that is Avalon's host-side gate — every dynamic source (Slack, Granola,
+Notion) funnels through it — and because putting it in `hosted-mcp.ts` would make
+`packages/connectors` depend on `@avalon/agent-harness` for one import. A future
+change must keep it the only schema rewrite here: the value of "the remote schema
+is forwarded as authored" is that a second rewrite is a second place for a
+provider's contract to silently diverge from what the model was shown.
 
 ### 2026-08-12 — Remote hints cannot downgrade write policy
 

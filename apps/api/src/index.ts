@@ -13,6 +13,15 @@ import { processPendingNotePrivacyNotifications } from "./services/note-privacy-
 import { SlackAgentService } from "./services/slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
+import { processTelemetryOutbox } from "./telemetry/delivery";
+import { processPendingCrashReports } from "./telemetry/crash-processing";
+import {
+  processCrashOutbox,
+  purgeIneligibleCrashReports,
+  reapExpiredOrphanedCrashObjects,
+  reapExpiredCrashReports,
+} from "./telemetry/crash-delivery";
+import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -45,8 +54,42 @@ async function reapExpiredDraftAttachments(env: Env): Promise<void> {
   // stale scan loses the conditional delete and its objects are never touched.
 }
 
+async function processCrashTelemetry(env: Env): Promise<void> {
+  await reapExpiredCrashReports(env);
+  await reapExpiredOrphanedCrashObjects(env);
+  await purgeIneligibleCrashReports(env);
+  await processPendingCrashReports(env);
+  await processCrashOutbox(env);
+}
+
+async function processTelemetry(env: Env): Promise<void> {
+  await Promise.all([
+    processTelemetryOutbox(env),
+    processCrashTelemetry(env),
+  ]);
+  const snapshot = await readTelemetryOperationalSnapshot(env);
+  const unhealthy = snapshot.openCircuits > 0
+    || snapshot.acceptedTerminal > 0
+    || snapshot.crashTerminal > 0
+    || snapshot.profileTerminal > 0;
+  logStructuredEvent(env, unhealthy ? "warn" : "info", "telemetry_operations_snapshot", {
+    accepted_pending: snapshot.acceptedPending,
+    accepted_terminal: snapshot.acceptedTerminal,
+    crash_pending: snapshot.crashPending,
+    crash_terminal: snapshot.crashTerminal,
+    profile_pending: snapshot.profilePending,
+    profile_terminal: snapshot.profileTerminal,
+    rejection_count: snapshot.rejectionCount,
+    open_circuits: snapshot.openCircuits,
+    oldest_accepted_age_seconds: snapshot.oldestAcceptedAgeSeconds,
+    oldest_crash_age_seconds: snapshot.oldestCrashAgeSeconds,
+    oldest_profile_age_seconds: snapshot.oldestProfileAgeSeconds,
+  });
+}
+
 export { WorkstreamRoom } from "./durable-objects/workstream-room";
 export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
+export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
@@ -60,6 +103,8 @@ export { NotionRegionalBridge } from "./notion-regional-bridge";
 export { NotionRoutingBridge } from "./notion-routing-bridge";
 export { SlackRegionalBridge } from "./slack-regional-bridge";
 export { SlackRoutingBridge } from "./slack-routing-bridge";
+export { TelemetryRegionalBridge } from "./telemetry-regional-bridge";
+export { TelemetryControlBridge } from "./telemetry-control-bridge";
 
 /**
  * The environment is asserted here rather than inside `app`, so the check runs
@@ -133,6 +178,7 @@ export default {
       recoverPendingActivityQueue(env),
       reapExpiredActivityEvents(env),
       reconcileDigestDefaults(env),
+      processTelemetry(env),
     ]));
   }),
 } satisfies ExportedHandler<Env>;

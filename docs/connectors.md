@@ -130,6 +130,45 @@ untouched — the opening message keeps its external actor, so the transcript st
 provider identity wrote it. A connector that cannot map its actor leaves the work stream
 ownerless instead of guessing a member.
 
+### A work stream's audience is the conversation it started in
+
+`connector-workstream-audience.ts` holds the second half of the same idea, and it is
+connector-wide for the same reason: **a work stream starts with the audience of the
+conversation it came from.**
+
+- A conversation the provider calls public opens a public work stream by storing the existing
+  `workspace` scope, readable by the workspace like any other.
+- A private conversation — a private channel, a direct message, a group message — opens a
+  private work stream by storing the existing `personal` scope, whose participant room starts
+  with that conversation's resolved members. A conversation the connector cannot classify is
+  treated as private: that is the fail-closed direction, and the two mistakes do not cost the
+  same.
+- Anybody who can reach the conversation may continue the work stream. A member who arrives
+  later is seated by their own message, which is what makes a private work stream answer them
+  rather than 404 at them. Membership is only ever admitted, never revoked — somebody who leaves
+  the provider conversation keeps the work stream, because removing them is a membership
+  decision a person makes. Connector admission publishes the same `participant_added` event as
+  the in-product participant picker, so connected clients see the durable room change immediately.
+- A person the connector cannot map to an Avalon account is not an obstacle. Their message is
+  recorded under their external actor, because a work stream that silently drops what somebody
+  said in the conversation it lives in is worse than one whose participant list is shorter than
+  the channel's.
+
+**Each message runs under the authority of whoever sent it**, resolved per message rather than
+per conversation: a member with an *account link* runs as themselves, and everybody else runs
+under the workspace principal. This is the one place the strength tiers above are load-bearing
+rather than descriptive — a run spends personal connectors, memory, and approvals made in
+somebody's name, so nothing weaker than a link may authorize one. A `verified_email` match is
+enough to credit somebody and enough to seat them in a private room; it is not enough to spend
+their credentials. Two consecutive messages in one conversation can therefore run under
+different principals, exactly as they do when two members type into the same work stream in
+Avalon.
+
+Conversation rosters resolve as a batch. The connector asks D1 once for every identity it already
+knows, enriches only the unresolved provider members, and bounds that provider work by concurrency
+and one shared deadline. Do not turn roster size into one database query and one unconstrained API
+request per member: private conversations may legitimately reach the connector's 200-member cap.
+
 ### Delivering automation results to a person
 
 A connector that can hand a finished result to a specific person declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered. The same declaration serves every personal destination Avalon has: personal automation results and the scheduled digest ([`digests.md`](digests.md)) read the same list, so a connector that starts declaring a surface becomes a destination for both without either surface changing.
@@ -214,12 +253,37 @@ every numeric tool field, inherit the exact numeric-string normalization in
 [`agent-tools.md`](agent-tools.md).
 
 The GitHub plugin prompt treats metadata and code evidence as different things.
-When more than one repository is plausible, the model asks the user to choose
-instead of selecting the first result. It may say that verification was
+When a repository is not named, the model searches the authorized set and
+chooses the best match from the request, work-stream context, pinned status,
+and recent activity rather than handing repository selection back to the
+participant or taking an arbitrary first result. It may say that verification was
 incomplete without a readable code file, but it may not conclude that there are
 no discrepancies until `contents.get` has successfully returned at least one
 code file in that run. Repository, tree, commit, issue, and pull-request reads do
 not satisfy that evidence condition.
+
+An active GitHub connection advertises a connector-specific **GitHub** child
+page immediately below Connections in Settings. A personal connection is
+configurable by its owner; a workspace connection is configurable by an admin.
+The versioned policy either permits every App-installation repository with a
+default access level or only named immutable repository IDs, with per-repository
+overrides. Repository list/search results return the effective `access` so the
+model can plan before acting. `read_only` is a remote boundary: it still permits
+Terminal file changes and local commits, while its repository token cannot push
+or mutate GitHub. `full_access` supplies the Terminal sandbox a short-lived,
+single-repository App token for ordinary `git` and `gh` writes. Avalon prepares
+a stable word-based work-stream branch first and the plugin prompt directs the
+model to push only that branch. Full access does not broaden the GitHub App's
+installed permission ceiling, but GitHub does not technically scope that token
+to the prepared branch.
+
+A connection with no stored repository policy deliberately begins as **all
+repositories / full access**. This is the requested rollout compatibility mode,
+and means enabling this Terminal release immediately makes native remote
+`git`/`gh` writes available across that connection's existing App installation;
+an administrator can change the default or select individual repositories on
+the GitHub Settings child page. A present but malformed policy does not receive
+that compatibility default and fails closed.
 
 GitHub delivery signatures are verified against the exact raw body before
 installation-aware normalization and queueing. Webhooks also discover durable
@@ -411,6 +475,22 @@ A connector's normalized `title`/`summary` is not independently bounded to the A
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Avalon's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
+### Product measurement
+
+Connector setup intent records only connector, personal/workspace scope, setup
+method, and bounded capability count. The regional service owns terminal OAuth
+outcomes and successful direct connection creation. Test, reconnect, disconnect,
+and webhook-secret rotation report previous/applied health and result; a distinct
+health transition is emitted only when health actually changes. Activity ingest
+reports canonical connector/activity type, bounded item count, and
+accepted/duplicate/filtered/failed result after admission. Connection IDs are
+allowed only on resource-lifecycle events that require a stable join. OAuth
+state, capabilities themselves, scopes returned by a provider, account/tenant
+IDs, webhook bodies, activity content, error text, and credentials remain outside
+telemetry. The established OAuth operation pair remains available to correlate a
+desktop request with denial/failure while richer connection events describe the
+configuration that was actually established.
+
 
 ## Invariants
 
@@ -447,6 +527,10 @@ or a log-based handoff a persistent credential in observability.*
 **Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
 
 **Say where the things you produce live.** A work stream that exists because of a place in a connected tool attaches that place, and the connector is the only thing that knows what the place is. Every adapter gets this for its activities without writing code — `connectorOriginFromActivity` reads the object normalization already recorded — so implement `ConnectorAdapter.origin` only for a place no activity describes, such as a provider-hosted agent session, or when the activity's own object is not the place a person would want to be sent back to. A described `resourceType` must be one the manifest declares in `resourceTypes`, and `describeConnectorOrigin` refuses one that is not: a typo there forks the resource identity for every work stream started from that place afterwards, and nothing downstream would notice. See [work-stream origin attachments](workstream-origin-attachments.md).
+
+**A work stream started from a conversation is that conversation's, not one member's.** Its visibility is the conversation's own — public for a public channel, private for anything else, including anything the connector could not classify — and a private one's participants are that conversation's members. Anybody in the conversation may continue it, and a member who arrives later is seated by their own message. *A Slack thread used to belong to whichever member happened to be linked first, and every other person in the channel — the workspace owner included — was answered with "this thread is already running with another Avalon member's personal authority", in a public channel, in front of everyone.*
+
+**Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Avalon and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
 
 **Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
@@ -579,6 +663,118 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-15 — Conversation audiences resolve in bulk and announce admissions
+
+**What changed:** Conversation rosters now resolve known identities in one D1 query. Slack enriches
+only unresolved members, at six profile requests at a time under one ten-second deadline. A member
+admitted by a later connector message also emits `participant_added` after the durable write.
+
+**Why:** A 200-member private conversation previously risked one Slack profile request and several
+D1 reads per member, which could exhaust provider or Worker limits before the prompt started.
+Writing a participant without the room event also left an already-open People rail behind D1.
+
+**Considered and rejected:** Treating the 200-member roster cap as sufficient bounding, and relying
+on a later work-stream snapshot to repair connected clients. Neither bounds concurrent external
+work nor preserves the participant service's existing live-update contract.
+
+**Consequences:** Known mappings cost no provider profile calls; email enrichment remains best
+effort within the shared deadline. Consumers must continue to handle replayed `participant_added`
+events idempotently.
+
+### 2026-08-13 — Repository policy stays authoritative through drift and recovery
+
+**What changed:** A present malformed GitHub repository policy now denies all
+repositories while retaining its revision for repair; only a wholly absent
+policy receives the legacy all-repositories default. Authorization resolves the
+provider's immutable repository ID before applying name-based defaults, and
+renamed repositories retain their configured override. Disabled connections
+never perform settings discovery and revoke selected Terminal rows, while
+recoverable `error` and `needs_reconnect` rows may be tried and revalidated at
+GitHub. Policy writes update only their JSON subtree and commit mounted
+Terminal-credential invalidation in one D1 batch.
+
+**Why:** Review found four ways cached or mutable state could outrank the durable
+administrator choice: malformed JSON failed open, a rename missed a read-only
+override, a disabled credential could still enumerate repositories, and a
+Worker interruption between policy persistence and token invalidation could
+leave a broader credential mounted, and a whole-document rewrite could erase
+connector metadata written concurrently.
+
+**Considered and rejected:** Treating every non-healthy observation as a durable
+revocation, adding a repository-ID lint rule, and introducing another policy
+store. Connector status already defines only `disabled` as an intentional stop;
+the existing provider metadata and transactional regional rows are enough.
+
+**Consequences:** Repository-aware operations must resolve immutable identity
+before falling back to an all-repositories default. Settings repair must preserve
+the malformed row's revision, and future credential caches must be invalidated
+in the same transaction as any policy downgrade.
+
+### 2026-08-13 — Full access means native repository CLI access
+
+**What changed:** Terminal maps connector `full_access` to a short-lived
+single-repository GitHub App token inside the Daytona sandbox, while
+`read_only` remains technically enforced by token permissions. The harness
+prepares the work-stream branch and tells the model to stay on it.
+
+**Why:** Models already know Git and GitHub CLI, PRs routinely receive multiple
+commits, and GitHub offers no branch-scoped installation token. A second publish
+authorization parser and custom write path added friction without expressing a
+provider primitive that exists.
+
+**Considered and rejected:** A smart-HTTP/API proxy and a per-push participant
+gate. Connector Settings is the explicit durable access decision.
+
+**Consequences:** `full_access` is repository-wide at the provider. Policy
+updates must invalidate Terminal credential freshness before another command,
+and model guidance must continue to name the prepared branch behavior.
+
+### 2026-08-13 — Repository policy becomes connector-owned model context
+
+**What changed:** GitHub connections now persist a revisioned all-or-selected
+repository policy with read-only or full remote access, expose a dynamic
+connector Settings child page, filter repository discovery, return effective
+access to the model, and reject remote writes outside that policy. When no
+repository is named, the plugin tells the model to search and choose from
+context instead of delegating a chooser to the participant.
+
+**Why:** Repository selection was presented as an interruption even when the
+model already had installation-scoped discovery and enough context to make the
+choice. At the same time, App installation access was too coarse to express
+that a repository could be inspected and edited locally without authorizing a
+remote push or pull request.
+
+**Considered and rejected:** Keeping one participant chooser per work stream,
+and equating read-only with an immutable sandbox checkout. The former stranded
+runs and made ordinary code tasks interactive; the latter prevented useful
+local analysis and edits even though only the remote repository needed the
+narrower boundary.
+
+**Consequences:** New GitHub operations must resolve the current policy and,
+for explicitly configured repositories, revalidate the immutable repository ID.
+Every model-visible repository listing must carry effective access. A future
+connector with settings can reuse the dynamic navigation contract, but must own
+its own typed settings endpoint and authorization semantics.
+
+### 2026-08-13 — Connector adoption separates intent, established configuration, health, and activity
+
+**What changed:** Added closed setup, action, health-transition, and activity-
+ingest events across OAuth, API-key, direct, and webhook connectors. Terminal
+outcomes are emitted by the regional service; activity is measured only after
+the shared ingestion boundary classifies it.
+
+**Why:** A connection row alone cannot show failed or denied setup, reconnect
+pressure, stale-health recovery, or whether a configured connector ever produces
+usable activity.
+
+**Considered and rejected:** Provider payload logging, provider account IDs,
+credential/scope arrays, client-reported OAuth success, and treating a health
+check as activity. They expose content or report an observation at the wrong
+authority.
+
+**Consequences:** Connector dashboards can separate acquisition, establishment,
+maintenance, and value delivery. New adapters must use the canonical connector
+taxonomy and add no free-form provider fields to product telemetry.
 ### 2026-08-12 — Code-only tool refinements remain argument errors
 
 **What changed:** `ConnectorAdapter` can expose a pure `validateToolInput`
@@ -764,6 +960,46 @@ the provider supplies or accepts a secret through an authenticated configuration
 path, its existing setup remains sufficient. A second matching provider is the
 point to evaluate a shared adapter facet and storage model, while retaining the
 same observability and plaintext-handoff boundaries.
+
+### 2026-08-12 — A work stream belongs to the conversation it started in, not to one member
+
+**What changed:** Two connector-wide rules moved into `connector-workstream-audience.ts`. A work
+stream started from a provider conversation now maps that conversation onto the existing
+work-stream scope — public channel to `workspace`, anything else to `personal` — and a private
+one is seated with the conversation's members, resolved through the actor mapping this document
+already owned. Anybody
+in the conversation may continue it, and each message runs under the authority of whoever sent
+it: an account-linked member's own, the workspace principal for everyone else. Slack's
+per-thread pin, its claim button, and `claimWorkspaceSession` are gone.
+
+**Why:** The pin answered a real question with the wrong scope. Whose credentials a run spends
+has to be settled — that part was right and is kept, per message — but it does not require the
+*conversation* to have an owner, and making it one produced a public-channel thread that
+refused everybody except the first member who happened to be linked. In production that meant a
+workspace owner asking Avalon for deep research and being told the thread was already running
+with another member's personal authority, and a member Avalon knew by verified email being told
+an unlinked Slack member cannot continue it — both in channel, both with no way forward but
+starting a new task and losing the thread. Claiming was the sanctioned escape hatch and nobody
+used it: it moved the whole conversation's authority to the claimer rather than answering the
+one message they had just sent.
+
+**Considered and rejected:** Letting a `verified_email` match authorize a run as that member,
+which would have made every one of those refusals disappear. It inverts the tier ordering this
+document spends a section establishing — a provider profile address can belong to somebody other
+than the member that identity is linked to, and a run spends real credentials — so the match
+seats somebody in the room and credits them, and nothing more. Also rejected: keeping the pin
+and adding a "take over" button next to the refusal. It is the claim flow again with better
+copy, and it still asks a conversation to have one owner.
+
+**Consequences:** A private conversation's roster is read once, at creation, bounded at 200
+members and best-effort: `conversations.members` needs `groups:read`, which an installation that
+has not reconnected does not have, and an admitted prompt must not be dropped over a roster. The
+cost of failing is a smaller starting room, because every member is seated on their own first
+reply anyway. Membership is admitted and never revoked, so leaving the provider conversation
+does not remove somebody from the work stream — removal stays a decision a person makes.
+`slack_agent_sessions.linked_user_id` and `execution_scope` are written as fixed compatibility
+values for the previous Worker; nothing in the new Worker reads them. A later migration may
+drop them after this code has shipped everywhere.
 
 ### 2026-08-12 — A connector says where the things it produces live
 

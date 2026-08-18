@@ -1,12 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
 import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
+const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
+  async () => ({ saved: true }),
+));
+const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText }),
+  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent }),
+  desktopServicesAvailable,
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
@@ -314,6 +321,28 @@ describe('MessageBlock human identity', () => {
 });
 
 describe('MessageBlock markdown', () => {
+  it('reports a successful response copy by opaque message and work-stream id', async () => {
+    copyText.mockReset().mockResolvedValue(undefined);
+    reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
+    const message: Message = {
+      ...baseMessage,
+      id: '00000000-0000-4000-8000-000000000301',
+      workstreamId: '00000000-0000-4000-8000-000000000302',
+      authorType: 'agent',
+      author: undefined,
+      text: 'The bounded response.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(message.text));
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: message.id, workstreamId: message.workstreamId,
+    });
+  });
+
   it('renders person links as non-navigating chips resolved from mention metadata', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
     const message: Message = {
@@ -576,6 +605,109 @@ describe('MessageBlock markdown', () => {
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('const ready = true;'));
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
+  });
+});
+
+describe('MessageBlock export actions', () => {
+  const agentMessage: Message = {
+    ...baseMessage,
+    id: 'message-agent-export',
+    authorType: 'agent',
+    author: undefined,
+    text: '## Quarterly pipeline review\n\nThe **Northwind** renewal is at risk.',
+    createdAt: '2026-08-13T09:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-08-13T18:00:00.000Z'));
+    // The renderer reads the Avalon mark out of its own bundle before it can
+    // ask for an export; jsdom has no server to fetch it from.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      blob: async () => new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }),
+    })));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    exportMessage.mockClear();
+    exportMessage.mockResolvedValue({ saved: true });
+    desktopServicesAvailable.mockReturnValue(true);
+  });
+
+  it('sends the same markdown the feed rendered, under a name taken from the message', async () => {
+    render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+
+    await waitFor(() => expect(exportMessage).toHaveBeenCalledTimes(1));
+    const request = exportMessage.mock.calls[0]?.[0];
+    expect(request?.format).toBe('image');
+    expect(request?.fileName).toBe('quarterly-pipeline-review-2026-08-13');
+    // The card is built from `MarkdownBody`'s own DOM, so a heading is a heading
+    // and emphasis survives — not the raw markdown, and not text.
+    expect(request?.contentHtml).toContain('<h2>Quarterly pipeline review</h2>');
+    expect(request?.contentHtml).toContain('<strong>Northwind</strong>');
+    expect(request?.logoDataUrl).toMatch(/^data:image\/png;base64,/u);
+  });
+
+  it('asks for a PDF from the button beside it', async () => {
+    render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as a PDF' }));
+
+    await waitFor(() => expect(exportMessage).toHaveBeenCalledWith(expect.objectContaining({ format: 'pdf' })));
+  });
+
+  it('holds both buttons closed while one export is in flight', async () => {
+    let finish = (): void => undefined;
+    exportMessage.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { saved: true };
+    });
+    render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save response as a PDF' })).toBeDisabled());
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save response as a PDF' })).toBeEnabled());
+  });
+
+  it('says so when the file could not be made, and stays quiet when the dialog was dismissed', async () => {
+    exportMessage.mockRejectedValueOnce(new Error('no surface'));
+    const { rerender } = render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
+
+    exportMessage.mockResolvedValueOnce({ saved: false });
+    rerender(<MessageBlock {...actions} message={{ ...agentMessage, id: 'message-agent-dismissed' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as a PDF' }));
+    await waitFor(() => expect(exportMessage).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('PDF failed')).not.toBeInTheDocument();
+  });
+
+  it('forgets a failure once the pointer leaves the row', async () => {
+    exportMessage.mockRejectedValueOnce(new Error('no surface'));
+    const { container } = render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
+
+    fireEvent.pointerLeave(container.querySelector('.agent-message-actions')!);
+
+    expect(screen.queryByText('Image failed')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download response as an image' })).toBeEnabled();
+  });
+
+  it('offers nothing to save where there is no desktop to save it with', () => {
+    desktopServicesAvailable.mockReturnValue(false);
+
+    render(<MessageBlock {...actions} message={agentMessage} />);
+
+    expect(screen.getByRole('button', { name: 'Copy response' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Download response as an image' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save response as a PDF' })).not.toBeInTheDocument();
   });
 });
 

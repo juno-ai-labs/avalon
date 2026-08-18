@@ -8,7 +8,23 @@ import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
 import { WorkstreamComposer } from './workstream-composer';
 
-beforeEach(() => clearAllDrafts());
+// The composer shows the work stream's model only while Application →
+// Developer → Debug enabled is on, so this bridge is what turns it on and off.
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+}));
+
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
+    onApplicationSettingsChanged: () => () => undefined,
+  }),
+}));
+
+beforeEach(() => {
+  clearAllDrafts();
+  applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+});
 afterEach(() => vi.unstubAllGlobals());
 
 const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
@@ -44,6 +60,7 @@ function renderComposer(
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
   sending = false,
   onAttach: (files: FileList | File[]) => void = vi.fn(),
+  detail: WorkstreamDetail = workstream,
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -64,7 +81,7 @@ function renderComposer(
         onStop={async () => undefined}
         sending={sending}
         uploading={false}
-        workstream={workstream}
+        workstream={detail}
       />
     </Tooltip.Provider>,
   );
@@ -358,5 +375,136 @@ describe('WorkstreamComposer draft caching', () => {
     renderComposer();
 
     await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toHaveValue(''));
+  });
+});
+
+describe('WorkstreamComposer model readout', () => {
+  const ranOn = (model: string | undefined): WorkstreamDetail => ({
+    ...workstream,
+    latestHarnessRunId: 'run-1',
+    latestHarnessRun: {
+      id: 'run-1',
+      origin: 'opening_message',
+      status: 'completed',
+      ...(model ? { model } : {}),
+      createdAt: '2026-07-31T20:00:00.000Z',
+    },
+  });
+
+  it('shows no model unless developer mode is on', async () => {
+    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
+
+    await screen.findByLabelText('Message the work stream');
+    expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
+  });
+
+  it('names the model this work stream is running on', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
+
+    // The pill is the same one the launch composer offers, so a pinned work
+    // stream reads here exactly as it read when it was pinned. Unpinned, the
+    // name says the id is the latest run's rather than a standing property:
+    // this work stream re-resolves the flag on every launch.
+    const readout = await screen.findByRole('button', {
+      name: "Model: x-ai/grok-4.5 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
+    });
+    expect(readout).toHaveTextContent('Grok 4.5');
+  });
+
+  it('promises a fixed model only where one is actually pinned', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // The pin is the only thing that makes the model a property of the work
+    // stream rather than of its last run: `resolveWorkstreamModelRouting` stops
+    // at the row and never reads the flag. Saying so on an unpinned work stream
+    // would be a stability guarantee the server does not keep.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn('deepseek/deepseek-v4-pro'),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    await screen.findByRole('button', {
+      name: 'Model: deepseek/deepseek-v4-pro — pinned when this work stream was created, so every run uses it. It cannot be changed.',
+    });
+  });
+
+  it('is the launch composer’s dropdown with its trigger disabled', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
+
+    const readout = await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
+    expect(readout).toBeDisabled();
+
+    // The same gesture that opens it on the launch screen. A work stream's model
+    // is decided at creation, so a menu here would offer a change no later run
+    // would honour.
+    fireEvent.pointerDown(readout, { button: 0, ctrlKey: false });
+    fireEvent.click(readout);
+
+    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toBeInTheDocument());
+    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  });
+
+  it('names a served model the pin list does not admit', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // A flag variation may serve any OpenRouter id, and an unpinned work stream
+    // runs on whatever it served. The pill shortens it; the tooltip does not.
+    renderComposer(undefined, false, undefined, ranOn('moonshotai/kimi-k2.5'));
+
+    const readout = await screen.findByRole('button', { name: /^Model: moonshotai\/kimi-k2\.5/u });
+    expect(readout).toHaveTextContent('kimi-k2.5');
+  });
+
+  it('falls back to the pin when the run never got far enough to record a model', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // A run that failed before its first token leaves `harness_runs.model` null.
+    // Calling a pinned work stream **Default** there would describe it as
+    // following a flag it never consults.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn(undefined),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    const readout = await screen.findByRole('button', { name: /^Model: deepseek\/deepseek-v4-pro/u });
+    expect(readout).toHaveTextContent('DeepSeek V4 Pro');
+  });
+
+  it('prefers what ran over what was pinned', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // The two agree on every ordinary pinned work stream. Where they disagree
+    // the run is the truth — it is what answered.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn('x-ai/grok-4.5'),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
+  });
+
+  it('treats a blank recorded model as no model at all', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // `harness_runs.model` is not constrained to be non-empty, and a Worker with
+    // an unset OPENROUTER_* variable resolves to `""` and stores it. Believing
+    // that would render a pill with nothing in it; it falls through to the pin
+    // instead, exactly as a null would.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn('   '),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    const readout = await screen.findByRole('button', { name: /^Model: deepseek\/deepseek-v4-pro/u });
+    expect(readout).toHaveTextContent('DeepSeek V4 Pro');
+  });
+
+  it('claims no model before the work stream has a run to read one off', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, ranOn(undefined));
+
+    // Same answer an untouched launch composer gives, for the same reason: the
+    // flag decides and the renderer cannot see the served variation.
+    const readout = await screen.findByRole('button', {
+      name: 'Model: Default (no run yet) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.',
+    });
+    expect(readout).toHaveTextContent('Default');
   });
 });

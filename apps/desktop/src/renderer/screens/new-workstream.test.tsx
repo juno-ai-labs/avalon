@@ -179,6 +179,8 @@ describe('New work-stream home', () => {
       '00000000-0000-7000-8000-000000000099',
       3,
       expect.any(String),
+      'workspace_home',
+      1,
     ));
   });
 
@@ -412,6 +414,29 @@ describe('New work-stream home', () => {
     ]);
   });
 
+  it('carries a pinned model onto the seeded run so the arrival does not read Default', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    const queryClient = renderScreen();
+
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
+    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
+
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    // The work-stream screen reads the model off this seeded run. Without it the
+    // pill the composer was just showing reads **Default** for the frames
+    // between the navigation and the first refetch, which is the flash this
+    // seeding exists to prevent — and the pin is the only thing on the client
+    // that can answer before the server has recorded a run model.
+    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
+      latestHarnessRun: { model: 'deepseek/deepseek-v4-pro' },
+    }));
+  });
+
   it('opens the work stream on the keystroke rather than on the response', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
@@ -543,6 +568,9 @@ describe('New work-stream home', () => {
       id: 'new-workstream',
       latestHarnessRun: { id: 'run-new-workstream', status: 'running' },
     }));
+    expect(api.startWorkOpportunity).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000099', 3, expect.any(String), 'workspace_home', 1,
+    );
     // Empty rather than invented: the opening turn belongs to the agent and
     // arrives with the refetch.
     expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([]);

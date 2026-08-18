@@ -231,6 +231,13 @@ allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
 object, so they need neither a stable URL nor an unfurl. Give a new deep link a
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
 
+Every browser handoff reports only its closed type, `presented`/`automatic`/
+`manual` method, and local validity through the public-site telemetry boundary.
+The canonical work-stream UUID, custom-protocol target, query, fragment, and any
+single-use material are deliberately excluded. The desktop separately observes a
+successful deep-link activation; the site event is an attempt, not proof that the
+app opened.
+
 ## Failure modes and limits
 
 The refresh sweep's bounds, all deliberate:
@@ -278,8 +285,23 @@ the four fields the selection query and the rewrite gate read.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). Much of the reasoning
-above is recorded inline, but not as dated entries, and it was not reconstructed
-into them. The next substantial change to the link forms, the card, or the sweep
-starts the record, and that entry is that change, written in full.
+### 2026-08-13 — Browser handoffs are measurable without becoming link telemetry
+
+**What changed:** Work-stream and generic deep-link pages now emit bounded
+presented/automatic/manual handoff-attempt events after their existing local
+parsers classify the target.
+
+**Why:** Desktop activation can show that a deep link reached Avalon but cannot
+show which browser shell presented it or whether a malformed target stopped
+before the application.
+
+**Considered and rejected:** Sending the canonical URL, custom-protocol target,
+work-stream ID, query, fragment, or treating an attempted navigation as a
+successful desktop open. Those alternatives expose resource/token material or
+overstate conversion.
+
+**Consequences:** Site and desktop signals describe opposite sides of the
+handoff and can be compared only in aggregate today; the public anonymous epoch
+is not linked to the desktop account. This is the first changelog entry because
+the document predates the changelog rule; earlier reasoning remains inline and
+was not reconstructed.

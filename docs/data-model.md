@@ -20,6 +20,7 @@ knowing an object's ID is enough to read it — it never is.
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/lib/workstream-visibility.ts` | The single expression of who may read a work stream, parameterized by the SQL naming the reader. |
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
+| `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -73,6 +74,14 @@ includes it. Knowing an object ID is never sufficient authorization.
   parameterized by the SQL expression naming the reader so the work-stream room
   can bind by position and its eviction sweep can ask it of a whole column; a call
   site that pastes the rule instead of importing it is how it lost `scope` before.
+- A work stream born from a connector conversation uses that same scope rather
+  than introducing a second visibility model: a public conversation starts as
+  `workspace`, while a private or unclassified one starts as `personal` with the
+  conversation's resolved members seated as participants. This seeds the room at
+  creation; later speakers may join it and publish the same `participant_added`
+  event as an in-product admission, and the ordinary right-click scope toggle may
+  still change it. See
+  [`connectors.md`](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
 - **A work stream moves between the two, and privacy is not ownership.**
   `PATCH /workstreams/:id` takes `scope`, and the sidebar's right-click menu offers
   it as **Make private** / **Make public to workspace**, named for the state it
@@ -240,6 +249,24 @@ includes it. Knowing an object ID is never sufficient authorization.
   so a replayed tool receipt resolves to the wake-up its first attempt created;
   `status` moves `pending → fired` under a version guard before the run is launched,
   making a wake-up at-most-once rather than at-least-once.
+- Terminal control-plane rows are regional and tenant-first.
+  `workstream_sandboxes` owns one generation, authority fingerprint, provider
+  reconciliation identity, exclusive operation lease, lifecycle deadlines, and
+  final-diff pointer per work stream. `sandbox_tasks` binds one command to one
+  harness tool receipt and retains only command hash, terminal state, exit,
+  termination reason, byte counts, and bounded head/tail plus an optional full-log
+  resource. `sandbox_imported_resources` records planned and completed imports
+  per generation, destination, source hash, and byte size so a retry never trusts
+  pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
+  own the revision-fenced preview/confirm/read-back protocol.
+  `workstream_terminal_repositories` stores the immutable numeric GitHub
+  repository ID, canonical name, selected base/ref/SHA, fixed head ref, durable
+  requested remote-access ceiling, and connection; `terminal_publication_grants` retains run/principal provenance for
+  the optional typed publisher; `repository_publications` converges its
+  branch/PR writes. Standard full-access Git/CLI writes do not depend on these
+  receipt tables. Provider IDs and
+  repository names are facts, never authorization. See
+  [`terminal-workspaces.md`](terminal-workspaces.md).
 
 ### Activity log and digests
 
@@ -337,6 +364,46 @@ includes it. Knowing an object ID is never sufficient authorization.
 - `audit_events` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
+### Regional telemetry
+
+Telemetry uses regional D1 as a durable policy boundary, not as product truth.
+`users.analytics_person_id` and `workspaces.analytics_workspace_id` are random,
+immutable destination identities; they are deliberately unrelated to product
+primary keys. The user row also owns the default-on product-analytics preference,
+its compare-and-set version, and an opaque handle through which Global projects a
+preference change to an EU account without copying its regional user ID.
+
+The tables have distinct lifecycles rather than one catch-all event store:
+
+- `telemetry_onboarding_journeys` binds one anonymous login epoch to an immediate
+  coarse Global or EU route while no workspace exists. It is a route record, not a
+  region-pending queue.
+- `telemetry_accepted_events` and `telemetry_delivery_receipts` make event upload
+  idempotent. Global accepted rows are an outbox for PostHog; EU accepted rows are
+  internal-only. `telemetry_eu_events` is an independently expiring semantic
+  projection with trusted release, platform, channel, launch/session, and
+  operation dimensions for regional funnel and reliability queries.
+- `telemetry_identity_links` records the one anonymous-epoch-to-person link.
+  `telemetry_profile_jobs` separates that non-superseding transition from
+  coalescible person and workspace profile updates.
+- `telemetry_crash_reports` indexes one raw object and owns processing, retry,
+  destination, launch-correlation, and absolute-deletion state. EU occurrences
+  also contribute one flat row to `telemetry_eu_crash_contributions`; query-time
+  aggregation ages each contribution out independently instead of extending old
+  observations when an issue recurs. `telemetry_crash_access_audit` records
+  reason-coded support access without copying the object key or report.
+- `telemetry_destination_state`, `telemetry_ingest_rate_buckets`,
+  `telemetry_rejection_buckets`, and `telemetry_replay_audit` hold bounded
+  operational control and audit data without product payloads.
+
+Every telemetry row that retains data carries an absolute deadline, and migration
+triggers reject deadline extension. Accepted delivery metadata and full crash
+occurrences live for at most 90 days; EU semantic and minimized crash
+contributions live for at most 13 months. Raw dumps, source maps, and native
+symbols are outside the ordinary regional payload bucket in the region's dedicated
+`TELEMETRY_PAYLOADS` R2 bucket. See [`telemetry.md`](telemetry.md) for routing,
+collection, opt-out, and destination behavior.
+
 ## Invariants
 
 1. **Every tenant-owned table carries `workspace_id`, and every repository lookup
@@ -368,6 +435,14 @@ includes it. Knowing an object ID is never sufficient authorization.
     diverged from every database that has not.
 11. **Runtime request handlers never attempt broad schema migration.** A Worker
     that migrates on demand migrates concurrently, once per isolate.
+12. **A telemetry deletion deadline is absolute and immutable.** Delivery,
+    processing, replay, recurrence, or destination acknowledgement may change a
+    state column but never renew the row. EU aggregate queries operate on
+    independently expiring contribution rows rather than a mutable issue lifetime.
+13. **A Terminal sandbox row is unique by `(workspace_id, workstream_id)` and its
+    provider/stable names are unique inside that workspace.** Two live generations
+    for one stream would defeat mutation serialization and make authority
+    revocation nondeterministic.
 
 ## Boundary
 
@@ -385,7 +460,9 @@ has a document, and the column notes above point at it rather than restating it:
 | The draft automation lifecycle | [`automation-drafts.md`](automation-drafts.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
+| Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
+| Daytona Terminal sandbox, task, policy, and publication behavior | [`terminal-workspaces.md`](terminal-workspaces.md) |
 
 ## Failure modes and limits
 
@@ -439,6 +516,149 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-15 — Connector conversations seed the existing work-stream scope
+
+**What changed:** A work stream started from a connector conversation now chooses
+the existing `workstreams.scope` from that conversation: public maps to
+`workspace`, while private or unknown maps to `personal` and starts with the
+resolved conversation members as participants. Later speakers are admitted to
+the same room.
+
+**Why:** A Slack thread previously belonged to the first linked member, so other
+members of the conversation could not continue it. The work-stream scope already
+expressed the needed public/private split: `personal` has always meant active
+participants only, not one owner.
+
+**Considered and rejected:** Renaming `scope` to a second `visibility` column and
+renaming the API and socket contract around it. That duplicated an existing
+authorization model, introduced a migration window for the same two states, and
+broke released desktop clients without enabling the connector behavior.
+
+**Consequences:** Connector code translates provider-facing public/private words
+once at creation. The database, PATCH endpoint, socket event, right-click menu,
+and feature-flag targeting attribute keep their existing scope contract. Later
+connector admissions publish `participant_added`, keeping live clients aligned
+with that durable participant room.
+
+### 2026-08-13 — OAuth attempts retain one bounded telemetry contract shape
+
+**What changed:** Connector OAuth attempts retain the negotiated telemetry event
+version, requested scope, capability-count integer, and reconnect flag alongside
+their operation ID. Existing rows default to V1; current clients bind V2 after
+the attempt is durably created. Migration
+`0077_connector_oauth_telemetry_shape.sql` adds only these four fields after the
+already-shipped regional telemetry migration.
+
+**Why:** Terminal OAuth failures occur after the renderer is gone and often
+before a connection exists. Without the admitted shape, the API could either
+emit a sparse legacy outcome or guess the dimensions required by the V2 event.
+
+**Considered and rejected:** Provider-state payload inspection at reporting time
+and parallel V1/V2 emission. The former couples analytics to encrypted OAuth
+secrets; the latter double-counts one setup journey.
+
+**Consequences:** These columns are bounded metadata, not provider payloads.
+Future event versions must persist any terminal dimensions at admission and
+must not reinterpret an attempt after its operation binding is set.
+
+### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
+
+**What changed:** Migration
+`0076_terminal_recoverable_github_connections.sql` replaces the Terminal
+repository insert guard so every non-disabled GitHub connection remains a valid
+reference. It also records the model's selected `remote_access` ceiling on the
+work-stream repository row. Repository policy updates atomically invalidate
+cached mounted-token expiry in the same D1 batch, while connection disable
+atomically revokes affected selections.
+
+**Why:** `error` and `needs_reconnect` are cached observations that provider
+revalidation may recover, but the original trigger treated them as permanent
+revocation and contradicted the connector contract. Separating a policy write
+from token invalidation also admitted a broader credential after interruption.
+
+**Considered and rejected:** Removing the trigger or permitting disabled rows.
+The workspace/type guard remains valuable, and `disabled` is the one intentional
+durable stop state.
+
+**Consequences:** Code may attempt current provider verification for every
+non-disabled connection, while database writes still reject disabled and
+cross-workspace references. The stored checkout ceiling and current connector
+policy both constrain token minting. Policy, disable, and mounted-credential
+state must continue to move transactionally.
+
+### 2026-08-13 — Publication grants become compatibility provenance
+
+**What changed:** Existing Terminal publication-grant rows no longer parse
+request prose or limit a run to one write. They remain as provenance/FK records
+for the optional typed publisher while full-access sandboxes may use standard
+Git and GitHub CLI directly.
+
+**Why:** Connector repository policy is the durable authorization choice, and
+normal PR work may push several commits. Rebuilding the shipped migration only
+to remove a now-optional receipt relationship would add migration risk without
+changing the model-facing behavior.
+
+**Considered and rejected:** Dropping/rebuilding the tables immediately and
+keeping single-use semantics. Future schema work may retire the compatibility
+rows only with a normal forward migration.
+
+**Consequences:** Code must not treat `consumed_at` as an authorization gate.
+Typed publications may share one run provenance row; their own invocation rows
+remain the idempotency boundary.
+
+### 2026-08-13 — Telemetry rows enforce independent absolute lifecycles
+
+**What changed:** Migration `0074` adds random analytics identities, the account
+preference, regional accepted/outbox and EU projection rows, ordered
+identity/profile jobs, native crash indexes and contributions, replay/access
+audits, rate buckets, destination circuits, processing leases, and analysis
+context. Immutable-deadline triggers cover every retained telemetry record.
+
+**Why:** Offline Electron delivery, destination retries, and recurring crash
+issues all need durable state, but none may renew old data or turn Global into a
+holding area for an unresolved region. EU analysis also needs useful release and
+launch dimensions without a US destination.
+
+**Considered and rejected:** One polymorphic event table, a mutable crash-issue
+aggregate, product primary keys as PostHog identities, and extending retention on
+retry. Each would either erase distinct policy lifecycles, keep old contributions
+alive indefinitely, leak internal identifiers, or defeat the published ceiling.
+
+**Consequences:** New telemetry schema changes are additive migrations; code must
+preserve the stored random identities and original deadlines. Operators reap D1
+and dedicated R2 together, and EU analysis reconstructs issue and crash-free views
+from surviving rows.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Regional Terminal state separates authority from provider facts
+
+**What changed:** Migration `0075_terminal_workspaces.sql` adds tenant-first
+sandbox, task, import, network-policy, repository-selection, publication-grant,
+and convergent-publication rows with work-stream/workspace guards and unique
+replay keys.
+
+**Why:** Daytona persistence cannot be Avalon's authorization or retry ledger.
+Sandbox creation, command submission, egress mutation, and GitHub writes all
+have ambiguous provider outcomes that require durable regional intent and
+receipts independent of provider state.
+
+**Considered and rejected:** Storing lifecycle only in Daytona labels, reusing
+generic tool receipts as the entire command/publication state machine, and
+keying repositories only by mutable `owner/name`. None carries the domain state
+needed to reconcile races or prove exact GitHub identity.
+
+**Consequences:** Every Terminal query and mutation includes `workspace_id`;
+provider identifiers never authorize; command/publication state converges on the
+existing tool invocation; publication retries never replace an earlier
+invocation's audit row merely because they target the same branch; and future
+schema changes receive a new migration rather than editing `0075` after
+deployment.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — One pointer and one outbox replace the model-object catalog
 

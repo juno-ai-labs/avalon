@@ -1,4 +1,5 @@
 import {
+  AgentModelOverrideSchema,
   ExternalActorSchema,
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
 } from "@avalon/contracts";
@@ -222,6 +223,10 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
     scope: row.scope === "personal" ? "personal" : "workspace",
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
+    // Re-validated on read rather than trusted, the same way the API's mapper
+    // does it: a model retired from the closed set reads as unpinned here
+    // because that is what the work stream will actually run as.
+    modelOverride: AgentModelOverrideSchema.safeParse(row.model_override).data ?? null,
     nextPendingWakeup: row.next_pending_wakeup_at != null
       && row.next_pending_wakeup_prompt_prefix != null
       ? {
@@ -315,6 +320,12 @@ export interface CreateWorkstreamInput {
   openingStructuredContent?: Record<string, unknown> | null;
   clientMessageId: string;
   participantUserIds: string[];
+  /**
+   * Who may read it. Defaults to `workspace`; a caller passes `personal` when
+   * the work stream is born private — a connector conversation that was itself
+   * private, whose members are `participantUserIds`.
+   */
+  scope?: Scope;
   attachmentIds?: string[];
   /**
    * An OpenRouter model id every run of this work stream is pinned to, ahead of
@@ -440,8 +451,8 @@ export function createDatabase(db: D1DatabaseLike) {
             `INSERT INTO workstreams
              (id, workspace_id, title, title_status, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
               next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override,
-              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash, scope)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             workstreamId,
@@ -460,6 +471,7 @@ export function createDatabase(db: D1DatabaseLike) {
             input.opportunitySnapshot?.version ?? null,
             input.opportunitySnapshot?.displayPromptHash ?? null,
             input.opportunitySnapshot?.executionPromptHash ?? null,
+            input.scope ?? "workspace",
           ),
         db
           .prepare(

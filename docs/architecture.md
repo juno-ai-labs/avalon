@@ -20,18 +20,19 @@ apps/
 packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
-  agent-harness/           Bind 11/OpenRouter adapter, prompts, skills, classifiers, tools
+  agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item. |
+| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, and the main-owned telemetry/crash boundary. |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
+| `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkstreamRoom` and `WorkspaceScheduler`. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | The generic work-stream Workflow and the idempotent activity consumer. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
@@ -58,7 +59,10 @@ docs/                      Product, architecture, security, setup, runbooks
    macOS menu bar status item, which is the one surface that exists with no
    window open — Avalon opens at login by default and starts hidden — and which
    therefore reads the regional API for itself rather than through a renderer;
-   [`menu-bar.md`](menu-bar.md) owns it.
+   [`menu-bar.md`](menu-bar.md) owns it. Main also owns the typed telemetry
+   reporter, route and identity epochs, local spool, Crashpad generations, and
+   authenticated regional upload; the renderer can only invoke registered
+   semantic calls.
 2. **`apps/api`** is a Hono application deployed as the same Cloudflare Worker
    code in Global and EU environments. It owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
@@ -85,9 +89,11 @@ flowchart LR
   C --> D
   C --> S["WorkspaceScheduler DO"]
   S --> W["Generic Workstream Workflow"]
-  W --> A["Avalon Bind 11 adapter"]
+  W --> A["Avalon Bind adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
+  A --> X["Deferred Terminal plugin"]
+  X --> DT["Private Daytona sandbox"]
   W --> R
   T --> G["Google APIs"]
   T --> M["Signed webhook"]
@@ -127,6 +133,18 @@ revokes the bootstrap session. The desktop then pins that regional API base URL.
 Both deployments retain separate D1, R2, Durable Object namespaces,
 session-signing and credential-encryption keys, and Worker secrets. Cross-region
 workspace-content access is not implemented.
+
+Telemetry begins before workspace selection without introducing a third data
+plane. Global reduces Cloudflare's country signal to an immediate Global/EU route;
+an affirmative EU result crosses only as a validated semantic projection over
+`EU_TELEMETRY_BRIDGE` and prevents pre-region crash saving. The explicit workspace
+binding controls future signals, but accepted history never moves. Global delivers
+approved rows to PostHog; EU terminates telemetry in its regional D1, dedicated
+EU-jurisdiction R2, and pinned crash processor. EU uses the separate
+`GLOBAL_TELEMETRY_CONTROL` binding only for opaque preference mutation and
+Global-signed journey authorization/closure; the key and destination identities
+stay in Global. [`telemetry.md`](telemetry.md) owns the full event, preference,
+identity, crash, and restricted operator flow.
 
 ### Identity and secrets
 
@@ -272,7 +290,16 @@ A lightweight structured classifier decides whether a human message is
 `agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages start one
 generic Cloudflare Workflow instance parameterized by opaque IDs.
 
-The production entry point adapts `@juno-ai/bind` 11.0.0 to Avalon's OpenRouter
+Supported regional work-stream runtimes may discover the deferred Terminal
+plugin. Loading it changes only Bind's prompt/tool surface; the first file,
+command, resource, or repository tool call lazily crosses the regional API into
+one private Daytona sandbox for that work stream. D1 remains the authority for
+generation, mutation leases, tasks, egress revision, retention, resource
+exchange, and GitHub publication. The provider supplies isolation and process/
+filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
+[`terminal-workspaces.md`](terminal-workspaces.md).
+
+The production entry point adapts `@juno-ai/bind` 13.0.0 to Avalon's OpenRouter
 transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Avalon owns authorization, regional
@@ -321,6 +348,14 @@ time series, not exact event recovery, so Avalon never reconstructs a run from
 loop-churn datapoints. D1 remains canonical; Workers Logs and Traces provide
 correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
 positional dataset schema and sampling-aware queries.
+
+Daytona platform timings use a second fixed-grain dataset,
+`avalon_terminal_operations`. One content-free point measures provider create,
+managed-image bootstrap, manifest verification, stopped warming, or archived
+restore. Keeping platform operations out of `avalon_agent_runs` lets sampling
+and percentiles answer image/cold-start questions without pretending a provider
+phase is a model-run summary. The Terminal adapter emits both the structured log
+and non-blocking aggregate point; neither is canonical sandbox state.
 
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
@@ -469,6 +504,11 @@ precede any LLM classification.
 - **The renderer is never trusted with a secret.** It never receives provider
   credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration
   keys, raw IPC, Node integration, or arbitrary navigation.
+- **Telemetry observes product state; it never becomes product state or changes
+  its result.** Producers emit a closed semantic contract, API outcomes come from
+  the authoritative service, and a reporter/destination/processor failure is
+  swallowed outside that action. Direct PostHog or arbitrary capture from the
+  renderer would violate both halves of this rule.
 
 ## Boundary
 
@@ -482,12 +522,13 @@ document, and it does not absorb one when it grows:
 | Identity, tenancy, and the D1 schema | [`data-model.md`](data-model.md) |
 | The Global/EU boundary in detail | [`regionalization.md`](regionalization.md) |
 | Trust boundaries and the renderer's isolation | [`security.md`](security.md) |
-| The Bind 11 adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
+| The Bind adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
 | The connector registry and manifest model | [`connectors.md`](connectors.md) |
 | Model routing flags | [`feature-flags.md`](feature-flags.md) |
 | The activity log and scheduled digests | [`digests.md`](digests.md) |
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
+| Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
 
 A new module is added to this map in a sentence and documented in its own file per
@@ -555,9 +596,11 @@ that takes both regions down without Cloudflare credentials.
 ## Regional impact
 
 The Global and EU deployments run the same Worker code and share nothing but the
-identity control plane and the named RPC bridges. Each retains its own D1, R2,
-Durable Object namespaces, session-signing and credential-encryption keys, and
-Worker secrets. EU Durable Object namespaces resolve through `jurisdiction("eu")`.
+identity control plane and the named RPC bridges. Each retains its own D1, ordinary
+R2, dedicated telemetry R2, Durable Object namespaces, telemetry crash processor,
+session-signing and credential-encryption keys, and Worker secrets. EU Durable
+Object namespaces and its telemetry bucket resolve with EU jurisdiction; EU has no
+PostHog or telemetry Analytics Engine destination.
 
 This is a logical and storage boundary for the prototype, not a claim that all
 subprocessors provide complete EU-only processing. The Global identity control
@@ -575,9 +618,126 @@ contents, model context, and unnecessary personal information. External actions
 and authorization decisions create audit records with structured correlation IDs.
 Immutable run scopes and live connection reauthorization ensure progressive plugin
 activation can narrow, but never widen, a run's original authority.
+Telemetry IPC is a closed named surface, local files are owner-only and bounded,
+and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
+access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-13 — Telemetry separates data projection from control authority
+
+**What changed:** The architecture now names two directional telemetry RPC
+surfaces: validated event/outcome projection from Global to EU and opaque
+preference/journey control from EU to Global. Restricted regional telemetry
+operations are mounted separately from the product-session API.
+
+**Why:** EU onboarding needs both an immediate regional event path and a way to
+verify Global-issued journey authority, but combining them or sharing the signing
+key would turn a narrow region bridge into a general cross-region data plane.
+
+**Considered and rejected:** One bidirectional telemetry bridge, a shared
+capability key, and leaving replay/raw-access helpers without a deployed
+authorization boundary.
+
+**Consequences:** Event payloads cross only Global-to-EU; EU-to-Global commands
+carry no event, dump, regional analytics identity, or destination key. Operator
+access remains independently authenticated in the owning region.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-12 — Regional telemetry joins client intent to server truth
+
+**What changed:** Electron main now owns a typed, durable regional reporter and
+Crashpad lifecycle; APIs accept the same closed contract, add authoritative
+outcomes, and route to an internal EU sink or idiomatic Global PostHog adapter.
+Anonymous onboarding receives an immediate coarse route and later same-region
+person link.
+
+**Why:** Product funnels need the intent visible only in the client and the result
+known only by the service, while crash reporting must survive renderer and process
+failure without placing provider authority in that renderer.
+
+**Considered and rejected:** A PostHog SDK in Electron, automatic DOM/network
+capture, a Global region-pending queue, Segment as a second destination layer, and
+using analytics as canonical state. Those shapes either weaken the trust/region
+boundary or lose the semantic server outcome.
+
+**Consequences:** Telemetry remains observational and independently fallible.
+Every new event enters the shared registry and receives tests at producer,
+regional acceptance, and destination boundaries; EU and Global resources are
+operated independently.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-12 — Main owns route-final native crash generations
+
+**What changed:** Added the first regional telemetry module boundary in Electron
+main: Crashpad writes only inside an active route-final generation, and a later
+process rotates or purges that whole generation before starting another handler.
+The detailed lifecycle and future regional pipeline live in
+[`telemetry.md`](telemetry.md).
+
+**Why:** Crashpad cannot be stopped after startup and cannot use Avalon's required
+authenticated-header uploader. Giving main ownership of the directory above the
+live database preserves Electron's supported boundary while allowing policy,
+region, and absolute retention to be enforced between launches.
+
+**Future changes must preserve:** Renderer code never owns crash paths or
+transport, and main never reads or mutates a database while its Crashpad handler
+is active.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Daytona platform timing uses its own analytics grain
+
+**What changed:** The two API Workers bind `TERMINAL_ANALYTICS` to
+`avalon_terminal_operations`. The Terminal provider emits one versioned,
+content-free point for each create, bootstrap, or start operation, with separate
+phase durations and no tenant or provider-operation identifier.
+
+**Why:** An owned snapshot can remove recurring package installation but cannot
+remove Daytona allocation, policy read-back, or Avalon's verification. Mixing
+those provider phases into root-run summaries would hide which latency is
+actually removable and make both datasets ambiguous.
+
+**Considered and rejected:** One end-to-end Worker log only, adding fields to
+`avalon_agent_runs`, and storing raw bootstrap output. Those approaches lose
+sampling-aware distributions, mix event grains, or enlarge the content/secrets
+boundary for no image decision value.
+
+**Consequences:** Analytics failure never changes provider behavior. Operators
+query the dedicated dataset through the checked-in human-readable report and
+retain D1/Workers Logs for exact diagnosis; Cloudflare's account-level retention
+and regional caveat apply.
+
+### 2026-08-13 — Daytona is an external execution substrate, not a fourth Avalon surface
+
+**What changed:** The regional API composes a deferred Terminal plugin whose
+first tool call reaches a private Daytona sandbox. Avalon D1/R2, Bind receipts,
+the workspace scheduler, resource subsystem, and GitHub App publisher retain
+their existing ownership.
+
+**Why:** Code execution needs an isolation substrate, but making Daytona a
+canonical application surface would move authorization, retry state, resources,
+and regional lifecycle outside Avalon's existing owners.
+
+**Considered and rejected:** Treating provider labels/state as the control
+plane, exposing Daytona directly to Electron, and introducing a separate
+Terminal Workflow. They respectively cannot enforce tenant authority, create a
+new client trust boundary, or duplicate the existing harness/scheduler state
+machines.
+
+**Consequences:** Daytona SDK calls remain behind one regional adapter; loading
+Terminal cannot allocate; and any alternative provider must implement the same
+internal sandbox contract without changing model-facing tools or canonical
+state.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
 

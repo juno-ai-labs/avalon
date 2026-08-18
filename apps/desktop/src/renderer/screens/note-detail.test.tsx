@@ -6,10 +6,20 @@ import { NoteDetailScreen } from './note-detail';
 
 const state = vi.hoisted(() => ({
   getNote: vi.fn(),
+  noteNavigation: vi.fn(() => 'opened' as const),
+  reportTelemetryProductIntent: vi.fn(),
 }));
 
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({ api: { getNote: state.getNote } }),
+}));
+vi.mock('../lib/telemetry', () => ({
+  currentSurfaceEntrypoint: () => 'sidebar_note',
+  noteNavigation: state.noteNavigation,
+  reportTelemetryProductIntent: state.reportTelemetryProductIntent,
+  telemetryCountBucket: () => 'one',
+  telemetryJourneyDuration: () => '5s_30s',
+  telemetryVisibility: (scope: string) => scope === 'workspace' ? 'public' : 'private',
 }));
 
 function detail(overrides: Record<string, unknown> = {}) {
@@ -75,6 +85,14 @@ describe('NoteDetailScreen', () => {
     expect(within(rail).getByText('The customer wants a smaller onboarding flow.')).toBeVisible();
     expect(within(rail).queryByText(/00:05|5,000|16,000/u)).not.toBeInTheDocument();
     expect(screen.getByText('Private')).toBeVisible();
+    expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'note_opened_v2', noteId: '00000000-0000-4000-8000-000000000111',
+      visibility: 'private', navigation: 'opened', recordingState: 'complete',
+      hasSummary: true, hasTranscript: true,
+    }));
+    expect(state.reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'note_opened' }),
+    );
   });
 
   it('shows handwritten content when a note has no generated summary', async () => {

@@ -28,6 +28,7 @@ import {
   RefreshRequestSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  StartWorkOpportunityRequestSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -39,6 +40,19 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("adds a bounded optional suggested-work surface without breaking older clients", () => {
+    const legacy = { version: 3, idempotencyKey: "legacy-attempt" };
+    expect(StartWorkOpportunityRequestSchema.safeParse(legacy).success).toBe(true);
+    expect(StartWorkOpportunityRequestSchema.parse({
+      ...legacy,
+      surface: "menu_bar",
+    })).toMatchObject({ surface: "menu_bar" });
+    expect(StartWorkOpportunityRequestSchema.safeParse({
+      ...legacy,
+      surface: "private-screen-name",
+    }).success).toBe(false);
+  });
+
   it("uses one connector OAuth provider catalog across protocol consumers", () => {
     expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
     expect(ConnectorOAuthProviders).toContain("granola");
@@ -239,6 +253,12 @@ describe("boundary contracts", () => {
       "run_tool_call_limit_exceeded",
       "run_cost_limit_exceeded",
       "context_limit_exceeded",
+      // The two provider arms are separate on purpose: one says Avalon called
+      // and got nothing, the other that Avalon declined to call. Neither may
+      // collapse back into `harness_execution_failed`, which means Avalon's own
+      // defect and tells a member not to bother retrying.
+      "provider_unavailable",
+      "provider_circuit_open",
     ]));
     expect(() => HarnessFailureCodeSchema.parse("generic_limit")).toThrow();
   });
@@ -582,6 +602,27 @@ describe("boundary contracts", () => {
       reason: "message"
     });
     expect(result.success).toBe(false);
+  });
+
+  it("carries only a bounded server-owned telemetry correlation for a user-started run", () => {
+    const parsed = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      harnessRunId: id,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: id },
+      telemetryOperationId: id,
+      telemetrySubjectUserId: id,
+      reason: "human_message",
+    });
+    expect(parsed).toMatchObject({ telemetryOperationId: id, telemetrySubjectUserId: id });
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...parsed,
+      telemetryOperationId: "not-an-id",
+    }).success).toBe(false);
   });
 
   it("bounds Slack-origin context carried into a work-stream run", () => {

@@ -27,6 +27,13 @@ The packaged app then performs the native macOS flow:
 
 “Use the system icon” removes the saved preference, clears the Finder custom icon, clears the plugin content view, and refreshes the cache. The adaptive `.icon` then resumes automatically.
 
+Product analytics records the actual icon identifier and automatic/custom state
+once per initialized launch. A successful selection records the previous and
+applied closed identifiers plus both automatic states. The event runs after the
+native operation and preference commit; a failed selection or rollback produces
+no completion event. Identified Global events update the corresponding current
+PostHog person properties.
+
 This follows the architecture described in Granola's [macOS app-icon implementation](https://www.granola.ai/blog/so-you-think-its-easy-to-change-an-app-icon). The cache refresh dynamically calls the private `SLSIconAppearanceConfiguration` selector used by System Settings. It is best-effort: icon selection still succeeds if that selector is unavailable on a later macOS release.
 
 ## Artwork rules
@@ -58,7 +65,7 @@ Do not hand-edit the generated light/dark copies or renderer previews. A later g
 ## Add a selectable icon
 
 1. Add an opaque, full-bleed 1024×1024 PNG under `apps/desktop/resources/app-icons`. Do not pre-mask it; `build-macos-icon-components.mjs` compiles it through the checked-in `.icon` template.
-2. Add its identifier, label, ICNS filename, and artwork filename to `applicationIconChoices` in `apps/desktop/src/common/application-icons.ts`. This allowlist is shared by renderer and main; IPC never accepts a filesystem path.
+2. Add its identifier to `TELEMETRY_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The shared identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
 3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/AvalonDockTilePlugin.m`.
 4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce the 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
 5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
@@ -110,3 +117,23 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **The icon is square or double-masked:** confirm the source PNG is full-bleed and has no baked mask, inset, or platform shadow, then rebuild the selectable ICNS renditions with `pnpm --filter @avalon/desktop build:macos-icons`.
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @avalon/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
+
+## Changelog
+
+### 2026-08-13 — Icon choice has one product and telemetry taxonomy
+
+**What changed:** The selectable icon identifiers now come from the closed
+telemetry contract, while the desktop owns labels and generated filenames.
+Successful native selections emit previous and applied icon/automatic state;
+launch snapshots preserve current state.
+
+**Why:** Product analysis needs to know which icon was actually applied, but a
+second analytics-only list would drift when a new selectable icon is added.
+
+**Considered and rejected:** Reporting display labels, filesystem paths, or the
+renderer click before the AppKit operation. They are respectively mutable,
+unbounded, or capable of recording a selection that rolled back.
+
+**Consequences:** Adding an icon starts at `TELEMETRY_APPLICATION_ICON_IDS` and
+must update the desktop label, artwork, plugin, packaging, and telemetry tests.
+Product analytics opt-out suppresses the events and current-person updates.

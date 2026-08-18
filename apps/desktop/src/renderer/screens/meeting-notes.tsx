@@ -22,6 +22,12 @@ import { Button, IconButton, InlineError, Modal } from '../components/primitives
 import { MarkdownBody } from '../components/workstream-blocks';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import {
+  reportTelemetryProductIntent,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+  telemetryVisibility,
+} from '../lib/telemetry';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
@@ -55,6 +61,11 @@ export function noteIdFromSearch(search: string, createId: () => string = () => 
 
 function currentNoteId(): string {
   return noteIdFromSearch(window.location.search);
+}
+
+function meetingEntrypoint(): 'sidebar' | 'menu_bar' | 'unknown' | null {
+  const value = new URLSearchParams(window.location.search).get('meetingEntrypoint');
+  return value === 'sidebar' || value === 'menu_bar' || value === 'unknown' ? value : null;
 }
 
 function defaultMeetingTitle(): string {
@@ -122,9 +133,21 @@ function permissionIsBlocked(status: DesktopMediaPermissionStatus | undefined): 
   return status === 'denied' || status === 'restricted';
 }
 
+function recordingPermissionClass(permissions: DesktopMeetingAudioPermissions | undefined):
+  'both_granted' | 'microphone_only' | 'system_only' | 'both_blocked' | 'unknown' {
+  if (!permissions) return 'unknown';
+  const microphone = !permissionIsBlocked(permissions.microphone);
+  const system = !permissionIsBlocked(permissions.systemAudio);
+  if (microphone && system) return 'both_granted';
+  if (microphone) return 'microphone_only';
+  if (system) return 'system_only';
+  return 'both_blocked';
+}
+
 export function MeetingNotesScreen(): React.JSX.Element {
   const { api, session } = useAppSession();
   const noteId = useMemo(currentNoteId, []);
+  const creationEntrypoint = useMemo(meetingEntrypoint, []);
   const initialTitle = useMemo(defaultMeetingTitle, []);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState(initialTitle);
@@ -157,12 +180,17 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const currentSegmentStartedOffsetRef = useRef(0);
   const segmentBoundaryOffsetRef = useRef<number | null>(null);
   const finalizationInFlightRef = useRef<Promise<boolean> | undefined>(undefined);
+  const transcriptionAudioSourceRef = useRef<
+    'microphone_and_system' | 'microphone_only' | 'system_only' | 'unknown'
+  >('unknown');
   const generationTailRef = useRef<Promise<unknown>>(Promise.resolve());
   const liveGenerationRef = useRef<Promise<boolean> | null>(null);
   const persistenceTailRef = useRef<Promise<void>>(Promise.resolve());
   const notesBodyRef = useRef<HTMLDivElement | null>(null);
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
   const autoStartRequestedRef = useRef(false);
+  const pauseCountRef = useRef(0);
+  const terminalTelemetryReportedRef = useRef(false);
   const readOnly = Boolean(note && note.ownerUserId !== session?.user.id);
 
   const hydrateNote = useCallback((next: NoteDetail): void => {
@@ -226,14 +254,23 @@ export function MeetingNotesScreen(): React.JSX.Element {
     setLoading(true);
     setSaveError(undefined);
     void api.createNote(noteId, initialTitle).then((created) => {
-      if (active) hydrateNote(created);
+      if (active) {
+        hydrateNote(created);
+        if (creationEntrypoint) reportTelemetryProductIntent({
+          kind: 'note_created',
+          noteId: created.id,
+          visibility: telemetryVisibility(created.scope),
+          noteType: 'meeting_or_voice',
+          entrypoint: creationEntrypoint,
+        });
+      }
     }).catch((error: unknown) => {
       if (active) setSaveError(error instanceof Error ? error.message : 'Avalon could not open this note.');
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [api, hydrateNote, initialTitle, noteId]);
+  }, [api, creationEntrypoint, hydrateNote, initialTitle, noteId]);
 
   useEffect(() => {
     if (!api || refreshIntervalMs !== null) return undefined;
@@ -461,9 +498,11 @@ export function MeetingNotesScreen(): React.JSX.Element {
     setPermissionPreparing(true);
     setSavePending(true);
     setSaveError(undefined);
+    let preparedPermissions: DesktopMeetingAudioPermissions | undefined;
     try {
       const bridge = desktopBridge();
       const permissions = await bridge.prepareMeetingAudioPermissions();
+      preparedPermissions = permissions;
       setAudioPermissions(permissions);
       if (permissionIsBlocked(permissions.microphone) && permissionIsBlocked(permissions.systemAudio)) {
         throw new Error(
@@ -488,6 +527,27 @@ export function MeetingNotesScreen(): React.JSX.Element {
         dictation.start(),
       ]);
       applyNotePatch(next, patch);
+      const audioSource = !permissionIsBlocked(permissions.microphone) && !permissionIsBlocked(permissions.systemAudio)
+        ? 'microphone_and_system'
+        : !permissionIsBlocked(permissions.microphone)
+          ? 'microphone_only'
+          : !permissionIsBlocked(permissions.systemAudio) ? 'system_only' : 'unknown';
+      transcriptionAudioSourceRef.current = audioSource;
+      reportTelemetryProductIntent({
+        kind: 'transcription_state_changed',
+        noteId,
+        state: 'started',
+        visibility: telemetryVisibility(next.scope),
+        audioSource,
+      });
+      reportTelemetryProductIntent({
+        kind: 'recording_start_completed',
+        noteId,
+        result: 'success',
+        permissionClass: recordingPermissionClass(permissions),
+        audioSource,
+        entrypoint: creationEntrypoint ?? 'unknown',
+      });
       void bridge.getMeetingAudioPermissions().then(setAudioPermissions).catch(() => undefined);
     } catch (error) {
       recordingIntentRef.current = false;
@@ -495,11 +555,21 @@ export function MeetingNotesScreen(): React.JSX.Element {
       setRecording(false);
       await dictation.stop().catch(() => undefined);
       setSaveError(error instanceof Error ? error.message : 'Avalon could not start this recording.');
+      reportTelemetryProductIntent({
+        kind: 'recording_start_completed',
+        noteId,
+        result: recordingPermissionClass(preparedPermissions) === 'both_blocked'
+          ? 'permission_denied'
+          : 'capture_failed',
+        permissionClass: recordingPermissionClass(preparedPermissions),
+        audioSource: 'unknown',
+        entrypoint: creationEntrypoint ?? 'unknown',
+      });
     } finally {
       setPermissionPreparing(false);
       setSavePending(false);
     }
-  }, [api, applyNotePatch, dictation.start, dictation.stop, noteId, readOnly, startedAt, stopRecordingClock]);
+  }, [api, applyNotePatch, creationEntrypoint, dictation.start, dictation.stop, noteId, readOnly, startedAt, stopRecordingClock]);
 
   useEffect(() => {
     if (readOnly) return undefined;
@@ -568,16 +638,53 @@ export function MeetingNotesScreen(): React.JSX.Element {
       // is only reported here — and it is the failure most worth keeping a
       // window open for, since nothing in the note screen can ask for the
       // summary again.
-      if (!await generateNotes('final', transcriptStatus)) complete = false;
+      const summarySucceeded = await generateNotes('final', transcriptStatus);
+      if (!summarySucceeded) complete = false;
       const patch = {
         recordingStatus: 'complete',
         recordedMs: finalRecordedMs,
         endedAt: new Date().toISOString(),
       } as const;
-      applyNotePatch(await api.updateNote(noteId, patch), patch);
+      const completedNote = await api.updateNote(noteId, patch);
+      applyNotePatch(completedNote, patch);
+      reportTelemetryProductIntent({
+        kind: 'transcription_state_changed',
+        noteId,
+        state: 'completed',
+        visibility: telemetryVisibility(completedNote.scope),
+        audioSource: transcriptionAudioSourceRef.current,
+      });
+      if (!terminalTelemetryReportedRef.current) {
+        terminalTelemetryReportedRef.current = true;
+        reportTelemetryProductIntent({
+          kind: 'recording_terminal',
+          noteId,
+          result: transcriptStatus === 'partial'
+            ? 'partial_transcript'
+            : !summarySucceeded ? 'summary_failed' : complete ? 'complete' : 'capture_failed',
+          duration: telemetryJourneyDuration(finalRecordedMs),
+          segmentCount: telemetryCountBucket(segmentsRef.current.length),
+          pauseCount: telemetryCountBucket(pauseCountRef.current),
+          finalSummaryResult: summarySucceeded ? 'success' : 'failed',
+          audioSource: transcriptionAudioSourceRef.current,
+        });
+      }
       return complete;
     })().catch((error: unknown) => {
       setSaveError(error instanceof Error ? error.message : 'Avalon could not finish saving this note.');
+      if (!terminalTelemetryReportedRef.current) {
+        terminalTelemetryReportedRef.current = true;
+        reportTelemetryProductIntent({
+          kind: 'recording_terminal',
+          noteId,
+          result: 'persistence_failed',
+          duration: telemetryJourneyDuration(finalRecordedMs),
+          segmentCount: telemetryCountBucket(segmentsRef.current.length),
+          pauseCount: telemetryCountBucket(pauseCountRef.current),
+          finalSummaryResult: 'not_attempted',
+          audioSource: transcriptionAudioSourceRef.current,
+        });
+      }
       throw error;
     }).finally(() => {
       finalizationInFlightRef.current = undefined;
@@ -650,7 +757,15 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const pauseRecording = async (): Promise<void> => {
     if (!recording || finalizing || dictation.state !== 'listening') return;
     await dictation.pause();
+    pauseCountRef.current += 1;
     stopRecordingClock();
+    reportTelemetryProductIntent({
+      kind: 'transcription_state_changed',
+      noteId,
+      state: 'paused',
+      visibility: telemetryVisibility(noteRef.current?.scope ?? 'personal'),
+      audioSource: transcriptionAudioSourceRef.current,
+    });
   };
 
   const resumeRecording = async (): Promise<void> => {
@@ -658,10 +773,19 @@ export function MeetingNotesScreen(): React.JSX.Element {
     await dictation.resume();
     activeRecordingStartedAtRef.current = Date.now();
     setNow(Date.now());
+    reportTelemetryProductIntent({
+      kind: 'transcription_state_changed',
+      noteId,
+      state: 'resumed',
+      visibility: telemetryVisibility(noteRef.current?.scope ?? 'personal'),
+      audioSource: transcriptionAudioSourceRef.current,
+    });
   };
 
-  const copy = async (value: string): Promise<void> => {
-    if (value) await desktopBridge().copyText(value);
+  const copy = async (value: string, contentType: 'note_summary' | 'note_transcript'): Promise<void> => {
+    if (!value) return;
+    await desktopBridge().copyText(value);
+    reportTelemetryProductIntent({ kind: 'content_copied', contentType, resourceType: 'note', resourceId: noteId });
   };
 
   const changeVisibility = async (scope: 'personal' | 'workspace'): Promise<void> => {
@@ -671,7 +795,15 @@ export function MeetingNotesScreen(): React.JSX.Element {
     setSaveError(undefined);
     try {
       const patch = { scope };
-      applyNotePatch(await api.updateNote(noteId, patch), patch);
+      const updated = await api.updateNote(noteId, patch);
+      applyNotePatch(updated, patch);
+      reportTelemetryProductIntent({
+        kind: 'note_action_completed',
+        noteId,
+        action: scope === 'workspace' ? 'make_public' : 'make_private',
+        visibility: telemetryVisibility(updated.scope),
+        recordingState: updated.recordingStatus,
+      });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Avalon could not update this note’s visibility.');
     } finally {
@@ -777,7 +909,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           <section aria-labelledby="live-notes-heading" className="meeting-live-notes">
             <header>
               <span><IconAirTrafficControl aria-hidden="true" size={17} /><h2 id="live-notes-heading">Control Tower</h2></span>
-              <IconButton disabled={!notes || notesPending} label="Copy Control Tower" onClick={() => void copy(notes)}>
+              <IconButton disabled={!notes || notesPending} label="Copy Control Tower" onClick={() => void copy(notes, 'note_summary')}>
                 <Copy size={15} />
               </IconButton>
             </header>
@@ -806,7 +938,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           <section aria-labelledby="live-transcript-heading" className="meeting-transcript-card">
             <header>
               <span><IconWaveSine aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
-              <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript)}>
+              <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript, 'note_transcript')}>
                 <Copy size={15} />
               </IconButton>
             </header>

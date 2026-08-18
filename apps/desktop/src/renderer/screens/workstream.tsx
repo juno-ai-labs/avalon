@@ -37,6 +37,13 @@ import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
+  currentSurfaceEntrypoint,
+  reportTelemetryProductIntent,
+  telemetryCountBucket,
+  telemetryVisibility,
+  workstreamNavigation,
+} from '../lib/telemetry';
+import {
   createTextMessage,
   visibleTranscriptMessages,
 } from '../lib/transcript';
@@ -405,10 +412,25 @@ export function WorkstreamHeader({
       const bridge = desktopBridge();
       const { webBaseUrl } = await bridge.getRuntimeConfig();
       await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstream.id));
-    })();
+      reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
+      });
+    })().catch(() => undefined);
   };
   const copyEmailAddress = (): void => {
-    if (workstream.emailAddress) void desktopBridge().copyText(workstream.emailAddress);
+    if (!workstream.emailAddress) return;
+    void desktopBridge().copyText(workstream.emailAddress)
+      .then(() => reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream', resourceId: workstream.id,
+      }))
+      .catch(() => undefined);
+  };
+  const copyWorkstreamId = (): void => {
+    void desktopBridge().copyText(workstream.id)
+      .then(() => reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream', resourceId: workstream.id,
+      }))
+      .catch(() => undefined);
   };
   const naming = useNamingSkeleton(workstream);
 
@@ -570,7 +592,7 @@ export function WorkstreamHeader({
               {workstream.emailAddress && (
                 <DropdownMenu.Item className="menu-item" onSelect={copyEmailAddress}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
               )}
-              <DropdownMenu.Item className="menu-item" onSelect={() => void desktopBridge().copyText(workstream.id)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -588,6 +610,13 @@ export function WorkstreamErrorState({
   onRetry: () => void;
   workstreamId: string;
 }): React.JSX.Element {
+  const copyWorkstreamId = (): void => {
+    void desktopBridge().copyText(workstreamId)
+      .then(() => reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream', resourceId: workstreamId,
+      }))
+      .catch(() => undefined);
+  };
   return (
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
@@ -596,7 +625,7 @@ export function WorkstreamErrorState({
           <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={() => void desktopBridge().copyText(workstreamId)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -759,6 +788,36 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
+  const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const detail = workstream.data;
+    if (!detail || telemetryOpenedWorkstreamRef.current === detail.id) return;
+    telemetryOpenedWorkstreamRef.current = detail.id;
+    reportTelemetryProductIntent({
+      kind: 'workstream_opened',
+      workstreamId: detail.id,
+      visibility: telemetryVisibility(detail.scope),
+      navigation: workstreamNavigation(detail.id),
+      origin: detail.systemKind ? 'system' : detail.origin,
+      pinned: detail.pinPosition !== null,
+    });
+  }, [workstream.data]);
+  const terminalWorkspace = useQuery({
+    queryKey: ['terminal-workstream', id],
+    queryFn: ({ signal }) => api!.getTerminalWorkstreamState(id, signal),
+    enabled: Boolean(api && id),
+    staleTime: 5_000,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      if (!state) return false;
+      if (['starting', 'running', 'restoring'].includes(state.state)) return 5_000;
+      return state.localFilesRetained ? 30_000 : false;
+    },
+  });
+  const startFreshTerminal = useMutation({
+    mutationFn: () => api!.startFreshTerminalWorkspace(id),
+    onSuccess: (state) => queryClient.setQueryData(['terminal-workstream', id], state),
+  });
   const messageCursor = useQuery<string | null>({
     queryKey: ['messages-cursor', id],
     queryFn: async () => null,
@@ -828,6 +887,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && hypersightOpen),
     staleTime: 5_000,
   });
+  const reportedHyperSightOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hypersightOpen) {
+      reportedHyperSightOpen.current = null;
+      return;
+    }
+    if (!hypersight.data || reportedHyperSightOpen.current === id) return;
+    reportedHyperSightOpen.current = id;
+    reportTelemetryProductIntent({
+      kind: 'hypersight_opened',
+      workstreamId: id,
+      blockCount: telemetryCountBucket(hypersight.data.blocks.length),
+    });
+  }, [hypersight.data, hypersightOpen, id]);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -1258,6 +1331,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       id,
       highestVisibleSequence,
       detail.manualUnreadGeneration,
+      currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeWorkstreamIdRef.current !== id) return;
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
@@ -1454,7 +1528,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
-              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retry it, or copy the request ID for support.'}
+              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
               onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
@@ -1493,13 +1567,20 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <InspectorRail
         dropTarget={railDrop}
-        error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message}
+        error={deferredContext.error?.message
+          ?? terminalWorkspace.error?.message
+          ?? startFreshTerminal.error?.message
+          ?? watchResource.error?.message
+          ?? detachResource.error?.message
+          ?? attachResource.error?.message}
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
+        onStartFreshTerminal={() => startFreshTerminal.mutate()}
+        terminalWorkspace={terminalWorkspace.data}
         workstream={displayedDetail}
       />
 

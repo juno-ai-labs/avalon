@@ -1,6 +1,6 @@
 {
   "name": "@avalon/desktop",
-  "version": "1.100.0",
+  "version": "1.111.0",
   "private": true,
   "description": "Avalon secure Electron desktop client",
   "author": "Avalon",
@@ -24,7 +24,9 @@
     "release:guard": "node scripts/validate-release-tag.mjs",
     "release:verify": "node scripts/verify-macos-release.mjs",
     "release:publish:r2": "node scripts/publish-r2-release.mjs",
-    "test:release": "node --test scripts/*.test.mjs"
+    "telemetry:publish-artifacts": "node scripts/publish-telemetry-artifacts.mjs",
+    "test:release": "node --test scripts/*.test.mjs",
+    "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs"
   },
   "dependencies": {
     "@avalon/contracts": "workspace:*",
@@ -65,6 +67,7 @@
     "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
+    "esbuild": "0.25.12",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "latest",
     "postcss": "latest",

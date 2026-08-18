@@ -3,6 +3,7 @@ import type {
   AvalonDesktopBridge,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
+  DesktopDeepLinkNavigation,
   DesktopMeetingAudioPermissions,
   DesktopSession,
   DesktopSystemAudioCaptureInfo,
@@ -11,11 +12,12 @@ import type {
   RuntimeConfig,
 } from '../common/desktop';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
+import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 
-const deepLinkListeners = new Set<(url: string) => void>();
-const queuedDeepLinks: string[] = [];
+const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
+const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
@@ -24,14 +26,22 @@ let meetingCloseQueued: MeetingCloseReason | null = null;
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
 // arriving in that gap must be replayed instead of silently disappearing.
-ipcRenderer.on('auth:deep-link', (_event, rawUrl: unknown) => {
-  if (typeof rawUrl !== 'string') return;
+ipcRenderer.on('auth:deep-link', (_event, rawNavigation: unknown) => {
+  if (!rawNavigation || typeof rawNavigation !== 'object') return;
+  const candidate = rawNavigation as Record<string, unknown>;
+  const entrypoint = candidate.entrypoint;
+  if (typeof candidate.url !== 'string'
+    || (entrypoint !== 'deep_link' && entrypoint !== 'menu_bar'
+      && entrypoint !== 'notification' && entrypoint !== 'in_app_link')) return;
+  const navigation: DesktopDeepLinkNavigation = { url: candidate.url, entrypoint };
   if (deepLinkListeners.size === 0) {
-    if (!queuedDeepLinks.includes(rawUrl)) queuedDeepLinks.push(rawUrl);
+    if (!queuedDeepLinks.some((queued) => (
+      queued.url === navigation.url && queued.entrypoint === navigation.entrypoint
+    ))) queuedDeepLinks.push(navigation);
     if (queuedDeepLinks.length > 16) queuedDeepLinks.shift();
     return;
   }
-  for (const listener of deepLinkListeners) listener(rawUrl);
+  for (const listener of deepLinkListeners) listener(navigation);
 });
 
 // A settings request can arrive as soon as the window finishes loading, before
@@ -73,6 +83,12 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.invoke('application-settings:set-menu-bar-enabled', enabled) as Promise<DesktopApplicationSettings>,
   setLaunchAtLogin: (enabled) =>
     ipcRenderer.invoke('application-settings:set-launch-at-login', enabled) as Promise<DesktopApplicationSettings>,
+  setProductAnalyticsEnabled: (enabled) =>
+    ipcRenderer.invoke('application-settings:set-product-analytics', enabled) as Promise<DesktopApplicationSettings>,
+  reportTelemetryScreen: (screen) => ipcRenderer.invoke('telemetry:screen', screen) as Promise<void>,
+  reportTelemetryProductIntent: (intent) => ipcRenderer.invoke('telemetry:product-intent', intent) as Promise<void>,
+  getTelemetryInspector: () => ipcRenderer.invoke('telemetry:inspector'),
+  reportJavascriptError: (candidate) => ipcRenderer.invoke('telemetry:javascript-error', candidate) as Promise<void>,
   onApplicationSettingsChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, settings: DesktopApplicationSettings): void => listener(settings);
     ipcRenderer.on('application-settings:changed', handler);
@@ -101,6 +117,7 @@ const bridge: AvalonDesktopBridge = {
   hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
+  exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
@@ -146,13 +163,13 @@ const bridge: AvalonDesktopBridge = {
     }
     return () => settingsSectionListeners.delete(listener);
   },
-  consumePendingDeepLinks: () => ipcRenderer.invoke('auth:consume-pending-deep-links') as Promise<string[]>,
+  consumePendingDeepLinks: () => ipcRenderer.invoke('auth:consume-pending-deep-links') as Promise<DesktopDeepLinkNavigation[]>,
   onDeepLink: (listener) => {
     deepLinkListeners.add(listener);
     const pending = queuedDeepLinks.splice(0);
     queueMicrotask(() => {
       if (!deepLinkListeners.has(listener)) return;
-      for (const url of pending) listener(url);
+      for (const navigation of pending) listener(navigation);
     });
     return () => deepLinkListeners.delete(listener);
   },

@@ -33,6 +33,14 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // toggle is offered where it could not work.
   launchAtLogin: false,
   launchAtLoginAvailable: false,
+  // Browser development follows the account-level default. There is no
+  // Electron main process here to persist an offline mutation, so the browser
+  // bridge exposes the state but declines writes below.
+  productAnalyticsEnabled: true,
+  productAnalyticsAvailable: false,
+  productAnalyticsEffective: true,
+  productAnalyticsPreferencePending: false,
+  nativeCrashRestartRequired: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
@@ -216,6 +224,21 @@ const browserBridge: AvalonDesktopBridge = {
   async setLaunchAtLogin() {
     throw new Error('Opening at login is available only in the Avalon desktop app.');
   },
+  async setProductAnalyticsEnabled() {
+    throw new Error('Product analytics is managed in the Avalon desktop app.');
+  },
+  async reportTelemetryScreen() {
+    // Public-site/browser telemetry is outside this feature's V1 scope.
+  },
+  async reportTelemetryProductIntent() {
+    // Public-site/browser telemetry is outside this feature's V1 scope.
+  },
+  async getTelemetryInspector() {
+    return [];
+  },
+  async reportJavascriptError() {
+    // Browser telemetry is outside this feature's V1 scope.
+  },
   onApplicationSettingsChanged(listener) {
     browserApplicationSettingsListeners.add(listener);
     return () => browserApplicationSettingsListeners.delete(listener);
@@ -336,6 +359,11 @@ const browserBridge: AvalonDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async exportMessage() {
+    // Rendering a card and choosing where it goes are both main-process work.
+    // A browser has neither, and the buttons that call this are hidden there.
+    throw new Error('Saving a message needs the Avalon desktop application.');
+  },
   async openExternal(url) {
     window.open(url, '_blank', 'noopener,noreferrer');
   },
@@ -399,4 +427,13 @@ export function desktopBridge(): AvalonDesktopBridge {
   if (window.avalon) return window.avalon;
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') return browserBridge;
   throw new Error('Avalon desktop services did not load. Reopen the application.');
+}
+
+/**
+ * Whether the privileged bridge is actually there. Only for affordances that a
+ * browser cannot honour at all — saving a file to a chosen place is the one — so
+ * that they are absent rather than present and failing.
+ */
+export function desktopServicesAvailable(): boolean {
+  return Boolean(window.avalon);
 }

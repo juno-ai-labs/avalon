@@ -145,7 +145,7 @@ describe('InspectorRail details', () => {
 
     // The Settings window owns the preference, so the rail learns about a
     // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true });
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']);
     expect(within(details).queryByText('harness-run-1')).not.toBeInTheDocument();
@@ -162,7 +162,7 @@ describe('InspectorRail details', () => {
     await waitFor(() => expect(screen.getByText('Origin')).toBeVisible());
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
 
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true });
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
   });
@@ -269,5 +269,28 @@ describe('InspectorRail details', () => {
     // exists to avoid. jsdom has no layout, so the overlay that widens the
     // button's hit area back over the whole row is checked in a real engine.
     expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
+  });
+
+  it('shows Terminal retention and selected repository state without a participant chooser', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          terminalWorkspace={{
+            availability: 'supported', state: 'stopped',
+            lastActivityAt: '2026-08-13T12:00:00.000Z', expiresAt: '2026-09-12T12:00:00.000Z',
+            retentionWarning: null, localFilesRetained: true, finalDiffResourceId: null,
+            failureCode: null,
+            repository: { id: 42, fullName: 'owner/repo', baseRef: 'main', baseSha: 'a'.repeat(40), headRef: 'avalon/workstream' },
+          }}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('Terminal workspace')).toBeVisible();
+    expect(screen.getByText('Stopped')).toBeVisible();
+    expect(screen.getByText(/Local files remain in Daytona/u)).toBeVisible();
+    expect(screen.getByText('owner/repo')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: /Terminal repository/u })).not.toBeInTheDocument();
   });
 });

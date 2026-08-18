@@ -22,6 +22,91 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("anchors regional telemetry identity, preference, delivery, and retention in D1", () => {
+    const database = migrateFreshDatabase();
+    const userColumns = database.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    const workspaceColumns = database.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>;
+    expect(userColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "analytics_person_id",
+      "product_analytics_enabled",
+      "product_analytics_preference_version",
+      "preference_subject_handle",
+    ]));
+    expect(workspaceColumns.map((column) => column.name)).toContain("analytics_workspace_id");
+    const oauthColumns = database.prepare("PRAGMA table_info(connector_oauth_attempts)")
+      .all() as Array<{ name: string }>;
+    expect(oauthColumns.map((column) => column.name)).toContain("telemetry_operation_id");
+    const crashColumns = database.prepare("PRAGMA table_info(telemetry_crash_reports)")
+      .all() as Array<{ name: string }>;
+    expect(crashColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "processing_attempt_count",
+      "processing_next_attempt_at",
+      "processing_started_at",
+      "launch_id",
+      "channel",
+    ]));
+    const contributionColumns = database.prepare("PRAGMA table_info(telemetry_eu_crash_contributions)")
+      .all() as Array<{ name: string }>;
+    expect(contributionColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "build_id", "platform", "architecture", "process_role", "channel", "launch_id",
+    ]));
+    const journeyColumns = database.prepare("PRAGMA table_info(telemetry_onboarding_journeys)")
+      .all() as Array<{ name: string }>;
+    expect(journeyColumns.map((column) => column.name)).toContain("closed_at");
+    const euEventColumns = database.prepare("PRAGMA table_info(telemetry_eu_events)")
+      .all() as Array<{ name: string }>;
+    expect(euEventColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "environment", "release", "build_id", "platform", "architecture", "channel",
+      "launch_id", "session_id", "operation_id",
+    ]));
+
+    const tables = database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'telemetry_%' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    expect(tables.map(({ name }) => name)).toEqual([
+      "telemetry_accepted_events",
+      "telemetry_crash_access_audit",
+      "telemetry_crash_reports",
+      "telemetry_delivery_receipts",
+      "telemetry_destination_state",
+      "telemetry_eu_crash_contributions",
+      "telemetry_eu_events",
+      "telemetry_identity_links",
+      "telemetry_ingest_rate_buckets",
+      "telemetry_maintenance_state",
+      "telemetry_onboarding_journeys",
+      "telemetry_profile_jobs",
+      "telemetry_rejection_buckets",
+      "telemetry_replay_audit",
+    ]);
+
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('telemetry-user', 'telemetry-subject', 'telemetry@example.com', 'Telemetry User', '2026-08-12', '2026-08-12');
+      INSERT INTO telemetry_accepted_events
+        (event_id, payload_hash, envelope_json, route, routing_basis, analytics_subject_id, subject_user_id,
+         accepted_at, normalized_timestamp, delete_at, delivery_state)
+      VALUES
+        ('018f22f2-4c22-7abc-8def-0123456789ab', 'hash', '{}', 'global', 'explicit_binding',
+         'analytics-subject', 'telemetry-user', '2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z',
+         '2026-11-10T00:00:00.000Z', 'pending');
+    `);
+    expect(() => database.exec(`
+      UPDATE telemetry_accepted_events SET delete_at = '2027-01-01T00:00:00.000Z'
+      WHERE event_id = '018f22f2-4c22-7abc-8def-0123456789ab';
+    `)).toThrow(/telemetry_deadline_immutable/u);
+    database.exec(`
+      INSERT INTO telemetry_ingest_rate_buckets
+        (surface, subject_hash, bucket_start, count, delete_at)
+      VALUES ('telemetry_bootstrap', '${'a'.repeat(43)}', '2026-08-12T00:00:00.000Z', 1,
+              '2026-08-13T00:00:00.000Z');
+      INSERT INTO telemetry_maintenance_state (task, cursor, updated_at)
+      VALUES ('crash_object_retention', 'opaque-cursor', '2026-08-12T00:00:00.000Z');
+    `);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  }, 15_000);
+
   it("moves legacy Notion bot grants to workspace scope without widening personal MCP rows", () => {
     const database = migrateDatabaseThrough("0071_notion_webhook_setup_nonces.sql");
     database.exec(`
@@ -1051,6 +1136,15 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT provider, connection_id FROM resources WHERE id = '00000000-0000-7000-8000-000000000041'",
     ).get()).toEqual({ provider: "fixture", connection_id: null });
+    expect(database.prepare(
+      `SELECT connector_type, scope, status, model_plugin_id FROM connector_connections
+       WHERE id = '00000000-0000-7000-8000-000000000061'`,
+    ).get()).toEqual({
+      connector_type: "generic_webhook",
+      scope: "workspace",
+      status: "healthy",
+      model_plugin_id: "plugin_webhook",
+    });
     database.close();
   });
 
@@ -2218,6 +2312,71 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT nonce_hash FROM notion_webhook_setup_nonces WHERE is_current = 1",
     ).all()).toEqual([{ nonce_hash: secondHash }]);
+    database.close();
+  });
+
+  it("owns Terminal sandbox, policy, task, grant, and publication state inside a workspace", () => {
+    const database = migrateFreshDatabase();
+    const terminalTables = [
+      "workstream_sandboxes",
+      "workspace_sandbox_network_policies",
+      "workspace_sandbox_network_domains",
+      "workspace_sandbox_network_policy_mutations",
+      "sandbox_tasks",
+      "sandbox_imported_resources",
+      "terminal_publication_grants",
+      "workstream_terminal_repositories",
+      "repository_publications",
+    ];
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%sandbox%'
+       OR type = 'table' AND name IN ('terminal_publication_grants', 'workstream_terminal_repositories', 'repository_publications')
+       ORDER BY name`,
+    ).all()).toEqual(terminalTables.slice().sort().map((name) => ({ name })));
+
+    for (const table of terminalTables) {
+      const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name), `${table} must carry workspace_id`).toContain("workspace_id");
+      const indexes = database.prepare(`PRAGMA index_list(${table})`).all() as Array<{ name: string }>;
+      const indexedColumns = indexes.flatMap((index) => (
+        database.prepare(`PRAGMA index_info(${index.name})`).all() as Array<{ name: string }>
+      ).map((column) => column.name));
+      expect(indexedColumns[0], `${table} must lead an index with workspace_id`).toBe("workspace_id");
+    }
+
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('terminal-owner', 'terminal-owner-subject', 'terminal@example.com', 'Terminal Owner', '2026-08-13', '2026-08-13');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('terminal-workspace', 'Terminal Workspace', 'terminal-workspace', 'global', 'terminal-owner', '2026-08-13', '2026-08-13');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('terminal-workstream', 'terminal-workspace', 'Terminal', 'Run code', 'ad_hoc',
+              'terminal-owner', 'idle', '2026-08-13', '2026-08-13', '2026-08-13');
+      INSERT INTO workspace_sandbox_network_policies
+        (workspace_id, mode, revision, verification_state, baseline_manifest_version,
+         effective_domains_json, created_at, updated_at)
+      VALUES ('terminal-workspace', 'trusted_only', 1, 'verified', 'terminal-network-v1', '[]',
+              '2026-08-13', '2026-08-13');
+      INSERT INTO workstream_sandboxes
+        (workspace_id, workstream_id, state, stable_name, generation,
+         authority_fingerprint, applied_network_revision, version, last_activity_at,
+         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
+      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'avalon-terminal-workstream', 1,
+              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
+              '2026-08-13', '2026-08-13');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO workstream_sandboxes
+        (workspace_id, workstream_id, state, stable_name, generation,
+         authority_fingerprint, applied_network_revision, version, last_activity_at,
+         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
+      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'duplicate', 2,
+              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
+              '2026-08-13', '2026-08-13');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
 });

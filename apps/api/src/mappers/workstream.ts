@@ -5,6 +5,7 @@ import {
 } from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import { z } from "zod";
+import { agentModelOverride } from "../services/agent-model-flags";
 
 /**
  * The columns beyond `workstreams.*` that `toWorkstream` reads, and the joins
@@ -106,6 +107,12 @@ export const WorkstreamRowSchema = z.object({
   unread_tracking_start_sequence_number: rowCount.nullish(),
   scope: z.enum(["personal", "workspace"]),
   system_kind: z.literal("digest").nullish(),
+  // Deliberately not the closed enum: the column takes whatever was admitted
+  // when the row was written, and a model since retired from
+  // `AGENT_MODEL_OVERRIDES` must not fail the whole response. It is narrowed to
+  // the set below, where an unrecognized value becomes null — the same answer
+  // `resolveWorkstreamModelRouting` gives it.
+  model_override: rowText.nullish(),
   last_activity_at: rowTimestamp,
   created_at: rowTimestamp,
   updated_at: rowTimestamp,
@@ -193,6 +200,7 @@ export function toWorkstream(input: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at ?? null,
     scope: row.scope,
     systemKind: row.system_kind ?? null,
+    modelOverride: agentModelOverride(row.model_override),
     nextPendingWakeup: row.next_pending_wakeup_at && row.next_pending_wakeup_prompt_prefix
       ? {
         dueAt: row.next_pending_wakeup_at,

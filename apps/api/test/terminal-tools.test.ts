@@ -1,0 +1,223 @@
+import type { HarnessToolContext } from "@avalon/agent-harness";
+import { describe, expect, it } from "vitest";
+
+import {
+  createTerminalToolExecutors,
+  sanitizeTerminalOutput,
+  TerminalToolError,
+  type TerminalRuntime,
+} from "../src/services/terminal/tools";
+
+const context: HarnessToolContext = {
+  workspaceId: "workspace-1",
+  workstreamId: "workstream-1",
+  harnessRunId: "run-1",
+  toolCallId: "call-1",
+  executionPrincipal: { type: "user", userId: "user-1" },
+  signal: new AbortController().signal,
+};
+
+function runtime(initial: Record<string, string> = {}) {
+  const files = new Map<string, Uint8Array>(
+    Object.entries(initial).map(([path, content]) => [path, new TextEncoder().encode(content)]),
+  );
+  const value: TerminalRuntime = {
+    async readFile(_context, path) { return files.get(path) ?? null; },
+    async writeFile(_context, path, bytes) { files.set(path, bytes); },
+    async applyPatch() { return { files: [], additions: 0, deletions: 0 }; },
+    async runCommand(_context, input) {
+      return {
+        state: input.command === "false" ? "failed" : "completed",
+        terminationReason: "exited",
+        exitCode: input.command === "false" ? 1 : 0,
+        stdout: input.command === "false" ? "" : "ok\n",
+        stderr: input.command === "false" ? "failed\n" : "",
+        startedAt: "2026-08-13T00:00:00.000Z",
+        completedAt: "2026-08-13T00:00:00.010Z",
+      };
+    },
+    async checkoutRepository(_context, input) {
+      return {
+        repository: input.repositoryFullName,
+        repositoryId: 41,
+        connectionId: "connection-1",
+        connectionName: "GitHub",
+        baseRef: "main",
+        baseSha: "a".repeat(40),
+        headRef: "avalon/workstream-1",
+        remoteAccess: input.requiredRemoteAccess,
+        localEditsAllowed: true,
+        remoteWritesAllowed: input.requiredRemoteAccess === "full_access",
+        outcome: "selected",
+        backup: null,
+      };
+    },
+    async importResource(_context, input) {
+      return { resourceId: input.resourceId, filePath: ".avalon/resources/item", outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64) };
+    },
+    async publishResource() {
+      return {
+        resourceId: "resource-published",
+        title: "Chart",
+        resourceType: "generated_file",
+        provider: "avalon_generated",
+        mimeType: "image/png",
+        sizeBytes: 42,
+        sourceSha256: "b".repeat(64),
+        attachmentKind: "image",
+        contentMode: "view",
+        derivativeStatus: "ready",
+        createdAt: "2026-08-13T00:00:00.000Z",
+      };
+    },
+    async publishBranchAndPr() {
+      return {
+        repository: "avalon/repo",
+        baseRef: "main",
+        headRef: "avalon/workstream-1",
+        commitSha: "c".repeat(40),
+        publishedSha: "c".repeat(40),
+        outcome: "created",
+        pullRequest: { number: 17, url: "https://github.com/avalon/repo/pull/17", title: "Ship", state: "open" },
+      };
+    },
+  };
+  return { value, files };
+}
+
+describe("Terminal file and command tools", () => {
+  it("freezes exact success envelopes for all nine model-facing tools", async () => {
+    const { value } = runtime({ "notes.txt": "old\n" });
+    const tools = createTerminalToolExecutors(value);
+    const calls = [
+      ["read_file", { filePath: "notes.txt" }, {
+        output: { filePath: "notes.txt", content: "old", startLine: 1, endLine: 1, totalLines: 1, truncated: false },
+        summary: "Read notes.txt lines 1–1",
+      }],
+      ["edit_file", { filePath: "notes.txt", oldString: "old", newString: "new" }, {
+        output: { filePath: "notes.txt", replacements: 1, additions: 1, deletions: 1 }, summary: "Edited notes.txt",
+      }],
+      ["write_file", { filePath: "created.txt", content: "hello\n" }, {
+        output: { filePath: "created.txt", created: true, bytes: 6, additions: 1, deletions: 0 }, summary: "Created created.txt",
+      }],
+      ["apply_patch", { patch: "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-new\n+newer\n" }, {
+        output: { files: [], additions: 0, deletions: 0 }, summary: "Patched 0 files",
+      }],
+      ["run_command", { command: "printf ok" }, {
+        output: {
+          state: "completed", terminationReason: "exited", exitCode: 0, stdout: "ok\n", stderr: "",
+          startedAt: "2026-08-13T00:00:00.000Z", completedAt: "2026-08-13T00:00:00.010Z",
+          stdoutTruncated: false, stderrTruncated: false, durationMs: 10,
+        },
+        summary: "Completed printf ok",
+      }],
+      ["checkout_repository", { repositoryFullName: "avalon/repo", requiredRemoteAccess: "read_only" }, {
+        output: {
+          repository: "avalon/repo", repositoryId: 41, connectionId: "connection-1", connectionName: "GitHub",
+          baseRef: "main", baseSha: "a".repeat(40), headRef: "avalon/workstream-1",
+          remoteAccess: "read_only", localEditsAllowed: true, remoteWritesAllowed: false,
+          outcome: "selected", backup: null,
+        },
+        summary: "Checked out avalon/repo with read-only remote access; local edits remain allowed",
+      }],
+      ["import_resource", { resourceId: "00000000-0000-4000-8000-000000000001" }, {
+        output: {
+          resourceId: "00000000-0000-4000-8000-000000000001", filePath: ".avalon/resources/item",
+          outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64),
+        },
+        summary: "Imported resource 00000000-0000-4000-8000-000000000001",
+      }],
+      ["publish_resource", { filePath: "chart.png" }, {
+        output: {
+          resourceId: "resource-published", title: "Chart", resourceType: "generated_file",
+          provider: "avalon_generated", mimeType: "image/png", sizeBytes: 42, sourceSha256: "b".repeat(64),
+          attachmentKind: "image", contentMode: "view", derivativeStatus: "ready",
+          createdAt: "2026-08-13T00:00:00.000Z",
+        },
+        summary: "Published Chart",
+      }],
+      ["publish_branch_and_pr", { title: "Ship", body: "Why" }, {
+        output: {
+          repository: "avalon/repo", baseRef: "main", headRef: "avalon/workstream-1",
+          commitSha: "c".repeat(40), publishedSha: "c".repeat(40), outcome: "created",
+          pullRequest: { number: 17, url: "https://github.com/avalon/repo/pull/17", title: "Ship", state: "open" },
+        },
+        summary: "Published pull request 17",
+      }],
+    ] as const;
+
+    for (const [name, input, expected] of calls) {
+      await expect(tools[name](input, context), name).resolves.toEqual(expected);
+    }
+  });
+
+  it("scrubs every common GitHub token prefix from provider output", () => {
+    for (const prefix of ["ghp", "gho", "ghu", "ghs", "ghr"]) {
+      expect(sanitizeTerminalOutput(`${prefix}_${"a".repeat(40)}`)).toBe("[REDACTED]");
+    }
+    expect(sanitizeTerminalOutput(`sk-${"a".repeat(40)}`)).toBe("[REDACTED]");
+  });
+
+  it("reads exact raw pages and reports the next one without line-number pollution", async () => {
+    const { value } = runtime({ "notes.txt": "one\ntwo\nthree\nfour" });
+    const tools = createTerminalToolExecutors(value);
+
+    await expect(tools.read_file({ filePath: "notes.txt", offset: 2, limit: 2 }, context)).resolves.toEqual({
+      output: {
+        filePath: "notes.txt",
+        content: "two\nthree",
+        startLine: 2,
+        endLine: 3,
+        totalLines: 4,
+        truncated: true,
+        nextOffset: 4,
+      },
+      summary: "Read notes.txt lines 2–3",
+    });
+  });
+
+  it("self-heals exact edits and performs deliberate complete writes", async () => {
+    const { value, files } = runtime({ "src/app.ts": "const old = 1;\nconst old = 1;\n" });
+    const tools = createTerminalToolExecutors(value);
+
+    await expect(tools.edit_file({
+      filePath: "src/app.ts",
+      oldString: "const old = 1;",
+      newString: "const current = 1;",
+    }, context)).rejects.toMatchObject({
+      code: "match_not_unique",
+      details: { reason: expect.stringContaining("2") },
+    });
+    await expect(tools.edit_file({
+      filePath: "src/app.ts",
+      oldString: "const old = 1;",
+      newString: "const current = 1;",
+      replaceAll: true,
+    }, context)).resolves.toMatchObject({
+      output: { replacements: 2, additions: 2, deletions: 2 },
+    });
+    await expect(tools.write_file({ filePath: "report.md", content: "# Report\n" }, context)).resolves.toMatchObject({
+      output: { filePath: "report.md", created: true, bytes: 9, additions: 1, deletions: 0 },
+    });
+    expect(new TextDecoder().decode(files.get("src/app.ts"))).toBe("const current = 1;\nconst current = 1;\n");
+  });
+
+  it.each(["../escape", "/absolute", "dir\\windows", "./../escape"])("rejects a path outside the root: %s", async (filePath) => {
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).read_file({ filePath }, context)).rejects.toBeInstanceOf(TerminalToolError);
+  });
+
+  it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {
+    const { value } = runtime();
+    const tools = createTerminalToolExecutors(value);
+    await expect(tools.run_command({ command: "false" }, context)).resolves.toMatchObject({
+      output: { state: "failed", terminationReason: "exited", exitCode: 1, stderr: "failed\n" },
+    });
+    await expect(tools.run_command({ command: "git push origin HEAD" }, context)).resolves.toMatchObject({
+      output: { state: "completed", exitCode: 0 },
+    });
+    await expect(tools.run_command({ command: "gh pr create --title ship" }, context)).resolves.toMatchObject({
+      output: { state: "completed", exitCode: 0 },
+    });
+  });
+});
