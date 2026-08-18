@@ -11,9 +11,11 @@ its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
 regional effect outbox plus HyperSight configuration/published results. Each
 stable HyperSight block has a separate `BlockDashboardAgent` execution ledger,
 while its fenced transcript and Bind runtime rows remain in main
-`SubstreamAgent("0")`. Legacy D1 product rows are maintenance import input and
-are scrubbed before each verified WorkspaceDO route becomes active; the empty
-table shells remain writer tripwires, never a serving fallback. The checked-in migrations are the authoritative D1 schema and the
+`SubstreamAgent("0")`. Legacy D1 workspace-product activity/opportunity rows are
+maintenance import input and are scrubbed before each verified WorkspaceDO route
+becomes active; their empty table shells remain writer tripwires. Legacy
+per-workstream source rows are still retained frozen after their object import.
+Neither family is a serving fallback. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
 rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
