@@ -72,6 +72,13 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
 
 function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata> = {}): WorkstreamControlMetadata {
   return {
+    stateVersion: {
+      commonEventId: `00000000-0000-7000-8000-${revision.toString(16).padStart(12, '0')}`,
+      viewerEventId: `00000000-0000-7000-8001-${revision.toString(16).padStart(12, '0')}`,
+      authorityGeneration: 1,
+      commonWaterline: revision,
+      viewerWaterline: revision,
+    },
     revision,
     id: workstreamId,
     workspaceId,

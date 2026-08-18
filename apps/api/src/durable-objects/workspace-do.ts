@@ -2,6 +2,7 @@ import {
   IdSchema,
   WORKSPACE_SYNC_TOPICS,
   WorkspaceWorkstreamPageEventSchema,
+  WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
@@ -24,6 +25,7 @@ import {
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import {
   acceptsNewWorkstreamWork,
@@ -108,11 +110,14 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
-  lastVersion: number;
+  lastWaterline: number;
 }
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   workstream_id: string;
+  authority_generation: number;
+  common_waterline: number;
+  common_event_id: string;
   title: string;
   description: string;
   scope: "personal" | "workspace";
@@ -140,6 +145,8 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   manual_unread_generation: number | null;
   latest_mention_attention_ordinal: number | null;
   is_participant: number | null;
+  viewer_waterline: number | null;
+  viewer_event_id: string | null;
   pin_position: number | null;
 }
 
@@ -168,7 +175,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX socket_ticket_receipts_expiry_idx
       ON socket_ticket_receipts(expires_at, ticket_id)`,
     `CREATE TABLE workspace_sync_events (
-      version INTEGER PRIMARY KEY AUTOINCREMENT,
+      waterline INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
       topics_json TEXT NOT NULL CHECK (json_valid(topics_json) AND length(topics_json) <= 4096),
       occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0)
     ) STRICT`,
@@ -182,14 +190,15 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       ON workspace_socket_ticket_receipts(expires_at, ticket_id)`,
     `CREATE TABLE workspace_directory_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      version INTEGER NOT NULL CHECK (version >= 0),
+      waterline INTEGER NOT NULL CHECK (waterline >= 0),
       updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
     ) STRICT`,
-    `INSERT INTO workspace_directory_state(id, version, updated_at) VALUES (1, 0, 0)`,
+    `INSERT INTO workspace_directory_state(id, waterline, updated_at) VALUES (1, 0, 0)`,
     `CREATE TABLE workspace_workstream_directory (
       workstream_id TEXT PRIMARY KEY,
       authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      waterline INTEGER NOT NULL CHECK (waterline > 0),
+      source_event_id TEXT NOT NULL UNIQUE,
       payload_hash TEXT NOT NULL,
       title TEXT NOT NULL CHECK (length(title) <= 500),
       description TEXT NOT NULL CHECK (length(description) <= 4000),
@@ -227,7 +236,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       workstream_id TEXT NOT NULL REFERENCES workspace_workstream_directory(workstream_id) ON DELETE CASCADE,
       user_id TEXT NOT NULL,
       authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      waterline INTEGER NOT NULL CHECK (waterline > 0),
+      source_event_id TEXT NOT NULL,
       payload_hash TEXT NOT NULL,
       is_participant INTEGER NOT NULL CHECK (is_participant IN (0, 1)),
       unread_count INTEGER NOT NULL CHECK (unread_count >= 0),
@@ -258,7 +268,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       watch_enabled INTEGER NOT NULL CHECK (watch_enabled IN (0, 1)),
       relationship_type TEXT NOT NULL CHECK (length(relationship_type) BETWEEN 1 AND 80),
       authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      waterline INTEGER NOT NULL CHECK (waterline > 0),
+      source_event_id TEXT NOT NULL,
       projected_at INTEGER NOT NULL CHECK (projected_at >= 0),
       PRIMARY KEY (workstream_id, resource_id)
     ) STRICT`,
@@ -273,7 +284,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       resolved_at INTEGER NOT NULL CHECK (resolved_at >= 0),
       resolved_by_user_id TEXT NOT NULL,
       authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      waterline INTEGER NOT NULL CHECK (waterline > 0),
+      source_event_id TEXT NOT NULL,
       projected_at INTEGER NOT NULL CHECK (projected_at >= 0),
       PRIMARY KEY (workstream_id, action_id)
     ) STRICT`,
@@ -323,7 +335,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       connectionId: z.string().uuid(),
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
-      lastVersion: z.number().int().nonnegative(),
+      lastWaterline: z.number().int().nonnegative(),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -413,6 +425,17 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
   });
 }
 
+function directoryStateVersion(row: WorkspaceDirectoryRow) {
+  return {
+    workstreamId: row.workstream_id,
+    commonEventId: row.common_event_id,
+    viewerEventId: row.viewer_event_id,
+    authorityGeneration: row.authority_generation,
+    commonWaterline: row.common_waterline,
+    viewerWaterline: row.viewer_waterline ?? 0,
+  };
+}
+
 function internalDirectoryItem(row: WorkspaceDirectoryRow) {
   return {
     workstreamId: row.workstream_id,
@@ -433,7 +456,9 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
   };
 }
 
-const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id, directory.title,
+const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
+    directory.authority_generation, directory.waterline AS common_waterline,
+    directory.source_event_id AS common_event_id, directory.title,
     directory.description, directory.scope, directory.exact_state,
     directory.system_kind, directory.last_activity_at, directory.completed_at,
     directory.archived_at, directory.email_address, directory.origin_type,
@@ -445,10 +470,13 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id, directory.ti
     directory.source_created_at, directory.source_updated_at,
     viewer.seen_attention_ordinal, viewer.manual_unread_from_ordinal,
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
-    viewer.is_participant, pin.position AS pin_position
+    viewer.is_participant, viewer.waterline AS viewer_waterline,
+    viewer.source_event_id AS viewer_event_id, pin.position AS pin_position
   FROM workspace_workstream_directory directory
   LEFT JOIN workspace_workstream_viewers viewer
-    ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+    ON viewer.workstream_id = directory.workstream_id
+   AND viewer.user_id = ?
+   AND viewer.authority_generation = directory.authority_generation
   LEFT JOIN workspace_workstream_pins pin
     ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?`;
 
@@ -500,7 +528,7 @@ export class WorkspaceDO extends DurableObject<Env> {
         role: "workspace-control",
         workspaceId: this.workspaceId(),
         placementAffinity: this.placementAffinity(),
-        syncVersion: this.latestSyncVersion(),
+        syncWaterline: this.latestSyncWaterline(),
         databaseBytes: this.state.storage.sql.databaseSize,
       });
     }
@@ -533,7 +561,7 @@ export class WorkspaceDO extends DurableObject<Env> {
         socket.close(1008, "Session no longer active");
         return;
       }
-      await this.subscribe(socket, attachment, parsed.data.afterVersion);
+      await this.subscribe(socket, attachment, parsed.data.afterWaterline);
       return;
     }
     if (parsed.data.type === "list_workstreams") {
@@ -585,22 +613,25 @@ export class WorkspaceDO extends DurableObject<Env> {
     const ordered = WORKSPACE_SYNC_TOPICS.filter((topic) => requested.has(topic));
     const occurredAtMs = Date.now();
     const occurredAt = new Date(occurredAtMs).toISOString();
-    const version = this.state.storage.transactionSync(() => {
-      const row = this.state.storage.sql.exec<{ version: number }>(
-        `INSERT INTO workspace_sync_events(topics_json, occurred_at)
-         VALUES (?, ?) RETURNING version`,
+    const eventId = uuidV7(occurredAtMs);
+    const waterline = this.state.storage.transactionSync(() => {
+      const row = this.state.storage.sql.exec<{ waterline: number }>(
+        `INSERT INTO workspace_sync_events(event_id, topics_json, occurred_at)
+         VALUES (?, ?, ?) RETURNING waterline`,
+        eventId,
         JSON.stringify(ordered),
         occurredAtMs,
       ).one();
       this.state.storage.sql.exec(
-        `DELETE FROM workspace_sync_events WHERE version <= ?`,
-        row.version - 1_024,
+        `DELETE FROM workspace_sync_events WHERE waterline <= ?`,
+        row.waterline - 1_024,
       );
-      return row.version;
+      return row.waterline;
     });
     const event = WorkspaceSocketSyncEventSchema.parse({
       type: "workspace_sync",
-      version,
+      eventId,
+      waterline,
       occurredAt,
       topics: ordered,
       reason: "change",
@@ -611,13 +642,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!attachment?.subscribed) continue;
       try {
         socket.send(payload);
-        socket.serializeAttachment({ ...attachment, lastVersion: version });
+        socket.serializeAttachment({ ...attachment, lastWaterline: waterline });
       } catch {
         // The hibernation runtime owns close cleanup. A reconnect receives a
         // full invalidation or replays the bounded SQL log.
       }
     }
-    return version;
+    return waterline;
   }
 
   /** Pin the workspace identity before any child object can be resolved. */
@@ -673,16 +704,30 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
     }
     let directoryChanged = false;
+    const commonChanges = new Set<string>();
+    const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     for (const envelope of request.envelopes) {
       const changed = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
       directoryChanged = directoryChanged || changed;
+      if (changed && envelope.effect.kind === "directory_common") {
+        commonChanges.add(envelope.workstreamId);
+      } else if (changed && envelope.effect.kind === "directory_user") {
+        const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
+        users.add(envelope.effect.userId);
+        viewerChanges.set(envelope.workstreamId, users);
+      }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     if (directoryChanged) {
-      const placementAffinity = this.placementAffinity();
-      if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
-      await this.publishSync(["workstream_directory"], request.workspaceId, placementAffinity);
+      await Promise.all([
+        ...commonChanges,
+      ].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
+      await Promise.all([...viewerChanges].flatMap(([workstreamId, users]) => (
+        commonChanges.has(workstreamId)
+          ? []
+          : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
+      )));
     }
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
@@ -708,7 +753,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id FROM workspace_workstream_directory directory
        LEFT JOIN workspace_workstream_viewers viewer
-         ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
        WHERE directory.archived_at IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
          AND ((? = 0 AND directory.scope = 'workspace') OR viewer.is_participant = 1)
@@ -892,23 +939,25 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const row = this.state.storage.sql.exec<{
       authority_generation: number;
-      source_version: number;
+      waterline: number;
       listable: number;
       title: string;
       email_address: string | null;
     }>(
-      `SELECT directory.authority_generation, viewer.source_version,
+      `SELECT directory.authority_generation, viewer.waterline,
               viewer.listable, directory.title, directory.email_address
          FROM workspace_workstream_directory directory
          JOIN workspace_workstream_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
         WHERE directory.workstream_id = ? AND directory.archived_at IS NULL`,
       request.userId,
       request.workstreamId,
     ).toArray()[0];
     return row ? WorkspaceDirectoryNotificationStateSchema.parse({
       authorityGeneration: row.authority_generation,
-      viewerVersion: row.source_version,
+      viewerVersion: row.waterline,
       listable: row.listable === 1,
       title: row.title,
       emailAddress: row.email_address,
@@ -1039,6 +1088,7 @@ export class WorkspaceDO extends DurableObject<Env> {
            OR EXISTS (
              SELECT 1 FROM workspace_workstream_viewers allowed
               WHERE allowed.workstream_id = directory.workstream_id
+                AND allowed.authority_generation = directory.authority_generation
                 AND allowed.user_id IN (SELECT value FROM json_each(?))
                 AND allowed.is_participant = 1
            ))
@@ -1123,7 +1173,9 @@ export class WorkspaceDO extends DurableObject<Env> {
          JOIN workspace_workstream_directory directory
            ON directory.workstream_id = link.workstream_id
          LEFT JOIN workspace_workstream_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
         WHERE link.resource_id = ? AND directory.archived_at IS NULL
         ORDER BY directory.workstream_id`,
       request.userId,
@@ -1172,10 +1224,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
     const attachment: WorkspaceSocketAttachment = {
       ...identity.data,
-      connectionId: crypto.randomUUID(),
+      connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
-      lastVersion: 0,
+      lastWaterline: 0,
     };
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
     // Register the server end with the hibernation API before attaching the
@@ -1265,20 +1317,20 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
-          source_version: number;
+          waterline: number;
           payload_hash: string;
         }>(
-          `SELECT authority_generation, source_version, payload_hash
+          `SELECT authority_generation, waterline, payload_hash
              FROM workspace_workstream_directory WHERE workstream_id = ?`,
           envelope.workstreamId,
         ).toArray()[0];
         const applies = !current
           || envelope.generation > current.authority_generation
           || (envelope.generation === current.authority_generation
-            && envelope.sourceVersion > current.source_version);
+            && envelope.sourceVersion > current.waterline);
         if (current
           && envelope.generation === current.authority_generation
-          && envelope.sourceVersion === current.source_version
+          && envelope.sourceVersion === current.waterline
           && envelope.payloadHash !== current.payload_hash) {
           throw new Error("workspace_directory_projection_version_conflict");
         }
@@ -1289,7 +1341,7 @@ export class WorkspaceDO extends DurableObject<Env> {
             : null;
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_directory
-               (workstream_id, authority_generation, source_version, payload_hash,
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
                 title, description, preview, scope, exact_state, system_kind,
                 last_activity_at, completed_at, archived_at, email_address,
                 origin_type, origin_label, created_by_user_id,
@@ -1299,10 +1351,11 @@ export class WorkspaceDO extends DurableObject<Env> {
                 next_wakeup_prompt, next_terminal_action_at, source_created_at,
                 source_updated_at, projected_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                     ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(workstream_id) DO UPDATE SET
                authority_generation = excluded.authority_generation,
-               source_version = excluded.source_version,
+               waterline = excluded.waterline,
+               source_event_id = excluded.source_event_id,
                payload_hash = excluded.payload_hash,
                title = excluded.title, description = excluded.description,
                preview = excluded.preview, scope = excluded.scope,
@@ -1326,6 +1379,7 @@ export class WorkspaceDO extends DurableObject<Env> {
             envelope.workstreamId,
             envelope.generation,
             envelope.sourceVersion,
+            envelope.messageId,
             envelope.payloadHash,
             effect.title,
             effect.description,
@@ -1361,14 +1415,15 @@ export class WorkspaceDO extends DurableObject<Env> {
             this.state.storage.sql.exec(
               `INSERT INTO workspace_workstream_resource_links
                  (workstream_id, resource_id, watch_enabled, relationship_type,
-                  authority_generation, source_version, projected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                  authority_generation, waterline, source_event_id, projected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               envelope.workstreamId,
               link.resourceId,
               link.watchEnabled ? 1 : 0,
               link.relationshipType,
               envelope.generation,
               envelope.sourceVersion,
+              envelope.messageId,
               now,
             );
           }
@@ -1378,10 +1433,10 @@ export class WorkspaceDO extends DurableObject<Env> {
         const effect = envelope.effect;
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
-          source_version: number;
+          waterline: number;
           payload_hash: string;
         }>(
-          `SELECT authority_generation, source_version, payload_hash
+          `SELECT authority_generation, waterline, payload_hash
              FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.workstreamId,
           effect.userId,
@@ -1397,25 +1452,26 @@ export class WorkspaceDO extends DurableObject<Env> {
           const applies = !current
             || envelope.generation > current.authority_generation
             || (envelope.generation === current.authority_generation
-              && envelope.sourceVersion > current.source_version);
+              && envelope.sourceVersion > current.waterline);
           if (current
             && envelope.generation === current.authority_generation
-            && envelope.sourceVersion === current.source_version
+            && envelope.sourceVersion === current.waterline
             && envelope.payloadHash !== current.payload_hash) {
             throw new Error("workspace_directory_viewer_version_conflict");
           }
           if (applies) {
             this.state.storage.sql.exec(
               `INSERT INTO workspace_workstream_viewers
-                 (workstream_id, user_id, authority_generation, source_version,
-                  payload_hash, is_participant, unread_count, you_are_mentioned,
+                 (workstream_id, user_id, authority_generation, waterline,
+                  source_event_id, payload_hash, is_participant, unread_count, you_are_mentioned,
                   listable, seen_attention_ordinal, manual_unread_from_ordinal,
                   manual_unread_generation, latest_mention_attention_ordinal,
                   projected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workstream_id, user_id) DO UPDATE SET
                  authority_generation = excluded.authority_generation,
-                 source_version = excluded.source_version,
+                 waterline = excluded.waterline,
+                 source_event_id = excluded.source_event_id,
                  payload_hash = excluded.payload_hash,
                  is_participant = excluded.is_participant,
                  unread_count = excluded.unread_count,
@@ -1430,6 +1486,7 @@ export class WorkspaceDO extends DurableObject<Env> {
               effect.userId,
               envelope.generation,
               envelope.sourceVersion,
+              envelope.messageId,
               envelope.payloadHash,
               effect.isParticipant ? 1 : 0,
               effect.unreadCount,
@@ -1448,9 +1505,9 @@ export class WorkspaceDO extends DurableObject<Env> {
         const effect = envelope.effect;
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
-          source_version: number;
+          waterline: number;
         }>(
-          `SELECT authority_generation, source_version
+          `SELECT authority_generation, waterline
              FROM workspace_workstream_suggestion_feedback
             WHERE workstream_id = ? AND action_id = ?`,
           envelope.workstreamId,
@@ -1459,18 +1516,19 @@ export class WorkspaceDO extends DurableObject<Env> {
         if (!current
           || envelope.generation > current.authority_generation
           || (envelope.generation === current.authority_generation
-            && envelope.sourceVersion > current.source_version)) {
+            && envelope.sourceVersion > current.waterline)) {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_suggestion_feedback
                (workstream_id, action_id, activity_id, source, status, resolved_at,
-                resolved_by_user_id, authority_generation, source_version, projected_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                resolved_by_user_id, authority_generation, waterline, source_event_id, projected_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(workstream_id, action_id) DO UPDATE SET
                activity_id = excluded.activity_id, source = excluded.source,
                status = excluded.status, resolved_at = excluded.resolved_at,
                resolved_by_user_id = excluded.resolved_by_user_id,
                authority_generation = excluded.authority_generation,
-               source_version = excluded.source_version,
+               waterline = excluded.waterline,
+               source_event_id = excluded.source_event_id,
                projected_at = excluded.projected_at`,
             envelope.workstreamId,
             effect.actionId,
@@ -1481,6 +1539,7 @@ export class WorkspaceDO extends DurableObject<Env> {
             effect.resolvedByUserId,
             envelope.generation,
             envelope.sourceVersion,
+            envelope.messageId,
             now,
           );
         }
@@ -1528,8 +1587,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!request.before) rows.push(...this.pinnedDirectoryRows(request.userId, request.includeSystem));
     return {
       items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
+      stateVersions: rows.map(directoryStateVersion),
       nextCursor,
-      directoryVersion: this.directoryVersion(),
+      directoryWaterline: this.directoryWaterline(),
     };
   }
 
@@ -1550,7 +1610,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM workspace_workstream_directory directory
        LEFT JOIN workspace_workstream_viewers viewer
-         ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)`,
       userId,
@@ -1580,17 +1642,57 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
   }
 
-  private directoryVersion(): number {
-    return this.state.storage.sql.exec<{ version: number }>(
-      `SELECT version FROM workspace_directory_state WHERE id = 1`,
-    ).one().version;
+  private directoryWaterline(): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM workspace_directory_state WHERE id = 1`,
+    ).one().waterline;
   }
 
   private advanceDirectoryVersion(now: number): void {
     this.state.storage.sql.exec(
-      `UPDATE workspace_directory_state SET version = version + 1, updated_at = ? WHERE id = 1`,
+      `UPDATE workspace_directory_state SET waterline = waterline + 1, updated_at = ? WHERE id = 1`,
       now,
     );
+  }
+
+  /** Push the current row; missed intermediate rows are intentionally irrelevant. */
+  private async publishWorkstreamState(workstreamId: string, targetUserId?: string): Promise<void> {
+    const occurredAt = new Date().toISOString();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      if (targetUserId && attachment.userId !== targetUserId) continue;
+      const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY}
+         WHERE directory.workstream_id = ?`,
+        attachment.userId,
+        attachment.userId,
+        workstreamId,
+      ).toArray()[0];
+      if (!row) continue;
+      const visible = row.archived_at === null
+        && (row.scope === "workspace" || row.is_participant === 1);
+      const stateVersion = directoryStateVersion(row);
+      const payload = JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
+        type: "workspace_workstream_state",
+        occurredAt,
+        workstreamId,
+        stateVersion: {
+          commonEventId: stateVersion.commonEventId,
+          viewerEventId: stateVersion.viewerEventId,
+          authorityGeneration: stateVersion.authorityGeneration,
+          commonWaterline: stateVersion.commonWaterline,
+          viewerWaterline: stateVersion.viewerWaterline,
+        },
+        workstream: visible ? directoryWorkstream(row, attachment.workspaceId) : null,
+      }));
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns close cleanup; reconnect loads the current page and
+        // does not need the state rows missed while this socket was unhealthy.
+      }
+    }
   }
 
   private async publishDirectorySync(workspaceId: string): Promise<void> {
@@ -1642,60 +1744,72 @@ export class WorkspaceDO extends DurableObject<Env> {
     return isWorkspacePlacementAffinityForRegion(this.env.AVALON_REGION, value) ? value : null;
   }
 
-  private latestSyncVersion(): number {
-    return this.state.storage.sql.exec<{ version: number }>(
-      `SELECT COALESCE(MAX(version), 0) AS version FROM workspace_sync_events`,
-    ).one().version;
+  private latestSyncWaterline(): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT COALESCE(MAX(waterline), 0) AS waterline FROM workspace_sync_events`,
+    ).one().waterline;
   }
 
   private async subscribe(
     socket: WebSocket,
     attachment: WorkspaceSocketAttachment,
-    afterVersion: number,
+    afterWaterline: number,
   ): Promise<void> {
-    const latest = this.latestSyncVersion();
-    const earliest = this.state.storage.sql.exec<{ version: number | null }>(
-      `SELECT MIN(version) AS version FROM workspace_sync_events`,
-    ).one().version;
+    const latest = this.latestSyncWaterline();
+    const earliest = this.state.storage.sql.exec<{ waterline: number | null }>(
+      `SELECT MIN(waterline) AS waterline FROM workspace_sync_events`,
+    ).one().waterline;
     let events: WorkspaceSocketSyncEvent[];
-    if (afterVersion === 0) {
+    if (afterWaterline === 0) {
       events = [{
         type: "workspace_sync",
-        version: latest,
+        eventId: uuidV7(),
+        waterline: latest,
         occurredAt: new Date().toISOString(),
         topics: [...WORKSPACE_SYNC_TOPICS],
         reason: "initial",
       }];
-    } else if (afterVersion > latest || (earliest !== null && afterVersion < earliest - 1)) {
+    } else if (afterWaterline > latest || (earliest !== null && afterWaterline < earliest - 1)) {
       events = [{
         type: "workspace_sync",
-        version: latest,
+        eventId: uuidV7(),
+        waterline: latest,
         occurredAt: new Date().toISOString(),
         topics: [...WORKSPACE_SYNC_TOPICS],
         reason: "history_unavailable",
       }];
     } else {
-      events = this.state.storage.sql.exec<{
-        version: number;
+      const rows = this.state.storage.sql.exec<{
+        waterline: number;
+        event_id: string;
         topics_json: string;
         occurred_at: number;
       }>(
-        `SELECT version, topics_json, occurred_at FROM workspace_sync_events
-          WHERE version > ? ORDER BY version`,
-        afterVersion,
-      ).toArray().map((row) => WorkspaceSocketSyncEventSchema.parse({
+        `SELECT waterline, event_id, topics_json, occurred_at FROM workspace_sync_events
+          WHERE waterline > ? ORDER BY waterline`,
+        afterWaterline,
+      ).toArray();
+      const newest = rows.at(-1);
+      const changedTopics = new Set<WorkspaceSyncTopic>();
+      for (const row of rows) {
+        for (const topic of z.array(WorkspaceSyncTopicSchema).parse(JSON.parse(row.topics_json))) {
+          changedTopics.add(topic);
+        }
+      }
+      events = newest ? [WorkspaceSocketSyncEventSchema.parse({
         type: "workspace_sync",
-        version: row.version,
-        occurredAt: new Date(row.occurred_at).toISOString(),
-        topics: JSON.parse(row.topics_json),
+        eventId: newest.event_id,
+        waterline: newest.waterline,
+        occurredAt: new Date(newest.occurred_at).toISOString(),
+        topics: WORKSPACE_SYNC_TOPICS.filter((topic) => changedTopics.has(topic)),
         reason: "change",
-      }));
+      })] : [];
     }
     for (const event of events) socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse(event)));
     socket.serializeAttachment({
       ...attachment,
       subscribed: true,
-      lastVersion: events.at(-1)?.version ?? Math.max(afterVersion, latest),
+      lastWaterline: events.at(-1)?.waterline ?? Math.max(afterWaterline, latest),
     });
   }
 

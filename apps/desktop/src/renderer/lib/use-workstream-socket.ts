@@ -477,7 +477,7 @@ export function reconcileCanonicalTranscript(
  * query and its sidebar row reads the list query. Invalidating the list instead
  * would put a REST round trip between the two, and the header would pulse blue
  * over a sidebar dot that had not caught up yet — for as long as the refetch
- * took, and indefinitely if it raced with a poll that had already been issued.
+ * took, and indefinitely if it raced with an older page already in flight.
  */
 export function applyHarnessStatus(
   queryClient: QueryClient,
@@ -988,7 +988,7 @@ export function useWorkstreamSocket(
      * forever while the transcript already fetched stayed on screen. Dropping
      * the cached work stream instead lets the screen's existing "could not be
      * opened" state take over, and takes the sidebar row with it rather than
-     * waiting for the list poll to notice.
+     * waiting for a later workspace state event to notice.
      */
     const handleAccessRevoked = (): void => {
       accessRevoked = true;

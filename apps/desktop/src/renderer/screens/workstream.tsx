@@ -852,13 +852,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryKey: ['terminal-workstream', id],
     queryFn: ({ signal }) => api!.getTerminalWorkstreamState(id, signal),
     enabled: Boolean(api && id),
-    staleTime: 5_000,
-    refetchInterval: (query) => {
-      const state = query.state.data;
-      if (!state) return false;
-      if (['starting', 'running', 'restoring'].includes(state.state)) return 5_000;
-      return state.localFilesRetained ? 30_000 : false;
-    },
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const startFreshTerminal = useMutation({
     mutationFn: () => api!.startFreshTerminalWorkspace(id),

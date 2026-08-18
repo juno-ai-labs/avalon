@@ -1436,6 +1436,7 @@ export const WORKSPACE_SYNC_TOPICS = [
   "member_directory",
   "invitation_directory",
   "connector_connections",
+  "connector_oauth_attempts",
   "terminal_policy",
   "digest_schedule",
   "automations",
@@ -1457,7 +1458,7 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("subscribe"),
-    afterVersion: z.number().int().nonnegative(),
+    afterWaterline: z.number().int().nonnegative(),
   }).strict(),
   z.object({
     type: z.literal("create_message"),
@@ -1475,22 +1476,87 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
+const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
+
 export const WorkspaceSocketSyncEventSchema = z.object({
   type: z.literal("workspace_sync"),
-  version: z.number().int().nonnegative(),
+  eventId: WorkstreamStateEventIdSchema,
+  waterline: z.number().int().nonnegative(),
   occurredAt: TimestampSchema,
   topics: z.array(WorkspaceSyncTopicSchema).min(1),
   reason: z.enum(["initial", "change", "history_unavailable"]),
+}).strict();
+
+/**
+ * Coordinates one complete work-stream UI snapshot across its two authorities.
+ *
+ * `commonWaterline` orders the WorkstreamDO-owned shared row and
+ * `viewerWaterline` orders the authenticated user's row. They are deliberately
+ * independent: Cloudflare Queues is unordered, so advancing one must never
+ * cause a delayed update for the other to be discarded. Each field carries
+ * the UUIDv7 identity of its own state row unchanged over both socket paths;
+ * those IDs are time-sortable traces, not a distributed total-order clock.
+ */
+export const WorkstreamStateVersionSchema = z.object({
+  commonEventId: WorkstreamStateEventIdSchema,
+  viewerEventId: WorkstreamStateEventIdSchema.nullable(),
+  authorityGeneration: z.number().int().positive(),
+  commonWaterline: z.number().int().positive(),
+  viewerWaterline: z.number().int().nonnegative(),
+}).strict().superRefine((version, context) => {
+  if ((version.viewerWaterline === 0) !== (version.viewerEventId === null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["viewerEventId"],
+      message: "must be null exactly when viewerWaterline is zero",
+    });
+  }
+});
+
+export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchema.extend({
+  workstreamId: IdSchema,
 }).strict();
 
 /** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
 export const WorkspaceWorkstreamPageEventSchema = z.object({
   type: z.literal("workspace_workstream_page"),
   requestId: IdSchema,
-  directoryVersion: z.number().int().nonnegative(),
+  directoryWaterline: z.number().int().nonnegative(),
   items: z.array(WorkstreamSchema).max(1_250),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-}).strict();
+}).strict().superRefine((page, context) => {
+  const itemIds = new Set(page.items.map((item) => item.id));
+  const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
+  if (itemIds.size !== page.items.length
+    || versionIds.size !== page.stateVersions.length
+    || itemIds.size !== versionIds.size
+    || [...itemIds].some((id) => !versionIds.has(id))) {
+    context.addIssue({
+      code: "custom",
+      path: ["stateVersions"],
+      message: "must contain exactly one state version for every work stream item",
+    });
+  }
+});
+
+/** A current state row pushed by WorkspaceDO after Queue ingestion. */
+export const WorkspaceWorkstreamStateEventSchema = z.object({
+  type: z.literal("workspace_workstream_state"),
+  occurredAt: TimestampSchema,
+  workstreamId: IdSchema,
+  stateVersion: WorkstreamStateVersionSchema,
+  /** Null is a versioned visibility/archive tombstone for this viewer. */
+  workstream: WorkstreamSchema.nullable(),
+}).strict().superRefine((event, context) => {
+  if (event.workstream && event.workstream.id !== event.workstreamId) {
+    context.addIssue({
+      code: "custom",
+      path: ["workstream", "id"],
+      message: "must match workstreamId",
+    });
+  }
+});
 
 /**
  * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
@@ -1498,6 +1564,7 @@ export const WorkspaceWorkstreamPageEventSchema = z.object({
  * the selected SubstreamAgent feed.
  */
 export const WorkstreamControlMetadataSchema = z.object({
+  stateVersion: WorkstreamStateVersionSchema,
   revision: z.number().int().nonnegative(),
   id: IdSchema,
   workspaceId: IdSchema,
@@ -1565,6 +1632,8 @@ export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
+export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
+export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
 export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocketEventSchema>;
 

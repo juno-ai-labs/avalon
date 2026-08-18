@@ -25,8 +25,7 @@ export function NoteDetailScreen(): React.JSX.Element {
     queryKey: ['note', id],
     queryFn: ({ signal }) => api!.getNote(id!, signal),
     enabled: Boolean(api && id),
-    refetchInterval: 5_000,
-    staleTime: 2_000,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const reportedNoteId = useRef<string | null>(null);
   useEffect(() => {

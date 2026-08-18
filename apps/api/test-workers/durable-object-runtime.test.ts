@@ -372,6 +372,32 @@ describe("Durable Objects in the Workers runtime", () => {
             "last_settlement_error_code",
           ]));
         }
+        if (instance instanceof WorkstreamDO) {
+          const stateColumns = state.storage.sql.exec<{ name: string }>(
+            `PRAGMA table_info(workstream_state_changes)`,
+          ).toArray().map((column) => column.name);
+          expect(stateColumns).toEqual(expect.arrayContaining([
+            "sequence",
+            "state_key",
+            "waterline",
+            "event_id",
+            "state_json",
+          ]));
+        }
+        if (instance instanceof WorkspaceDO) {
+          const syncColumns = state.storage.sql.exec<{ name: string }>(
+            `PRAGMA table_info(workspace_sync_events)`,
+          ).toArray().map((column) => column.name);
+          expect(syncColumns).toEqual(["waterline", "event_id", "topics_json", "occurred_at"]);
+          const directoryColumns = state.storage.sql.exec<{ name: string }>(
+            `PRAGMA table_info(workspace_workstream_directory)`,
+          ).toArray().map((column) => column.name);
+          expect(directoryColumns).toEqual(expect.arrayContaining([
+            "authority_generation",
+            "waterline",
+            "source_event_id",
+          ]));
+        }
       });
     }
   });
@@ -631,7 +657,12 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM durable_outbox WHERE partition_key IN ('common', ?)`,
         `user:${USER_ID}`,
-      ).one().count).toBe(2);
+      ).one().count).toBe(4);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workstream_state_changes
+          WHERE state_key IN ('common', ?)`,
+        `user:${USER_ID}`,
+      ).one().count).toBe(4);
       state.storage.sql.exec(
         `UPDATE durable_outbox SET state = 'inflight' WHERE partition_key = 'common'`,
       );
@@ -651,12 +682,12 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT source_version, state FROM durable_outbox WHERE partition_key = 'common'
           ORDER BY source_version`,
       ).toArray();
-      // A timeout cannot prove that the receiver did not commit the inflight
-      // row. Retain it until an idempotent acknowledgement arrives, while
-      // coalescing only a still-pending replacement.
-      expect(replacements).toHaveLength(2);
-      expect(replacements[1]!.source_version).toBe(replacements[0]!.source_version + 1);
-      expect(replacements[0]?.state).toBe("inflight");
+      // Every aggregate state transition remains independently deliverable.
+      // Queue delivery may duplicate or reorder these rows, so WorkspaceDO
+      // accepts only the greatest waterline for the common state key.
+      expect(replacements).toHaveLength(3);
+      expect(replacements.map((row) => row.source_version)).toEqual([1, 2, 3]);
+      expect(replacements.slice(0, 2).every((row) => row.state === "inflight")).toBe(true);
       state.storage.sql.exec(`DELETE FROM durable_outbox`);
     });
   });
@@ -1247,10 +1278,10 @@ describe("Durable Objects in the Workers runtime", () => {
     socket!.send("ping");
     expect((await pong).data).toBe("pong");
     const snapshot = nextMessage(socket!);
-    socket!.send(JSON.stringify({ type: "subscribe", afterVersion: 0 }));
+    socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
     expect(JSON.parse(String((await snapshot).data))).toMatchObject({
       type: "workspace_sync",
-      version: 0,
+      waterline: 0,
       reason: "initial",
     });
   });
@@ -1299,8 +1330,8 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(stub.applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
       envelopes: [
-        effectEnvelope(common, "directory-common:1"),
-        effectEnvelope(viewer, "directory-viewer:1"),
+        effectEnvelope(common, "00000000-0000-7000-8000-000000000201"),
+        effectEnvelope(viewer, "00000000-0000-7000-8000-000000000202"),
       ],
     })).resolves.toMatchObject({ directoryChanged: true });
 
@@ -1318,6 +1349,72 @@ describe("Durable Objects in the Workers runtime", () => {
       hasUnread: true,
       youAreMentioned: true,
     });
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [effectEnvelope(
+        {
+          ...viewer,
+          unreadCount: 9,
+          youAreMentioned: false,
+          latestMentionAttentionOrdinal: 2,
+        },
+        "00000000-0000-7000-8000-000000000203",
+        3,
+      )],
+    });
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [effectEnvelope(
+        { ...viewer, unreadCount: 1, youAreMentioned: true },
+        "00000000-0000-7000-8000-000000000204",
+        2,
+      )],
+    });
+    const afterReorder = await stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    });
+    expect(afterReorder.items[0]).toMatchObject({ hasUnread: true, youAreMentioned: false });
+    expect(afterReorder.stateVersions[0]).toMatchObject({ viewerWaterline: 3 });
+
+    // A replacement authority's viewer row may beat its common row through
+    // the unordered Queue. Once the common row arrives, the WorkspaceDO must
+    // expose the new generation's low waterline instead of retaining the old
+    // generation's numerically larger viewer waterline.
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [{
+        ...effectEnvelope(viewer, "00000000-0000-7000-8000-000000000205"),
+        generation: 2,
+      }],
+    });
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [{
+        ...effectEnvelope(
+          { ...common, title: "Replacement authority" },
+          "00000000-0000-7000-8000-000000000206",
+        ),
+        generation: 2,
+      }],
+    });
+    const afterGenerationChange = await stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    });
+    expect(afterGenerationChange.items[0]).toMatchObject({
+      title: "Replacement authority",
+      youAreMentioned: true,
+    });
+    expect(afterGenerationChange.stateVersions[0]).toMatchObject({
+      authorityGeneration: 2,
+      commonWaterline: 1,
+      viewerWaterline: 1,
+    });
 
     const tiedCommon: WorkstreamRegionalEffect = {
       ...common,
@@ -1333,7 +1430,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceId: WORKSPACE_ID,
       envelopes: tiedIds.map((workstreamId, index) => effectEnvelope(
         tiedCommon,
-        `directory-tied:${index}`,
+        `00000000-0000-7000-8000-${(0x210 + index).toString(16).padStart(12, "0")}`,
         1,
         workstreamId,
       )),
@@ -1445,9 +1542,17 @@ describe("Durable Objects in the Workers runtime", () => {
     expect((await pong).data).toBe("pong");
     const snapshot = nextMessage(socket);
     socket.send(JSON.stringify({ type: "subscribe" }));
-    expect(JSON.parse(String((await snapshot).data))).toMatchObject({
+    const initialMetadata = JSON.parse(String((await snapshot).data)) as {
+      metadata: { stateVersion: { commonEventId: string; viewerEventId: string | null } };
+    };
+    expect(initialMetadata).toMatchObject({
       type: "workstream_metadata",
       metadata: {
+        stateVersion: {
+          authorityGeneration: 1,
+          commonWaterline: 1,
+          viewerWaterline: 1,
+        },
         id: WORKSTREAM_ID,
         workspaceId: WORKSPACE_ID,
         title: "Socket metadata",
@@ -1465,6 +1570,12 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       },
     });
+    expect(initialMetadata.metadata.stateVersion.commonEventId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+    expect(initialMetadata.metadata.stateVersion.viewerEventId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
 
     const pushed = nextMessage(socket);
     const update = await fetchAndDrain(stub, "https://workstream.test/internal/substream-effects", {

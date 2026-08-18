@@ -96,13 +96,13 @@ flowchart LR
   H --> SA
   WD --> SA
   SA --> WS
-  WS -->|"directory RPC"| WD
-  WS -->|"activity + mention effects"| Q
+  WS -->|"opaque state/effect wake-up"| Q
   H --> Q["Activity Queue"]
   GH["GitHub App"] -->|"signed webhook"| GI["Smart GitHub ingress"]
   GI -->|"installation route"| H
   GI -->|"exact bytes over RPC"| EH["EU Hono API"]
   Q --> C["Idempotent activity consumer"]
+  C -->|"typed directory state RPC"| WD
   C --> D
   C --> S["WorkspaceScheduler DO"]
   S --> SA
@@ -184,9 +184,11 @@ identity, crash, and restricted operator flow.
   record before returning the provider URL, completes the provider callback and
   credential persistence in-region, records a terminal result, and then redirects
   through the same hosted HTTPS-to-desktop handoff. The custom-protocol launch is
-  a fast notification; Settings also polls the authenticated regional attempt
-  endpoint, so the server record remains authoritative when a browser blocks or
-  loses the launch. Google Mail + Calendar and Google Drive + Docs + Sheets remain
+  a fast notification; the terminal attempt advances the WorkspaceDO socket
+  waterline, and Settings then reads the authenticated regional attempt endpoint
+  once. Reconnect repeats that reconciliation, so the server record remains
+  authoritative when a browser blocks or loses the launch without an interval
+  poll. Google Mail + Calendar and Google Drive + Docs + Sheets remain
   presentation and authorization bundles over the same `google` adapter, not
   separate connector types.
 - Desktop refresh material uses a versioned authenticated-encryption envelope. The
@@ -266,14 +268,17 @@ outbox, and the model-free parent never relays token traffic.
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
 The child RPCs it to `WorkstreamDO`, which deduplicates the source, recomputes
-the aggregate, and owns the sole parent outbox. Its alarm sends directory,
-viewer, resource-link, and suggestion-feedback effects directly to the
-deterministic WorkspaceDO by typed RPC. WorkspaceDO commits each effect with a
-hash receipt, advances its directory version, and publishes the workspace
-socket invalidation. Only activity-log and mention-delivery effects publish
-opaque object/message IDs and a hash through Cloudflare Queue; the consumer
-fetches the payload from WorkstreamDO and commits the minimal D1 inbox/activity
-or notification-intent transaction before acknowledging the source object. D1
+the aggregate, appends a common or per-viewer state row with a monotonic
+waterline and UUIDv7 identity, and owns the sole parent outbox. The direct
+WorkstreamDO socket can publish that committed row immediately. Its alarm sends
+an opaque Queue wake-up for every directory, viewer, resource-link,
+suggestion-feedback, activity-log, and mention-delivery effect. The regional
+consumer fetches the payload from WorkstreamDO, then either RPCs the named
+WorkspaceDO or commits the minimal D1 activity/notification-intent transaction.
+WorkspaceDO rejects stale/duplicate per-key waterlines, persists the current
+row with the same UUIDv7 for the affected common or viewer field, and publishes
+it on the workspace socket before the
+consumer acknowledges the source object. D1
 resolves current membership, profile, Slack, and email state, while mention
 delivery asks WorkspaceDO for the causally required viewer version so Queue
 reordering cannot outrun a removal. The
@@ -296,8 +301,8 @@ The socket responsibilities are deliberately not interchangeable:
 
 - `WorkspaceDO` accepts idempotent user commands, including new work-stream and
   message creation, serves cursor-paged authoritative work-stream lists, and
-  publishes versioned workspace-topic invalidations.
-- `WorkstreamDO` publishes complete increasing-revision metadata/viewer
+  publishes current work-stream rows plus waterlined workspace-topic invalidations.
+- `WorkstreamDO` publishes complete independently waterlined common/viewer
   snapshots and HyperSight configuration, but carries neither transcript parts
   nor model tokens.
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
@@ -306,6 +311,15 @@ The socket responsibilities are deliberately not interchangeable:
 - `BlockDashboardAgent` is a read-only direct derived-output channel. It
   publishes queued/running/terminal state and a replaceable durable stream
   checkpoint for exactly one configured block.
+
+Electron's header/detail/sidebar use one shared work-stream cache and one
+per-work-stream ledger keyed by authority generation plus separate common and
+viewer waterlines. The direct WorkstreamDO event gives an open work stream the
+fast path; the Queue-delayed WorkspaceDO event gives inactive rows and global
+sidebar/discovery surfaces the complete path. Whichever copy arrives second is
+field-wise ignored unless its corresponding waterline is newer. UUIDv7 makes
+the same event searchable and millisecond-time-sortable across both paths, but
+does not replace authority-local waterlines for causal correctness.
 
 The WorkspaceDO command receipt is private and outside the published version
 sequence. If a connection drops before that receipt, Electron reconnects and
@@ -330,21 +344,22 @@ turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
 feed and stream cursors across socket and route handoffs, keeps background
 subscribers only for listed running work streams, drops duplicate or stale
 frames, and reconciles to the agent's final local-SQL transcript page plus the
-matching terminal metadata revision. WorkspaceDO directory queries refresh
+matching terminal metadata waterline. WorkspaceDO directory queries refresh
 regional lists but never override canonical child transcript content.
 
-The desktop applies each complete increasing-revision WorkstreamDO viewer
-snapshot to both the open detail and sidebar caches, so the header and status dot
-cannot disagree across a stale fetch. WorkspaceDO directory pages are the
-backstop for work streams without a live child socket. A lower revision never
-rolls either cache backward, and no list response becomes transcript authority.
+The desktop applies each complete WorkstreamDO snapshot through one shared
+common/viewer waterline ledger behind the open detail and sidebar caches, so the
+header and status dot cannot disagree across a delayed Queue copy. WorkspaceDO
+directory pages/events are the path for work streams without a live child
+socket. A lower generation/key waterline never rolls either cache backward, and
+no list response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
 across 45–55 seconds; WorkspaceDO, WorkstreamDO, and BlockDashboardAgent use a
 fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
-while offline, and resumes from its own topic version, metadata revision, feed
+while offline, and resumes from its own topic waterline, metadata waterlines, feed
 sequence/stream cursor, or full block checkpoint.
 
 Viewing is presence only. Participant persistence occurs only through explicit
@@ -642,7 +657,12 @@ it.
   query is not evidence that any particular reader lost access; those clients
   reconnect and re-authorize in under a second.
 - **Reconnect uses equal-jitter exponential backoff capped at 30 seconds**, pauses
-  while offline, and resumes from the last cursor/version for that socket role.
+  while offline, and resumes from the last cursor/waterline for that socket role.
+- **Queue delivery is duplicate-prone and unordered by design.** WorkstreamDO
+  retains every state outbox row until acknowledgement; WorkspaceDO compares
+  authority generation and the affected common/viewer waterline. UUIDv7 order
+  alone never decides freshness. A synchronous WorkstreamDO-to-WorkspaceDO
+  flush exists only inside the maintenance/bootstrap route-activation fence.
 - **Dictation sessions are capped at five minutes**, with a one-minute single-use
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.
@@ -710,6 +730,32 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-18 — Work-stream state uses Queue plus dual-socket waterlines
+
+**What changed:** Every WorkstreamDO aggregate state transition is appended with
+a per-key waterline and UUIDv7, published immediately to active work-stream
+clients, and retained in an SQL outbox for Cloudflare Queue. The consumer sends
+directory/user/feedback state to WorkspaceDO by typed RPC; WorkspaceDO publishes
+the current row to workspace clients. Electron merges either path through one
+shared common/viewer ledger. Workspace invalidations and OAuth completion also
+use waterlined socket events instead of renderer polling.
+
+**Why:** Direct delivery is the right latency path for the open header, while a
+Queue-buffered workspace projection is the right scale/failure-isolation path
+for many inactive work streams and sidebar/discovery. Queue does not promise
+ordering or exactly-once delivery, so freshness must live in the data model.
+
+**Considered and rejected:** The earlier direct-RPC-only parent handoff, a
+single combined version, UUID lexical order as a global clock, and periodic
+query refetch. They respectively couple every work stream to WorkspaceDO
+availability, lose independently reordered fields, overstate UUIDv7's causal
+guarantees, or spend idle requests while preserving cache races.
+
+**Consequences:** The runtime handoff always uses Queue; only maintenance route
+activation may synchronously flush its initial snapshot. Any new shared state
+must define an authority-local waterline and both socket handlers must use the
+same receiver ledger.
 
 ### 2026-08-18 — WorkspaceDO replaces the D1 work-stream query plane
 

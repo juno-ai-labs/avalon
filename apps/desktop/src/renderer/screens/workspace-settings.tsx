@@ -46,6 +46,7 @@ import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities'
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import type {
   GitHubRepositoryAccessSettings,
   TerminalNetworkPolicyPreview,
@@ -61,7 +62,6 @@ type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 interface PendingConnectorOAuth {
   attemptId: string;
   provider: ConnectorOAuthProvider;
-  startedAt: number;
 }
 
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
@@ -364,6 +364,7 @@ export function WorkspaceSettingsScreen({
   workspace,
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
+  const workspaceSocket = useOptionalWorkspaceSocket();
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -563,7 +564,6 @@ export function WorkspaceSettingsScreen({
       setPendingConnectorOAuth({
         attemptId: result.authorization.attemptId,
         provider: result.provider,
-        startedAt: Date.now(),
       });
     },
   });
@@ -613,7 +613,6 @@ export function WorkspaceSettingsScreen({
     onSuccess: ({ authorization, provider }) => setPendingConnectorOAuth({
       attemptId: authorization.attemptId,
       provider,
-      startedAt: Date.now(),
     }),
   });
   const testConnection = useMutation({
@@ -803,19 +802,13 @@ export function WorkspaceSettingsScreen({
   useEffect(() => {
     if (!api || !pendingConnectorOAuth) return;
     let cancelled = false;
-    let timer: number | undefined;
-    let retryDelayMs = 750;
     const providerName = connectorProviderName[pendingConnectorOAuth.provider];
 
-    const poll = async (): Promise<void> => {
+    const reconcile = async (): Promise<void> => {
       try {
         const attempt = await api.getConnectorOAuthAttempt(pendingConnectorOAuth.attemptId);
         if (cancelled) return;
-        if (attempt.status === 'pending') {
-          retryDelayMs = 1_000;
-          timer = window.setTimeout(() => void poll(), retryDelayMs);
-          return;
-        }
+        if (attempt.status === 'pending') return;
         setPendingConnectorOAuth(null);
         if (attempt.status === 'succeeded') {
           setConnectorOAuthError(null);
@@ -836,23 +829,23 @@ export function WorkspaceSettingsScreen({
               : `${providerName} could not be connected. Try again.`,
         );
       } catch {
-        if (cancelled) return;
-        if (Date.now() - pendingConnectorOAuth.startedAt >= 16 * 60_000) {
-          setPendingConnectorOAuth(null);
+        if (!cancelled) {
           setConnectorOAuthError(`${providerName} authorization could not be confirmed. Refresh connections or try again.`);
-          return;
         }
-        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
-        timer = window.setTimeout(() => void poll(), retryDelayMs);
       }
     };
 
-    void poll();
+    void reconcile();
     return () => {
       cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [api, pendingConnectorOAuth, queryClient]);
+  }, [
+    api,
+    pendingConnectorOAuth,
+    queryClient,
+    workspaceSocket?.state,
+    workspaceSocket?.topicWaterlines.connector_oauth_attempts,
+  ]);
 
   const copyInvitation = async (): Promise<void> => {
     if (!createdUrl) return;

@@ -7,6 +7,9 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
 import {
+  consumeActivityQueue,
+} from "../src/queues/activity-consumer";
+import {
   applyWorkstreamRegionalEffect,
   loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
@@ -101,6 +104,84 @@ function workspaceSyncNamespace() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("the WorkstreamDO regional effect inbox", () => {
+  it("routes an opaque directory wake-up through Queue into WorkspaceDO and acknowledges the child outbox", async () => {
+    const database = seedAuthority();
+    const common: WorkstreamRegionalEffect = {
+      kind: "directory_common",
+      title: "Queue-delivered state",
+      description: "Latest-state workspace projection",
+      preview: "",
+      scope: "workspace",
+      state: "running",
+      systemKind: null,
+      lastActivityAt: AT,
+      completedAt: null,
+      archivedAt: null,
+    };
+    const envelope = message(common, {
+      messageId: MESSAGE_ID,
+      partitionKey: "common",
+      sourceVersion: 7,
+    });
+    const loadRegionalEffect = vi.fn(async () => envelope);
+    const acknowledgeRegionalEffect = vi.fn(async () => true);
+    const applyWorkstreamDirectoryEffects = vi.fn(async () => ({
+      accepted: [{ messageId: envelope.messageId, payloadHash: envelope.payloadHash }],
+      directoryChanged: true,
+    }));
+    const workstreams = createCloudflareTestBinding<DurableObjectNamespace>({
+      idFromName: () => createTestDurableObjectId("queue-workstream"),
+      get: () => ({ loadRegionalEffect, acknowledgeRegionalEffect }),
+    });
+    const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
+      idFromName: () => createTestDurableObjectId("queue-workspace"),
+      get: () => ({ applyWorkstreamDirectoryEffects }),
+    });
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      WORKSTREAM_DOS: workstreams,
+      WORKSPACE_DOS: workspaces,
+    });
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const queueMessage = {
+      id: "directory-wake",
+      timestamp: new Date(AT),
+      body: workstreamRegionalEffectWakeMessage(envelope),
+      attempts: 1,
+      ack,
+      retry,
+    } satisfies Message<unknown>;
+    try {
+      await consumeActivityQueue({
+        messages: [queueMessage],
+        queue: "activity",
+        metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+        retryAll: vi.fn(),
+        ackAll: vi.fn(),
+      } satisfies MessageBatch<unknown>, env);
+
+      expect(loadRegionalEffect).toHaveBeenCalledOnce();
+      expect(applyWorkstreamDirectoryEffects).toHaveBeenCalledWith({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [envelope],
+      });
+      expect(acknowledgeRegionalEffect).toHaveBeenCalledWith({
+        messageId: envelope.messageId,
+        payloadHash: envelope.payloadHash,
+      });
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
+      ).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("uses an opaque Queue wake-up and fetches the payload from the regional object", async () => {
     const effect: WorkstreamRegionalEffect = {
       kind: "directory_common",

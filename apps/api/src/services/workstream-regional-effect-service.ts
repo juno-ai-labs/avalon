@@ -12,7 +12,10 @@ import {
   type WorkstreamRegionalEffectQueueMessage,
 } from "../durable-objects/workstream-regional-effect";
 import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
-import { WorkspaceDirectoryNotificationStateSchema } from "../durable-objects/workspace-directory-protocol";
+import {
+  WorkspaceDirectoryApplyResultSchema,
+  WorkspaceDirectoryNotificationStateSchema,
+} from "../durable-objects/workspace-directory-protocol";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
@@ -47,6 +50,44 @@ interface NotificationIntentRow {
 export interface WorkstreamRegionalEffectResult {
   replayed: boolean;
   notificationIntentId: string | null;
+}
+
+export function isWorkspaceDirectoryEffect(
+  effect: WorkstreamRegionalEffectEnvelope["effect"],
+): effect is Extract<WorkstreamRegionalEffectEnvelope["effect"], {
+  kind: "directory_common" | "directory_user" | "suggestion_feedback";
+}> {
+  return effect.kind === "directory_common"
+    || effect.kind === "directory_user"
+    || effect.kind === "suggestion_feedback";
+}
+
+/** Apply one unordered, at-least-once Queue delivery to WorkspaceDO. */
+export async function applyQueuedWorkspaceDirectoryEffect(
+  env: Env,
+  input: WorkstreamRegionalEffectEnvelope,
+): Promise<void> {
+  const message = WorkstreamRegionalEffectEnvelopeSchema.parse(input);
+  if (!isWorkspaceDirectoryEffect(message.effect)) {
+    throw new Error("non_workspace_effect_misdirected_to_workspace_do");
+  }
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    message.workspaceId,
+    workspaceDOName(message.region, message.workspaceId),
+  );
+  const result = WorkspaceDirectoryApplyResultSchema.parse(
+    await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: message.workspaceId,
+      envelopes: [message],
+    }),
+  );
+  if (result.accepted.length !== 1
+    || result.accepted[0]?.messageId !== message.messageId
+    || result.accepted[0]?.payloadHash !== message.payloadHash) {
+    throw new Error("workspace_directory_effect_ack_incomplete");
+  }
 }
 
 /**
@@ -391,6 +432,15 @@ export async function acknowledgeWorkstreamRegionalEffect(
   env: Env,
   message: WorkstreamRegionalEffectEnvelope,
 ): Promise<void> {
+  await acknowledgeWorkstreamOutboxEffect(env, message);
+  await markWorkstreamRegionalEffectAcknowledged(env, message.messageId, message.payloadHash);
+}
+
+/** Remove an acknowledged DO outbox row without creating a regional D1 receipt. */
+export async function acknowledgeWorkstreamOutboxEffect(
+  env: Env,
+  message: WorkstreamRegionalEffectEnvelope,
+): Promise<void> {
   const objectName = workstreamDOName(message.region, message.workspaceId, message.workstreamId);
   const workstream = await durableObjectStubForWorkspace(
     env,
@@ -402,7 +452,6 @@ export async function acknowledgeWorkstreamRegionalEffect(
     messageId: message.messageId,
     payloadHash: message.payloadHash,
   });
-  await markWorkstreamRegionalEffectAcknowledged(env, message.messageId, message.payloadHash);
 }
 
 export async function markWorkstreamRegionalEffectAcknowledged(
@@ -462,9 +511,9 @@ export async function loadWorkstreamRegionalEffect(
     messageId: wake.messageId,
     payloadHash: wake.payloadHash,
   });
-  // A newer coalesced sidebar version or a prior acknowledgement may have
-  // removed this row after the wake-up was queued. There is nothing left for
-  // this delivery to do, and retrying it cannot recreate the superseded row.
+  // A prior acknowledgement may have removed this row after a duplicate
+  // wake-up was queued. There is nothing left for this delivery to do, and
+  // retrying it cannot recreate an acknowledged row.
   if (!loaded) return null;
   const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse(loaded);
   if (

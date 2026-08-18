@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
-import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
@@ -9,7 +9,6 @@ import {
   backgroundRealtimeWorkstreamIds,
   openWorkstreamId,
   showsAutomation,
-  staleHarnessStatusWorkstreamId,
 } from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
@@ -32,13 +31,6 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
     pinPosition: null,
     lastActivityAt: '2026-08-11T10:00:00.000Z',
   };
-}
-
-function detail(
-  harnessStatus: WorkstreamDetail['harnessStatus'],
-  dataUpdatedAt: number,
-): { data?: WorkstreamDetail; dataUpdatedAt: number } {
-  return { data: { id: workstreamId, harnessStatus } as WorkstreamDetail, dataUpdatedAt };
 }
 
 describe('openWorkstreamId', () => {
@@ -146,41 +138,5 @@ describe('showsAutomation', () => {
     expect(showsAutomation('/automations/new', '', automationId)).toBe(false);
     expect(showsAutomation('/automations/00000000-0000-7000-8000-000000000009', '', automationId)).toBe(false);
     expect(showsAutomation('/workstreams/new', '', automationId)).toBe(false);
-  });
-});
-
-describe('staleHarnessStatusWorkstreamId', () => {
-  it('catches a detail left behind by a status the poll already has', () => {
-    expect(staleHarnessStatusWorkstreamId(
-      workstreamId,
-      [summary('needs_input')],
-      2_000,
-      detail('running', 1_000),
-    )).toBe(workstreamId);
-  });
-
-  it('leaves a detail written after the poll alone, so a push is not undone', () => {
-    expect(staleHarnessStatusWorkstreamId(
-      workstreamId,
-      [summary('needs_input')],
-      1_000,
-      detail('running', 2_000),
-    )).toBeNull();
-  });
-
-  it('stays quiet while the two agree', () => {
-    expect(staleHarnessStatusWorkstreamId(
-      workstreamId,
-      [summary('running')],
-      2_000,
-      detail('running', 1_000),
-    )).toBeNull();
-  });
-
-  it('stays quiet with no work stream open, no list yet, or no detail yet', () => {
-    expect(staleHarnessStatusWorkstreamId(null, [summary('needs_input')], 2_000, detail('running', 1_000))).toBeNull();
-    expect(staleHarnessStatusWorkstreamId(workstreamId, undefined, 2_000, detail('running', 1_000))).toBeNull();
-    expect(staleHarnessStatusWorkstreamId(workstreamId, [summary('needs_input')], 2_000, undefined)).toBeNull();
-    expect(staleHarnessStatusWorkstreamId(workstreamId, [], 2_000, detail('running', 1_000))).toBeNull();
   });
 });

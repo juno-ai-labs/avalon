@@ -57,8 +57,11 @@ import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creati
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 import { newId } from "@avalon/db";
 import {
+  acknowledgeWorkstreamOutboxEffect,
   acknowledgeWorkstreamRegionalEffect,
+  applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
+  isWorkspaceDirectoryEffect,
   loadWorkstreamRegionalEffect,
   markWorkstreamRegionalEffectAcknowledged,
   processWorkstreamNotificationIntent,
@@ -220,11 +223,20 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     try {
       const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
       if (!envelope) {
+        // An already acknowledged DO row no longer needs work. Regional D1
+        // receipts exist only for activity/notification effects, so an absent
+        // workspace-state wake-up has nothing to mark there.
         await markWorkstreamRegionalEffectAcknowledged(
           env,
           regionalEffect.data.messageId,
           regionalEffect.data.payloadHash,
         );
+        message.ack();
+        return;
+      }
+      if (isWorkspaceDirectoryEffect(envelope.effect)) {
+        await applyQueuedWorkspaceDirectoryEffect(env, envelope);
+        await acknowledgeWorkstreamOutboxEffect(env, envelope);
         message.ack();
         return;
       }
