@@ -13,12 +13,12 @@ describe('useRailCrossFade', () => {
 
   it('holds the panel that lost the sidebar until its fade is over', () => {
     const { result, rerender } = renderHook(({ id }: { id: string | null }) => useRailCrossFade(id), {
-      initialProps: { id: 'hypersight' as string | null },
+      initialProps: { id: 'block-dashboard' as string | null },
     });
     expect(result.current).toBeNull();
 
     rerender({ id: 'inspector' });
-    expect(result.current).toBe('hypersight');
+    expect(result.current).toBe('block-dashboard');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
     expect(result.current).toBeNull();
@@ -48,7 +48,7 @@ describe('useRailCrossFade', () => {
     });
 
     rerender({ id: null });
-    rerender({ id: 'hypersight' });
+    rerender({ id: 'block-dashboard' });
     expect(result.current).toBe('inspector');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
@@ -77,7 +77,7 @@ describe('useRailCrossFade', () => {
     rerender({ id: null });
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS - 10));
     rerender({ id: 'inspector' });
-    rerender({ id: 'hypersight' });
+    rerender({ id: 'block-dashboard' });
     expect(result.current).toBe('inspector');
 
     // The first departure's timer would have fired here.
@@ -95,11 +95,11 @@ describe('useRailCrossFade', () => {
       initialProps: { id: 'inspector' as string | null },
     });
 
-    rerender({ id: 'hypersight' });
+    rerender({ id: 'block-dashboard' });
     expect(result.current).toBe('inspector');
 
     rerender({ id: 'inspector' });
-    expect(result.current).toBe('hypersight');
+    expect(result.current).toBe('block-dashboard');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
     expect(result.current).toBeNull();

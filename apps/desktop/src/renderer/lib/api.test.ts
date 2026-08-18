@@ -915,16 +915,16 @@ describe('Avalon API wire adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getHyperSightPreference(workstreamId)).resolves.toEqual({
+    await expect(api.getBlockDashboardPreference(workstreamId)).resolves.toEqual({
       visible: false,
       updatedAt: null,
     });
-    await expect(api.updateHyperSightPreference(workstreamId, true)).resolves.toEqual({
+    await expect(api.updateBlockDashboardPreference(workstreamId, true)).resolves.toEqual({
       visible: true,
       updatedAt: timestamp,
     });
 
-    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/hypersight/preference`;
+    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/preference`;
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(preferenceUrl);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT' });

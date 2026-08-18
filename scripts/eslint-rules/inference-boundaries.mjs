@@ -128,7 +128,7 @@ const TICKET_METHODS = new Set([
   "getSocketTicket",
   "getWorkspaceSocketTicket",
   "getWorkstreamControlSocketTicket",
-  "getHyperSightBlockSocketTicket",
+  "getBlockDashboardBlockSocketTicket",
   "getRealtimeTranscriptionTicket",
   "getTranscriptionSocketTicket",
 ]);

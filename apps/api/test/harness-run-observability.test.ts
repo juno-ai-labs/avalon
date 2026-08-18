@@ -54,17 +54,17 @@ describe("harness run observability", () => {
       workspaceId: "00000000-0000-4000-8000-000000000001",
       workstreamId: "00000000-0000-4000-8000-000000000002",
       harnessRunId: "00000000-0000-4000-8000-000000000003",
-      source: "hypersight",
+      source: "block_dashboard",
       status: "completed",
       metrics: summarizeHarnessRun(outcome, 21_000),
     });
 
     expect(writeDataPoint).toHaveBeenCalledOnce();
     expect(writeDataPoint).toHaveBeenCalledWith({
-      indexes: ["hypersight:eu"],
+      indexes: ["block_dashboard:eu"],
       blobs: [
         "harness_run_v1",
-        "hypersight",
+        "block_dashboard",
         "completed",
         "provider/model",
         "none",
@@ -77,7 +77,7 @@ describe("harness run observability", () => {
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: "harness_run_finished",
       request_id: "00000000-0000-4000-8000-000000000003",
-      source: "hypersight",
+      source: "block_dashboard",
       duration_ms: 21_000,
       tool_calls: 5,
       detailed_timing_available: true,

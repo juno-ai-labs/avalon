@@ -241,7 +241,7 @@ export interface ActivitySuggestionData {
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
-export interface HyperSightBlockRun {
+export interface BlockDashboardBlockRun {
   id: string;
   blockId: string;
   configurationVersionId: string;
@@ -254,20 +254,20 @@ export interface HyperSightBlockRun {
   completedAt: string | null;
 }
 
-export interface HyperSightBlock {
+export interface BlockDashboardBlock {
   id: string;
   prompt: string;
-  latestRun: HyperSightBlockRun | null;
+  latestRun: BlockDashboardBlockRun | null;
 }
 
-export interface HyperSight {
+export interface BlockDashboard {
   versionId: string | null;
   versionNumber: number;
-  blocks: HyperSightBlock[];
+  blocks: BlockDashboardBlock[];
   updatedAt: string | null;
 }
 
-export interface HyperSightPreference {
+export interface BlockDashboardPreference {
   visible: boolean;
   updatedAt: string | null;
 }

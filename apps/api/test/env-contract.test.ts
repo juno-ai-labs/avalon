@@ -12,7 +12,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
-    SUBSTREAM_AGENTS: binding(), HYPERSIGHT_BLOCK_AGENTS: binding(),
+    SUBSTREAM_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),

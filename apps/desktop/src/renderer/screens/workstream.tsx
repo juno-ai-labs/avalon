@@ -51,7 +51,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
-import { useHyperSightBlockSockets } from '../lib/use-hypersight-block-sockets';
+import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
@@ -62,7 +62,7 @@ import {
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -70,7 +70,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
+import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -106,7 +106,7 @@ export function workstreamRunTiming(
  * leave the stored preference disagreeing with the screen, never two panels
  * stacked in one slot with both controls reading as open.
  */
-export function hypersightHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
+export function blockDashboardHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
   return preferenceVisible && !railOpen;
 }
 
@@ -302,21 +302,21 @@ const RENAME_HINT = 'Double-click to rename';
 export function WorkstreamHeader({
   workstream,
   socketState,
-  hypersightOpen,
-  hypersightPreferencePending,
+  blockDashboardOpen,
+  blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
   onRename,
-  onToggleHyperSight,
+  onToggleBlockDashboard,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
-  hypersightOpen: boolean;
-  hypersightPreferencePending: boolean;
+  blockDashboardOpen: boolean;
+  blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
-  onToggleHyperSight: () => void;
+  onToggleBlockDashboard: () => void;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -567,11 +567,11 @@ export function WorkstreamHeader({
         {/* The two controls that own the right sidebar sit side by side, in the
             order the panels themselves are named. */}
         <IconButton
-          className={clsx('panel-toggle', 'hypersight-toggle', hypersightOpen && 'is-active')}
-          aria-pressed={hypersightOpen}
-          disabled={hypersightPreferencePending}
-          label={hypersightOpen ? 'Hide HyperSight' : 'Show HyperSight'}
-          onClick={onToggleHyperSight}
+          className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
+          aria-pressed={blockDashboardOpen}
+          disabled={blockDashboardPreferencePending}
+          label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
+          onClick={onToggleBlockDashboard}
         >
           <IconAugmentedReality size={16} stroke={1.7} />
         </IconButton>
@@ -758,7 +758,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const closeRail = useUiStore((state) => state.closeRail);
   const openRail = useUiStore((state) => state.openRail);
   const railOpen = useUiStore((state) => state.railOpen);
-  const setHyperSightOpen = useUiStore((state) => state.setHyperSightOpen);
+  const setBlockDashboardOpen = useUiStore((state) => state.setBlockDashboardOpen);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -915,43 +915,43 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
     staleTime: 5_000,
   });
-  const hypersightPreference = useQuery({
-    queryKey: ['hypersight-preference', id],
-    queryFn: ({ signal }) => api!.getHyperSightPreference(id, signal),
+  const blockDashboardPreference = useQuery({
+    queryKey: ['block-dashboard-preference', id],
+    queryFn: ({ signal }) => api!.getBlockDashboardPreference(id, signal),
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
-  const hypersightPreferred = hypersightPreference.data?.visible ?? false;
-  const hypersightOpen = hypersightHoldsSidebar(hypersightPreferred, railOpen);
+  const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
+  const blockDashboardOpen = blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
   // the slot animates between their two widths.
-  const railLeaving = useRailCrossFade<RailPanel>(hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : null);
-  const hypersight = useQuery({
-    queryKey: ['hypersight', id],
-    queryFn: ({ signal }) => api!.getHyperSight(id, signal),
-    enabled: Boolean(api && id && hypersightOpen),
+  const railLeaving = useRailCrossFade<RailPanel>(blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : null);
+  const blockDashboard = useQuery({
+    queryKey: ['block-dashboard', id],
+    queryFn: ({ signal }) => api!.getBlockDashboard(id, signal),
+    enabled: Boolean(api && id && blockDashboardOpen),
     staleTime: 5_000,
   });
   const reportedHyperSightOpen = useRef<string | null>(null);
   useEffect(() => {
-    if (!hypersightOpen) {
+    if (!blockDashboardOpen) {
       reportedHyperSightOpen.current = null;
       return;
     }
-    if (!hypersight.data || reportedHyperSightOpen.current === id) return;
+    if (!blockDashboard.data || reportedHyperSightOpen.current === id) return;
     reportedHyperSightOpen.current = id;
     reportTelemetryProductIntent({
       kind: 'hypersight_opened',
       workstreamId: id,
-      blockCount: telemetryCountBucket(hypersight.data.blocks.length),
+      blockCount: telemetryCountBucket(blockDashboard.data.blocks.length),
     });
-  }, [hypersight.data, hypersightOpen, id]);
-  const hypersightConnectionStates = useHyperSightBlockSockets(
+  }, [blockDashboard.data, blockDashboardOpen, id]);
+  const blockDashboardConnectionStates = useBlockDashboardSockets(
     api,
     id,
-    hypersight.data?.blocks.map((block) => block.id) ?? [],
-    Boolean(api && id && hypersightOpen && hypersight.isSuccess),
+    blockDashboard.data?.blocks.map((block) => block.id) ?? [],
+    Boolean(api && id && blockDashboardOpen && blockDashboard.isSuccess),
   );
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -1157,69 +1157,69 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
-  const updateHyperSight = useMutation({
+  const updateBlockDashboard = useMutation({
     mutationFn: (blocks: Array<{ id: string; prompt: string }>) => {
-      const current = queryClient.getQueryData<HyperSight>(['hypersight', id]) ?? hypersight.data;
+      const current = queryClient.getQueryData<BlockDashboard>(['block-dashboard', id]) ?? blockDashboard.data;
       if (!current) throw new Error('HyperSight is not ready yet.');
-      return api!.updateHyperSight(id, {
+      return api!.updateBlockDashboard(id, {
         expectedVersionNumber: current.versionNumber,
         blocks,
       });
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData(['hypersight', id], updated);
+      queryClient.setQueryData(['block-dashboard', id], updated);
     },
     onError: () => {
-      void queryClient.invalidateQueries({ queryKey: ['hypersight', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['block-dashboard', id], exact: true });
     },
   });
 
-  const updateHyperSightPreference = useMutation({
-    mutationFn: (visible: boolean) => api!.updateHyperSightPreference(id, visible),
+  const updateBlockDashboardPreference = useMutation({
+    mutationFn: (visible: boolean) => api!.updateBlockDashboardPreference(id, visible),
     onMutate: async (visible) => {
-      await queryClient.cancelQueries({ queryKey: ['hypersight-preference', id], exact: true });
-      const previous = queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', id]);
-      queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', id], {
+      await queryClient.cancelQueries({ queryKey: ['block-dashboard-preference', id], exact: true });
+      const previous = queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', id]);
+      queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', id], {
         visible,
         updatedAt: previous?.updatedAt ?? null,
       });
       return { previous };
     },
     onError: (_error, _visible, context) => {
-      queryClient.setQueryData(['hypersight-preference', id], context?.previous);
+      queryClient.setQueryData(['block-dashboard-preference', id], context?.previous);
     },
     onSuccess: (preference) => {
-      queryClient.setQueryData(['hypersight-preference', id], preference);
+      queryClient.setQueryData(['block-dashboard-preference', id], preference);
     },
   });
-  const { mutate: persistHyperSightPreference } = updateHyperSightPreference;
+  const { mutate: persistBlockDashboardPreference } = updateBlockDashboardPreference;
 
   // HyperSight and the inspector rail share the right sidebar and are never
   // open together. HyperSight's visibility is a stored personal preference
   // rather than window state, so yielding the sidebar to the rail is written
   // back the same way the toggle is: the next visit opens where this one left
   // off.
-  const setHyperSightVisible = useCallback((visible: boolean): void => {
+  const setBlockDashboardVisible = useCallback((visible: boolean): void => {
     if (visible) closeRail();
-    persistHyperSightPreference(visible);
-  }, [closeRail, persistHyperSightPreference]);
+    persistBlockDashboardPreference(visible);
+  }, [closeRail, persistBlockDashboardPreference]);
 
   const openRailVariant = useCallback((variant: RailVariant): void => {
     openRail(variant);
-    if (hypersightPreferred) persistHyperSightPreference(false);
-  }, [hypersightPreferred, openRail, persistHyperSightPreference]);
+    if (blockDashboardPreferred) persistBlockDashboardPreference(false);
+  }, [blockDashboardPreferred, openRail, persistBlockDashboardPreference]);
 
   // The shell lays the main pane out against whichever panel holds the right
   // sidebar, and only this screen knows whether HyperSight has it — or which
   // panel is still fading out of it.
   useEffect(() => {
-    setHyperSightOpen(hypersightOpen);
-  }, [hypersightOpen, setHyperSightOpen]);
+    setBlockDashboardOpen(blockDashboardOpen);
+  }, [blockDashboardOpen, setBlockDashboardOpen]);
   useEffect(() => {
     setRailLeaving(railLeaving);
     return () => setRailLeaving(null);
   }, [railLeaving, setRailLeaving]);
-  useEffect(() => () => setHyperSightOpen(false), [setHyperSightOpen]);
+  useEffect(() => () => setBlockDashboardOpen(false), [setBlockDashboardOpen]);
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
@@ -1517,40 +1517,40 @@ export function WorkstreamScreen(): React.JSX.Element {
           nothing to hand focus back to when it closes. The write is optimistic;
           there is nothing to wait for. */}
       <WorkstreamHeader
-        hypersightOpen={hypersightOpen}
-        hypersightPreferencePending={hypersightPreference.isPending}
+        blockDashboardOpen={blockDashboardOpen}
+        blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
-        onToggleHyperSight={() => setHyperSightVisible(!hypersightOpen)}
+        onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
         socketState={socketState}
         workstream={displayedDetail}
       />
-      {hypersightOpen || railLeaving === 'hypersight' ? (
-        <HyperSightRail
-          blockCount={hypersight.data?.blocks.length ?? 0}
-          leaving={railLeaving === 'hypersight'}
-          onClose={() => setHyperSightVisible(false)}
+      {blockDashboardOpen || railLeaving === 'block-dashboard' ? (
+        <BlockDashboardRail
+          blockCount={blockDashboard.data?.blocks.length ?? 0}
+          leaving={railLeaving === 'block-dashboard'}
+          onClose={() => setBlockDashboardVisible(false)}
         >
-          {hypersight.data ? (
-            <HyperSightPanel
-              connectionStates={hypersightConnectionStates}
-              error={updateHyperSight.error?.message ?? hypersight.error?.message}
-              hypersight={hypersight.data}
-              onChange={(blocks) => updateHyperSight.mutateAsync(blocks).then(() => undefined)}
-              pending={updateHyperSight.isPending}
+          {blockDashboard.data ? (
+            <BlockDashboardPanel
+              connectionStates={blockDashboardConnectionStates}
+              error={updateBlockDashboard.error?.message ?? blockDashboard.error?.message}
+              blockDashboard={blockDashboard.data}
+              onChange={(blocks) => updateBlockDashboard.mutateAsync(blocks).then(() => undefined)}
+              pending={updateBlockDashboard.isPending}
             />
-          ) : hypersight.error ? (
-            <div className="hypersight-load-state">
-              <InlineError>{hypersight.error.message}</InlineError>
-              <Button onClick={() => void hypersight.refetch()}><RefreshCcw size={14} /> Try again</Button>
+          ) : blockDashboard.error ? (
+            <div className="block-dashboard-load-state">
+              <InlineError>{blockDashboard.error.message}</InlineError>
+              <Button onClick={() => void blockDashboard.refetch()}><RefreshCcw size={14} /> Try again</Button>
             </div>
           ) : (
-            <div className="hypersight-load-state">
+            <div className="block-dashboard-load-state">
               <LoadingState label="Opening HyperSight…" />
             </div>
           )}
-        </HyperSightRail>
+        </BlockDashboardRail>
       ) : null}
       <div
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}

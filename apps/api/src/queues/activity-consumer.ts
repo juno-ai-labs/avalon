@@ -918,7 +918,7 @@ async function startActivityAutomation(
     const harness = await executionEnv.DB.prepare(
       `SELECT id FROM harness_runs
         WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
         ORDER BY created_at DESC LIMIT 1`
     )
       .bind(run.workstream_id)

@@ -758,44 +758,44 @@ export const ActivitySuggestionSchema = z.object({
   resolvedAt: TimestampSchema.nullable()
 });
 
-export const HyperSightBlockRunStatusSchema = z.enum([
+export const BlockDashboardBlockRunStatusSchema = z.enum([
   "queued",
   "running",
   "completed",
   "failed",
   "stopped"
 ]);
-export const HyperSightBlockRunSchema = z.object({
+export const BlockDashboardBlockRunSchema = z.object({
   id: IdSchema,
   blockId: IdSchema,
   configurationVersionId: IdSchema,
   triggerSequence: z.number().int().nonnegative(),
-  status: HyperSightBlockRunStatusSchema,
+  status: BlockDashboardBlockRunStatusSchema,
   markdown: z.string().nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   createdAt: TimestampSchema,
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable()
 });
-export const HyperSightBlockSchema = z.object({
+export const BlockDashboardBlockSchema = z.object({
   id: IdSchema,
   prompt: z.string().max(12_000),
-  latestRun: HyperSightBlockRunSchema.nullable()
+  latestRun: BlockDashboardBlockRunSchema.nullable()
 });
-export const HyperSightSchema = z.object({
+export const BlockDashboardSchema = z.object({
   versionId: IdSchema.nullable(),
   versionNumber: z.number().int().nonnegative(),
-  blocks: z.array(HyperSightBlockSchema).max(24),
+  blocks: z.array(BlockDashboardBlockSchema).max(24),
   updatedAt: TimestampSchema.nullable()
 });
-export const HyperSightPreferenceSchema = z.object({
+export const BlockDashboardPreferenceSchema = z.object({
   visible: z.boolean(),
   updatedAt: TimestampSchema.nullable()
 });
-export const UpdateHyperSightPreferenceRequestSchema = z.object({
+export const UpdateBlockDashboardPreferenceRequestSchema = z.object({
   visible: z.boolean()
 }).strict();
-export const UpdateHyperSightRequestSchema = z.object({
+export const UpdateBlockDashboardRequestSchema = z.object({
   expectedVersionNumber: z.number().int().nonnegative(),
   blocks: z.array(z.object({
     id: IdSchema,
@@ -1534,14 +1534,14 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
     metadata: WorkstreamControlMetadataSchema,
   }).strict(),
   z.object({
-    type: z.literal("hypersight_configuration_updated"),
+    type: z.literal("block_dashboard_configuration_updated"),
     occurredAt: TimestampSchema,
-    hypersight: HyperSightSchema,
+    blockDashboard: BlockDashboardSchema,
   }).strict(),
   z.object({
-    type: z.literal("hypersight_preference_updated"),
+    type: z.literal("block_dashboard_preference_updated"),
     occurredAt: TimestampSchema,
-    preference: HyperSightPreferenceSchema,
+    preference: BlockDashboardPreferenceSchema,
   }).strict(),
 ]);
 
@@ -1648,26 +1648,26 @@ export type SubstreamDirectSocketEvent = z.infer<typeof SubstreamDirectSocketEve
  * stream checkpoint shape as SubstreamAgent so reconnect replacement semantics
  * stay identical across all agent sockets.
  */
-export const HyperSightBlockSocketClientEventSchema = z.object({
+export const BlockDashboardBlockSocketClientEventSchema = z.object({
   type: z.literal("subscribe"),
 }).strict();
 
-export const HyperSightBlockSocketEventSchema = z.discriminatedUnion("type", [
+export const BlockDashboardBlockSocketEventSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal("hypersight_block_snapshot"),
+    type: z.literal("block_dashboard_block_snapshot"),
     occurredAt: TimestampSchema,
     blockId: IdSchema,
-    run: HyperSightBlockRunSchema.nullable(),
+    run: BlockDashboardBlockRunSchema.nullable(),
     streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
   }).strict(),
   z.object({
-    type: z.literal("hypersight_block_run_updated"),
+    type: z.literal("block_dashboard_block_run_updated"),
     occurredAt: TimestampSchema,
     blockId: IdSchema,
-    run: HyperSightBlockRunSchema,
+    run: BlockDashboardBlockRunSchema,
   }).strict(),
   z.object({
-    type: z.literal("hypersight_block_stream_checkpoint"),
+    type: z.literal("block_dashboard_block_stream_checkpoint"),
     occurredAt: TimestampSchema,
     blockId: IdSchema,
     blockRunId: IdSchema,
@@ -1675,8 +1675,8 @@ export const HyperSightBlockSocketEventSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
-export type HyperSightBlockSocketClientEvent = z.infer<typeof HyperSightBlockSocketClientEventSchema>;
-export type HyperSightBlockSocketEvent = z.infer<typeof HyperSightBlockSocketEventSchema>;
+export type BlockDashboardBlockSocketClientEvent = z.infer<typeof BlockDashboardBlockSocketClientEventSchema>;
+export type BlockDashboardBlockSocketEvent = z.infer<typeof BlockDashboardBlockSocketEventSchema>;
 /**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
@@ -1758,8 +1758,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("hypersight_configuration_updated"), hypersight: HyperSightSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("hypersight_block_run_updated"), run: HyperSightBlockRunSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
@@ -1775,9 +1775,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
 /** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */
 export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal("hypersight_preference_updated"),
+    type: z.literal("block_dashboard_preference_updated"),
     occurredAt: TimestampSchema,
-    preference: HyperSightPreferenceSchema
+    preference: BlockDashboardPreferenceSchema
   })
 ]);
 
@@ -2419,12 +2419,12 @@ export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
-export type HyperSight = z.infer<typeof HyperSightSchema>;
-export type HyperSightBlock = z.infer<typeof HyperSightBlockSchema>;
-export type HyperSightBlockRun = z.infer<typeof HyperSightBlockRunSchema>;
-export type HyperSightPreference = z.infer<typeof HyperSightPreferenceSchema>;
-export type UpdateHyperSightPreferenceRequest = z.infer<typeof UpdateHyperSightPreferenceRequestSchema>;
-export type UpdateHyperSightRequest = z.infer<typeof UpdateHyperSightRequestSchema>;
+export type BlockDashboard = z.infer<typeof BlockDashboardSchema>;
+export type BlockDashboardBlock = z.infer<typeof BlockDashboardBlockSchema>;
+export type BlockDashboardBlockRun = z.infer<typeof BlockDashboardBlockRunSchema>;
+export type BlockDashboardPreference = z.infer<typeof BlockDashboardPreferenceSchema>;
+export type UpdateBlockDashboardPreferenceRequest = z.infer<typeof UpdateBlockDashboardPreferenceRequestSchema>;
+export type UpdateBlockDashboardRequest = z.infer<typeof UpdateBlockDashboardRequestSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;

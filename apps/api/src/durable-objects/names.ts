@@ -30,11 +30,11 @@ export function substreamAgentName(
 }
 
 /** One durable Bind-loop owner for each stable HyperSight block. */
-export function hyperSightBlockAgentName(
+export function blockDashboardAgentName(
   region: Region,
   workspaceId: string,
   workstreamId: string,
   blockId: string,
 ): string {
-  return `${workstreamDOName(region, workspaceId, workstreamId)}:hypersight:${blockId}`;
+  return `${workstreamDOName(region, workspaceId, workstreamId)}:block-dashboard:${blockId}`;
 }

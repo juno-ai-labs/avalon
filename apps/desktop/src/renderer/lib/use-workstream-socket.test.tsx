@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
@@ -345,14 +345,14 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000301';
     const versionId = '00000000-0000-7000-8000-000000000302';
     const blockId = '00000000-0000-7000-8000-000000000303';
-    const initial: HyperSight = {
+    const initial: BlockDashboard = {
       versionId,
       versionNumber: 1,
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
       updatedAt: '2026-08-07T12:00:00.000Z',
     };
-    queryClient.setQueryData(['hypersight', workstreamId], initial);
-    queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', workstreamId], {
+    queryClient.setQueryData(['block-dashboard', workstreamId], initial);
+    queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId], {
       visible: false,
       updatedAt: null,
     });
@@ -371,7 +371,7 @@ describe('useWorkstreamSocket', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 1,
       occurredAt: '2026-08-07T12:00:01.000Z',
       run: {
@@ -387,11 +387,11 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:03.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun)
       .toMatchObject({ status: 'completed', markdown: '- First result' });
 
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 2,
       occurredAt: '2026-08-07T12:00:04.000Z',
       run: {
@@ -408,7 +408,7 @@ describe('useWorkstreamSocket', () => {
       },
     }));
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 3,
       occurredAt: '2026-08-07T12:00:05.000Z',
       run: {
@@ -424,11 +424,11 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:05.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
       .toBe('Newest result');
 
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 4,
       occurredAt: '2026-08-07T12:00:05.000Z',
       run: {
@@ -444,29 +444,29 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:05.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
       .toBe('Newest result');
 
-    const next: HyperSight = {
+    const next: BlockDashboard = {
       versionId: '00000000-0000-7000-8000-000000000306',
       versionNumber: 2,
       blocks: [{ id: blockId, prompt: 'List decisions', latestRun: null }],
       updatedAt: '2026-08-07T12:00:05.000Z',
     };
     act(() => socket.message({
-      type: 'hypersight_configuration_updated',
+      type: 'block_dashboard_configuration_updated',
       sequence: 5,
       occurredAt: '2026-08-07T12:00:05.000Z',
-      hypersight: next,
+      blockDashboard: next,
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])).toEqual(next);
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])).toEqual(next);
 
     act(() => socket.message({
-      type: 'hypersight_preference_updated',
+      type: 'block_dashboard_preference_updated',
       occurredAt: '2026-08-07T12:00:06.000Z',
       preference: { visible: true, updatedAt: '2026-08-07T12:00:06.000Z' },
     }));
-    expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId]))
+    expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
       .toEqual({ visible: true, updatedAt: '2026-08-07T12:00:06.000Z' });
 
   });
@@ -1226,8 +1226,8 @@ describe('useWorkstreamSocket', () => {
       toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'completed' },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
-    queryClient.setQueryData(['hypersight', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
-    queryClient.setQueryData(['hypersight-preference', workstreamId], { visible: false, updatedAt: null });
+    queryClient.setQueryData(['block-dashboard', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
+    queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: false, updatedAt: null });
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
@@ -1251,8 +1251,8 @@ describe('useWorkstreamSocket', () => {
 
     expect(api.getMessages).toHaveBeenCalledOnce();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
-    expect(queryClient.getQueryState(['hypersight', workstreamId])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['hypersight-preference', workstreamId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['block-dashboard-preference', workstreamId])?.isInvalidated).toBe(true);
   });
 
   it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {

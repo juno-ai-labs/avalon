@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HYPERSIGHT_MODEL, type Env } from "../src/env";
+import { BLOCK_DASHBOARD_MODEL, type Env } from "../src/env";
 import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -152,8 +152,8 @@ describe("agent model flags", () => {
     expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "activity_structured").model).toBe("google/gemini-2.5-flash-lite");
-    expect(defaultAgentModelRouting(baseEnv, "hypersight")).toEqual({
-      model: HYPERSIGHT_MODEL,
+    expect(defaultAgentModelRouting(baseEnv, "block_dashboard")).toEqual({
+      model: BLOCK_DASHBOARD_MODEL,
       fallbackModels: [],
     });
   });
@@ -304,7 +304,7 @@ describe("agent model flags", () => {
     });
   });
 
-  // Deliberately a role whose default fallbacks are non-empty: on `hypersight`
+  // Deliberately a role whose default fallbacks are non-empty: on `blockDashboard`
   // this would pass even if the default's fallbacks were merged over the served
   // value, which is the half-applied plan the whole design exists to prevent.
   it("treats an omitted fallback list as no fallbacks rather than the variable's list", async () => {
@@ -327,7 +327,7 @@ describe("agent model flags", () => {
       fallbackModels: ["x-ai/grok-4.3"],
     }));
 
-    await expect(resolveAgentModelRouting(env, "hypersight")).resolves.toEqual({
+    await expect(resolveAgentModelRouting(env, "block_dashboard")).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
     });

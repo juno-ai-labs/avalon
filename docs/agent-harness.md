@@ -4,6 +4,10 @@ Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns tu
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
+The user-facing dashboard is **HyperSight**. Its harness role, plugin wire
+prefix, durable owner, persistence rows, and terminal error codes use the
+internal `block_dashboard` / `BlockDashboardAgent` name.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -314,13 +318,13 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### HyperSight blocks
 
-A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript or interactive participant of its own. A user may watch read-only state and streamed output over the block agent's direct socket while the dashboard is visible, but cannot send a message, pause it, or answer an elicitation. One stable `HyperSightBlockAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly for its Bind runtime SQL and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
+A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript or interactive participant of its own. A user may watch read-only state and streamed output over the block agent's direct socket while the dashboard is visible, but cannot send a message, pause it, or answer an elicitation. One stable `BlockDashboardAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly for its Bind runtime SQL and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
 
-It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `hypersight_input_unavailable`, because there is no one to answer.
+It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `block_dashboard_input_unavailable`, because there is no one to answer.
 
-Its output is a tool call. The block is exactly the `markdown` argument passed to the `avalon:hypersight` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Avalon's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
+Its output is a tool call. The block is exactly the `markdown` argument passed to the `avalon:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Avalon's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
 
-A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `hypersight_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
+A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `block_dashboard_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
 HyperSight shares the root run policy: 1,000 routed model attempts and no aggregate
 tool-call, cost, or task-scale wall-time ceiling. Its read-only tool policy and inability to pause remain independent
@@ -589,7 +593,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
-| `apps/api/test/hypersight-block-submission.test.ts` | The single nudge, the `hypersight_block_not_submitted` failure, and the discarded trailing text. |
+| `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
@@ -619,6 +623,25 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-18 — HyperSight loops use the BlockDashboard runtime role
+
+**What changed:** The model role, feature-flag key, submission plugin namespace,
+run origin, error codes, test modules, and owning Durable Object now use
+BlockDashboard identifiers. Model-visible product prompts and tool display copy
+still say HyperSight.
+
+**Why:** The harness needs a stable technical role that matches the owning
+subsystem across flags, SQL, and telemetry without renaming the product users
+recognize.
+
+**Considered and rejected:** Translating only at the Durable Object class. That
+would leave one logical loop split across two names in runtime ledgers and
+operational queries.
+
+**Consequences:** Internal callers route the `block_dashboard` role and emit
+`block_dashboard_*` outcomes. Prompt and UI reviews must continue to treat
+HyperSight as the visible name.
+
 ### 2026-08-18 — HyperSight input is a reproducible model-array interval
 
 **What changed:** Every block dispatch binds the exact eligible compaction
@@ -640,7 +663,7 @@ fails before model inference.
 
 ### 2026-08-18 — Each HyperSight block gets a durable Bind-loop owner
 
-**What changed:** Stable block IDs now resolve to `HyperSightBlockAgent`
+**What changed:** Stable block IDs now resolve to `BlockDashboardAgent`
 instances. WorkstreamDO durably fans out configured runs, each block agent uses
 main `SubstreamAgent("0")` as its fenced source/runtime ledger, and result
 versions settle back into WorkstreamDO. Both agent classes share Avalon's
@@ -1694,7 +1717,7 @@ absent backfill safe: a legacy row replays the whole transcript rather than
 silently less of it. Any new path that inserts a `harness_runs` row directly
 rather than through `launchWorkstreamHarness` has to write this column too, or
 its runs become unretryable-in-place in the same quiet way — the sub-agent,
-hypersight, activity, and scheduler inserts leave it NULL correctly, because
+block-dashboard, activity, and scheduler inserts leave it NULL correctly, because
 none of them has a trigger message. And anything else that ever wants to pin a
 run to a trigger without narrowing what it can see now has the field to say so;
 the fence is clamped to the trigger, so it can only ever widen the window.

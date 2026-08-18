@@ -937,7 +937,7 @@ const WORKSTREAM_SCHEMA_V1 = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS elicitation_requests_status_idx
      ON elicitation_requests(status, target_user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS hypersight_configuration_versions (
+  `CREATE TABLE IF NOT EXISTS block_dashboard_configuration_versions (
     configuration_version_id TEXT PRIMARY KEY,
     version_number INTEGER NOT NULL CHECK (version_number > 0),
     blocks_json TEXT NOT NULL CHECK (json_valid(blocks_json)),
@@ -945,10 +945,10 @@ const WORKSTREAM_SCHEMA_V1 = [
     created_at INTEGER NOT NULL,
     UNIQUE (version_number)
   ) STRICT`,
-  `CREATE TABLE IF NOT EXISTS hypersight_block_runs (
+  `CREATE TABLE IF NOT EXISTS block_dashboard_block_runs (
     block_run_id TEXT PRIMARY KEY,
     configuration_version_id TEXT NOT NULL
-      REFERENCES hypersight_configuration_versions(configuration_version_id) ON DELETE CASCADE,
+      REFERENCES block_dashboard_configuration_versions(configuration_version_id) ON DELETE CASCADE,
     block_id TEXT NOT NULL,
     prompt TEXT NOT NULL,
     trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
@@ -960,9 +960,9 @@ const WORKSTREAM_SCHEMA_V1 = [
     started_at INTEGER,
     completed_at INTEGER
   ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS hypersight_block_runs_status_idx
-     ON hypersight_block_runs(status, created_at, block_run_id)`,
-  `CREATE TABLE IF NOT EXISTS hypersight_user_preferences (
+  `CREATE INDEX IF NOT EXISTS block_dashboard_block_runs_status_idx
+     ON block_dashboard_block_runs(status, created_at, block_run_id)`,
+  `CREATE TABLE IF NOT EXISTS block_dashboard_user_preferences (
     user_id TEXT PRIMARY KEY,
     visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
     updated_at INTEGER NOT NULL

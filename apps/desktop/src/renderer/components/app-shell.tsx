@@ -145,8 +145,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
-  const hypersightOpen = useUiStore((state) => state.hypersightOpen);
-  const hypersightWidth = useUiStore((state) => state.hypersightWidth);
+  const blockDashboardOpen = useUiStore((state) => state.blockDashboardOpen);
+  const blockDashboardWidth = useUiStore((state) => state.blockDashboardWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   // Replacing rather than pushing, so Back cannot return to an automation that
@@ -161,7 +161,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // HyperSight and the inspector rail are the same slot, so the main pane makes
   // room for whichever one holds it — including a panel that has lost the slot
   // and is still fading out, which is on screen and has to be laid out for.
-  const slotHolder = hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : railLeaving;
+  const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
   const automations = useQuery({
     queryKey: ['automations'],
@@ -218,7 +218,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // is on screen, so a panel closing on its own dissolves at its own width
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
-    '--rail-width': `${slotHolder === 'hypersight' ? hypersightWidth : railWidth}px`,
+    '--rail-width': `${slotHolder === 'block-dashboard' ? blockDashboardWidth : railWidth}px`,
     '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 

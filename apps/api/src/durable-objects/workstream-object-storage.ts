@@ -9,7 +9,7 @@ import {
 import { z } from "zod";
 
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
-import { HyperSightContextFenceSchema } from "./hypersight-protocol";
+import { BlockDashboardContextFenceSchema } from "./block-dashboard-protocol";
 import {
   WorkstreamRegionalEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -18,7 +18,7 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 
-const HYPERSIGHT_JOB_KEY = "hypersight_refresh";
+const BLOCK_DASHBOARD_JOB_KEY = "block_dashboard_refresh";
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
 const SOCKET_TICKET_RECEIPT_RETENTION_MS = 5 * 60_000;
 const REGIONAL_EFFECT_CHANNEL = "regional_effect_v1";
@@ -30,9 +30,9 @@ const RoomIdentitySchema = z.object({
   workstreamId: z.string().uuid(),
 });
 
-const PendingHyperSightRefreshSchema = RoomIdentitySchema.extend({
+const PendingBlockDashboardRefreshSchema = RoomIdentitySchema.extend({
   triggerSequence: z.number().int().nonnegative(),
-  contextFence: HyperSightContextFenceSchema,
+  contextFence: BlockDashboardContextFenceSchema,
   firstQueuedAt: z.number().int().nonnegative(),
 });
 
@@ -105,7 +105,7 @@ export interface RegionalEffectCommand {
 }
 
 export type WorkstreamObjectIdentity = z.infer<typeof RoomIdentitySchema>;
-export type PendingHyperSightRefresh = z.infer<typeof PendingHyperSightRefreshSchema>;
+export type PendingBlockDashboardRefresh = z.infer<typeof PendingBlockDashboardRefreshSchema>;
 
 function first<T extends Record<string, SqlStorageValue>>(
   cursor: SqlStorageCursor<T>,
@@ -656,55 +656,55 @@ export class WorkstreamObjectStore {
     });
   }
 
-  pendingHyperSightRefresh(): PendingHyperSightRefresh | null {
+  pendingBlockDashboardRefresh(): PendingBlockDashboardRefresh | null {
     const row = first(this.storage.sql.exec<DueWorkRow>(
       `SELECT payload_json FROM due_work WHERE job_key = ?`,
-      HYPERSIGHT_JOB_KEY,
+      BLOCK_DASHBOARD_JOB_KEY,
     ));
     if (!row) return null;
-    const parsed = PendingHyperSightRefreshSchema.safeParse(JSON.parse(row.payload_json));
+    const parsed = PendingBlockDashboardRefreshSchema.safeParse(JSON.parse(row.payload_json));
     return parsed.success ? parsed.data : null;
   }
 
-  nextHyperSightDueAt(): number | null {
+  nextBlockDashboardDueAt(): number | null {
     const row = first(this.storage.sql.exec<DueWorkTimeRow>(
       `SELECT due_at FROM due_work WHERE job_key = ?`,
-      HYPERSIGHT_JOB_KEY,
+      BLOCK_DASHBOARD_JOB_KEY,
     ));
     return row?.due_at ?? null;
   }
 
-  putPendingHyperSightRefresh(pending: PendingHyperSightRefresh, dueAt: number): void {
+  putPendingBlockDashboardRefresh(pending: PendingBlockDashboardRefresh, dueAt: number): void {
     this.storage.sql.exec(
       `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
-       VALUES (?, 'hypersight_refresh', ?, 0, ?, 0, NULL, ?)
+       VALUES (?, 'block_dashboard_refresh', ?, 0, ?, 0, NULL, ?)
        ON CONFLICT(job_key) DO UPDATE SET
          due_at = excluded.due_at,
          payload_json = excluded.payload_json,
          last_error_code = NULL,
          updated_at = excluded.updated_at`,
-      HYPERSIGHT_JOB_KEY,
+      BLOCK_DASHBOARD_JOB_KEY,
       dueAt,
       JSON.stringify(pending),
       Date.now(),
     );
   }
 
-  deletePendingHyperSightRefresh(): void {
-    this.storage.sql.exec(`DELETE FROM due_work WHERE job_key = ?`, HYPERSIGHT_JOB_KEY);
+  deletePendingBlockDashboardRefresh(): void {
+    this.storage.sql.exec(`DELETE FROM due_work WHERE job_key = ?`, BLOCK_DASHBOARD_JOB_KEY);
   }
 
-  failPendingHyperSightRefresh(pending: PendingHyperSightRefresh, dueAt: number): void {
+  failPendingBlockDashboardRefresh(pending: PendingBlockDashboardRefresh, dueAt: number): void {
     this.storage.sql.exec(
       `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
-       VALUES (?, 'hypersight_refresh', ?, 0, ?, 1, 'refresh_failed', ?)
+       VALUES (?, 'block_dashboard_refresh', ?, 0, ?, 1, 'refresh_failed', ?)
        ON CONFLICT(job_key) DO UPDATE SET
          due_at = excluded.due_at,
          payload_json = excluded.payload_json,
          attempts = due_work.attempts + 1,
          last_error_code = excluded.last_error_code,
          updated_at = excluded.updated_at`,
-      HYPERSIGHT_JOB_KEY,
+      BLOCK_DASHBOARD_JOB_KEY,
       dueAt,
       JSON.stringify(pending),
       Date.now(),

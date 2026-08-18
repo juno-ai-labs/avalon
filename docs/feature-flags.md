@@ -76,7 +76,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Automation architect | `agent-model-automation-compiler` | `OPENROUTER_AUTOMATION_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none by default; a flag may add them |
+| HyperSight block | `agent-model-block-dashboard` | `BLOCK_DASHBOARD_MODEL` (`apps/api/src/env.ts`) | none by default; a flag may add them |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -121,7 +121,7 @@ one.
 HyperSight has no fallbacks by default. A block that routes onward can change
 voice between refreshes of one configuration, so routing is something an
 operator turns on for it deliberately rather than the state it starts in. That
-is now a **default rather than an invariant**: `agent-model-hypersight` may
+is now a **default rather than an invariant**: `agent-model-block-dashboard` may
 serve a `fallbackModels` and the resolver honours it exactly as it does for
 every other role.
 
@@ -638,7 +638,7 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A `fallbackModels` served to `agent-model-hypersight` is honoured**, like every
+- **A `fallbackModels` served to `agent-model-block-dashboard` is honoured**, like every
   other role's. HyperSight's empty fallback list is the checked-in default, not a
   resolver invariant.
 - **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
@@ -923,6 +923,22 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-18 — The HyperSight model flag adopts its BlockDashboard role
+
+**What changed:** The HyperSight block runtime now evaluates the
+`block_dashboard` role through `agent-model-block-dashboard`, with
+`BLOCK_DASHBOARD_MODEL` as its no-fallback default.
+
+**Why:** Flag identity is operational, so it must match the internal agent,
+telemetry source, and SQL origin rather than the product label.
+
+**Considered and rejected:** Retaining `agent-model-hypersight` as an alias.
+This flag surface has not shipped, and an alias would make targeting and audit
+history ambiguous.
+
+**Consequences:** Internal dogfood environments must provision the renamed flag.
+The user-facing feature and any product copy continue to say HyperSight.
 
 Entries before the one below were never written. This document predates the
 changelog rule in [`module-documents.md`](module-documents.md#starting-one), and

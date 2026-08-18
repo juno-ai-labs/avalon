@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
-import type { HyperSight, HyperSightBlockRun } from "@avalon/contracts";
+import type { BlockDashboard, BlockDashboardBlockRun } from "@avalon/contracts";
 import type { Env } from "../src/env";
-import { HyperSightService, launchHyperSightRefresh } from "../src/services/hypersight-service";
+import { BlockDashboardService, launchBlockDashboardRefresh } from "../src/services/block-dashboard-service";
 import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
@@ -50,10 +50,10 @@ function fixture(): {
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES
-      ('${OWNER_ID}', 'hypersight-owner', 'owner-hypersight@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-      ('${MEMBER_ID}', 'hypersight-member', 'member-hypersight@example.com', 'Member', '2026-01-01', '2026-01-01');
+      ('${OWNER_ID}', 'block-dashboard-owner', 'owner-block-dashboard@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+      ('${MEMBER_ID}', 'block-dashboard-member', 'member-block-dashboard@example.com', 'Member', '2026-01-01', '2026-01-01');
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-    VALUES ('${WORKSPACE_ID}', 'HyperSight', 'hypersight-service', 'global', '${OWNER_ID}', '2026-01-01', '2026-01-01');
+    VALUES ('${WORKSPACE_ID}', 'HyperSight', 'block-dashboard-service', 'global', '${OWNER_ID}', '2026-01-01', '2026-01-01');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES
       ('${WORKSPACE_ID}', '${OWNER_ID}', 'owner', 'active', '2026-01-01'),
@@ -66,9 +66,9 @@ function fixture(): {
   `);
   const prepare = (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql)));
   const requests: Array<Record<string, unknown>> = [];
-  let hypersight: HyperSight = { versionId: null, versionNumber: 0, blocks: [], updatedAt: null };
+  let blockDashboard: BlockDashboard = { versionId: null, versionNumber: 0, blocks: [], updatedAt: null };
   const preferences = new Map<string, { visible: boolean; updatedAt: string | null }>();
-  const run: HyperSightBlockRun = {
+  const run: BlockDashboardBlockRun = {
     id: "00000000-0000-4000-8000-000000000406",
     blockId: BLOCK_ID,
     configurationVersionId: "00000000-0000-4000-8000-000000000407",
@@ -83,7 +83,7 @@ function fixture(): {
   const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     requests.push(body);
-    if (body.operation === "get") return Response.json({ hypersight });
+    if (body.operation === "get") return Response.json({ blockDashboard });
     if (body.operation === "get_preference") {
       return Response.json({
         preference: preferences.get(String(body.userId)) ?? { visible: false, updatedAt: null },
@@ -96,21 +96,21 @@ function fixture(): {
     }
     if (body.operation === "update_configuration") {
       const input = body.input as { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> };
-      if (input.expectedVersionNumber !== hypersight.versionNumber) {
-        return Response.json({ error: "hypersight_version_conflict" }, { status: 409 });
+      if (input.expectedVersionNumber !== blockDashboard.versionNumber) {
+        return Response.json({ error: "block_dashboard_version_conflict" }, { status: 409 });
       }
-      hypersight = {
+      blockDashboard = {
         versionId: String(body.configurationVersionId),
-        versionNumber: hypersight.versionNumber + 1,
+        versionNumber: blockDashboard.versionNumber + 1,
         blocks: input.blocks.map((block) => ({ ...block, latestRun: null })),
         updatedAt: String(body.createdAt),
       };
-      return Response.json({ hypersight, runs: [] });
+      return Response.json({ blockDashboard, runs: [] });
     }
     return Response.json({ runs: [run] });
   });
-  const controlHyperSight = vi.fn(async (body: Record<string, unknown>) => {
-    const response = await fetch("https://workstream.internal/hypersight", {
+  const controlBlockDashboard = vi.fn(async (body: Record<string, unknown>) => {
+    const response = await fetch("https://workstream.internal/block-dashboard", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -118,7 +118,7 @@ function fixture(): {
   });
   const namespace = {
     idFromName: vi.fn(() => ({ toString: () => "workstream-do-id" })),
-    get: vi.fn(() => ({ controlHyperSight })),
+    get: vi.fn(() => ({ controlBlockDashboard })),
   };
   const env = createTestEnv({
     APP_ENV: "test",
@@ -129,11 +129,11 @@ function fixture(): {
   return { database, env, requests };
 }
 
-describe("HyperSightService", () => {
+describe("BlockDashboardService", () => {
   it("stores shared configuration and personal visibility through WorkstreamDO", async () => {
     const { database, env, requests } = fixture();
-    const owner = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
-    const member = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: MEMBER_ID } as never);
+    const owner = new BlockDashboardService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
+    const member = new BlockDashboardService(env, { workspaceId: WORKSPACE_ID, userId: MEMBER_ID } as never);
 
     await expect(owner.get(WORKSTREAM_ID)).resolves.toMatchObject({ versionNumber: 0 });
     const first = await owner.update(WORKSTREAM_ID, {
@@ -144,7 +144,7 @@ describe("HyperSightService", () => {
     await expect(owner.update(WORKSTREAM_ID, {
       expectedVersionNumber: 0,
       blocks: [],
-    })).rejects.toMatchObject({ status: 409, code: "hypersight_version_conflict" });
+    })).rejects.toMatchObject({ status: 409, code: "block_dashboard_version_conflict" });
 
     await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
     const visible = await owner.updatePreference(WORKSTREAM_ID, { visible: true });
@@ -162,7 +162,7 @@ describe("HyperSightService", () => {
   it("asks WorkstreamDO to fan out one fenced refresh", async () => {
     const { database, env, requests } = fixture();
     const contextFence = { throughSequence: 42, compaction: null } as const;
-    await expect(launchHyperSightRefresh(
+    await expect(launchBlockDashboardRefresh(
       env,
       WORKSPACE_ID,
       WORKSTREAM_ID,

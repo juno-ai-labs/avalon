@@ -3,22 +3,22 @@ import clsx from 'clsx';
 import { AlertTriangle, GripVertical, LoaderCircle, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import type { HyperSight, HyperSightBlock } from '../lib/types';
-import type { HyperSightBlockConnectionState } from '../lib/use-hypersight-block-sockets';
+import type { BlockDashboard, BlockDashboardBlock } from '../lib/types';
+import type { BlockDashboardBlockConnectionState } from '../lib/use-block-dashboard-sockets';
 import { useUiStore } from '../lib/ui-store';
 import { Button, IconButton, Modal } from './primitives';
 import { RailSurface } from './rail-surface';
 import { MarkdownBody } from './workstream-blocks';
 
-interface HyperSightPanelProps {
-  hypersight: HyperSight;
-  connectionStates?: Readonly<Record<string, HyperSightBlockConnectionState>>;
+interface BlockDashboardPanelProps {
+  blockDashboard: BlockDashboard;
+  connectionStates?: Readonly<Record<string, BlockDashboardBlockConnectionState>>;
   pending: boolean;
   error?: string;
   onChange: (blocks: Array<{ id: string; prompt: string }>) => Promise<void>;
 }
 
-function moveBlock(blocks: HyperSightBlock[], sourceId: string, targetId: string): HyperSightBlock[] {
+function moveBlock(blocks: BlockDashboardBlock[], sourceId: string, targetId: string): BlockDashboardBlock[] {
   const sourceIndex = blocks.findIndex((block) => block.id === sourceId);
   const targetIndex = blocks.findIndex((block) => block.id === targetId);
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return blocks;
@@ -29,19 +29,19 @@ function moveBlock(blocks: HyperSightBlock[], sourceId: string, targetId: string
   return next;
 }
 
-function configurationBlocks(blocks: HyperSightBlock[]): Array<{ id: string; prompt: string }> {
+function configurationBlocks(blocks: BlockDashboardBlock[]): Array<{ id: string; prompt: string }> {
   return blocks.map(({ id, prompt }) => ({ id, prompt }));
 }
 
-function HyperSightBlockContent({
+function BlockDashboardBlockContent({
   block,
   connectionState,
 }: {
-  block: HyperSightBlock;
-  connectionState?: HyperSightBlockConnectionState;
+  block: BlockDashboardBlock;
+  connectionState?: BlockDashboardBlockConnectionState;
 }): React.JSX.Element {
   if (!block.prompt.trim()) {
-    return <p className="hypersight-block-placeholder">Choose the sparkle to add a prompt.</p>;
+    return <p className="block-dashboard-block-placeholder">Choose the sparkle to add a prompt.</p>;
   }
   const run = block.latestRun;
   if (!run || run.status === 'queued' || run.status === 'running') {
@@ -59,11 +59,11 @@ function HyperSightBlockContent({
     const connectionUnavailable = connectionState === 'revoked';
     if (run?.status === 'running' && run.markdown?.trim()) {
       return (
-        <div className="hypersight-block-streaming">
+        <div className="block-dashboard-block-streaming">
           <MarkdownBody>{run.markdown}</MarkdownBody>
           <div
             aria-live="polite"
-            className={clsx('hypersight-block-stream-status', connectionUnavailable && 'is-error')}
+            className={clsx('block-dashboard-block-stream-status', connectionUnavailable && 'is-error')}
             {...(connectionUnavailable ? { role: 'alert' as const } : {})}
           >
             {connectionUnavailable
@@ -77,7 +77,7 @@ function HyperSightBlockContent({
     return (
       <div
         aria-live="polite"
-        className={clsx('hypersight-block-state', connectionUnavailable && 'is-error')}
+        className={clsx('block-dashboard-block-state', connectionUnavailable && 'is-error')}
         {...(connectionUnavailable ? { role: 'alert' as const } : {})}
       >
         {connectionUnavailable
@@ -89,7 +89,7 @@ function HyperSightBlockContent({
   }
   if (run.status === 'failed' || run.status === 'stopped') {
     return (
-      <div className="hypersight-block-state is-error" role="alert">
+      <div className="block-dashboard-block-state is-error" role="alert">
         <AlertTriangle aria-hidden="true" size={14} />
         <span>{run.error?.message ?? 'This block could not be refreshed.'}</span>
       </div>
@@ -98,14 +98,14 @@ function HyperSightBlockContent({
   return <MarkdownBody>{run.markdown ?? ''}</MarkdownBody>;
 }
 
-export function HyperSightPanel({
-  hypersight,
+export function BlockDashboardPanel({
+  blockDashboard,
   connectionStates = {},
   pending,
   error,
   onChange,
-}: HyperSightPanelProps): React.JSX.Element {
-  const [blocks, setBlocks] = useState(hypersight.blocks);
+}: BlockDashboardPanelProps): React.JSX.Element {
+  const [blocks, setBlocks] = useState(blockDashboard.blocks);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
@@ -116,29 +116,29 @@ export function HyperSightPanel({
 
   useEffect(() => {
     if (!draggingIdRef.current) {
-      setBlocks(hypersight.blocks);
+      setBlocks(blockDashboard.blocks);
       return;
     }
-    const incomingById = new Map(hypersight.blocks.map((block) => [block.id, block]));
+    const incomingById = new Map(blockDashboard.blocks.map((block) => [block.id, block]));
     setBlocks((current) => current.map((block) => {
       const incoming = incomingById.get(block.id);
       return incoming ? { ...block, latestRun: incoming.latestRun } : block;
     }));
-  }, [hypersight.blocks]);
+  }, [blockDashboard.blocks]);
   useEffect(() => () => dragImageRef.current?.remove(), []);
 
-  const openPrompt = (block: HyperSightBlock): void => {
+  const openPrompt = (block: BlockDashboardBlock): void => {
     setEditingBlockId(block.id);
     setPromptDraft(block.prompt);
   };
 
-  const commit = async (next: HyperSightBlock[]): Promise<boolean> => {
+  const commit = async (next: BlockDashboardBlock[]): Promise<boolean> => {
     setBlocks(next);
     try {
       await onChange(configurationBlocks(next));
       return true;
     } catch {
-      setBlocks(hypersight.blocks);
+      setBlocks(blockDashboard.blocks);
       return false;
     }
   };
@@ -149,18 +149,18 @@ export function HyperSightPanel({
     draggingIdRef.current = null;
     dragImageRef.current?.remove();
     dragImageRef.current = null;
-    const changed = blocks.some((block, index) => block.id !== hypersight.blocks[index]?.id);
+    const changed = blocks.some((block, index) => block.id !== blockDashboard.blocks[index]?.id);
     setDraggingId(null);
     if (changed) void commit(blocks);
   };
 
   return (
-    <section aria-label="HyperSight blocks" className="hypersight-panel">
+    <section aria-label="HyperSight blocks" className="block-dashboard-panel">
       <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
-      <div className="hypersight-block-list">
+      <div className="block-dashboard-block-list">
         {blocks.map((block, blockIndex) => (
           <article
-            className={clsx('hypersight-block', draggingId === block.id && 'is-dragging')}
+            className={clsx('block-dashboard-block', draggingId === block.id && 'is-dragging')}
             key={block.id}
             onDragEnter={(event) => {
               event.preventDefault();
@@ -173,10 +173,10 @@ export function HyperSightPanel({
               finishDrag();
             }}
           >
-            <div className="hypersight-block-card">
-              <HyperSightBlockContent block={block} connectionState={connectionStates[block.id]} />
+            <div className="block-dashboard-block-card">
+              <BlockDashboardBlockContent block={block} connectionState={connectionStates[block.id]} />
             </div>
-            <div className="hypersight-block-controls">
+            <div className="block-dashboard-block-controls">
               <IconButton
                 disabled={pending}
                 label={block.prompt ? 'Edit HyperSight prompt' : 'Add HyperSight prompt'}
@@ -184,11 +184,11 @@ export function HyperSightPanel({
               >
                 <Sparkles size={15} />
               </IconButton>
-              <div className="hypersight-block-hover-controls">
+              <div className="block-dashboard-block-hover-controls">
                 <button
                   aria-label="Reorder HyperSight block"
                   aria-keyshortcuts="ArrowUp ArrowDown"
-                  className="hypersight-grip"
+                  className="block-dashboard-grip"
                   disabled={pending}
                   draggable={!pending}
                   onDragEnd={finishDrag}
@@ -198,10 +198,10 @@ export function HyperSightPanel({
                     setDraggingId(block.id);
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData('text/plain', block.id);
-                    const article = event.currentTarget.closest('.hypersight-block');
+                    const article = event.currentTarget.closest('.block-dashboard-block');
                     if (article instanceof HTMLElement) {
                       const ghost = article.cloneNode(true) as HTMLElement;
-                      ghost.classList.add('hypersight-drag-ghost');
+                      ghost.classList.add('block-dashboard-drag-ghost');
                       ghost.style.width = `${article.getBoundingClientRect().width}px`;
                       document.body.append(ghost);
                       event.dataTransfer.setDragImage(ghost, 24, 24);
@@ -223,7 +223,7 @@ export function HyperSightPanel({
                   <GripVertical aria-hidden="true" size={15} />
                 </button>
                 <IconButton
-                  className="hypersight-delete"
+                  className="block-dashboard-delete"
                   disabled={pending}
                   label="Delete HyperSight block"
                   onClick={() => void commit(blocks.filter((candidate) => candidate.id !== block.id))}
@@ -235,10 +235,10 @@ export function HyperSightPanel({
           </article>
         ))}
         <button
-          className="hypersight-add-block"
+          className="block-dashboard-add-block"
           disabled={pending || blocks.length >= 24}
           onClick={() => {
-            const block: HyperSightBlock = { id: crypto.randomUUID(), prompt: '', latestRun: null };
+            const block: BlockDashboardBlock = { id: crypto.randomUUID(), prompt: '', latestRun: null };
             const next = [...blocks, block];
             void commit(next).then((saved) => {
               if (saved) openPrompt(block);
@@ -249,7 +249,7 @@ export function HyperSightPanel({
           <Plus aria-hidden="true" size={15} />
           <span>Add block</span>
         </button>
-        {error ? <p className="hypersight-panel-error" role="alert">{error}</p> : null}
+        {error ? <p className="block-dashboard-panel-error" role="alert">{error}</p> : null}
       </div>
       <Modal
         description="This prompt runs against the current work stream whenever its shared context changes. The result is rendered as Markdown."
@@ -277,7 +277,7 @@ export function HyperSightPanel({
         open={editingBlockId !== null}
         title="HyperSight block prompt"
       >
-        <label className="hypersight-prompt-field">
+        <label className="block-dashboard-prompt-field">
           <span>Prompt</span>
           <textarea
             autoFocus
@@ -298,7 +298,7 @@ export function HyperSightPanel({
  * and grab handle: only one of the two is ever open, so they can be laid out as
  * one panel that changes contents.
  */
-export function HyperSightRail({
+export function BlockDashboardRail({
   blockCount,
   children,
   leaving,
@@ -310,12 +310,12 @@ export function HyperSightRail({
   leaving?: boolean;
   onClose: () => void;
 }): React.JSX.Element {
-  const width = useUiStore((state) => state.hypersightWidth);
-  const setWidth = useUiStore((state) => state.setHyperSightWidth);
+  const width = useUiStore((state) => state.blockDashboardWidth);
+  const setWidth = useUiStore((state) => state.setBlockDashboardWidth);
 
   return (
     <RailSurface
-      className="hypersight-rail"
+      className="block-dashboard-rail"
       label="HyperSight"
       leaving={leaving}
       onClose={onClose}
@@ -328,9 +328,9 @@ export function HyperSightRail({
     >
       <header className="rail-header window-drag">
         <div className="rail-title window-no-drag">
-          <span aria-hidden="true" className="hypersight-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
+          <span aria-hidden="true" className="block-dashboard-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
           <h2>HyperSight</h2>
-          <span className="hypersight-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
+          <span className="block-dashboard-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
         </div>
         <div className="rail-header-actions window-no-drag">
           <IconButton label="Close HyperSight" onClick={onClose}><X size={15} /></IconButton>

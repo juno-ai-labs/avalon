@@ -106,7 +106,7 @@ describe('WorkspaceSocketProvider', () => {
       ['work-opportunities'],
       ['workstreams'],
       ['telemetry-preference'],
-      ['hypersight-preference'],
+      ['block-dashboard-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
   });
