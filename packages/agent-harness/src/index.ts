@@ -2359,6 +2359,19 @@ export interface HarnessPlugin {
 
 export type HarnessEvent =
   | {
+      /** A lossy context checkpoint has begun and ordinary token output is paused. */
+      type: "compaction_started";
+      compactionIndex: number;
+      trigger: "manual" | "auto";
+    }
+  | {
+      /** The matching checkpoint either became durable or failed the run. */
+      type: "compaction_finished";
+      compactionIndex: number;
+      trigger: "manual" | "auto";
+      outcome: "completed" | "failed";
+    }
+  | {
       type: "stream_started";
       model: string;
       turnId: string;

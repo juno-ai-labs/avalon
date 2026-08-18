@@ -652,10 +652,7 @@ export class ResourceService {
       this.auth.workspaceId,
       `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
     );
-    await scheduler.fetch("https://scheduler.internal/refresh", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }),
-    });
+    await scheduler.refresh(this.auth.workspaceId);
   }
 }
 

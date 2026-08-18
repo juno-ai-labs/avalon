@@ -230,4 +230,5 @@ describe("Durable Object SQLite migrations", () => {
       database.close();
     }
   });
+
 });

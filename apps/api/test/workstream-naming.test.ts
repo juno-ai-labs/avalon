@@ -472,10 +472,10 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
     jurisdiction: () => rooms,
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
-      fetch: async (_url: string, init: RequestInit) => {
-        const event = JSON.parse(String(init.body)) as Record<string, unknown>;
+      publishEvent: async (input: { event: Record<string, unknown> }) => {
+        const event = input.event;
         published.push(event);
-        return new Response(null, { status: 202 });
+        return { status: 202, bodyJson: "null" };
       },
     }),
   };

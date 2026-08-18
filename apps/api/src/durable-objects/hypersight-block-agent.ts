@@ -1,7 +1,15 @@
 import {
+  ActiveStreamCheckpointSchema,
+  HyperSightBlockSocketClientEventSchema,
+  HyperSightBlockSocketEventSchema,
   HyperSightBlockRunSchema,
+  IdSchema,
+  RegionSchema,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  ServerSocketEventSchema,
   WorkstreamWorkflowInputSchema,
   type HyperSightBlockRun,
+  type ActiveStreamCheckpoint,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -23,21 +31,53 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { workstreamExecutionEnvironment } from "../services/workstream-runtime-database";
-import { DurableAgentDrain, DurableAgentKeepAlive, durableAgentRetryDelay } from "./durable-agent-runtime";
+import {
+  DurableAgentDrain,
+  DurableAgentKeepAlive,
+  DurableAgentPublicationQueue,
+  durableAgentRetryDelay,
+} from "./durable-agent-runtime";
 import {
   HyperSightBlockDispatchSchema,
   HyperSightControlRequestSchema,
+  HyperSightSocketRetractionRequestSchema,
   hyperSightBlockResultHash,
   type HyperSightBlockDispatch,
+  type HyperSightSocketRetractionRequest,
 } from "./hypersight-protocol";
 import { workstreamDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
+
+const HyperSightBlockIdentityInputSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  blockId: IdSchema,
+  region: RegionSchema,
+}).strict();
+type HyperSightBlockIdentityInput = z.infer<typeof HyperSightBlockIdentityInputSchema>;
+
+const HyperSightSocketIdentitySchema = HyperSightBlockIdentityInputSchema.extend({
+  userId: IdSchema,
+  sessionId: z.string().min(1).max(200),
+  ticketId: z.string().uuid(),
+  ticketExpiresAt: z.coerce.number().int().positive(),
+}).strict();
+type HyperSightSocketIdentity = z.infer<typeof HyperSightSocketIdentitySchema>;
+const HyperSightSocketAttachmentSchema = HyperSightSocketIdentitySchema.extend({
+  connectionId: z.string().uuid(),
+  connectedAt: z.string().datetime({ offset: true }),
+  subscribed: z.boolean(),
+  authorizedAt: z.number().int().nonnegative().default(0),
+}).strict();
+type HyperSightSocketAttachment = z.infer<typeof HyperSightSocketAttachmentSchema>;
 
 const TerminalOutcomeSchema = z.object({
   run: HyperSightBlockRunSchema,
@@ -47,10 +87,52 @@ type TerminalOutcome = z.infer<typeof TerminalOutcomeSchema>;
 interface DispatchRow extends Record<string, SqlStorageValue> {
   block_run_id: string;
   dispatch_json: string;
-  state: "queued" | "running";
+  state: "queued" | "running" | "completed" | "failed";
   attempt: number;
   terminal_outcome_json: string | null;
   settled_at: number | null;
+}
+
+function compareDispatchFreshness(
+  left: HyperSightBlockDispatch,
+  right: HyperSightBlockDispatch,
+): number {
+  if (left.configurationVersionNumber !== right.configurationVersionNumber) {
+    return left.configurationVersionNumber - right.configurationVersionNumber;
+  }
+  if (left.triggerSequence !== right.triggerSequence) {
+    return left.triggerSequence - right.triggerSequence;
+  }
+  const createdAt = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+  if (createdAt !== 0) return createdAt;
+  return left.blockRunId.localeCompare(right.blockRunId);
+}
+
+function supersededOutcome(
+  dispatch: HyperSightBlockDispatch,
+  completedAt: number,
+): TerminalOutcome {
+  return TerminalOutcomeSchema.parse({
+    run: {
+      id: dispatch.blockRunId,
+      blockId: dispatch.blockId,
+      configurationVersionId: dispatch.configurationVersionId,
+      triggerSequence: dispatch.triggerSequence,
+      status: "stopped",
+      markdown: null,
+      error: {
+        code: "hypersight_run_superseded",
+        message: "A newer refresh superseded this queued run.",
+      },
+      createdAt: dispatch.createdAt,
+      startedAt: null,
+      completedAt: new Date(completedAt).toISOString(),
+    },
+  });
+}
+
+function terminalDispatchState(run: HyperSightBlockRun): "completed" | "failed" {
+  return run.status === "failed" ? "failed" : "completed";
 }
 
 interface RuntimeBlockRow {
@@ -68,7 +150,7 @@ interface RuntimeBlockRow {
 
 export const HYPERSIGHT_BLOCK_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
-  description: "stable HyperSight block identity and durable Bind dispatch ledger",
+  description: "HyperSight block execution, resumable streaming, and causal dispatch authority",
   statements: [
     `PRAGMA foreign_keys = ON`,
     `CREATE TABLE hypersight_block_identity (
@@ -97,6 +179,29 @@ export const HYPERSIGHT_BLOCK_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSql
     ) STRICT`,
     `CREATE INDEX agent_run_dispatches_ready_idx
       ON agent_run_dispatches(state, available_at, created_at, block_run_id)`,
+    `CREATE TABLE hypersight_socket_ticket_receipts (
+      ticket_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX hypersight_socket_ticket_receipts_expiry_idx
+      ON hypersight_socket_ticket_receipts(expires_at)`,
+    `CREATE TABLE agent_stream_checkpoint (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      block_run_id TEXT NOT NULL REFERENCES agent_run_dispatches(block_run_id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      checkpoint_json TEXT NOT NULL CHECK (json_valid(checkpoint_json)),
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE latest_dispatch_freshness (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      configuration_version_number INTEGER NOT NULL CHECK (configuration_version_number > 0),
+      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
+      source_created_at INTEGER NOT NULL,
+      block_run_id TEXT NOT NULL UNIQUE
+        REFERENCES agent_run_dispatches(block_run_id) ON DELETE RESTRICT
+    ) STRICT`,
   ],
 }];
 
@@ -137,12 +242,22 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  private readonly publicationQueue: DurableAgentPublicationQueue;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
+    this.publicationQueue = new DurableAgentPublicationQueue(
+      (phase, error) => {
+        logWarn(this.env, "hypersight_block_agent_broadcast_failed", {
+          phase,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      },
+      (drain) => this.state.waitUntil(drain),
+    );
     this.initialized = state.blockConcurrencyWhile(async () => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
@@ -153,19 +268,20 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       this.resumeRunDrain();
       await this.scheduleNextAlarm();
     });
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
   override async fetch(request: Request): Promise<Response> {
     await this.initialized;
     const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path === "/socket") {
+      return this.acceptSocket(request);
+    }
     if (request.method === "POST" && path === "/internal/run-dispatch") {
       const parsed = HyperSightBlockDispatchSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return json({ error: "invalid_hypersight_block_dispatch" }, 400);
       try {
-        this.ensureIdentity(parsed.data);
-        this.enqueue(parsed.data);
-        this.resumeRunDrain();
-        await this.ensureAlarmNoLaterThan(Date.now() + 1);
+        await this.dispatchRun(parsed.data);
         return json({ accepted: true }, 202);
       } catch (error) {
         return json({
@@ -183,13 +299,342 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
+  async initializeBlock(input: HyperSightBlockIdentityInput): Promise<void> {
+    await this.initialized;
+    this.ensureIdentity(HyperSightBlockIdentityInputSchema.parse(input));
+  }
+
+  async dispatchRun(input: HyperSightBlockDispatch): Promise<void> {
+    await this.initialized;
+    const dispatch = HyperSightBlockDispatchSchema.parse(input);
+    this.ensureIdentity(dispatch);
+    this.enqueue(dispatch);
+    this.queueBroadcast(() => this.broadcastLatestRun(dispatch.blockRunId), "dispatch");
+    this.resumeRunDrain();
+    await this.ensureAlarmNoLaterThan(Date.now() + 1);
+  }
+
+  /** Applies an explicit parent access/configuration retraction to live sockets. */
+  async revalidateViewerAccess(input: HyperSightSocketRetractionRequest): Promise<void> {
+    await this.initialized;
+    const request = HyperSightSocketRetractionRequestSchema.parse(input);
+    this.ensureIdentity(request);
+    await this.revalidateSockets(request.userId);
+  }
+
+  override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    await this.initialized;
+    const attachment = this.readSocketAttachment(socket);
+    if (!attachment) {
+      socket.close(1011, "Missing HyperSight block connection identity");
+      return;
+    }
+    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      socket.close(1008, "HyperSight block events must be JSON");
+      return;
+    }
+    if (!HyperSightBlockSocketClientEventSchema.safeParse(decoded).success
+      || !await this.authorizeViewer(attachment)) {
+      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
+      return;
+    }
+    socket.serializeAttachment({ ...attachment, subscribed: true, authorizedAt: Date.now() });
+    const run = this.latestRun();
+    socket.send(JSON.stringify(HyperSightBlockSocketEventSchema.parse({
+      type: "hypersight_block_snapshot",
+      occurredAt: new Date().toISOString(),
+      blockId: attachment.blockId,
+      run,
+      streamCheckpoint: run ? this.streamCheckpoint(run.id) : null,
+    })));
+  }
+
+  override webSocketClose(): void {
+    // Hibernating sockets restore all state from their serialized attachment.
+  }
+
+  override webSocketError(): void {
+    // The desktop reconnects with a new one-time ticket.
+  }
+
   override async alarm(): Promise<void> {
     await this.initialized;
     this.resumeRunDrain();
     await this.scheduleNextAlarm();
   }
 
-  private ensureIdentity(dispatch: HyperSightBlockDispatch): void {
+  private async acceptSocket(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return json({ error: "websocket_upgrade_required" }, 426);
+    }
+    const identity = HyperSightSocketIdentitySchema.safeParse({
+      workspaceId: request.headers.get("x-avalon-workspace-id"),
+      workstreamId: request.headers.get("x-avalon-workstream-id"),
+      blockId: request.headers.get("x-avalon-hypersight-block-id"),
+      region: request.headers.get("x-avalon-region"),
+      userId: request.headers.get("x-avalon-user-id"),
+      sessionId: request.headers.get("x-avalon-session-id"),
+      ticketId: request.headers.get("x-avalon-socket-ticket-id"),
+      ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+    });
+    if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
+    try {
+      this.ensureIdentity(identity.data);
+    } catch {
+      return json({ error: "hypersight_block_agent_identity_mismatch" }, 409);
+    }
+    if (!this.consumeSocketTicket(identity.data)) return json({ error: "socket_ticket_replayed" }, 401);
+    if (!await this.authorizeViewer(identity.data)) return json({ error: "forbidden" }, 403);
+
+    const [client, server] = Object.values(new WebSocketPair());
+    if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
+    const attachment: HyperSightSocketAttachment = {
+      ...identity.data,
+      connectionId: crypto.randomUUID(),
+      connectedAt: new Date().toISOString(),
+      subscribed: false,
+      authorizedAt: Date.now(),
+    };
+    this.state.acceptWebSocket(server, [
+      attachment.workspaceId,
+      attachment.workstreamId,
+      attachment.blockId,
+      attachment.userId,
+    ]);
+    server.serializeAttachment(attachment);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private consumeSocketTicket(identity: HyperSightSocketIdentity): boolean {
+    const now = Math.floor(Date.now() / 1_000);
+    if (identity.ticketExpiresAt <= now) return false;
+    return this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `DELETE FROM hypersight_socket_ticket_receipts WHERE expires_at < ?`,
+        now - 300,
+      );
+      return this.state.storage.sql.exec<{ ticket_id: string }>(
+        `INSERT OR IGNORE INTO hypersight_socket_ticket_receipts
+           (ticket_id, user_id, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?) RETURNING ticket_id`,
+        identity.ticketId,
+        identity.userId,
+        identity.ticketExpiresAt,
+        now,
+      ).toArray().length === 1;
+    });
+  }
+
+  private readSocketAttachment(socket: WebSocket): HyperSightSocketAttachment | null {
+    try {
+      const parsed = HyperSightSocketAttachmentSchema.safeParse(socket.deserializeAttachment());
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async authorizeViewer(
+    identity: Pick<HyperSightSocketIdentity, "sessionId" | "userId" | "workspaceId" | "workstreamId" | "blockId">,
+  ): Promise<boolean> {
+    const session = await this.env.DB.prepare(
+      `SELECT 1 FROM sessions session
+        JOIN workspace_members member
+          ON member.workspace_id = session.workspace_id
+         AND member.user_id = session.user_id AND member.status = 'active'
+       WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
+         AND session.region = ? AND session.revoked_at IS NULL
+         AND session.expires_at > ?`,
+    ).bind(
+      identity.sessionId,
+      identity.userId,
+      identity.workspaceId,
+      this.env.AVALON_REGION,
+      new Date().toISOString(),
+    ).first();
+    const developmentSession = this.env.APP_ENV === "development"
+      && this.env.AVALON_DEV_AUTH === "true"
+      && identity.sessionId === "development"
+      ? await this.env.DB.prepare(
+        `SELECT 1 FROM workspace_members
+          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+      ).bind(identity.workspaceId, identity.userId).first()
+      : null;
+    if (!session && !developmentSession) return false;
+    const parent = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      identity.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, identity.workstreamId),
+    );
+    return parent.authorizeHyperSightBlockViewer({
+      workspaceId: identity.workspaceId,
+      workstreamId: identity.workstreamId,
+      blockId: identity.blockId,
+      userId: identity.userId,
+    });
+  }
+
+  private latestRun(): HyperSightBlockRun | null {
+    const row = this.state.storage.sql.exec<{
+      dispatch_json: string;
+      state: "queued" | "running" | "completed" | "failed";
+      started_at: number | null;
+      completed_at: number | null;
+      terminal_outcome_json: string | null;
+    }>(
+      `SELECT dispatch_json, state, started_at, completed_at, terminal_outcome_json
+         FROM agent_run_dispatches ORDER BY created_at DESC, block_run_id DESC LIMIT 1`,
+    ).toArray()[0];
+    if (!row) return null;
+    if (row.terminal_outcome_json) {
+      return TerminalOutcomeSchema.parse(JSON.parse(row.terminal_outcome_json)).run;
+    }
+    const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+    const checkpoint = this.streamCheckpoint(dispatch.blockRunId);
+    return HyperSightBlockRunSchema.parse({
+      id: dispatch.blockRunId,
+      blockId: dispatch.blockId,
+      configurationVersionId: dispatch.configurationVersionId,
+      triggerSequence: dispatch.triggerSequence,
+      status: row.state === "queued" ? "queued" : "running",
+      markdown: checkpoint?.harnessRunId === dispatch.harnessRunId ? checkpoint.text : null,
+      error: null,
+      createdAt: dispatch.createdAt,
+      startedAt: row.started_at === null ? null : new Date(row.started_at).toISOString(),
+      completedAt: row.completed_at === null ? null : new Date(row.completed_at).toISOString(),
+    });
+  }
+
+  private streamCheckpoint(expectedBlockRunId?: string): ActiveStreamCheckpoint | null {
+    const row = this.state.storage.sql.exec<{ block_run_id: string; checkpoint_json: string }>(
+      `SELECT block_run_id, checkpoint_json FROM agent_stream_checkpoint WHERE id = 1`,
+    ).toArray()[0];
+    if (expectedBlockRunId && row?.block_run_id !== expectedBlockRunId) return null;
+    return row ? ActiveStreamCheckpointSchema.parse(JSON.parse(row.checkpoint_json)) : null;
+  }
+
+  private async recordStreamEvent(
+    dispatch: HyperSightBlockDispatch,
+    rawEvent: Record<string, unknown>,
+  ): Promise<void> {
+    const current = this.streamCheckpoint(dispatch.blockRunId);
+    const revision = (current?.roomSequence ?? 0) + 1;
+    const event = ServerSocketEventSchema.safeParse({
+      ...rawEvent,
+      sequence: revision,
+      occurredAt: typeof rawEvent.occurredAt === "string"
+        ? rawEvent.occurredAt
+        : new Date().toISOString(),
+    });
+    if (!event.success) return;
+    const next = applyActiveStreamCheckpointEvent(current ? [current] : [], event.data)[0] ?? null;
+    if (next === current) return;
+    this.state.storage.transactionSync(() => {
+      if (!next) {
+        this.state.storage.sql.exec(`DELETE FROM agent_stream_checkpoint WHERE id = 1`);
+        return;
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO agent_stream_checkpoint
+           (id, block_run_id, revision, checkpoint_json, updated_at)
+         VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET block_run_id = excluded.block_run_id,
+           revision = excluded.revision, checkpoint_json = excluded.checkpoint_json,
+           updated_at = excluded.updated_at`,
+        dispatch.blockRunId,
+        next.roomSequence,
+        JSON.stringify(next),
+        Date.now(),
+      );
+    });
+    this.queueCheckpointBroadcast(
+      () => this.broadcastStreamCheckpoint(dispatch, next),
+      "checkpoint",
+    );
+  }
+
+  private async broadcastStreamCheckpoint(
+    dispatch: HyperSightBlockDispatch,
+    checkpoint: ActiveStreamCheckpoint | null,
+  ): Promise<void> {
+    const payload = JSON.stringify(HyperSightBlockSocketEventSchema.parse({
+      type: "hypersight_block_stream_checkpoint",
+      occurredAt: new Date().toISOString(),
+      blockId: dispatch.blockId,
+      blockRunId: dispatch.blockRunId,
+      streamCheckpoint: checkpoint,
+    }));
+    for (const socket of await this.authorizedSubscribedSockets()) {
+      try {
+        socket.send(payload);
+      } catch {
+        socket.close(1011, "HyperSight block stream delivery failed");
+      }
+    }
+  }
+
+  private async broadcastLatestRun(expectedBlockRunId?: string): Promise<void> {
+    const run = this.latestRun();
+    if (!run || (expectedBlockRunId && run.id !== expectedBlockRunId)) return;
+    const sockets = this.state.getWebSockets();
+    if (sockets.length === 0) return;
+    const event = JSON.stringify(HyperSightBlockSocketEventSchema.parse({
+      type: "hypersight_block_run_updated",
+      occurredAt: new Date().toISOString(),
+      blockId: run.blockId,
+      run,
+    }));
+    for (const socket of await this.authorizedSubscribedSockets()) {
+      try {
+        socket.send(event);
+      } catch {
+        socket.close(1011, "HyperSight block delivery failed");
+      }
+    }
+  }
+
+  private async authorizedSubscribedSockets(force = false, onlyUserId?: string): Promise<WebSocket[]> {
+    const now = Date.now();
+    const authorization = new Map<string, boolean>();
+    const permitted: WebSocket[] = [];
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = this.readSocketAttachment(socket);
+      if (!attachment?.subscribed || (onlyUserId && attachment.userId !== onlyUserId)) continue;
+      let allowed = true;
+      if (force || now - attachment.authorizedAt >= SOCKET_AUTHORIZATION_REVALIDATE_MS) {
+        const key = `${attachment.userId}\u0000${attachment.sessionId}`;
+        const cached = authorization.get(key);
+        allowed = cached ?? await this.authorizeViewer(attachment);
+        authorization.set(key, allowed);
+        if (allowed) socket.serializeAttachment({ ...attachment, authorizedAt: now });
+      }
+      if (!allowed) {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
+        continue;
+      }
+      permitted.push(socket);
+    }
+    return permitted;
+  }
+
+  private async revalidateSockets(userId?: string): Promise<void> {
+    await this.authorizedSubscribedSockets(true, userId);
+  }
+
+  private queueBroadcast(broadcast: () => Promise<void>, phase: string): void {
+    this.publicationQueue.enqueueBarrier(phase, broadcast);
+  }
+
+  private queueCheckpointBroadcast(broadcast: () => Promise<void>, phase: string): void {
+    this.publicationQueue.enqueueCheckpoint(phase, broadcast);
+  }
+
+  private ensureIdentity(dispatch: HyperSightBlockIdentityInput): void {
     const existing = this.state.storage.sql.exec<{
       workspace_id: string;
       workstream_id: string;
@@ -222,27 +667,94 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
 
   private enqueue(dispatch: HyperSightBlockDispatch): void {
     const now = Date.now();
-    const inserted = this.state.storage.sql.exec<{ block_run_id: string }>(
-      `INSERT OR IGNORE INTO agent_run_dispatches
-         (block_run_id, dispatch_json, state, attempt, available_at, started_at,
-          completed_at, last_error_code, terminal_outcome_json, settled_at,
-          last_settlement_error_code, created_at, updated_at)
-       VALUES (?, ?, 'queued', 0, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
-       RETURNING block_run_id`,
-      dispatch.blockRunId,
-      JSON.stringify(dispatch),
-      now,
-      now,
-      now,
-    ).toArray()[0];
-    if (inserted) return;
+    const dispatchJson = JSON.stringify(dispatch);
     const existing = this.state.storage.sql.exec<{ dispatch_json: string }>(
       `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
       dispatch.blockRunId,
     ).toArray()[0];
-    if (existing?.dispatch_json !== JSON.stringify(dispatch)) {
-      throw new Error("hypersight_block_dispatch_idempotency_conflict");
+    if (existing) {
+      if (existing.dispatch_json !== dispatchJson) {
+        throw new Error("hypersight_block_dispatch_idempotency_conflict");
+      }
+      return;
     }
+    this.state.storage.transactionSync(() => {
+      const freshestKnown = this.state.storage.sql.exec<{ dispatch_json: string }>(
+        `SELECT dispatch.dispatch_json
+           FROM latest_dispatch_freshness AS freshness
+           JOIN agent_run_dispatches AS dispatch
+             ON dispatch.block_run_id = freshness.block_run_id
+          WHERE freshness.id = 1`,
+      ).toArray()[0];
+      const freshestDispatch = freshestKnown
+        ? HyperSightBlockDispatchSchema.parse(JSON.parse(freshestKnown.dispatch_json))
+        : null;
+      if (freshestDispatch && compareDispatchFreshness(dispatch, freshestDispatch) < 0) {
+        const outcome = supersededOutcome(dispatch, now);
+        this.state.storage.sql.exec(
+          `INSERT INTO agent_run_dispatches
+             (block_run_id, dispatch_json, state, attempt, available_at, started_at,
+              completed_at, last_error_code, terminal_outcome_json, settled_at,
+              last_settlement_error_code, created_at, updated_at)
+           VALUES (?, ?, 'completed', 0, ?, NULL, ?, 'hypersight_run_superseded', ?,
+                   NULL, NULL, ?, ?)`,
+          dispatch.blockRunId,
+          dispatchJson,
+          now,
+          now,
+          JSON.stringify(outcome),
+          Date.parse(dispatch.createdAt),
+          now,
+        );
+        return;
+      }
+      const obsolete = this.state.storage.sql.exec<{ block_run_id: string; dispatch_json: string }>(
+        `SELECT block_run_id, dispatch_json FROM agent_run_dispatches
+          WHERE state = 'queued' AND terminal_outcome_json IS NULL
+          ORDER BY created_at, block_run_id`,
+      ).toArray();
+      for (const row of obsolete) {
+        const previous = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        const outcome = supersededOutcome(previous, now);
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches
+              SET state = 'completed', terminal_outcome_json = ?, available_at = ?, completed_at = ?,
+                  last_error_code = 'hypersight_run_superseded', updated_at = ?
+            WHERE block_run_id = ? AND state = 'queued' AND terminal_outcome_json IS NULL`,
+          JSON.stringify(outcome),
+          now,
+          now,
+          now,
+          row.block_run_id,
+        );
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO agent_run_dispatches
+           (block_run_id, dispatch_json, state, attempt, available_at, started_at,
+            completed_at, last_error_code, terminal_outcome_json, settled_at,
+            last_settlement_error_code, created_at, updated_at)
+         VALUES (?, ?, 'queued', 0, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+        dispatch.blockRunId,
+        dispatchJson,
+        now,
+        Date.parse(dispatch.createdAt),
+        now,
+      );
+      this.state.storage.sql.exec(
+        `INSERT INTO latest_dispatch_freshness
+           (id, configuration_version_number, trigger_sequence, source_created_at, block_run_id)
+         VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           configuration_version_number = excluded.configuration_version_number,
+           trigger_sequence = excluded.trigger_sequence,
+           source_created_at = excluded.source_created_at,
+           block_run_id = excluded.block_run_id`,
+        dispatch.configurationVersionNumber,
+        dispatch.triggerSequence,
+        Date.parse(dispatch.createdAt),
+        dispatch.blockRunId,
+      );
+    });
   }
 
   private resumeRunDrain(): void {
@@ -263,65 +775,110 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       const row = this.state.storage.sql.exec<DispatchRow>(
         `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
            FROM agent_run_dispatches
-          WHERE state IN ('queued', 'running') AND available_at <= ?
-          ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END, created_at, block_run_id
+          WHERE terminal_outcome_json IS NULL AND state IN ('queued', 'running')
+            AND available_at <= ?
+            AND (
+              state = 'running'
+              OR NOT EXISTS (
+                SELECT 1 FROM agent_run_dispatches AS active
+                 WHERE active.state = 'running'
+                   AND active.terminal_outcome_json IS NULL
+              )
+            )
+          ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,
+                   json_extract(dispatch_json, '$.configurationVersionNumber') DESC,
+                   json_extract(dispatch_json, '$.triggerSequence') DESC,
+                   created_at DESC, block_run_id DESC
           LIMIT 1`,
         Date.now(),
       ).toArray()[0];
-      if (!row) return;
-      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
-      this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
-           started_at = COALESCE(started_at, ?), updated_at = ?
-         WHERE block_run_id = ? AND state IN ('queued', 'running')`,
-        Date.now(),
-        Date.now(),
-        row.block_run_id,
-      );
-      let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
-      try {
-        result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
-      } catch (error) {
-        const code = error instanceof Error && "code" in error && typeof error.code === "string"
-          ? error.code
-          : "hypersight_block_execution_failed";
+      if (row) {
+        const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
         this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-             last_error_code = ?, updated_at = ? WHERE block_run_id = ?`,
-          Date.now() + durableAgentRetryDelay(row.attempt + 1),
-          code,
+          `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
+             started_at = COALESCE(started_at, ?), updated_at = ?
+           WHERE block_run_id = ? AND state IN ('queued', 'running')
+             AND terminal_outcome_json IS NULL`,
+          Date.now(),
           Date.now(),
           row.block_run_id,
         );
-        logWarn(this.env, "hypersight_block_agent_run_deferred", {
-          workspace_id: dispatch.workspaceId,
-          workstream_id: dispatch.workstreamId,
-          block_id: dispatch.blockId,
-          block_run_id: dispatch.blockRunId,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-        return;
-      }
-      if (result.retryAt !== null) {
+        this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
+        let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
+        try {
+          result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
+        } catch (error) {
+          const code = error instanceof Error && "code" in error && typeof error.code === "string"
+            ? error.code
+            : "hypersight_block_execution_failed";
+          this.state.storage.sql.exec(
+            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               AND terminal_outcome_json IS NULL`,
+            Date.now() + durableAgentRetryDelay(row.attempt + 1),
+            code,
+            Date.now(),
+            row.block_run_id,
+          );
+          logWarn(this.env, "hypersight_block_agent_run_deferred", {
+            workspace_id: dispatch.workspaceId,
+            workstream_id: dispatch.workstreamId,
+            block_id: dispatch.blockId,
+            block_run_id: dispatch.blockRunId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+          return;
+        }
+        const terminalized = this.state.storage.sql.exec<{ terminal_outcome_json: string | null }>(
+          `SELECT terminal_outcome_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+          row.block_run_id,
+        ).toArray()[0]?.terminal_outcome_json ?? null;
+        if (terminalized) continue;
+        if (result.retryAt !== null) {
+          this.state.storage.sql.exec(
+            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               AND terminal_outcome_json IS NULL`,
+            result.retryAt,
+            result.errorCode,
+            Date.now(),
+            row.block_run_id,
+          );
+          return;
+        }
         this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-             last_error_code = ?, updated_at = ? WHERE block_run_id = ?`,
-          result.retryAt,
+          `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
+             last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+             AND terminal_outcome_json IS NULL`,
+          result.failed ? "failed" : "completed",
+          Date.now(),
           result.errorCode,
           Date.now(),
           row.block_run_id,
         );
-        return;
+        continue;
       }
+
+      const settlement = this.state.storage.sql.exec<DispatchRow>(
+        `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
+           FROM agent_run_dispatches
+          WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL AND available_at <= ?
+          ORDER BY available_at, created_at, block_run_id LIMIT 1`,
+        Date.now(),
+      ).toArray()[0];
+      if (!settlement?.terminal_outcome_json) return;
+      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(settlement.dispatch_json));
       this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
-           last_error_code = ?, updated_at = ? WHERE block_run_id = ?`,
-        result.failed ? "failed" : "completed",
+        `UPDATE agent_run_dispatches SET attempt = attempt + 1, updated_at = ?
+          WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL AND settled_at IS NULL`,
         Date.now(),
-        result.errorCode,
-        Date.now(),
-        row.block_run_id,
+        settlement.block_run_id,
       );
+      const result = await this.settleWithRetry(
+        dispatch,
+        TerminalOutcomeSchema.parse(JSON.parse(settlement.terminal_outcome_json)),
+      );
+      if (result.retryAt !== null) return;
     }
   }
 
@@ -385,10 +942,15 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     await this.sendResult(dispatch, running, 1).catch(() => undefined);
     let outcome: WorkstreamHarnessResult;
     try {
-      outcome = await runWorkstreamHarness(executionEnv, input, undefined, {
+      outcome = await runWorkstreamHarness(
+        executionEnv,
+        input,
+        (event) => this.recordStreamEvent(dispatch, event),
+        {
         lease: claim.lease,
         publishRealtime: false,
-      });
+        },
+      );
     } catch (error) {
       const code = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code
@@ -550,19 +1112,40 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     return blockRunFromRow(row);
   }
 
-  private persistAndSettle(
+  private async persistAndSettle(
     dispatch: HyperSightBlockDispatch,
     outcome: TerminalOutcome,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     const parsed = TerminalOutcomeSchema.parse(outcome);
-    this.state.storage.sql.exec(
-      `UPDATE agent_run_dispatches SET terminal_outcome_json = ?, settled_at = NULL,
-         last_settlement_error_code = NULL, updated_at = ? WHERE block_run_id = ?`,
-      JSON.stringify(parsed),
-      Date.now(),
-      dispatch.blockRunId,
-    );
-    return this.settleWithRetry(dispatch, parsed);
+    const state = terminalDispatchState(parsed.run);
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET state = ?, terminal_outcome_json = ?,
+           available_at = ?, completed_at = COALESCE(completed_at, ?), settled_at = NULL,
+           last_settlement_error_code = NULL, updated_at = ? WHERE block_run_id = ?`,
+        state,
+        JSON.stringify(parsed),
+        now,
+        now,
+        now,
+        dispatch.blockRunId,
+      );
+      this.state.storage.sql.exec(
+        `DELETE FROM agent_stream_checkpoint WHERE id = 1 AND block_run_id = ?`,
+        dispatch.blockRunId,
+      );
+    });
+    await this.settleWithRetry(dispatch, parsed);
+    this.queueBroadcast(async () => {
+      await this.broadcastStreamCheckpoint(dispatch, null);
+      await this.broadcastLatestRun(dispatch.blockRunId);
+    }, "terminal");
+    return {
+      failed: parsed.run.status === "failed",
+      errorCode: parsed.run.error?.code ?? null,
+      retryAt: null,
+    };
   }
 
   private async settleWithRetry(
@@ -572,8 +1155,11 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     try {
       await this.sendResult(dispatch, outcome.run, 2);
       this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET settled_at = ?, last_settlement_error_code = NULL,
-           updated_at = ? WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL`,
+        `UPDATE agent_run_dispatches SET state = ?, completed_at = COALESCE(completed_at, ?),
+           settled_at = ?, last_settlement_error_code = NULL, updated_at = ?
+         WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL`,
+        terminalDispatchState(outcome.run),
+        Date.now(),
         Date.now(),
         Date.now(),
         dispatch.blockRunId,
@@ -589,9 +1175,13 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         dispatch.blockRunId,
       ).toArray()[0]?.attempt ?? 1;
       const code = error instanceof Error ? error.message : "hypersight_result_settlement_failed";
+      const retryAt = Date.now() + durableAgentRetryDelay(attempt);
       this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET last_settlement_error_code = ?, updated_at = ?
+        `UPDATE agent_run_dispatches SET state = ?, available_at = ?,
+           last_settlement_error_code = ?, updated_at = ?
           WHERE block_run_id = ?`,
+        terminalDispatchState(outcome.run),
+        retryAt,
         code,
         Date.now(),
         dispatch.blockRunId,
@@ -599,7 +1189,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       return {
         failed: outcome.run.status === "failed",
         errorCode: code,
-        retryAt: Date.now() + durableAgentRetryDelay(attempt),
+        retryAt,
       };
     }
   }
@@ -615,26 +1205,26 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       dispatch.workspaceId,
       workstreamDOName(dispatch.region, dispatch.workspaceId, dispatch.workstreamId),
     );
-    const response = await stub.fetch("https://workstream.internal/internal/hypersight", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(HyperSightControlRequestSchema.parse({
-        operation: "block_result",
-        workspaceId: dispatch.workspaceId,
-        workstreamId: dispatch.workstreamId,
-        blockId: dispatch.blockId,
-        sourceVersion,
-        payloadHash: hyperSightBlockResultHash(run),
-        run,
-      })),
-    });
-    if (!response.ok) throw new Error(`hypersight_result_rejected:${response.status}`);
+    const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse({
+      operation: "block_result",
+      workspaceId: dispatch.workspaceId,
+      workstreamId: dispatch.workstreamId,
+      blockId: dispatch.blockId,
+      sourceVersion,
+      payloadHash: hyperSightBlockResultHash(run),
+      run,
+    }));
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`hypersight_result_rejected:${response.status}`);
+    }
   }
 
   private nextRunAt(): number | null {
+    if (this.agentDrain.active) return null;
     return this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
-        WHERE state = 'queued' ${this.agentDrain.active ? "" : "OR state = 'running'"}`,
+        WHERE (terminal_outcome_json IS NULL AND state IN ('queued', 'running'))
+           OR (terminal_outcome_json IS NOT NULL AND settled_at IS NULL)`,
     ).toArray()[0]?.due_at ?? null;
   }
 

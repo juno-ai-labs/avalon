@@ -174,15 +174,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
           input.workspaceId,
           `${input.region}:${input.workspaceId}`,
         );
-        const response = await scheduler.fetch(
-          "https://scheduler.internal/refresh",
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ workspaceId: input.workspaceId })
-          }
-        );
-        if (!response.ok) throw new Error("connector_scheduler_refresh_failed");
+        await scheduler.refresh(input.workspaceId);
       });
     }
 

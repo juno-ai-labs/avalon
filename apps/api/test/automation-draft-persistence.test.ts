@@ -81,7 +81,7 @@ function serviceFor(database: DatabaseSync, as: AuthContext = auth): AutomationS
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
     },
   });
   return new AutomationService(env, as);

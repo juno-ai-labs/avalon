@@ -5,10 +5,12 @@ import {
   WORKSTREAM_AUTHORITY_CAMPAIGN_PREFIX,
   WORKSTREAM_AUTHORITY_IMPORT_PAGE_SIZE,
   WORKSTREAM_AUTHORITY_IMPORT_STAGES,
+  WorkstreamAuthorityImportRequestSchema,
   workstreamImportHash,
   type WorkstreamAuthorityImportStage,
 } from "../durable-objects/workstream-authority-import";
 import { substreamAgentName } from "../durable-objects/substream-agent";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 import {
   WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
   type WorkstreamAuthorityControl,
@@ -575,13 +577,11 @@ async function postImport(
     route.workspace_id,
     substreamAgentName(env.AVALON_REGION, route.workspace_id, route.workstream_id),
   );
-  const response = await agent.fetch("https://substream-agent/internal/authority-import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json() as Record<string, unknown>;
-  if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "workstream_import_request_failed");
+  const response = await agent.importAuthority(WorkstreamAuthorityImportRequestSchema.parse(body));
+  const result = rpcResultBody(response) as Record<string, unknown>;
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(typeof result.error === "string" ? result.error : "workstream_import_request_failed");
+  }
   return result;
 }
 

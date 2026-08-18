@@ -23,6 +23,7 @@ import {
 } from "./scripts/eslint-rules/type-assertion-boundaries.mjs";
 import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-object-sql-storage.mjs";
 import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-object-region-routing.mjs";
+import { durableObjectNativeRpcRule } from "./scripts/eslint-rules/durable-object-native-rpc.mjs";
 
 export default tseslint.config(
   {
@@ -59,6 +60,7 @@ export default tseslint.config(
           "no-production-double-assertion": noProductionDoubleAssertionRule,
           "durable-object-sql-storage": durableObjectSqlStorageRule,
           "durable-object-region-routing": durableObjectRegionRoutingRule,
+          "durable-object-native-rpc": durableObjectNativeRpcRule,
         },
       },
     },
@@ -75,6 +77,7 @@ export default tseslint.config(
     ignores: ["apps/api/src/lib/durable-object-namespace.ts"],
     rules: {
       "avalon/durable-object-region-routing": "error",
+      "avalon/durable-object-native-rpc": "error",
     },
   },
   {

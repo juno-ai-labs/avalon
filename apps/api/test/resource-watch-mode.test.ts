@@ -81,7 +81,7 @@ const auth: AuthContext = {
 function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof vi.fn>): Env {
   const schedulerNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => ({ toString: () => "scheduler-id" }),
-    get: () => ({ fetch: schedulerFetch }),
+    get: () => ({ refresh: schedulerFetch }),
   });
   return createTestEnv({
     DB: database.binding,

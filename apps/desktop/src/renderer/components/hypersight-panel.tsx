@@ -4,6 +4,7 @@ import { AlertTriangle, GripVertical, LoaderCircle, Plus, Sparkles, Trash2, X } 
 import { useEffect, useRef, useState } from 'react';
 
 import type { HyperSight, HyperSightBlock } from '../lib/types';
+import type { HyperSightBlockConnectionState } from '../lib/use-hypersight-block-sockets';
 import { useUiStore } from '../lib/ui-store';
 import { Button, IconButton, Modal } from './primitives';
 import { RailSurface } from './rail-surface';
@@ -11,6 +12,7 @@ import { MarkdownBody } from './workstream-blocks';
 
 interface HyperSightPanelProps {
   hypersight: HyperSight;
+  connectionStates?: Readonly<Record<string, HyperSightBlockConnectionState>>;
   pending: boolean;
   error?: string;
   onChange: (blocks: Array<{ id: string; prompt: string }>) => Promise<void>;
@@ -31,16 +33,57 @@ function configurationBlocks(blocks: HyperSightBlock[]): Array<{ id: string; pro
   return blocks.map(({ id, prompt }) => ({ id, prompt }));
 }
 
-function HyperSightBlockContent({ block }: { block: HyperSightBlock }): React.JSX.Element {
+function HyperSightBlockContent({
+  block,
+  connectionState,
+}: {
+  block: HyperSightBlock;
+  connectionState?: HyperSightBlockConnectionState;
+}): React.JSX.Element {
   if (!block.prompt.trim()) {
     return <p className="hypersight-block-placeholder">Choose the sparkle to add a prompt.</p>;
   }
   const run = block.latestRun;
   if (!run || run.status === 'queued' || run.status === 'running') {
+    const connectionLabel = connectionState === 'revoked'
+      ? 'Live updates unavailable.'
+      : connectionState === 'offline'
+        ? 'Waiting for a connection…'
+        : connectionState === 'reconnecting'
+          ? 'Reconnecting live updates…'
+          : connectionState === 'connecting'
+            ? 'Connecting live updates…'
+            : run?.status === 'queued'
+              ? 'Waiting to refresh…'
+              : 'Refreshing…';
+    const connectionUnavailable = connectionState === 'revoked';
+    if (run?.status === 'running' && run.markdown?.trim()) {
+      return (
+        <div className="hypersight-block-streaming">
+          <MarkdownBody>{run.markdown}</MarkdownBody>
+          <div
+            aria-live="polite"
+            className={clsx('hypersight-block-stream-status', connectionUnavailable && 'is-error')}
+            {...(connectionUnavailable ? { role: 'alert' as const } : {})}
+          >
+            {connectionUnavailable
+              ? <AlertTriangle aria-hidden="true" size={12} />
+              : <LoaderCircle aria-hidden="true" className="spin" size={12} />}
+            <span>{connectionLabel}</span>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div aria-live="polite" className="hypersight-block-state">
-        <LoaderCircle aria-hidden="true" className="spin" size={14} />
-        <span>{run?.status === 'queued' ? 'Waiting to refresh…' : 'Refreshing…'}</span>
+      <div
+        aria-live="polite"
+        className={clsx('hypersight-block-state', connectionUnavailable && 'is-error')}
+        {...(connectionUnavailable ? { role: 'alert' as const } : {})}
+      >
+        {connectionUnavailable
+          ? <AlertTriangle aria-hidden="true" size={14} />
+          : <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+        <span>{connectionLabel}</span>
       </div>
     );
   }
@@ -57,6 +100,7 @@ function HyperSightBlockContent({ block }: { block: HyperSightBlock }): React.JS
 
 export function HyperSightPanel({
   hypersight,
+  connectionStates = {},
   pending,
   error,
   onChange,
@@ -130,7 +174,7 @@ export function HyperSightPanel({
             }}
           >
             <div className="hypersight-block-card">
-              <HyperSightBlockContent block={block} />
+              <HyperSightBlockContent block={block} connectionState={connectionStates[block.id]} />
             </div>
             <div className="hypersight-block-controls">
               <IconButton

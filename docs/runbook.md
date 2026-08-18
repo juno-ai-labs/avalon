@@ -551,13 +551,22 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
   terminal state. Do not collapse it into one unbounded value.
 - Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data moves only through the maintenance import, never a hidden KV importer.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
-- Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
+- Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
+  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO,
+  WorkstreamDO control, and HyperSightBlockAgent sockets use a fixed 50-second
+  heartbeat. Every role waits 15 seconds for `pong` and reconnects with
+  equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
+  perform application work.
 - Expect one WorkspaceDO socket per signed-in Electron renderer/workspace, plus one
   WorkstreamDO metadata socket and one SubstreamAgent feed for every selected or
   background-running work stream. Navigation must not reopen the WorkspaceDO
   socket. An idle, non-running work stream should retain neither child socket.
-  HyperSight block agents never add Electron sockets; their results arrive on
-  the WorkstreamDO connection.
+  While the HyperSight panel is visible, Electron also opens one direct
+  hibernating socket per configured `HyperSightBlockAgent`; closing the panel
+  closes those block sockets, and reopening replaces from durable checkpoints.
+  WorkstreamDO remains the configuration/preference/terminal-result control
+  plane and never relays block token frames. An open idle block socket uses
+  hibernation and auto-response rather than billed application timers.
 - Verify foreground message ingress on the workspace socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one

@@ -1995,6 +1995,9 @@ pre {
 .hypersight-block-placeholder { color: #84847d; font-size: 12px; margin: 0; }
 .hypersight-block-state { align-items: center; color: #92928b; display: flex; font-size: 11px; gap: 7px; min-height: 70px; justify-content: center; }
 .hypersight-block-state.is-error { color: #d8867f; }
+.hypersight-block-streaming { display: grid; gap: 9px; }
+.hypersight-block-stream-status { align-items: center; border-top: 1px solid #42433e; color: #92928b; display: flex; font-size: 10px; gap: 6px; padding-top: 8px; }
+.hypersight-block-stream-status.is-error { color: #d8867f; }
 .hypersight-add-block { align-items: center; background: transparent; border: 1px dashed #4b4c46; border-radius: 9px; color: #8c8c84; display: flex; font-size: 11px; gap: 7px; justify-content: center; min-height: 43px; width: 100%; }
 .hypersight-add-block:hover:not(:disabled) { background: #292a26; border-color: #62635c; color: var(--ink-soft); }
 .hypersight-add-block:disabled { cursor: not-allowed; opacity: .45; }

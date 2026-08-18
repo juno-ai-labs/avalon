@@ -22,6 +22,7 @@ import {
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
   HyperSightPreferenceSchema,
+  HyperSightBlockSocketEventSchema,
   MessageSchema,
   MentionSchema,
   NoteDetailSchema,
@@ -29,6 +30,7 @@ import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   StartWorkOpportunityRequestSchema,
+  SubstreamDirectSocketEventSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -567,6 +569,31 @@ describe("boundary contracts", () => {
     }).success).toBe(false);
   });
 
+  it("carries resumable stream checkpoints on HyperSight block-agent sockets", () => {
+    const checkpoint = ActiveStreamCheckpointSchema.parse({
+      messageId: id,
+      harnessRunId: id,
+      turnId: "turn-1",
+      epoch: 0,
+      streamSeq: 8,
+      seenTurnIds: ["turn-1"],
+      text: "A partially streamed block",
+      turnStartOffset: 0,
+      roomSequence: 8,
+      createdAt: "2026-08-18T20:00:00.000Z",
+    });
+    expect(HyperSightBlockSocketEventSchema.parse({
+      type: "hypersight_block_stream_checkpoint",
+      occurredAt: "2026-08-18T20:00:01.000Z",
+      blockId: id,
+      blockRunId: id,
+      streamCheckpoint: checkpoint,
+    })).toMatchObject({
+      type: "hypersight_block_stream_checkpoint",
+      streamCheckpoint: { roomSequence: 8, text: "A partially streamed block" },
+    });
+  });
+
   it("keeps room replay sequence separate from Bind stream epochs", () => {
     expect(ServerSocketEventSchema.parse({
       type: "stream_delta",
@@ -590,6 +617,56 @@ describe("boundary contracts", () => {
       streamSeq: 0,
       reset: true
     }).success).toBe(false);
+  });
+
+  it("carries an explicit reconnect-safe compaction lifecycle", () => {
+    const startedAt = "2026-08-18T20:00:00.000Z";
+    expect(ServerSocketEventSchema.parse({
+      type: "compaction_started",
+      sequence: 44,
+      occurredAt: startedAt,
+      compaction: {
+        harnessRunId: id,
+        attemptId: id,
+        compactionIndex: 1,
+        trigger: "auto",
+        startedAt,
+      },
+    })).toMatchObject({
+      type: "compaction_started",
+      compaction: { compactionIndex: 1, trigger: "auto" },
+    });
+    expect(ServerSocketEventSchema.parse({
+      type: "compaction_finished",
+      sequence: 45,
+      occurredAt: "2026-08-18T20:00:01.000Z",
+      harnessRunId: id,
+      attemptId: id,
+      compactionIndex: 1,
+      outcome: "completed",
+    })).toMatchObject({ type: "compaction_finished", outcome: "completed" });
+  });
+
+  it("keeps correlated message-page reads outside the shared room sequence", () => {
+    expect(ClientSocketEventSchema.parse({
+      type: "load_message_page",
+      requestId: id,
+      cursor: { direction: "before", value: "42" },
+    })).toMatchObject({ type: "load_message_page", limit: 200 });
+    expect(ClientSocketEventSchema.safeParse({
+      type: "load_message_page",
+      requestId: id,
+      cursor: { direction: "before", value: "0" },
+    }).success).toBe(false);
+    expect(SubstreamDirectSocketEventSchema.parse({
+      type: "message_page",
+      requestId: id,
+      occurredAt: "2026-08-18T20:00:00.000Z",
+      page: { items: [], nextCursor: "12", newerCursor: null },
+    })).toMatchObject({
+      type: "message_page",
+      page: { nextCursor: "12" },
+    });
   });
 
   it("bounds a stream checkpoint's retry prefix to its accumulated text", () => {

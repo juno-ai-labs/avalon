@@ -56,7 +56,7 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
     WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
       jurisdiction: () => ({
         idFromName: () => createTestDurableObjectId("scheduler"),
         get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),

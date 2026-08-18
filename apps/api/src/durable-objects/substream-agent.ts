@@ -5,6 +5,7 @@ import {
   IdSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamWorkflowInputSchema,
@@ -89,6 +90,7 @@ import {
 } from "./workstream-runtime-sql";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { DurableAgentDrain, DurableAgentKeepAlive } from "./durable-agent-runtime";
+import { responseToRpcResult, rpcResultBody, type DurableObjectRpcResult } from "./rpc-result";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -183,9 +185,19 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   }
 });
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
+export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
+export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
+export type SubstreamRuntimeSuggestionRequest = z.infer<typeof RuntimeSuggestionRequestSchema>;
+export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
+export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
+export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
+  event: unknown;
+  audienceUserId?: string;
+};
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
 const MAX_SOCKET_SNAPSHOT_BYTES = 900_000;
+const MAX_SOCKET_MESSAGE_PAGE_BYTES = 900_000;
 /**
  * How stale the room lets its picture of who may read this work stream get.
  *
@@ -555,6 +567,100 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
 
     return jsonResponse({ error: "not_found" }, 404);
+  }
+
+  async handleProductRequest(input: SubstreamProductRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input)));
+  }
+
+  async executeRuntimeSql(
+    input: z.input<typeof WorkstreamRuntimeSqlRequestSchema>,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptRuntimeSql(this.rpcRequest(input)));
+  }
+
+  async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
+  }
+
+  async createRuntimeSuggestion(input: SubstreamRuntimeSuggestionRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptRuntimeSuggestion(this.rpcRequest(input)));
+  }
+
+  async bootstrapRuntime(input: SubstreamRuntimeBootstrapRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
+  }
+
+  async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptRunDispatch(this.rpcRequest(input)));
+  }
+
+  async importAuthority(
+    input: z.input<typeof WorkstreamAuthorityImportRequestSchema>,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptAuthorityImport(this.rpcRequest(input)));
+  }
+
+  async publishEvent(input: SubstreamPublishedEvent): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    const headers = new Headers({ "content-type": "application/json" });
+    headers.set("x-avalon-workspace-id", input.workspaceId);
+    headers.set("x-avalon-workstream-id", input.workstreamId);
+    return responseToRpcResult(await this.acceptEvent(new Request(
+      "https://substream.internal/internal/events",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          event: input.event,
+          ...(input.audienceUserId ? { audienceUserId: input.audienceUserId } : {}),
+        }),
+      },
+    )));
+  }
+
+  async requestHyperSightRefresh(
+    input: z.input<typeof HyperSightSourceRefreshRequestSchema>,
+  ): Promise<{ accepted: boolean; error?: string }> {
+    await this.initialized;
+    const parsed = HyperSightSourceRefreshRequestSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.workspaceId
+      || identity.workstreamId !== parsed.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { accepted: false, error: "hypersight_source_identity_mismatch" };
+    }
+    await this.scheduleHyperSightRefresh(parsed.triggerSequence);
+    return { accepted: true };
+  }
+
+  async refreshTimerAlarm(input: SubstreamTimerRefreshRequest): Promise<void> {
+    await this.initialized;
+    const parsed = AgentTimerRefreshRequestSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.workspaceId
+      || identity.workstreamId !== parsed.workstreamId) {
+      throw new Error("substream_timer_identity_mismatch");
+    }
+    this.ensureSubstreamIdentity(parsed.substreamId);
+    await this.scheduleNextAlarm();
+  }
+
+  private rpcRequest(body: unknown): Request {
+    return new Request("https://substream.internal/internal-rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
   }
 
   private async acceptRuntimeSql(request: Request): Promise<Response> {
@@ -1489,6 +1595,11 @@ export class SubstreamAgent extends DurableObject<Env> {
       return;
     }
 
+    if (parsed.data.type === "load_message_page") {
+      await this.fulfillMessagePage(socket, attachment, parsed.data);
+      return;
+    }
+
     if (parsed.data.type === "create_message") {
       this.sendError(
         socket,
@@ -1505,6 +1616,78 @@ export class SubstreamAgent extends DurableObject<Env> {
       "rest_required",
       "Persist this action through the work-stream API before publishing it."
     );
+  }
+
+  private async fulfillMessagePage(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    request: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "load_message_page" }>,
+  ): Promise<void> {
+    const sendFailure = (code: string, message: string): void => socket.send(JSON.stringify(
+      SubstreamDirectSocketEventSchema.parse({
+        type: "message_page_error",
+        requestId: request.requestId,
+        occurredAt: new Date().toISOString(),
+        code,
+        message,
+      }),
+    ));
+    if (!attachment.subscribed) {
+      sendFailure("subscription_required", "Subscribe to the message feed before loading a page.");
+      return;
+    }
+    const auth = await this.socketAuth(attachment);
+    if (!auth) {
+      sendFailure("socket_access_revoked", "The work stream is no longer available.");
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Work stream access revoked");
+      return;
+    }
+    const value = Number(request.cursor.value);
+    if (!Number.isSafeInteger(value)) {
+      sendFailure("invalid_message_cursor", "The message cursor is not valid.");
+      return;
+    }
+    try {
+      const loadedPage = await this.product.messages(
+        auth,
+        request.limit,
+        request.cursor.direction === "before" ? value : undefined,
+        request.cursor.direction === "after" ? value : undefined,
+      );
+      const page = { ...loadedPage, items: [...loadedPage.items] };
+      const buildEvent = () => SubstreamDirectSocketEventSchema.parse({
+          type: "message_page",
+          requestId: request.requestId,
+          occurredAt: new Date().toISOString(),
+          page,
+        });
+      let event = buildEvent();
+      let encoded = JSON.stringify(event);
+      while (textEncoder.encode(encoded).byteLength > MAX_SOCKET_MESSAGE_PAGE_BYTES
+        && page.items.length > 1) {
+        if (request.cursor.direction === "after") {
+          page.items.pop();
+          page.newerCursor = String(page.items.at(-1)!.sequenceNumber);
+        } else {
+          page.items.shift();
+          page.nextCursor = String(page.items[0]!.sequenceNumber);
+        }
+        event = buildEvent();
+        encoded = JSON.stringify(event);
+      }
+      if (textEncoder.encode(encoded).byteLength > MAX_SOCKET_MESSAGE_PAGE_BYTES) {
+        sendFailure("message_page_too_large", "The next message is too large to load over the live feed.");
+        return;
+      }
+      socket.send(encoded);
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
+        sendFailure("socket_access_revoked", "The work stream is no longer available.");
+        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Work stream access revoked");
+        return;
+      }
+      sendFailure("message_page_unavailable", "Messages could not be loaded.");
+    }
   }
 
   private async publishLocalProductEvent(
@@ -1652,16 +1835,12 @@ export class SubstreamAgent extends DurableObject<Env> {
       ),
     );
     for (let offset = 0; offset < effects.length; offset += 25) {
-      const response = await stub.fetch("https://workstream.internal/internal/substream-effects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          substreamId: this.externalSubstreamId(),
-          envelopes: effects.slice(offset, offset + 25),
-        }),
+      const response = await stub.receiveSubstreamEffects({
+        substreamId: this.externalSubstreamId(),
+        envelopes: effects.slice(offset, offset + 25),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+      if (response.status < 200 || response.status >= 300) {
+        const body = rpcResultBody(response) as { error?: unknown } | null;
         throw new Error(typeof body?.error === "string" ? body.error : "workstream_parent_effect_failed");
       }
     }
@@ -1680,12 +1859,10 @@ export class SubstreamAgent extends DurableObject<Env> {
     );
     const pageSize = 250;
     const send = async (body: z.input<typeof HyperSightControlRequestSchema>): Promise<void> => {
-      const response = await stub.fetch("https://workstream.internal/internal/hypersight", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(HyperSightControlRequestSchema.parse(body)),
-      });
-      if (!response.ok) throw new Error(`hypersight_authority_import_rejected:${response.status}`);
+      const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse(body));
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`hypersight_authority_import_rejected:${response.status}`);
+      }
     };
     for (let offset = 0; ; offset += pageSize) {
       const rows = this.state.storage.sql.exec<{
@@ -2365,6 +2542,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       activeStreams: plan.reason === "history_unavailable"
         ? this.objectStore.activeStreamCheckpoints()
         : [],
+      activeCompaction: this.objectStore.activeCompaction(),
     });
     socket.send(JSON.stringify(event));
   }
@@ -2389,6 +2567,11 @@ export class SubstreamAgent extends DurableObject<Env> {
         ? storedCheckpoints.filter((checkpoint) =>
             checkpoint.harnessRunId === workstream.latestHarnessRunId)
         : [];
+      const storedCompaction = this.objectStore.activeCompaction();
+      const activeCompaction = workstream.harnessStatus === "running"
+        && storedCompaction?.harnessRunId === workstream.latestHarnessRunId
+        ? storedCompaction
+        : null;
       const buildEvent = () => ServerSocketEventSchema.parse({
           type: "snapshot",
           sequence,
@@ -2396,6 +2579,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           workstream,
           messageFeed,
           activeStreams,
+          activeCompaction,
         });
       let event = buildEvent();
       let encoded = JSON.stringify(event);

@@ -1,4 +1,4 @@
-import type { HyperSight, HyperSightPreference, WorkstreamControlMetadata } from '@avalon/contracts';
+import type { HyperSightPreference, WorkstreamControlMetadata } from '@avalon/contracts';
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
@@ -212,7 +212,7 @@ describe('useWorkstreamControlSocket', () => {
     expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
   });
 
-  it('applies HyperSight configuration, block progress, and personal visibility from WorkstreamDO', async () => {
+  it('applies HyperSight configuration and personal visibility from WorkstreamDO', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
@@ -229,7 +229,6 @@ describe('useWorkstreamControlSocket', () => {
     act(() => socket.open());
     const blockId = '00000000-0000-7000-8000-000000000014';
     const versionId = '00000000-0000-7000-8000-000000000015';
-    const blockRunId = '00000000-0000-7000-8000-000000000016';
     act(() => socket.event({
       type: 'hypersight_configuration_updated',
       occurredAt: '2026-08-17T20:00:00.000Z',
@@ -241,29 +240,13 @@ describe('useWorkstreamControlSocket', () => {
       },
     }));
     act(() => socket.event({
-      type: 'hypersight_block_run_updated',
-      occurredAt: '2026-08-17T20:00:01.000Z',
-      run: {
-        id: blockRunId,
-        blockId,
-        configurationVersionId: versionId,
-        triggerSequence: 7,
-        status: 'running',
-        markdown: null,
-        error: null,
-        createdAt: '2026-08-17T20:00:00.000Z',
-        startedAt: '2026-08-17T20:00:01.000Z',
-        completedAt: null,
-      },
-    }));
-    act(() => socket.event({
       type: 'hypersight_preference_updated',
       occurredAt: '2026-08-17T20:00:02.000Z',
       preference: { visible: true, updatedAt: '2026-08-17T20:00:02.000Z' },
     }));
 
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId]))
-      .toMatchObject({ blocks: [{ latestRun: { id: blockRunId, status: 'running' } }] });
+    expect(queryClient.getQueryData(['hypersight', workstreamId]))
+      .toMatchObject({ blocks: [{ latestRun: null }] });
     expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId]))
       .toEqual({ visible: true, updatedAt: '2026-08-17T20:00:02.000Z' });
   });

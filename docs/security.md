@@ -194,12 +194,17 @@ connectors.
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing
 origins and suffix lookalikes are rejected before the short-lived socket ticket is
 forwarded to a room. Tickets bind user, workspace, work stream, region, and
-one-time ID, and the room atomically rejects reuse. The ticket travels in
+one-time ID, and the room atomically rejects reuse. HyperSight block tickets add
+the stable block ID and a distinct audience, so they cannot authorize a source
+feed or parent control socket. The ticket travels in
 `Sec-WebSocket-Protocol` — the one handshake header a browser will set, through
 the `WebSocket` constructor's `protocols` argument — as the sentinel
-`avalon.ticket.v1` followed by the ticket. It is deliberately not in the query
-string: Cloudflare records whole request URLs into the invocation log, the Logpush
-export, and trace spans, and no redaction in this repository can reach them. The
+`avalon.ticket.v1` followed by the ticket. Current clients never place it in the
+query string: Cloudflare records whole request URLs into the invocation log, the
+Logpush export, and trace spans, and no redaction in this repository can reach
+them. Legacy workspace/work-stream/substream/dictation issuers retain a query
+field only for old desktop compatibility; the new HyperSight issuer returns a
+clean URL, and the current renderer strips any legacy field before opening. The
 server echoes only the sentinel, never the ticket, because a selected subprotocol
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
@@ -465,9 +470,12 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A Terminal sandbox generation is reused only under its exact frozen authority
   fingerprint, and never receives a GitHub write or R2 credential.** Filesystem
   persistence cannot become a way around later revocation.
-- **A socket ticket never travels in a URL.** Cloudflare records whole request URLs
-  into the invocation log, the Logpush export, and trace spans, and no redaction in
-  this repository can reach them.
+- **A current client never sends a socket ticket in a URL, and a new ticket
+  audience never issues one there.** Cloudflare records whole request URLs into
+  the invocation log, the Logpush export, and trace spans, and no redaction in
+  this repository can reach them. Legacy issuer response fields exist only for
+  old desktop compatibility and must be removed at the declared compatibility
+  cutoff rather than copied to HyperSight or any later role.
 - **A WebSocket in the renderer is constructed only from a URL an authenticated
   ticket endpoint returned**, enforced by ESLint at each production constructor.
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
