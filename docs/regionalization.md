@@ -235,6 +235,7 @@ to cross it.
 | The Global address registry and its tombstones | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
 | Provider app registrations and their callbacks | [`provider-apps.md`](provider-apps.md) |
 | Telemetry routing, opt-out, identities, and lifecycle | [`telemetry.md`](telemetry.md) |
+| What a Durable Object's migration report may carry out of its region | [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md) |
 | Deploying and verifying both regions | [`runbook.md`](runbook.md) |
 
 A module document that touches identity, the Global registry, a cross-region

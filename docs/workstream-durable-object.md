@@ -49,6 +49,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
+| `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
 | `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
@@ -1818,6 +1819,34 @@ same change (40+ call sites fail closed without the row — removal has to
 follow, not accompany, the code that reads it), and keeping the import RPCs as
 "harmless" dead surface (an import RPC on a live object is a data-corruption
 primitive if ever reachable).
+### 2026-08-19 — Every Durable Object reports its migration outcome
+
+**What changed:** All five constructors now run their migration call inside
+`withMigrationReport`, which tells `avalon-migration-tracker` the version the
+object landed on, or the error it failed with. Nothing about the migration
+runner, the schemas, or the objects' behavior changed.
+
+**Why:** The runner's verdict was unreadable. Success is silent, and failure is
+an exception thrown inside a constructor on one isolate — so a deploy that
+stranded some objects on the old version, or broke one on
+`component_schema_hash_mismatch`, was invisible until something downstream
+noticed. The object is the only thing that knows its version, and the only
+moment it knows it is when it applies one.
+
+**Considered and rejected:** Putting the report inside
+`applyDurableObjectSqliteMigrations` itself. It is synchronous, has no `env` and
+no `waitUntil`, and one of the five sites does not call it directly —
+`SubstreamAgent` reaches it through `WorkstreamObjectStore`'s constructor. A
+wrapper that takes a thunk covers all five without the runner acquiring an
+observer dependency it would then have to be tested with.
+
+**Consequences:** A new Durable Object class in this hierarchy must wrap its
+migration call or it is invisible to the tracker; nothing enforces that
+automatically. The reporter creates a `_migration_report_state` table in each
+object's SQLite outside the migration history — deliberately, for the same
+reason the runner bootstraps `_sql_schema_migrations` that way — so a schema
+audit will find a table that is in no migration list. Reporting is
+best-effort by contract: it must never be allowed to fail construction.
 
 ### 2026-08-19 — The fleet's tables get retention, byte-accurate bounds, and honest columns
 

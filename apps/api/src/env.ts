@@ -25,6 +25,7 @@ import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
 import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
+import type { DurableObjectMigrationTracker } from "@avalon/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
 export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
@@ -66,6 +67,13 @@ export interface Env {
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
   GLOBAL_TELEMETRY_CONTROL?: GlobalTelemetryControlRpcBinding;
+  /**
+   * The account-wide Durable Object migration tracker, bound in both regions.
+   * Optional deliberately: local development and every partial test `Env` run
+   * without it, and an object's schema must never depend on the observer that
+   * watches it. See `docs/durable-object-migration-tracking.md`.
+   */
+  MIGRATION_TRACKER?: DurableObjectMigrationTracker;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;

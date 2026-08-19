@@ -1,0 +1,365 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import { REGISTRY_OBJECT_NAME } from "../src/registry";
+import type { MigrationRegistry } from "../src/registry";
+import { ObjectQuerySchema, type InventorySweep } from "../src/protocol";
+
+const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
+const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
+
+function objectId(seed: string): string {
+  return seed.repeat(64).slice(0, 64);
+}
+
+function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableObjectMigrationReport {
+  return {
+    objectId: objectId("a"),
+    objectName: `global:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
+    className: "SubstreamAgent",
+    component: "workstream",
+    region: "global",
+    appEnv: "production",
+    workerVersionId: "0.24.0",
+    status: "applied",
+    schemaVersion: 3,
+    latestVersion: 3,
+    appliedVersions: [3],
+    failure: null,
+    occurredAt: 1_700_000_000_000,
+    ...overrides,
+  };
+}
+
+function sweep(overrides: Partial<InventorySweep> = {}): InventorySweep {
+  return {
+    startedAt: 1_700_000_000_000,
+    finishedAt: 1_700_000_001_000,
+    status: "complete",
+    namespaces: [],
+    truncatedNamespaces: [],
+    errorMessage: null,
+    ...overrides,
+  };
+}
+
+/** A fresh registry per test; the object is a singleton, so it is reset by hand. */
+async function withRegistry<T>(
+  run: (registry: MigrationRegistry, state: DurableObjectState) => T | Promise<T>,
+): Promise<T> {
+  const stub = env.MIGRATION_REGISTRY.get(
+    env.MIGRATION_REGISTRY.idFromName(REGISTRY_OBJECT_NAME),
+  );
+  return runInDurableObject(stub, async (instance, state) => run(instance, state));
+}
+
+beforeEach(async () => {
+  await withRegistry((_registry, state) => {
+    const storage = state.storage;
+    for (const table of [
+      "durable_objects",
+      "migration_events",
+      "component_versions",
+      "inventory_sweeps",
+      "durable_object_namespaces",
+    ]) {
+      storage.sql.exec(`DELETE FROM ${table}`);
+    }
+  });
+});
+
+describe("recordReport", () => {
+  it("records a successful migration and marks the object current", async () => {
+    const page = await withRegistry((registry) => {
+      registry.recordReport(report());
+      return registry.listObjects(ObjectQuerySchema.parse({}));
+    });
+
+    expect(page.total).toBe(1);
+    const object = page.objects[0];
+    expect(object?.status).toBe("current");
+    expect(object?.schemaVersion).toBe(3);
+    expect(object?.componentLatestVersion).toBe(3);
+    expect(object?.objectName).toBe(`global:${WORKSPACE_ID}:${WORKSTREAM_ID}`);
+  });
+
+  it("marks an object behind once another object reports a higher head", async () => {
+    const page = await withRegistry((registry) => {
+      registry.recordReport(report({ objectId: objectId("a"), schemaVersion: 3, latestVersion: 3 }));
+      registry.recordReport(report({
+        objectId: objectId("b"),
+        objectName: null,
+        schemaVersion: 4,
+        latestVersion: 4,
+        appliedVersions: [4],
+      }));
+      return registry.listObjects(ObjectQuerySchema.parse({}));
+    });
+
+    const behind = page.objects.find((object) => object.objectId === objectId("a"));
+    const current = page.objects.find((object) => object.objectId === objectId("b"));
+    expect(behind?.status).toBe("behind");
+    expect(behind?.componentLatestVersion).toBe(4);
+    expect(current?.status).toBe("current");
+  });
+
+  it("keeps the component head monotonic across a rollback", async () => {
+    const overview = await withRegistry((registry) => {
+      registry.recordReport(report({ schemaVersion: 4, latestVersion: 4 }));
+      registry.recordReport(report({
+        objectId: objectId("b"),
+        objectName: null,
+        schemaVersion: 3,
+        latestVersion: 3,
+        workerVersionId: "0.23.0",
+      }));
+      return registry.overview();
+    });
+
+    expect(overview.components[0]?.latestVersion).toBe(4);
+    expect(overview.components[0]?.workerVersionId).toBe("0.24.0");
+    expect(overview.totals.behind).toBe(1);
+  });
+
+  it("keeps a failure visible with its message and version", async () => {
+    const detail = await withRegistry((registry) => {
+      registry.recordReport(report({
+        status: "failed",
+        schemaVersion: 2,
+        appliedVersions: [],
+        failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
+      }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("failed");
+    expect(detail?.object.failureMessage).toBe("workstream_schema_hash_mismatch:3");
+    expect(detail?.object.failureVersion).toBe(3);
+    expect(detail?.events).toHaveLength(1);
+    expect(detail?.events[0]?.status).toBe("failed");
+  });
+
+  it("clears a failure when the object next reports success", async () => {
+    const object = await withRegistry((registry) => {
+      registry.recordReport(report({
+        status: "failed",
+        schemaVersion: 2,
+        appliedVersions: [],
+        failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
+      }));
+      registry.recordReport(report({ status: "applied", schemaVersion: 3, appliedVersions: [3] }));
+      return registry.objectDetail(objectId("a"))?.object;
+    });
+
+    expect(object?.status).toBe("current");
+    expect(object?.failureMessage).toBeNull();
+    // The failure stays on the history even though the object recovered.
+    const detail = await withRegistry((registry) => registry.objectDetail(objectId("a")));
+    expect(detail?.events.map((event) => event.status)).toEqual(["applied", "failed"]);
+  });
+
+  it("appends one event per report and preserves the applied versions", async () => {
+    const detail = await withRegistry((registry) => {
+      registry.recordReport(report({ schemaVersion: 3, appliedVersions: [1, 2, 3] }));
+      registry.recordReport(report({ status: "current", appliedVersions: [] }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.events).toHaveLength(2);
+    expect(detail?.events[1]?.appliedVersions).toEqual([1, 2, 3]);
+    expect(detail?.events[0]?.appliedVersions).toEqual([]);
+  });
+});
+
+describe("recordSweep", () => {
+  it("adds objects the sweep discovered as unreported", async () => {
+    const page = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [
+            { objectId: objectId("c"), hasStoredData: true },
+            { objectId: objectId("d"), hasStoredData: false },
+          ],
+        }],
+      }));
+      return registry.listObjects(ObjectQuerySchema.parse({}));
+    });
+
+    expect(page.total).toBe(2);
+    expect(page.objects.every((object) => object.status === "unreported")).toBe(true);
+    expect(page.objects.every((object) => object.scriptName === "avalon-api-global")).toBe(true);
+  });
+
+  it("joins a swept object to the report that arrives later", async () => {
+    const detail = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: true }],
+        }],
+      }));
+      registry.recordReport(report());
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("current");
+    expect(detail?.object.scriptName).toBe("avalon-api-global");
+    expect(detail?.object.namespaceId).toBe("ns-1");
+    expect(detail?.object.hasStoredData).toBe(true);
+  });
+
+  it("marks an object absent once a complete sweep no longer lists it", async () => {
+    const detail = await withRegistry((registry) => {
+      const namespace = {
+        namespaceId: "ns-1",
+        scriptName: "avalon-api-global",
+        className: "SubstreamAgent",
+        usesSqlite: true,
+      };
+      registry.recordSweep(sweep({
+        namespaces: [{ ...namespace, objects: [{ objectId: objectId("a"), hasStoredData: true }] }],
+      }));
+      registry.recordSweep(sweep({ namespaces: [{ ...namespace, objects: [] }] }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("absent");
+    expect(detail?.object.absentSince).not.toBeNull();
+  });
+
+  it("never marks an object absent from a truncated namespace listing", async () => {
+    const detail = await withRegistry((registry) => {
+      const namespace = {
+        namespaceId: "ns-1",
+        scriptName: "avalon-api-global",
+        className: "SubstreamAgent",
+        usesSqlite: true,
+      };
+      registry.recordSweep(sweep({
+        namespaces: [{ ...namespace, objects: [{ objectId: objectId("a"), hasStoredData: true }] }],
+      }));
+      registry.recordSweep(sweep({
+        status: "partial",
+        namespaces: [{ ...namespace, objects: [] }],
+        truncatedNamespaces: ["ns-1"],
+      }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("unreported");
+    expect(detail?.object.absentSince).toBeNull();
+  });
+
+  it("brings an absent object back when it reports again", async () => {
+    const detail = await withRegistry((registry) => {
+      const namespace = {
+        namespaceId: "ns-1",
+        scriptName: "avalon-api-global",
+        className: "SubstreamAgent",
+        usesSqlite: true,
+      };
+      registry.recordSweep(sweep({
+        namespaces: [{ ...namespace, objects: [{ objectId: objectId("a"), hasStoredData: true }] }],
+      }));
+      registry.recordSweep(sweep({ namespaces: [{ ...namespace, objects: [] }] }));
+      registry.recordReport(report());
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("current");
+    expect(detail?.object.absentSince).toBeNull();
+  });
+
+  it("records the sweep receipt, including which namespaces were truncated", async () => {
+    const overview = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        status: "partial",
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-eu",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("e"), hasStoredData: true }],
+        }],
+        truncatedNamespaces: ["ns-1"],
+        errorMessage: "ns-2: cloudflare_api_status_429",
+      }));
+      return registry.overview();
+    });
+
+    expect(overview.latestSweep?.status).toBe("partial");
+    expect(overview.latestSweep?.truncatedNamespaces).toEqual(["ns-1"]);
+    expect(overview.latestSweep?.errorMessage).toBe("ns-2: cloudflare_api_status_429");
+    expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-eu");
+  });
+});
+
+describe("listObjects", () => {
+  it("filters by status, component, region, and identifier prefix", async () => {
+    const results = await withRegistry((registry) => {
+      registry.recordReport(report({ objectId: objectId("a"), schemaVersion: 4, latestVersion: 4 }));
+      registry.recordReport(report({
+        objectId: objectId("b"),
+        objectName: null,
+        schemaVersion: 3,
+        latestVersion: 3,
+      }));
+      registry.recordReport(report({
+        objectId: objectId("c"),
+        objectName: null,
+        component: "workspace_do",
+        className: "WorkspaceDO",
+        region: "eu",
+      }));
+      return {
+        behind: registry.listObjects(ObjectQuerySchema.parse({ status: "behind" })),
+        component: registry.listObjects(ObjectQuerySchema.parse({ component: "workspace_do" })),
+        region: registry.listObjects(ObjectQuerySchema.parse({ region: "eu" })),
+        search: registry.listObjects(ObjectQuerySchema.parse({ search: objectId("a").slice(0, 8) })),
+      };
+    });
+
+    expect(results.behind.objects.map((object) => object.objectId)).toEqual([objectId("b")]);
+    expect(results.component.total).toBe(1);
+    expect(results.region.objects[0]?.region).toBe("eu");
+    expect(results.search.objects.map((object) => object.objectId)).toEqual([objectId("a")]);
+  });
+
+  it("treats a wildcard in the search box as a literal", async () => {
+    const page = await withRegistry((registry) => {
+      registry.recordReport(report());
+      return registry.listObjects(ObjectQuerySchema.parse({ search: "%" }));
+    });
+
+    expect(page.total).toBe(0);
+  });
+
+  it("orders failures first and pages through the rest", async () => {
+    const page = await withRegistry((registry) => {
+      for (const seed of ["1", "2", "3", "4"]) {
+        registry.recordReport(report({ objectId: objectId(seed), objectName: null }));
+      }
+      registry.recordReport(report({
+        objectId: objectId("9"),
+        objectName: null,
+        status: "failed",
+        failure: { message: "workstream_schema_ahead:9", version: 9 },
+      }));
+      return registry.listObjects(ObjectQuerySchema.parse({ limit: 2 }));
+    });
+
+    expect(page.total).toBe(5);
+    expect(page.objects).toHaveLength(2);
+    expect(page.objects[0]?.status).toBe("failed");
+  });
+});

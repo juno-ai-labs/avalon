@@ -92,6 +92,8 @@ import {
   WorkstreamObjectStore,
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
+import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "./workstream-object-schema";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
@@ -437,11 +439,20 @@ export class SubstreamAgent extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
-    this.objectStore = new WorkstreamObjectStore(
+    // The store applies this object's schema in its own constructor, so the
+    // report wrapper goes around the construction rather than around a
+    // migration call this class makes itself.
+    this.objectStore = withMigrationReport({
+      state,
+      env,
+      component: "workstream",
+      className: "SubstreamAgent",
+      latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
+    }, () => new WorkstreamObjectStore(
       state.storage,
       env.APP_VERSION ?? "unknown",
       env.AVALON_REGION,
-    );
+    ));
     this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.initialized = state.blockConcurrencyWhile(async () => {

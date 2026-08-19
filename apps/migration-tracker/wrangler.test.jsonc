@@ -1,0 +1,20 @@
+{
+  "name": "avalon-migration-tracker-tests",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-17",
+  "vars": {
+    "APP_ENV": "test",
+    "APP_VERSION": "workerd-test",
+    "ACCESS_TEAM_DOMAIN": "avalon.cloudflareaccess.com",
+    "ACCESS_APPLICATION_AUD": "test-audience",
+    "ACCESS_ALLOWED_EMAIL_DOMAINS": "with-avalon.com"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "MIGRATION_REGISTRY", "class_name": "MigrationRegistry" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MigrationRegistry"] }
+  ]
+}

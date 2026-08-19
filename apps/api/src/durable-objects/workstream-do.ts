@@ -29,6 +29,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -479,12 +480,18 @@ export class WorkstreamDO extends DurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      withMigrationReport({
+        state,
+        env,
+        component: "workstream_do",
+        className: "WorkstreamDO",
+        latestVersion: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
         component: "workstream_do",
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
       const next = this.nextAlarmAt();
       if (next !== null) await state.storage.setAlarm(next);
     });
