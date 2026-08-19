@@ -2174,6 +2174,57 @@ describe("Durable Objects in the Workers runtime", () => {
         archived_at: null,
       }],
     })).resolves.toBe(1);
+    // The legacy consumer retried past the object's attempt bound; the import
+    // must clamp rather than let INSERT OR IGNORE swallow the CHECK and fail
+    // exact-match verification (the Global generation-2 quarantine).
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "opportunity_batch_windows",
+      rows: [{
+        id: "00000000-0000-7000-8000-000000000460",
+        partition_key: "legacy-partition",
+        audience_scope: "workspace",
+        audience_user_id: null,
+        first_event_at: "2098-08-18T20:00:00.000Z",
+        last_event_at: "2098-08-18T20:00:00.000Z",
+        process_after: "2098-08-18T20:10:00.000Z",
+        status: "queued",
+        attempt: 0,
+        lease_id: null,
+        lease_expires_at: null,
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+        completed_at: null,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "opportunity_batch_events",
+      rows: [{
+        id: "00000000-0000-7000-8000-000000000461",
+        window_id: "00000000-0000-7000-8000-000000000460",
+        partition_key: "legacy-partition",
+        source_kind: "activity",
+        source_id: "legacy-activity",
+        occurred_at: "2098-08-18T20:00:00.000Z",
+        input_characters: 12,
+        status: "failed",
+        attempt_count: 9,
+        error_text: "Admission retry limit exhausted",
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+      }],
+    })).resolves.toBe(1);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string; attempt_count: number }>(
+        "SELECT status, attempt_count FROM opportunity_batch_events WHERE batch_event_id = ?",
+        "00000000-0000-7000-8000-000000000461",
+      ).one()).toEqual({ status: "failed", attempt_count: 3 });
+      expect(state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM opportunity_batch_windows WHERE window_id = ?",
+        "00000000-0000-7000-8000-000000000460",
+      ).one().status).toBe("pending");
+    });
     await expect(stub.importWorkspaceProductRows({
       workspaceId: WORKSPACE_ID,
       stage: "workstream_email_receipts",
