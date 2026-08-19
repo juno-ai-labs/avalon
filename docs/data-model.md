@@ -723,7 +723,7 @@ WorkspaceDO and SubstreamAgent.
 first-party activity log/targets and the complete work-opportunity lifecycle:
 batch windows, opportunity records, provenance graph, user links/resolutions,
 rankings, impressions/dismissals, and immutable start snapshots. D1 migration
-`0082` adds only a maintenance import ledger and permanent writer fences for the
+`0083` adds only a maintenance import ledger and permanent writer fences for the
 legacy source table shells. Route activation atomically scrubs imported rows;
 only redacted opportunity ID anchors needed by the unshipped D1 workstream
 foreign key survive. Opportunity-start RPCs return authorized activity roots
@@ -820,7 +820,9 @@ override the directory after cutover.
 ### 2026-08-18 — HyperSight persistence adopts BlockDashboard identifiers
 
 **What changed:** Regional D1 and object-local SQLite tables, indexes, triggers,
-origins, errors, and import mappings now use `block_dashboard_*`. The
+origins, errors, and import mappings now use `block_dashboard_*`. Deployed D1
+migration `0043_hypersight.sql` remains byte-for-byte immutable; the forward
+`0078_rename_hypersight_to_block_dashboard.sql` migration performs that rename. The
 per-block execution owner is `BlockDashboardAgent`; API shapes use
 `BlockDashboard` types.
 
@@ -829,12 +831,14 @@ product label. The common prefix now joins configuration, dispatch, execution,
 socket receipts, and publication state in schema inspection and telemetry.
 
 **Considered and rejected:** Keeping old physical table names while renaming
-only TypeScript. The schema has not shipped, so that would preserve misleading
-names without avoiding a data migration.
+only TypeScript, and renaming the historical migration file. The former leaves
+misleading storage vocabulary; the latter replays because D1 tracks the full
+filename rather than only its numeric prefix.
 
-**Consequences:** The initial D1/DO baselines are renamed in place and tests
-assert the new schema. Visible dashboard text still says HyperSight and is not
-derived from storage identifiers.
+**Consequences:** The unshipped DO baseline uses the final name directly, while
+D1 reaches it through a new forward migration. Tests assert both historical
+migration immutability and the resulting schema. Visible dashboard text still
+says HyperSight and is not derived from storage identifiers.
 
 ### 2026-08-18 — Active compaction is operational state, not conversation
 
@@ -1012,7 +1016,7 @@ without becoming work-stream product authority.
 
 **What changed:** The map now distinguishes workspace/control/projection tables
 that remain in D1 from normalized product tables owned by one WorkstreamDO after
-the maintenance generation opens. D1 migration `0078` records the phase/routes
+the maintenance generation opens. D1 migration `0079` records the phase/routes
 and permanently fences the legacy product tables after open.
 
 **Why:** The physical copy and the authority switch are separate facts. Without
