@@ -7,6 +7,7 @@ import {
 } from '@avalon/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type AvalonApi } from './api';
 import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
@@ -114,6 +115,7 @@ export function useWorkstreamControlSocket(
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
+    let protocolWarningReported = false;
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -184,7 +186,13 @@ export function useWorkstreamControlSocket(
           }
           try {
             const event = WorkstreamControlSocketEventSchema.safeParse(JSON.parse(String(messageEvent.data)));
-            if (!event.success) return;
+            if (!event.success) {
+              if (!protocolWarningReported) {
+                protocolWarningReported = true;
+                logWarn('avalon', 'Ignored invalid WorkstreamDO socket event', event.error.issues);
+              }
+              return;
+            }
             if (event.data.type === 'workstream_metadata') {
               applyMetadata(event.data.metadata);
             } else if (event.data.type === 'block_dashboard_configuration_updated') {
@@ -195,8 +203,16 @@ export function useWorkstreamControlSocket(
                 event.data.preference,
               );
             }
-          } catch {
+          } catch (error) {
             // A reconnect always returns a complete authoritative metadata snapshot.
+            if (!protocolWarningReported) {
+              protocolWarningReported = true;
+              logWarn(
+                'avalon',
+                'Ignored unreadable WorkstreamDO socket event',
+                error instanceof Error ? error.message : 'unknown',
+              );
+            }
           }
         });
         next.addEventListener('close', (event) => {

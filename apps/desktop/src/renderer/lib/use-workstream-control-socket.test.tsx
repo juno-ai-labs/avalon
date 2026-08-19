@@ -134,6 +134,7 @@ async function flushPromises(): Promise<void> {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   FakeWebSocket.instances = [];
 });
@@ -256,5 +257,32 @@ describe('useWorkstreamControlSocket', () => {
       .toMatchObject({ blocks: [{ latestRun: null }] });
     expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
       .toEqual({ visible: true, updatedAt: '2026-08-17T20:00:02.000Z' });
+  });
+
+  it('logs the first malformed control frame without logging its payload', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket(
+        { getWorkstreamControlSocketTicket },
+        workstreamId,
+        true,
+      ),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.event({ privatePayload: 'do-not-log' }));
+    act(() => socket.event({ another: 'malformed-frame' }));
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0]?.[0]).toContain('Ignored invalid WorkstreamDO socket event');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('do-not-log');
   });
 });

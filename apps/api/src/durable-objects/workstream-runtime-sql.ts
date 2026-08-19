@@ -136,9 +136,7 @@ export async function executeWorkstreamRuntimeSql(
           rewriteWorkstreamRuntimeSql(statement.sql),
           ...statement.params,
         );
-        const rows = cursor.toArray().map((row) => Object.fromEntries(
-          Object.entries(row).map(([key, value]) => [key, value]),
-        ) as Record<string, string | number | null>);
+        const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
         const counted = first(sql.exec<{ changes: number }>(
           `SELECT changes FROM _runtime_statement_changes WHERE id = 1`,
         ))?.changes ?? 0;

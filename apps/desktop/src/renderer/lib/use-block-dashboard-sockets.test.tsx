@@ -273,4 +273,34 @@ describe('useBlockDashboardSockets', () => {
     expect(rendered.result.current[blockId]).toBe('reconnecting');
     rendered.unmount();
   });
+
+  it('logs the first malformed block frame without logging its payload', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      ticket: 'block-ticket',
+      protocols: socketTicketProtocols('block-ticket'),
+    }));
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(
+        api,
+        workstreamId,
+        [blockId],
+        true,
+      ),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await act(async () => Promise.resolve());
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.event({ privatePayload: 'do-not-log' }));
+    act(() => socket.event({ another: 'malformed-frame' }));
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0]?.[0]).toContain('Ignored invalid BlockDashboardAgent socket event');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('do-not-log');
+    rendered.unmount();
+  });
 });
