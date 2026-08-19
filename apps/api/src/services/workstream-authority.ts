@@ -35,7 +35,7 @@ const LEGACY_OPEN = {
  * Read the regional cutover fence.
  *
  * Missing-table fallback exists only for rollout ordering: the compatibility
- * Worker can deploy before D1 migration 0078. Every other database error is a
+ * Worker can deploy before D1 migration 0079. Every other database error is a
  * fail-closed maintenance state so an outage cannot accidentally reopen legacy
  * writers while an authority move is in progress.
  */
