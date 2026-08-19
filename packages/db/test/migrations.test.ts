@@ -22,6 +22,39 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("keeps the deployed HyperSight filename and renames its tables forward", () => {
+    const migrationFiles = readdirSync(migrationsDirectory)
+      .filter((fileName) => fileName.endsWith(".sql"));
+    expect(migrationFiles).toContain("0043_hypersight.sql");
+    expect(migrationFiles).not.toContain("0043_block_dashboard.sql");
+
+    const database = migrateDatabaseThrough("0043_hypersight.sql");
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hypersight_configuration_versions'",
+    ).get()).toEqual({ name: "hypersight_configuration_versions" });
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'block_dashboard_configuration_versions'",
+    ).get()).toBeUndefined();
+
+    database.exec(readFileSync(
+      new URL("../migrations/0078_rename_hypersight_to_block_dashboard.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name LIKE 'block_dashboard_%' ORDER BY name`,
+    ).all()).toEqual([
+      { name: "block_dashboard_block_runs" },
+      { name: "block_dashboard_configuration_versions" },
+      { name: "block_dashboard_user_preferences" },
+    ]);
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'hypersight_%'",
+    ).all()).toEqual([]);
+    database.close();
+  });
+
   it("persists region-compatible immutable workspace placement affinity", () => {
     const database = migrateFreshDatabase();
     database.exec(`
@@ -63,7 +96,7 @@ describe("database migrations", () => {
   });
 
   it("backfills and maintains the minimal connector ingress directory", () => {
-    const database = migrateDatabaseThrough("0081_workspace_durable_object_placement_affinity.sql");
+    const database = migrateDatabaseThrough("0082_workspace_durable_object_placement_affinity.sql");
     try {
       database.exec(`
         INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -87,7 +120,7 @@ describe("database migrations", () => {
            '2026-08-18', '2026-08-18');
       `);
       database.exec(readFileSync(
-        new URL("../migrations/0082_workspace_product_do_authority.sql", import.meta.url),
+        new URL("../migrations/0083_workspace_product_do_authority.sql", import.meta.url),
         "utf8",
       ));
 
