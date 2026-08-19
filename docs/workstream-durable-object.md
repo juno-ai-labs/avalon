@@ -958,6 +958,33 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-19 — Transient failures pause the import campaign instead of condemning it
+
+**What changed:** A campaign route operation that rejects with an
+infrastructure signature (platform fetch failures, D1 gateway blips,
+subrequest exhaustion, Durable Object mid-deploy resets) now ends the tick and
+leaves the route untouched — the idempotent page cursor makes the next cron
+tick the retry. Genuine import errors still quarantine immediately. Quarantine
+writers additionally preserve the first cause: a route or the control row that
+is already quarantined keeps its original error code. The per-tick operation
+budget is pinned at 100 so a tick always finishes inside the one-minute cron
+interval.
+
+**Why:** Generation 4 of the Global cutover quarantined with
+`workspace_product_import_not_active` on every route — a cascade, not a cause.
+One transient rejection quarantined the phase mid-tick; sibling operations
+in-flight (including an overlapping tick, possible once the cron accelerated to
+every minute with a 200-operation budget) then failed the WorkspaceDO's
+phase-guard read and their quarantine writes overwrote the original diagnosis.
+The campaign's zero-tolerance rejection handling predates the accelerated
+cadence, where transient platform errors are no longer rare events.
+
+**Considered and rejected:** In-place per-operation retry loops (the cron is
+already a retry loop with a natural backoff; duplicating it inside the tick
+adds concurrency for no coverage), and treating every error as retryable (a
+data conflict must stop the campaign — retrying it forever would hide the
+defect the quarantine exists to surface).
+
 ### 2026-08-19 — The fleet's tables get retention, byte-accurate bounds, and honest columns
 
 **What changed:** A four-reviewer table audit plus a platform-limits research
