@@ -92,8 +92,13 @@ it. `--brand-on` is the dark text that goes on a chartreuse fill. `green` carrie
 on, a selected preset — which is neither the vivid hue nor the wash.
 
 The rest is geometry (`--radius-*`), density (`--sidebar-width`, `--row-height`,
-`--control-height`, `--pane-pad`, `--stack-gap`, `--feed-width`,
-`--feed-width-wide`, `--feed-pad-x`, `--feed-pad-y`), type (`--font-*`,
+`--control-height`, `--pane-pad`, `--feed-width`, `--feed-width-wide`,
+`--feed-pad-x`, `--feed-pad-y`), vertical rhythm (`--row-gap` between rows in a
+list, `--group-gap` between one group of rows and the next, `--block-gap`
+between events in the feed, `--stack-gap` between message blocks, `--prose-gap`
+between paragraphs, and `--leading-prose` for the leading of prose itself — the
+five a theme changes to make the interface breathe downward), the fill behind a
+person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`), type (`--font-*`,
 `--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
 properties that decide whether a section heading is sentence case or letterspaced
 small capitals), depth (`--shadow-*`, `--scrim*`, `--ring*`), and a handful of
@@ -145,8 +150,10 @@ account row at the foot of the navigation paints `transparent` for this reason.
 `light` and `dark` are the two `system` resolves to. `airy` is a deliberate
 choice only — one near-black ground lit from a corner and running the full width
 of the window, amber where the others are chartreuse, borders that barely exist,
-uppercase letterspaced micro-labels, and roughly half again the spacing, so
-negative space does the work the lines used to.
+uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
+double the vertical spacing, so negative space does the work the lines used to.
+A person's turn has no bubble there at all: `--bubble-fill` is transparent and
+`--bubble-pad` is zero, so the message sits on the page as right-aligned text.
 
 ### Choosing one
 
@@ -266,6 +273,42 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — Vertical rhythm became a theme's decision, and Airy took it
+
+**What changed:** Five measurements that were fixed in the stylesheet are now
+tokens — `--row-gap`, `--group-gap`, `--block-gap`, `--prose-gap`, and
+`--leading-prose` — covering the gap between rows, between groups of rows,
+between events in the feed, between paragraphs, and the leading of prose. Airy
+roughly doubles all five and raises its leading to 1.85. Three more tokens carry
+the fill behind a person's turn (`--bubble-fill`, `--bubble-edge`,
+`--bubble-pad`); Airy sets all three to nothing, so a person's message sits on
+the page as right-aligned text rather than in a bubble.
+
+**Why:** Airy could change how much air the interface had *horizontally* — it
+already owned the pane padding, the column width, and the row height — but
+everything that spaces content *downward* was written into `app.css` as a
+number. A theme whose entire premise is that negative space does the work of
+borders could not act on the axis that matters most for reading. The bubble was
+the same problem in a different place: the fill was `--raised-hover`, so a theme
+could restyle it but never remove it.
+
+**Considered and rejected:** Deriving the gaps from `--leading-base`, so a
+theme would set one number and everything downstream would scale. The ratios are
+not constant — a list wants tight rows and generous group breaks, and prose
+wants the reverse — so a single multiplier produces a layout that is wrong in
+two places for every one it gets right.
+
+**Consequences:** A number that decides vertical spacing belongs in `themes.css`
+now, not in a rule. `--bubble-pad` exists because padding without a fill is dead
+space that holds the text off the edge it should sit against — a theme removing
+the bubble must remove the padding with it, and the two are separate tokens
+because a theme could plausibly want one without the other. Both `--prose-gap`
+and `--leading-prose` reach the human turn as well as the agent's, the former
+directly and the latter through a `calc()` that keeps the turn slightly tighter
+than surrounding prose.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — Airy has one ground, the full width of the window
 
