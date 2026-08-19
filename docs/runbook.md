@@ -611,12 +611,26 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 
 ### WorkstreamDO authority maintenance cutover
 
-Run one region at a time. Deploy the compatibility Worker and apply migrations
-`0078_rename_hypersight_to_block_dashboard.sql`,
-`0079_workstream_do_authority_cutover.sql`,
-`0080_workstream_do_regional_effects.sql`, and
-`0081_workstream_do_full_serving.sql` before starting. Use a new positive
-generation; never reuse one from a quarantined attempt.
+**The ordinary path is automated.** Merging the cutover branch triggers
+`deploy-api.yml`, which applies every pending migration, deploys both Workers
+(the shipped Worker is dual-path and already attests serving contract 1, so
+there is no separate compatibility deploy), and then runs
+`scripts/run-authority-cutover.mjs` for EU, verifies EU health, and runs it for
+Global. The script executes the numbered steps below as guarded D1 updates —
+the phase-transition triggers remain the safety authority, a region already at
+`durable_object_open` is a fast no-op on every later merge, and a quarantine
+fails the workflow run for a human. Each region returns 503 for non-health
+traffic from the drain flip until it opens; merge when that downtime is
+acceptable. The automated path substitutes the post-open health check for step
+6's inside-the-window smoke tests; run the step 7 product checks (two
+simultaneous streaming work streams, sidebar pages) promptly after the
+workflow reports both regions open. A `workflow_dispatch` run can skip the
+cutover with `run_cutover: false`.
+
+The numbered procedure below is what the script executes, the reference for
+watching it, and the manual path for quarantine recovery. Run one region at a
+time. Use a new positive generation; never reuse one from a quarantined
+attempt — the script never resumes a quarantined campaign for this reason.
 
 1. Set `workstream_authority_control` from `legacy_open` (or `quarantined` with
    a larger generation) to `maintenance_draining`, recording the operator and
