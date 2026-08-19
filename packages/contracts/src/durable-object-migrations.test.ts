@@ -37,6 +37,7 @@ describe("isOpaqueDurableObjectName", () => {
 
 describe("DurableObjectMigrationReportSchema", () => {
   const report = {
+    reportId: "0192f3a0-1c4d-7000-8000-0000000000b1",
     objectId: "a".repeat(64),
     objectName: `eu:${WORKSPACE}:${WORKSTREAM}`,
     className: "SubstreamAgent",
@@ -84,6 +85,14 @@ describe("DurableObjectMigrationReportSchema", () => {
       status: "failed",
       failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
     }).success).toBe(true);
+  });
+
+  it("requires a report id, which is what makes a redelivery detectable", () => {
+    const withoutId: Record<string, unknown> = { ...report };
+    delete withoutId.reportId;
+    expect(DurableObjectMigrationReportSchema.safeParse(withoutId).success).toBe(false);
+    expect(DurableObjectMigrationReportSchema
+      .safeParse({ ...report, reportId: "not-a-uuid" }).success).toBe(false);
   });
 
   it("refuses an unknown region or environment", () => {

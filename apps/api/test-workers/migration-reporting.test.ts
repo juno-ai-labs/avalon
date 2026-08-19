@@ -5,6 +5,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import type { Env } from "../src/env";
+import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
   latestMigrationVersion,
   withMigrationReport,
@@ -20,20 +21,26 @@ const WORKSPACE_PREFIX = "00000000-0000-7000-8000-0000005000";
 
 interface Tracker {
   reports: DurableObjectMigrationReport[];
-  binding: NonNullable<Env["MIGRATION_TRACKER"]>;
+  binding: NonNullable<Env["MIGRATION_REPORT_QUEUE"]>;
 }
 
-/** A tracker double that records what it was told, and optionally refuses it. */
+/**
+ * A report-queue double that records what was sent, and optionally refuses it.
+ *
+ * Only `send` is exercised: the reporter sends one message at a time, because
+ * the batching that makes this subsystem cheap happens on the consumer, not on
+ * the producer — each object has exactly one report to send.
+ */
 function tracker(options: { reject?: boolean } = {}): Tracker {
   const reports: DurableObjectMigrationReport[] = [];
   return {
     reports,
-    binding: {
-      report: async (input: DurableObjectMigrationReport) => {
+    binding: createCloudflareTestBinding<NonNullable<Env["MIGRATION_REPORT_QUEUE"]>>({
+      send: async (input: DurableObjectMigrationReport) => {
         reports.push(input);
-        if (options.reject) throw new Error("migration_report_rejected");
+        if (options.reject) throw new Error("queue_send_failed");
       },
-    },
+    }),
   };
 }
 
@@ -85,7 +92,7 @@ describe("withMigrationReport", () => {
     const observer = tracker();
     await withScheduler("01", async (state) => {
       withMigrationReport(
-        context(state, { ...env, MIGRATION_TRACKER: observer.binding }),
+        context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
       );
       await settle();
@@ -100,12 +107,37 @@ describe("withMigrationReport", () => {
     expect(report?.schemaVersion)
       .toBe(latestMigrationVersion(WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS));
     expect(report?.objectId).toMatch(/^[0-9a-f]{64}$/u);
+    expect(report?.reportId).toMatch(/^[0-9a-f-]{36}$/u);
+  });
+
+  it("gives every send its own report id, so a redelivery is distinguishable", async () => {
+    const observer = tracker();
+    await withScheduler("09", async (state) => {
+      withMigrationReport(
+        context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
+        () => undefined,
+      );
+      await settle();
+      withMigrationReport(
+        context(state, {
+          ...env,
+          APP_VERSION: "next-build",
+          MIGRATION_REPORT_QUEUE: observer.binding,
+        }),
+        () => undefined,
+      );
+      await settle();
+    });
+
+    const ids = observer.reports.map((report) => report.reportId);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it("says nothing on a later wake that changes nothing", async () => {
     const observer = tracker();
     await withScheduler("02", async (state) => {
-      const reportContext = context(state, { ...env, MIGRATION_TRACKER: observer.binding });
+      const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
       withMigrationReport(reportContext, () => undefined);
       await settle();
       withMigrationReport(reportContext, () => undefined);
@@ -120,7 +152,7 @@ describe("withMigrationReport", () => {
     const observer = tracker();
     await withScheduler("03", async (state) => {
       withMigrationReport(
-        context(state, { ...env, MIGRATION_TRACKER: observer.binding }),
+        context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
       );
       await settle();
@@ -128,7 +160,7 @@ describe("withMigrationReport", () => {
         context(state, {
           ...env,
           APP_VERSION: "next-build",
-          MIGRATION_TRACKER: observer.binding,
+          MIGRATION_REPORT_QUEUE: observer.binding,
         }),
         () => undefined,
       );
@@ -152,7 +184,7 @@ describe("withMigrationReport", () => {
 
     await withScheduler("04", async (state) => {
       withMigrationReport(
-        { ...context(state, { ...env, MIGRATION_TRACKER: observer.binding }), latestVersion: 900 },
+        { ...context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }), latestVersion: 900 },
         () => applyDurableObjectSqliteMigrations({
           storage: state.storage,
           migrations: extended,
@@ -173,7 +205,7 @@ describe("withMigrationReport", () => {
     const observer = tracker();
     await withScheduler("05", async (state) => {
       expect(() => withMigrationReport(
-        context(state, { ...env, MIGRATION_TRACKER: observer.binding }),
+        context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => {
           throw new Error("workspace_scheduler_schema_hash_mismatch:1");
         },
@@ -189,10 +221,10 @@ describe("withMigrationReport", () => {
     });
   });
 
-  it("retries on the next wake when the tracker refused the report", async () => {
+  it("retries on the next wake when the queue refused the message", async () => {
     const observer = tracker({ reject: true });
     const recorded = await withScheduler("06", async (state) => {
-      const reportContext = context(state, { ...env, MIGRATION_TRACKER: observer.binding });
+      const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
       withMigrationReport(reportContext, () => undefined);
       await settle();
       withMigrationReport(reportContext, () => undefined);
@@ -204,7 +236,7 @@ describe("withMigrationReport", () => {
     expect(recorded).toBeUndefined();
   });
 
-  it("leaves the object alone when no tracker is bound", async () => {
+  it("leaves the object alone when no report queue is bound", async () => {
     const applied = await withScheduler("07", async (state) => {
       const value = withMigrationReport(context(state, { ...env }), () => "constructed");
       await settle();
@@ -214,15 +246,15 @@ describe("withMigrationReport", () => {
     expect(applied).toBe("constructed");
   });
 
-  it("never lets a broken tracker fail the object", async () => {
-    const exploding = {
-      report: () => {
-        throw new Error("tracker_is_down");
+  it("never lets a broken queue fail the object", async () => {
+    const exploding = createCloudflareTestBinding<NonNullable<Env["MIGRATION_REPORT_QUEUE"]>>({
+      send: () => {
+        throw new Error("queue_is_down");
       },
-    };
+    });
     const applied = await withScheduler("08", async (state) => {
       const value = withMigrationReport(
-        context(state, { ...env, MIGRATION_TRACKER: exploding }),
+        context(state, { ...env, MIGRATION_REPORT_QUEUE: exploding }),
         () => "constructed",
       );
       await settle();
