@@ -187,7 +187,12 @@ export default {
         // The importer deliberately reserves one of the invocation's six
         // outbound-connection slots. Do not make telemetry compete with its
         // route waves during the maintenance window.
-        await processWorkstreamAuthorityMigration(env, authority);
+        //
+        // 200 operations per tick: each route operation spends ~4 subrequests
+        // (page read, placement, object RPC, cursor update), so 200 keeps the
+        // invocation under the 1,000-subrequest ceiling with headroom for the
+        // control reads and telemetry that share it.
+        await processWorkstreamAuthorityMigration(env, authority, 200);
         await processTelemetry(env);
         return;
       }

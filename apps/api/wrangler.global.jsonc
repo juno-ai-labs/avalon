@@ -83,7 +83,9 @@
     { "pattern": "notion.with-avalon.com", "custom_domain": true },
     { "pattern": "slack.with-avalon.com", "custom_domain": true }
   ],
-  "triggers": { "crons": ["*/5 * * * *"] },
+  // Every minute is temporary throughput for the generation-4 authority import
+  // campaign; restore "*/5 * * * *" once this region reports durable_object_open.
+  "triggers": { "crons": ["* * * * *"] },
   "services": [
     {
       "binding": "EU_IDENTITY_BRIDGE",
