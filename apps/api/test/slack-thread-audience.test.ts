@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
+import { admitConnectorAudience } from "../src/services/connector-workstream-audience";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import {
   createCloudflareTestBinding,
@@ -212,6 +213,97 @@ describe("who may continue a Slack work stream", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants",
     ).get()).toEqual({ count: 1 });
+  });
+
+  it("admits the audience through the work stream's object once the region is open", async () => {
+    // The defect this pins down: the audience upsert used to go straight to
+    // regional D1, where the post-cutover fence aborts it — so every linked
+    // member speaking in a connector conversation was refused. Post-open, the
+    // participant rows live in the work stream's Durable Object, and the only
+    // regional read left is the `users` profile join. The fences below are
+    // armed for real: any statement that leaks back to D1 fails the test.
+    const database = await seededDatabase();
+    // Walk the phase machine legitimately — transitions are trigger-enforced.
+    // No workstream rows exist, so no workstream routes are created; the one
+    // workspace product route is advanced by hand the way the campaign would.
+    const at = "2026-01-02T00:00:00.000Z";
+    database.exec(`
+      UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${at}' WHERE id = 1;
+      UPDATE workstream_authority_control SET phase = 'maintenance_importing', updated_at = '${at}' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = '${at}';
+      UPDATE workstream_authority_control SET phase = 'maintenance_verified', updated_at = '${at}' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${at}';
+      UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${at}' WHERE id = 1;
+    `);
+    // The object's storage, as the runtime SQL port sees it.
+    const objectDatabase = new DatabaseSync(":memory:");
+    databases.push(objectDatabase);
+    objectDatabase.exec(`
+      CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
+      CREATE TABLE workstream_participants (
+        workstream_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        added_by_user_id TEXT,
+        participation_reason TEXT,
+        joined_at TEXT,
+        removed_at TEXT,
+        PRIMARY KEY (workstream_id, user_id)
+      );
+    `);
+    const workstreamId = "019fc4e0-0000-7000-8000-0000000000aa";
+    objectDatabase.prepare("INSERT INTO workstreams (id, workspace_id) VALUES (?, ?)")
+      .run(workstreamId, WORKSPACE);
+    const roomEvents: Record<string, unknown>[] = [];
+    const objectStub = {
+      executeRuntimeSql: vi.fn(async (input: {
+        statements: Array<{ sql: string; params: Array<string | number | null> }>;
+      }) => {
+        const results = input.statements.map(({ sql, params }) => {
+          if (/^\s*SELECT/iu.test(sql)) {
+            const rows = objectDatabase.prepare(sql).all(...params) as Array<Record<string, string | number | null>>;
+            return { columns: rows.length > 0 ? Object.keys(rows[0]!) : [], rows, changes: 0 };
+          }
+          const run = objectDatabase.prepare(sql).run(...params);
+          return { columns: [], rows: [], changes: Number(run.changes) };
+        });
+        return { status: 200, bodyJson: JSON.stringify({ results }) };
+      }),
+      publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
+        roomEvents.push(input.event);
+        return { status: 204, bodyJson: "null" };
+      }),
+    };
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
+        jurisdiction: () => createCloudflareTestBinding<DurableObjectNamespace>({
+          idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
+          get: vi.fn(() => objectStub),
+        }),
+        idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
+        get: vi.fn(() => objectStub),
+      }),
+    });
+
+    await admitConnectorAudience(env, {
+      workspaceId: WORKSPACE,
+      workstreamId,
+      userIds: [TAYLOR],
+      addedByUserId: TAYLOR,
+    });
+
+    expect(objectDatabase.prepare(
+      "SELECT user_id, participation_reason FROM workstream_participants",
+    ).all()).toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
+    // Nothing reached the fenced D1 copy — it aborts writes, it does not skip them.
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_participants",
+    ).get()).toEqual({ count: 0 });
+    expect(roomEvents).toMatchObject([{
+      type: "participant_added",
+      participant: { user: { id: TAYLOR }, participationReason: "explicit" },
+    }]);
   });
 });
 
