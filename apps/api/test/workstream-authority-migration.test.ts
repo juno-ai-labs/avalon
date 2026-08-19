@@ -377,6 +377,85 @@ describe("the D1 to WorkspaceDO authority source", () => {
     }
   });
 
+  it("renumbers stacked provenance root positions and keeps one user link per identity", () => {
+    // Legacy D1 enforced neither UNIQUE (opportunity_id, position) on roots nor
+    // the object's link identity index; re-rootings stacked node sets onto the
+    // same positions and duplicate NULL-user link assertions accumulated. Both
+    // quarantined generation 3 of the Global cutover.
+    const database = migratedDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('user-dup', 'subject-dup', 'dup@example.com', 'Dup', '${AT}', '${AT}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('workspace-dup', 'Dup', 'workspace-dup', 'global', 'user-dup', '${AT}', '${AT}');
+        INSERT INTO opportunity_provenance_nodes
+          (id, workspace_id, node_kind, source_id, label, visibility_scope, created_at)
+        SELECT value, 'workspace-dup', 'activity', value, value, 'workspace', '${AT}'
+          FROM json_each('["node-a", "node-b", "node-c", "node-d"]');
+        INSERT INTO work_opportunities
+          (id, workspace_id, audience_scope, display_prompt, execution_prompt,
+           admission_reasoning, source_fingerprint, display_prompt_hash,
+           execution_prompt_hash, expires_at, created_at, updated_at)
+        VALUES ('opp-dup', 'workspace-dup', 'workspace', 'prompt', 'prompt',
+                'reasoning', 'fingerprint-dup', 'hash', 'hash', '${AT}', '${AT}', '${AT}');
+        INSERT INTO work_opportunity_provenance_roots (opportunity_id, node_id, position) VALUES
+          ('opp-dup', 'node-a', 0),
+          ('opp-dup', 'node-b', 0),
+          ('opp-dup', 'node-c', 1),
+          ('opp-dup', 'node-d', 1);
+        INSERT INTO work_opportunity_user_links
+          (id, workspace_id, opportunity_id, user_id, role, resolution, reasoning,
+           provenance_node_id, created_at, updated_at)
+        VALUES
+          ('link-old', 'workspace-dup', 'opp-dup', NULL, 'assignee', 'unresolved', 'old', NULL, '${AT}', '${AT}'),
+          ('link-new', 'workspace-dup', 'opp-dup', NULL, 'assignee', 'unresolved', 'new', NULL, '${AT}', '${AT}'),
+          ('link-node', 'workspace-dup', 'opp-dup', NULL, 'assignee', 'unresolved', 'kept', 'node-a', '${AT}', '${AT}');
+      `);
+
+      const rootsQuery = __workstreamAuthorityMigrationTesting
+        .workspaceProductSourceQuery("work_opportunity_provenance_roots");
+      const roots = database.prepare(rootsQuery).all("workspace-dup", 0, 101) as Array<{
+        node_id: string;
+        position: number;
+      }>;
+      // Dense rank in (original position, node_id) order: unique, gapless, and
+      // the original relative order survives.
+      expect(roots.map((row) => [row.node_id, row.position])).toEqual([
+        ["node-a", 0],
+        ["node-b", 1],
+        ["node-c", 2],
+        ["node-d", 3],
+      ]);
+      // Page boundaries must not change the assignment: walking one row at a
+      // time yields the same positions as one shot, so retries and page splits
+      // stay idempotent under the object's exact-match import check.
+      let cursor = 0;
+      const paged: Array<[string, number]> = [];
+      for (;;) {
+        const page = database.prepare(rootsQuery).all("workspace-dup", cursor, 1) as Array<{
+          source_rowid: number;
+          node_id: string;
+          position: number;
+        }>;
+        if (page.length === 0) break;
+        paged.push([page[0]!.node_id, page[0]!.position]);
+        cursor = page[0]!.source_rowid;
+      }
+      expect(paged).toEqual(roots.map((row) => [row.node_id, row.position]));
+
+      const links = database.prepare(
+        __workstreamAuthorityMigrationTesting.workspaceProductSourceQuery("work_opportunity_user_links"),
+      ).all("workspace-dup", 0, 101) as Array<{ id: string }>;
+      // One row per object identity (opportunity, user, role, resolution,
+      // provenance node), the latest assertion winning; the distinct-node link
+      // is its own identity and survives.
+      expect(links.map((row) => row.id)).toEqual(["link-new", "link-node"]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("translates historical connector events into stable WorkspaceDO payload identities", async () => {
     const source = {
       source_rowid: 17,
