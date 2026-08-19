@@ -177,6 +177,17 @@
   --turn-align: flex-end;
   --turn-margin: auto;
   --turn-width: min(72%, 620px);
+  /* Inside a navigation row: its padding, the leading of its two lines, the gap
+   * between title and hint, and the floor under the denser rows that carry
+   * both. `--row-height` is the floor for a single-line row; a work-stream or
+   * note row sets its own, because its height comes from its content. */
+  --row-pad: 3px 7px;
+  --row-leading: 1.25;
+  --row-hint-gap: 2px;
+  --row-height-dense: 30px;
+  /* The band a group's label sits in, and the gap under it. */
+  --label-height: 26px;
+  --label-gap: 4px;
 
   /* Type */
   --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -391,6 +402,12 @@
   --turn-align: flex-end;
   --turn-margin: auto;
   --turn-width: min(72%, 620px);
+  --row-pad: 3px 7px;
+  --row-leading: 1.25;
+  --row-hint-gap: 2px;
+  --row-height-dense: 30px;
+  --label-height: 26px;
+  --label-gap: 4px;
 
   --shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
   --shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
@@ -571,7 +588,7 @@
   --feed-pad-y: 64px;
   --feed-pad-x: 46px;
   --row-gap: 5px;
-  --group-gap: 28px;
+  --group-gap: 60px;
   --block-gap: 28px;
   --prose-gap: 22px;
   --leading-prose: 1.85;
@@ -581,6 +598,12 @@
   --turn-align: flex-start;
   --turn-margin: 0;
   --turn-width: 100%;
+  --row-pad: 9px 10px;
+  --row-leading: 1.55;
+  --row-hint-gap: 7px;
+  --row-height-dense: 44px;
+  --label-height: 34px;
+  --label-gap: 22px;
 
   --font-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
   --text-base: 15px;
