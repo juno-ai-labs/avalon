@@ -2310,11 +2310,28 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().expires_at_s).toBe(220);
     });
     await runInDurableObject(stub, async (instance) => {
+      // Two source rows under one object key is a mapper defect: the page that
+      // carries both is refused rather than letting the later row win.
       await expect(instance.importWorkspaceProductRows({
         workspaceId: WORKSPACE_ID,
         stage: "activity_events",
-        rows: [{ ...activity, title: "Conflicting activity" }],
+        rows: [activity, { ...activity, title: "Conflicting activity" }],
       })).rejects.toThrow("workspace_product_import_conflict:activity_events");
+    });
+    await runInDurableObject(stub, async (instance) => {
+      // A later page carrying the same key is a retry, and the frozen source
+      // snapshot wins — including over the row the earlier page stored.
+      await expect(instance.importWorkspaceProductRows({
+        workspaceId: WORKSPACE_ID,
+        stage: "activity_events",
+        rows: [{ ...activity, title: "Corrected activity" }],
+      })).resolves.toBe(1);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ title: string }>(
+        "SELECT title FROM workspace_activity_events WHERE event_id = ?",
+        eventId,
+      ).one().title).toBe("Corrected activity");
     });
     await env.DB.prepare(
       `UPDATE workstream_authority_control SET phase = 'durable_object_open' WHERE id = 1`,
@@ -2325,6 +2342,143 @@ describe("Durable Objects in the Workers runtime", () => {
         stage: "activity_events",
         rows: [activity],
       })).rejects.toThrow("workspace_product_import_not_active");
+    });
+  });
+
+  it("reconciles an imported row the object mutated before the page was retried", async () => {
+    // A page is re-sent whenever a tick pauses on a transient failure, and a
+    // new generation re-imports every page. Between the two, this object's own
+    // product alarm can claim a window it already holds. The frozen D1
+    // snapshot stays authoritative until the region opens, so the retry must
+    // reconcile the row instead of condemning the campaign — the failure that
+    // quarantined generation 5 of the Global cutover.
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      ),
+      env.DB.prepare(`CREATE TABLE workspace_product_authority_routes (
+        workspace_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workspace_product_authority_routes
+        (workspace_id, generation, state) VALUES (?, 1, 'importing')`).bind(WORKSPACE_ID),
+    ]);
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const windowId = "00000000-0000-7000-8000-000000000441";
+    const window = {
+      id: windowId,
+      partition_key: "workspace",
+      audience_scope: "workspace",
+      audience_user_id: null,
+      first_event_at: "2098-08-18T20:00:00.000Z",
+      last_event_at: "2098-08-18T20:00:05.000Z",
+      process_after: "2098-08-18T20:00:10.000Z",
+      status: "queued",
+      attempt: 0,
+      lease_id: null,
+      lease_expires_at: null,
+      created_at: "2098-08-18T20:00:00.000Z",
+      updated_at: "2098-08-18T20:00:00.000Z",
+      completed_at: null,
+    };
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "opportunity_batch_windows",
+      rows: [window],
+    })).resolves.toBe(1);
+    // Stand in for the alarm's claim: same window, mutated in place.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE opportunity_batch_windows
+            SET status = 'processing', attempt = 1, lease_id = ?, lease_expires_at = 99999
+          WHERE window_id = ?`,
+        "00000000-0000-7000-8000-000000000442",
+        windowId,
+      );
+    });
+
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "opportunity_batch_windows",
+      rows: [window],
+    })).resolves.toBe(1);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{
+        status: string;
+        attempt: number;
+        lease_id: string | null;
+      }>(
+        `SELECT status, attempt, lease_id FROM opportunity_batch_windows WHERE window_id = ?`,
+        windowId,
+      ).one()).toEqual({ status: "pending", attempt: 0, lease_id: null });
+    });
+
+    // Reconciliation is not blanket tolerance: a value the converter cannot
+    // produce still fails the re-read and quarantines.
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.importWorkspaceProductRows({
+        workspaceId: WORKSPACE_ID,
+        stage: "opportunity_batch_windows",
+        rows: [{ ...window, first_event_at: "not-a-timestamp" }],
+      })).rejects.toThrow("workspace_product_import_timestamp_invalid:first_event_at");
+    });
+  });
+
+  it("holds product alarm work while a maintenance campaign owns the tables", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const windowId = "00000000-0000-7000-8000-000000000443";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO opportunity_batch_windows
+           (window_id, partition_key, audience_scope, audience_user_id,
+            first_event_at, last_event_at, process_after, status, attempt,
+            lease_id, lease_expires_at, created_at, updated_at, completed_at)
+         VALUES (?, 'workspace', 'workspace', NULL, 1, 1, 1, 'pending', 0,
+                 NULL, NULL, 1, 1, NULL)`,
+        windowId,
+      );
+    });
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+    ).run();
+
+    await runInDurableObject(stub, async (instance) => {
+      await instance.alarm();
+    });
+
+    // The due window is still exactly as the importer left it: unclaimed.
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string; lease_id: string | null }>(
+        `SELECT status, lease_id FROM opportunity_batch_windows WHERE window_id = ?`,
+        windowId,
+      ).one()).toEqual({ status: "pending", lease_id: null });
+    });
+
+    // The gate is the phase and nothing else: once the region opens, the same
+    // alarm walks straight into the admission Workflow launch. This
+    // environment binds no Workflow, so reaching it surfaces as that binding's
+    // absence — which is the proof the window was claimed rather than held.
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'durable_object_open' WHERE id = 1`,
+    ).run();
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.alarm()).rejects.toThrow(/WORK_OPPORTUNITY_WORKFLOW|create/u);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM opportunity_batch_windows WHERE window_id = ?`,
+        windowId,
+      ).one().status).toBe("processing");
     });
   });
 

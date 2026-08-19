@@ -958,6 +958,33 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-19 — The import reconciles rows the object mutated, and product alarms wait for the open
+
+**What changed:** Two halves of one rule — the frozen D1 snapshot is authority
+for a WorkspaceDO's product tables until its region opens. `WorkspaceDO.alarm`
+now performs no product work (no window claims, no retention reaps, no ranking
+claims) while the authority phase is anything other than `durable_object_open`
+or `legacy_open`; it just re-arms. And when an import page finds a row that
+disagrees with the source, it updates that row to the source values instead of
+failing — unless the same page already wrote that key, which is a mapper defect
+and still fails, as does a value the converter cannot produce.
+
+**Why:** Generation 5 of the Global cutover quarantined on
+`opportunity_batch_windows` with no duplicate partition keys in the source. The
+object's own alarm had claimed a window the importer had just written —
+`pending` became `processing` with a lease — and the page's next delivery found
+its exact-match check violated by the object's own mutation. Page re-delivery
+became routine in the same change that made transient failures pause instead of
+quarantine, which is why this surfaced only once both were live. A new
+generation re-importing over an earlier one's rows hits the same wall.
+
+**Considered and rejected:** `INSERT OR REPLACE` (its delete half cascades to
+child rows an earlier stage already imported), truncating each object's product
+tables at generation start (correct but far larger blast radius, and it
+discards rows whose source pages have not been re-sent yet), and dropping the
+exact-match verification (it is the only thing that catches converter defects —
+generations 2, 3, and 4 were all caught by it).
+
 ### 2026-08-19 — Transient failures pause the import campaign instead of condemning it
 
 **What changed:** A campaign route operation that rejects with an
