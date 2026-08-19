@@ -599,37 +599,17 @@ Large data rewrites use the fleet maintenance/import control plane and resumable
 receipts, never unbounded constructor work. `durable-utils` is intentionally not
 a dependency.
 
-### Maintenance-window cutover
+### Retired maintenance-window cutover
 
-The branch assumes no partial deployment and permits a maintenance window:
-
-```text
-legacy_open
-  -> maintenance_draining
-  -> maintenance_importing
-  -> maintenance_verified
-  -> durable_object_open
-```
-
-The drain rejects new HTTP/socket/queue work and waits for active legacy loops.
-Import pages copy every legacy D1 work-stream product row into main
-`SubstreamAgent 0`, preserving IDs and order. Verification checks table counts,
-hashes, identities, references, and authority generation. Activation writes the
-initial child projection to `WorkstreamDO`, synchronously flushes the resulting
-common/user state to `WorkspaceDO`, verifies the workspace directory row,
-imports the frozen legacy pins, and only then opens the regional route. Legacy
-D1 product-table and pin triggers become permanent writer fences.
-
-In the same maintenance campaign, `workspace_product_authority_routes` pages the
-activity/opportunity graph and every workspace-scoped relational domain into
-each WorkspaceDO in foreign-key order: connector and Slack state, Terminal
-policy revisions, automations/digests/schedules, resources/notes/watches and R2
-outboxes, memory, and notification intents. Activity insertion sequences, stable
-IDs, leases, versions, credentials, resource references, and revision history
-are preserved. A workspace product route must be `verified` and then `active`
-before the serving-contract attestation can advance. Migration `0083` rejects
-all legacy D1 writers as soon as import starts and scrubs imported connector
-event bodies before open, so there is no dual-write or fallback path.
+The one-time D1-to-object authority cutover (drain -> import -> verify ->
+activate -> open) completed in both regions, and its machinery — the cron
+importer, the per-object import RPCs, and the deploy workflow's cutover steps —
+has been deleted. What deliberately survives it: the `workstream_authority_control`
+row (read on every request, fails closed when missing), the
+`workstream_authority_routes` table (now the live work-stream-to-object
+directory that creation writes and regional effect delivery fences on), and the
+legacy D1 product-table writer fences, which are the permanent tripwire against
+a resurrected D1 writer.
 
 ## Invariants
 
@@ -645,9 +625,8 @@ event bodies before open, so there is no dual-write or fallback path.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
-- **The WorkspaceDO directory is present before a D1 route becomes active.** Opening a route first creates a serving gap in which D1 is fenced and the sidebar has no authoritative row.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** HyperSight attachments carry only a bounded 60-second authorization cache and receive explicit parent sweeps; no long-lived ticket or attachment is continuing authority for a new write.
-- **Legacy D1 product rows are never a fallback after activation.** Fallback would silently split authority after an object failure.
+- **Legacy D1 product rows are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
 
@@ -1266,6 +1245,35 @@ already a retry loop with a natural backoff; duplicating it inside the tick
 adds concurrency for no coverage), and treating every error as retryable (a
 data conflict must stop the campaign — retrying it forever would hide the
 defect the quarantine exists to surface).
+### 2026-08-19 — The authority cutover campaign machinery is retired
+
+**What changed:** With both regions permanently at `durable_object_open`, the
+one-time campaign code is deleted: the cron importer
+(`workstream-authority-migration.ts`), the object-side import machinery
+(`workstream-authority-import.ts`, `workspace-product-import.ts`,
+`workspace-product-import-storage.ts`), the `importAuthority` /
+`importWorkspaceProductRows` RPCs and the `/internal/authority-import` route,
+the scheduled handler's maintenance-phase branches, the cutover driver script
+and its deploy-workflow steps. `workstreamImportHash` survives in
+`workstream-import-hash.ts` because create receipts and the runtime SQL port
+store hashes under its encoding.
+
+**Why:** The campaign completed; keeping ~2,500 lines of one-shot import code
+in live Durable Objects left writable import surface on production objects and
+made every reader of these files reason about a phase that can no longer
+recur. The fences and the control/route tables deliberately stay:
+`readWorkstreamAuthorityControl` fails closed to `quarantined` when the control
+row is missing, so the row is load-bearing on every request, and
+`workstream_authority_routes` is now the live directory that work-stream
+creation writes and regional effect delivery fences on. The D1 writer fences
+remain the tripwire that turns a resurrected legacy writer into a loud
+`workstream_do_authoritative` error instead of silent split authority.
+
+**Considered and rejected:** Deleting the control table and phase reads in the
+same change (40+ call sites fail closed without the row — removal has to
+follow, not accompany, the code that reads it), and keeping the import RPCs as
+"harmless" dead surface (an import RPC on a live object is a data-corruption
+primitive if ever reachable).
 
 ### 2026-08-19 — The fleet's tables get retention, byte-accurate bounds, and honest columns
 
