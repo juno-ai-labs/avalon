@@ -371,6 +371,22 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-18 — Schema-drifted agent frames leave bounded diagnostics
+
+**What changed:** WorkstreamDO control and BlockDashboardAgent sockets still
+ignore malformed frames and recover from the next authoritative snapshot, but
+each hook now records one payload-free warning per mounted socket set.
+
+**Why:** Silent Zod failures made a server/client contract mismatch
+indistinguishable from an idle socket, while logging every frame or its payload
+would create noise and risk exposing product content.
+
+**Considered and rejected:** Closing the socket on the first malformed frame,
+logging raw frames, and warning without a per-mount bound.
+
+**Consequences:** A malformed frame does not disrupt the UI or reconnect loop;
+developers get the validation issues or JSON error from the first occurrence.
+
 ### 2026-08-18 — Offline directory reads fail immediately
 
 **What changed:** The workspace socket rejects only pending directory-page

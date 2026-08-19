@@ -19,6 +19,7 @@ import type { AuthContext, Env } from "../env";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { logWarn } from "../observability/logger";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -1197,8 +1198,42 @@ export class WorkstreamDO extends DurableObject<Env> {
       limit,
     ).toArray();
     for (const row of rows) {
+      let dispatch: z.infer<typeof BlockDashboardBlockDispatchSchema>;
       try {
-        const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+      } catch (error) {
+        const completedAt = Date.now();
+        this.state.storage.transactionSync(() => {
+          this.state.storage.sql.exec(
+            `UPDATE block_dashboard_block_runs
+                SET status = 'failed', error_json = ?,
+                    completed_at = COALESCE(completed_at, ?)
+              WHERE block_run_id = ? AND status IN ('queued', 'running')`,
+            JSON.stringify({
+              code: "block_dashboard_dispatch_invalid",
+              message: "The HyperSight block could not start",
+            }),
+            completedAt,
+            row.block_run_id,
+          );
+          this.state.storage.sql.exec(
+            `DELETE FROM block_dashboard_dispatch_outbox WHERE block_run_id = ?`,
+            row.block_run_id,
+          );
+        });
+        logWarn(this.env, "block_dashboard_dispatch_invalid", {
+          block_id: row.block_id,
+          block_run_id: row.block_run_id,
+          reason: truncateUtf16Safe(error instanceof Error ? error.message : "unknown", 500),
+        });
+        await this.broadcastBlockDashboardEvent({
+          type: "block_dashboard_configuration_updated",
+          occurredAt: new Date(completedAt).toISOString(),
+          blockDashboard: this.loadBlockDashboard(),
+        });
+        continue;
+      }
+      try {
         const stub = await durableObjectStubForWorkspace(
           this.env,
           this.env.BLOCK_DASHBOARD_AGENTS,

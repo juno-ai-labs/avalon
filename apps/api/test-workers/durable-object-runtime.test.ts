@@ -1352,6 +1352,64 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("terminalizes a malformed HyperSight dispatch instead of retrying it forever", async () => {
+    await seedOpenAuthority();
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await fetchAndDrain(parent, "https://workstream.test/health");
+    const configurationVersionId = "00000000-0000-7000-8000-000000000171";
+    const blockRunId = "00000000-0000-7000-8000-000000000172";
+    await runInDurableObject(parent, async (instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO block_dashboard_configuration_versions
+           (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
+         VALUES (?, 1, ?, ?, 1)`,
+        configurationVersionId,
+        JSON.stringify([{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "Summarize" }]),
+        USER_ID,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO block_dashboard_block_runs
+           (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
+            harness_run_id, status, created_at)
+         VALUES (?, ?, ?, 'Summarize', 1, ?, 'queued', 1)`,
+        blockRunId,
+        configurationVersionId,
+        BLOCK_DASHBOARD_BLOCK_ID,
+        "00000000-0000-7000-8000-000000000173",
+      );
+      state.storage.sql.exec(
+        `INSERT INTO block_dashboard_dispatch_outbox
+           (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
+         VALUES (?, ?, ?, 0, 0, 1)`,
+        blockRunId,
+        BLOCK_DASHBOARD_BLOCK_ID,
+        JSON.stringify({ schema: "drifted" }),
+      );
+
+      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
+
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
+      ).one().count).toBe(0);
+      const run = state.storage.sql.exec<{
+        status: string;
+        error_json: string | null;
+        completed_at: number | null;
+      }>(
+        `SELECT status, error_json, completed_at FROM block_dashboard_block_runs
+          WHERE block_run_id = ?`,
+        blockRunId,
+      ).one();
+      expect(run.status).toBe("failed");
+      expect(run.completed_at).not.toBeNull();
+      expect(JSON.parse(run.error_json!)).toMatchObject({
+        code: "block_dashboard_dispatch_invalid",
+      });
+    });
+  });
+
   it("keeps a hibernating workspace socket alive across forced eviction", async () => {
     await seedOpenAuthority();
     const id = env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID));
