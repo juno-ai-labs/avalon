@@ -57,25 +57,44 @@ export function sqlLiteral(text) {
   return `'${String(text).replaceAll("'", "''")}'`;
 }
 
+// A dropped fetch must not abandon a healthy multi-hour campaign watch, but a
+// trigger rejection or constraint error is a real answer and retrying it is
+// noise — so retry only what reads as transport, never what reads as SQL.
+const TRANSIENT_D1_ERROR = /fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|Internal Server Error|granular error|\b50[0234]\b/iu;
+const DEFINITE_SQL_ERROR = /RAISE|SQLITE_|workstream_authority|workspace_do|no such/u;
+const D1_EXECUTE_ATTEMPTS = 5;
+
 async function wranglerD1Execute(region, sql) {
   const apiDirectory = fileURLToPath(new URL("../apps/api/", import.meta.url));
   let stdout;
-  try {
-    ({ stdout } = await execFileAsync("pnpm", [
-      "exec", "wrangler", "d1", "execute", "DB",
-      "--remote", "--json",
-      "--config", REGION_CONFIGS[region],
-      "--command", sql,
-    ], { cwd: apiDirectory, maxBuffer: 16 * 1024 * 1024 }));
-  } catch (error) {
-    // execFile's message is just the command line; the D1 trigger name the
-    // caller matches on (e.g. workstream_authority_runs_not_drained) arrives
-    // on wrangler's stdout/stderr, so surface both in the thrown error.
-    const detail = [error?.stdout, error?.stderr]
-      .filter((chunk) => typeof chunk === "string" && chunk.trim().length > 0)
-      .join("\n");
-    throw new Error(`d1 execute failed: ${detail.slice(0, 2000) || String(error)}`, { cause: error });
+  let lastError;
+  for (let attempt = 1; attempt <= D1_EXECUTE_ATTEMPTS; attempt += 1) {
+    try {
+      ({ stdout } = await execFileAsync("pnpm", [
+        "exec", "wrangler", "d1", "execute", "DB",
+        "--remote", "--json",
+        "--config", REGION_CONFIGS[region],
+        "--command", sql,
+      ], { cwd: apiDirectory, maxBuffer: 16 * 1024 * 1024 }));
+      lastError = undefined;
+      break;
+    } catch (error) {
+      // execFile's message is just the command line; the D1 trigger name the
+      // caller matches on (e.g. workstream_authority_runs_not_drained)
+      // arrives on wrangler's stdout/stderr, so surface both.
+      const detail = [error?.stdout, error?.stderr]
+        .filter((chunk) => typeof chunk === "string" && chunk.trim().length > 0)
+        .join("\n");
+      lastError = new Error(
+        `d1 execute failed: ${detail.slice(0, 2000) || String(error)}`,
+        { cause: error },
+      );
+      const retryable = TRANSIENT_D1_ERROR.test(detail) && !DEFINITE_SQL_ERROR.test(detail);
+      if (!retryable || attempt === D1_EXECUTE_ATTEMPTS) throw lastError;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5_000));
+    }
   }
+  if (lastError) throw lastError;
   const parsed = JSON.parse(stdout);
   const first = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!first || first.success === false) {
