@@ -80,6 +80,10 @@ export const WORKSPACE_PRODUCT_SCHEMA_STATEMENTS = [
     ON opportunity_batch_windows(partition_key) WHERE status = 'queued'`,
   `CREATE INDEX opportunity_batch_windows_due_idx
     ON opportunity_batch_windows(status, process_after, window_id)`,
+  `CREATE INDEX opportunity_batch_windows_lease_idx
+    ON opportunity_batch_windows(lease_expires_at, window_id) WHERE status = 'processing'`,
+  `CREATE INDEX opportunity_batch_windows_retention_idx
+    ON opportunity_batch_windows(completed_at, window_id) WHERE status = 'completed'`,
   `CREATE TABLE opportunity_batch_events (
     batch_event_id TEXT PRIMARY KEY,
     window_id TEXT NOT NULL REFERENCES opportunity_batch_windows(window_id) ON DELETE CASCADE,

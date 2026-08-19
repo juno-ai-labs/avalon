@@ -58,9 +58,18 @@ const TABLE_REWRITES = [
   ["workstreams", "_runtime_workstreams"],
 ] as const;
 
+function insertTarget(sql: string): string | null {
+  return /^\s*INSERT(?:\s+OR\s+\w+)?\s+INTO\s+["`[]?([\w]+)["`\]]?/iu.exec(sql)?.[1]?.toLowerCase() ?? null;
+}
+
 function stripViewUpsert(sql: string): string {
-  if (!/\bON\s+CONFLICT\b/iu.test(sql)) return sql;
-  return sql.replace(/\s+ON\s+CONFLICT(?:\s*\([^)]*\))?\s+DO\s+(?:NOTHING|UPDATE\s+SET[\s\S]*)\s*$/iu, "");
+  const conflictAt = sql.search(/\s+ON\s+CONFLICT(?:\s*\([^)]*\))?\s+DO\s+(?:NOTHING|UPDATE\s+SET)/iu);
+  if (conflictAt < 0) return sql;
+  const conflictTail = sql.slice(conflictAt);
+  const returningAt = conflictTail.search(/\s+RETURNING\b/iu);
+  return returningAt < 0
+    ? sql.slice(0, conflictAt).trimEnd()
+    : `${sql.slice(0, conflictAt).trimEnd()}${conflictTail.slice(returningAt)}`;
 }
 
 /**
@@ -79,13 +88,15 @@ export function rewriteWorkstreamRuntimeSql(input: string): string {
              WHERE workstream_key = ? AND parent_workspace_key = ?
              RETURNING next_sequence_number - 1 AS sequence_number`;
   }
+  const target = insertTarget(input);
+  const targetsCompatibilityView = TABLE_REWRITES.some(([legacy]) => legacy === target);
   let sql = input;
   for (const [legacy, view] of TABLE_REWRITES) {
     sql = sql.replace(new RegExp(`\\b${legacy}\\b`, "giu"), view);
   }
   // SQLite does not implement UPSERT syntax on a view. Each compatibility
   // trigger applies the equivalent conflict policy to its normalized table.
-  return stripViewUpsert(sql);
+  return targetsCompatibilityView ? stripViewUpsert(sql) : sql;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(

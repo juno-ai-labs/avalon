@@ -67,10 +67,21 @@ const LOCAL_TABLES = [
 ] as const;
 
 const LOCAL_TABLE_PATTERNS = LOCAL_TABLES.map((table) =>
-  new RegExp(`\\b${table}\\b`, "iu"));
+  new RegExp(`\\b(?:FROM|JOIN|UPDATE|INTO)\\s+["\u0060\\[]?${table}\\b`, "iu"));
+const LOCAL_TABLE_SET = new Set<string>(LOCAL_TABLES);
+
+function mutationTarget(sql: string): string | null {
+  return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
+    .exec(sql)?.[1]?.toLowerCase() ?? null;
+}
 
 function localStatement(sql: string): boolean {
-  return LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
+  const mentionsLocalTable = LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
+  const target = mutationTarget(sql);
+  if (mentionsLocalTable && target && !LOCAL_TABLE_SET.has(target)) {
+    throw new Error("workstream_runtime_cross_authority_statement");
+  }
+  return mentionsLocalTable;
 }
 
 function d1Result<T>(result: WorkstreamRuntimeSqlResult): D1Result<T> {

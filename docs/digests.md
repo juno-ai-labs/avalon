@@ -610,6 +610,25 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-18 — Slack-only members still receive schedule repair
+
+**What changed:** Digest reconciliation pages across every active member rather
+than excluding blank email addresses in the regional query. A member without an
+email still does not receive a newly invented email target, but an existing
+Slack-backed digest has its missing or timezone-stale scheduler rows repaired.
+
+**Why:** Email availability is a delivery-target concern, not a prerequisite
+for maintaining an existing digest. Applying it to the outer member scan made
+a Slack-only member's enabled digest silently stop after partial creation or a
+timezone change.
+
+**Considered and rejected:** Synthesizing an email destination or skipping the
+member entirely. The former is invalid product state; the latter also skips
+delivery-independent schedule repair.
+
+**Consequences:** The keyset sweep covers more members, still in bounded pages.
+New defaults remain email-backed only when a real nonblank address exists.
+
 ### 2026-08-18 — Digest scheduling and delivery move beside the activity log
 
 **What changed:** Digest schedules/times/targets/deliveries, their canonical

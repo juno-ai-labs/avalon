@@ -1048,8 +1048,13 @@ async function startActivityAutomation(
          result_summary, workflow_instance_id, created_at
        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`,
     ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now);
-    if (authority.phase === "durable_object_open") await runStatement.run();
-    await executionEnv.DB.batch([
+    let controlRunInserted = false;
+    if (authority.phase === "durable_object_open") {
+      const inserted = await runStatement.run();
+      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
+    }
+    try {
+      await executionEnv.DB.batch([
       executionEnv.DB.prepare(
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
@@ -1085,7 +1090,27 @@ async function startActivityAutomation(
       executionEnv.DB.prepare(
         `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
       ).bind(runId, workstreamId, activity.workspace_id)
-    ]);
+      ]);
+    } catch (error) {
+      if (controlRunInserted) {
+        try {
+          const deleted = await env.DB.prepare(
+            `DELETE FROM automation_runs
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
+          ).bind(runId, activity.workspace_id).run();
+          if ((deleted.meta.changes ?? 0) !== 1) {
+            throw new Error("activity_automation_run_compensation_not_applied", { cause: error });
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "activity_automation_run_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+      }
+      throw error;
+    }
     await recordWorkstreamCreatedTelemetry(env, {
       workspaceId: activity.workspace_id,
       workstreamId,
@@ -1161,17 +1186,24 @@ async function startActivityAutomation(
 
   const workflowId = await startWorkstreamWorkflow(env, workflowInput);
 
-  await env.DB.prepare(
-    `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-  ).bind(workflowId, run.id, activity.workspace_id).run();
   const executionEnv = await workstreamExecutionEnvironment(
     env,
     activity.workspace_id,
     run.workstream_id,
   );
-  await executionEnv.DB.prepare(
-    `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-  ).bind(workflowId, harnessRunId, activity.workspace_id).run();
+  const reconcileWorkflowId = () => Promise.all([
+    env.DB.prepare(
+      `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, run.id, activity.workspace_id).run(),
+    executionEnv.DB.prepare(
+      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, harnessRunId, activity.workspace_id).run(),
+  ]);
+  try {
+    await reconcileWorkflowId();
+  } catch {
+    await reconcileWorkflowId();
+  }
   return run.workstream_id;
 }
 

@@ -270,23 +270,12 @@ export class ResourceService {
 
   async deleteDraft(id: string): Promise<void> {
     const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open") {
-      const workspace = await this.workspaceDirectory();
-      const links = await workspace.workstreamsForResource({
-        workspaceId: this.auth.workspaceId,
-        resourceId: id,
-        watchedOnly: false,
-      });
-      if (links.workstreamIds.length > 0) {
-        throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
-      }
-    }
     const resource = await this.env.DB.prepare(
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          ${authority.phase === "durable_object_open"
-          ? ""
+          ? "AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)"
           : "AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)"}
          ${authority.phase === "durable_object_open"
           ? ""
@@ -489,9 +478,9 @@ export class ResourceService {
       workstreamId,
     );
     const attached = await executionEnv.DB.prepare(
-      `SELECT 1 AS attached FROM workstream_resources
+      `SELECT watch_enabled FROM workstream_resources
         WHERE resource_id = ? AND workstream_id = ?`,
-    ).bind(id, workstreamId).first();
+    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
     if (!attached) throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
     const watchStatement = this.env.DB.prepare(ENABLE_RESOURCE_WATCH_SQL).bind(
       newId(),
@@ -510,8 +499,23 @@ export class ResourceService {
     if (executionEnv === this.env) {
       await this.env.DB.batch([watchStatement, attachmentStatement]);
     } else {
-      await watchStatement.run();
       await attachmentStatement.run();
+      try {
+        await watchStatement.run();
+      } catch (error) {
+        try {
+          await executionEnv.DB.prepare(
+            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+          ).bind(attached.watch_enabled, workstreamId, id).run();
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "resource_watch_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+        throw error;
+      }
     }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
@@ -544,6 +548,11 @@ export class ResourceService {
       this.auth.workspaceId,
       workstreamId,
     );
+    const attached = await executionEnv.DB.prepare(
+      `SELECT watch_enabled FROM workstream_resources
+        WHERE resource_id = ? AND workstream_id = ?`,
+    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
+    if (!attached) throw new ApiError(404, "resource_attachment_not_found", "The resource is no longer attached");
     const watchStatement = this.env.DB.prepare(
       "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
     ).bind(nowIso(), workstreamId, id);
@@ -553,8 +562,23 @@ export class ResourceService {
     if (executionEnv === this.env) {
       await this.env.DB.batch([watchStatement, attachmentStatement]);
     } else {
-      await watchStatement.run();
       await attachmentStatement.run();
+      try {
+        await watchStatement.run();
+      } catch (error) {
+        try {
+          await executionEnv.DB.prepare(
+            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+          ).bind(attached.watch_enabled, workstreamId, id).run();
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "resource_unwatch_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+        throw error;
+      }
     }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {

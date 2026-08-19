@@ -171,8 +171,8 @@ async function loadDurableObjectStaleUnfurls(
        JOIN connector_connections connection
          ON connection.id = link.connection_id AND connection.status <> 'disabled'
       WHERE link.shared_at >= ?
-      ORDER BY link.refreshed_at ASC LIMIT 5000`,
-  ).bind(since).all<Record<string, unknown>>();
+      ORDER BY link.refreshed_at ASC LIMIT ?`,
+  ).bind(since, MAX_REFRESHES_PER_SWEEP * 2 + 1).all<Record<string, unknown>>();
   const byWorkspace = new Map<string, Set<string>>();
   for (const link of links.results ?? []) {
     const workspaceId = String(link.workspace_id);
@@ -211,6 +211,7 @@ async function loadDurableObjectStaleUnfurls(
   }
   const checkedAt = nowIso();
   const stale: Record<string, unknown>[] = [];
+  const unchangedUpdates: D1PreparedStatement[] = [];
   for (const link of links.results ?? []) {
     const item = directory.get(`${String(link.workspace_id)}:${String(link.workstream_id)}`);
     if (!item || item.archived_at !== null) continue;
@@ -222,7 +223,7 @@ async function loadDurableObjectStaleUnfurls(
       stale.push({ ...link, ...item, ordered_activity_at: item.last_activity_at });
       continue;
     }
-    await env.DB.prepare(
+    unchangedUpdates.push(env.DB.prepare(
       `UPDATE slack_unfurled_links SET refreshed_at = ?
         WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
     ).bind(
@@ -231,8 +232,9 @@ async function loadDurableObjectStaleUnfurls(
       link.slack_channel_id,
       link.slack_message_ts,
       link.url,
-    ).run();
+    ));
   }
+  if (unchangedUpdates.length > 0) await env.DB.batch(unchangedUpdates);
   const perConnection = new Map<string, number>();
   return stale.sort((left, right) => (
     String(right.ordered_activity_at).localeCompare(String(left.ordered_activity_at))

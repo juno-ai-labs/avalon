@@ -113,8 +113,22 @@ export function BlockDashboardPanel({
   const dragImageRef = useRef<HTMLElement | null>(null);
   const dragFinishedRef = useRef(false);
   const draggingIdRef = useRef<string | null>(null);
+  const pendingConfigurationRef = useRef<BlockDashboardBlock[] | null>(null);
 
   useEffect(() => {
+    const optimistic = pendingConfigurationRef.current;
+    if (optimistic) {
+      const incomingById = new Map(blockDashboard.blocks.map((block) => [block.id, block]));
+      const acknowledged = optimistic.length === blockDashboard.blocks.length
+        && optimistic.every((block, index) => block.id === blockDashboard.blocks[index]?.id
+          && block.prompt === blockDashboard.blocks[index]?.prompt);
+      if (acknowledged) pendingConfigurationRef.current = null;
+      setBlocks((acknowledged ? blockDashboard.blocks : optimistic).map((block) => {
+        const incoming = incomingById.get(block.id);
+        return incoming ? { ...block, latestRun: incoming.latestRun } : block;
+      }));
+      return;
+    }
     if (!draggingIdRef.current) {
       setBlocks(blockDashboard.blocks);
       return;
@@ -133,17 +147,19 @@ export function BlockDashboardPanel({
   };
 
   const commit = async (next: BlockDashboardBlock[]): Promise<boolean> => {
+    pendingConfigurationRef.current = next;
     setBlocks(next);
     try {
       await onChange(configurationBlocks(next));
       return true;
     } catch {
+      pendingConfigurationRef.current = null;
       setBlocks(blockDashboard.blocks);
       return false;
     }
   };
 
-  const finishDrag = (): void => {
+  const finishDrag = (dropped: boolean): void => {
     if (dragFinishedRef.current) return;
     dragFinishedRef.current = true;
     draggingIdRef.current = null;
@@ -151,7 +167,8 @@ export function BlockDashboardPanel({
     dragImageRef.current = null;
     const changed = blocks.some((block, index) => block.id !== blockDashboard.blocks[index]?.id);
     setDraggingId(null);
-    if (changed) void commit(blocks);
+    if (dropped && changed) void commit(blocks);
+    else if (!dropped) setBlocks(pendingConfigurationRef.current ?? blockDashboard.blocks);
   };
 
   return (
@@ -170,7 +187,7 @@ export function BlockDashboardPanel({
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
-              finishDrag();
+              finishDrag(true);
             }}
           >
             <div className="block-dashboard-block-card">
@@ -191,7 +208,7 @@ export function BlockDashboardPanel({
                   className="block-dashboard-grip"
                   disabled={pending}
                   draggable={!pending}
-                  onDragEnd={finishDrag}
+                  onDragEnd={() => finishDrag(false)}
                   onDragStart={(event) => {
                     dragFinishedRef.current = false;
                     draggingIdRef.current = block.id;

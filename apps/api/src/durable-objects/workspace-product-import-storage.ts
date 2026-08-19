@@ -257,7 +257,13 @@ function converted(row: WorkspaceProductImportRow, column: Column): SqlStorageVa
   const [, source = column[0], kind = "value", fallback = null] = column;
   const raw = row[source] ?? fallback;
   if (raw === null) return null;
-  if (kind === "integer") return Number.isFinite(Number(raw)) ? Math.trunc(Number(raw)) : Number(fallback ?? 0);
+  if (kind === "integer") {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`workspace_product_import_integer_invalid:${source}`);
+    }
+    return Math.trunc(parsed);
+  }
   if (kind === "epoch") {
     if (typeof raw === "number") return Math.trunc(raw);
     const parsed = Date.parse(String(raw));
