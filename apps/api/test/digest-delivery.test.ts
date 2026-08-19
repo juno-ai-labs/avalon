@@ -239,7 +239,7 @@ describe("settling a digest run", () => {
       batch: databaseBinding.batch.bind(databaseBinding),
     });
 
-    await expect(settleDigestRun(env, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
+    await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
 
     expect(database.prepare(
       "SELECT text_content FROM messages WHERE client_message_id = ?",

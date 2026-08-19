@@ -82,8 +82,8 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
     ...AVALON_SKILL_TOOL_DEFINITIONS,
     ...AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   ].map((definition) => ({ name: label(definition), schema: definition.inputSchema }));
-  const hyperSight = __integrationTesting
-    .hyperSightSubmissionPlugin({ markdown: null }, async () => undefined)
+  const blockDashboard = __integrationTesting
+    .blockDashboardSubmissionPlugin({ markdown: null }, async () => undefined)
     .tools.map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const terminal = TERMINAL_TOOL_DEFINITIONS
     .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema }));
@@ -93,7 +93,7 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  const walked = [...core, ...discovery, ...hyperSight, ...terminal, ...connectors]
+  const walked = [...core, ...discovery, ...blockDashboard, ...terminal, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
 
   // Asserted here rather than in one `it`, so no check can run against a set
@@ -119,7 +119,7 @@ const EXPECTED_TOOLS = [
   "web.fetch:fetch",
   "avalon.automation.plugins.list:plugins_list",
   "avalon.automation.submit:submit_draft",
-  "avalon.hypersight.submit:submit_block",
+  "avalon.block-dashboard.submit:submit_block",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",
