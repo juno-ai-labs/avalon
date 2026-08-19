@@ -188,11 +188,11 @@ export default {
         // outbound-connection slots. Do not make telemetry compete with its
         // route waves during the maintenance window.
         //
-        // 200 operations per tick: each route operation spends ~4 subrequests
-        // (page read, placement, object RPC, cursor update), so 200 keeps the
-        // invocation under the 1,000-subrequest ceiling with headroom for the
-        // control reads and telemetry that share it.
-        await processWorkstreamAuthorityMigration(env, authority, 200);
+        // 100 operations per tick: a tick finishes in well under the one-minute
+        // cron interval, so consecutive ticks never overlap — generation 4
+        // showed that overlapping ticks turn one transient failure into a
+        // cascade that quarantines every in-flight route.
+        await processWorkstreamAuthorityMigration(env, authority, 100);
         await processTelemetry(env);
         return;
       }

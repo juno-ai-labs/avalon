@@ -30,6 +30,35 @@ import {
 type SourceRow = Record<string, unknown> & { source_rowid: number };
 type ImportRow = Record<string, string | number | null>;
 
+/**
+ * Infrastructure failures that resolve on their own: platform networking, D1
+ * gateway blips, and Durable Object restarts mid-deploy. A route hit by one
+ * keeps its state — the idempotent page cursor makes the next cron tick the
+ * retry — while every other error still quarantines the campaign. Generation 4
+ * died to one of these: a single transient rejection quarantined the phase,
+ * and the in-flight sibling operations then cascaded `not_active` over the
+ * first cause.
+ */
+const TRANSIENT_CAMPAIGN_ERROR = new RegExp(
+  [
+    "fetch failed",
+    "network connection lost",
+    "too many (?:api requests|subrequests)",
+    "internal error",
+    "reset because its code was updated",
+    "storage caused object to be reset",
+    "durable object is overloaded",
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "\\b50[234]\\b",
+  ].join("|"),
+  "iu",
+);
+
+function isTransientCampaignError(error: unknown): boolean {
+  return error instanceof Error && TRANSIENT_CAMPAIGN_ERROR.test(error.message);
+}
+
 interface RouteRow {
   workspace_id: string;
   workstream_id: string;
@@ -1075,15 +1104,17 @@ async function activateRoute(env: Env, route: RouteRow): Promise<void> {
 
 async function quarantineRoute(env: Env, route: RouteRow, error: unknown): Promise<void> {
   const code = error instanceof Error ? error.message.slice(0, 180) : "workstream_import_failed";
+  // A quarantined row keeps its first cause: concurrent operations failing on
+  // the already-quarantined phase must not overwrite the diagnosis.
   await env.DB.prepare(
     `UPDATE workstream_authority_routes
         SET state = 'quarantined', last_error_code = ?, updated_at = ?
-      WHERE workstream_id = ? AND generation = ?`,
+      WHERE workstream_id = ? AND generation = ? AND state != 'quarantined'`,
   ).bind(code, new Date().toISOString(), route.workstream_id, route.generation).run();
   await env.DB.prepare(
     `UPDATE workstream_authority_control
         SET phase = 'quarantined', reason = ?, updated_at = ?
-      WHERE id = 1 AND generation = ?`,
+      WHERE id = 1 AND generation = ? AND phase != 'quarantined'`,
   ).bind(code, new Date().toISOString(), route.generation).run();
 }
 
@@ -1190,14 +1221,15 @@ async function quarantineWorkspaceProductRoute(
   error: unknown,
 ): Promise<void> {
   const code = error instanceof Error ? error.message.slice(0, 180) : "workspace_product_import_failed";
+  // First cause wins; see quarantineRoute.
   await env.DB.prepare(
     `UPDATE workspace_product_authority_routes
         SET state = 'quarantined', last_error_code = ?, updated_at = ?
-      WHERE workspace_id = ? AND generation = ?`,
+      WHERE workspace_id = ? AND generation = ? AND state != 'quarantined'`,
   ).bind(code, new Date().toISOString(), route.workspace_id, route.generation).run();
   await env.DB.prepare(
     `UPDATE workstream_authority_control SET phase = 'quarantined', reason = ?, updated_at = ?
-      WHERE id = 1 AND generation = ?`,
+      WHERE id = 1 AND generation = ? AND phase != 'quarantined'`,
   ).bind(code, new Date().toISOString(), route.generation).run();
 }
 
@@ -1358,9 +1390,14 @@ async function processWorkspaceProductRoutes(
   let succeeded = true;
   for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") continue;
+    // A transient infrastructure failure ends the tick without quarantining:
+    // the route keeps its cursor and the next cron tick retries the same
+    // idempotent page. Only a genuine import error condemns the campaign.
     succeeded = false;
     const route = routes[index];
-    if (route) await quarantineWorkspaceProductRoute(env, route, result.reason);
+    if (route && !isTransientCampaignError(result.reason)) {
+      await quarantineWorkspaceProductRoute(env, route, result.reason);
+    }
   }
   return succeeded;
 }
@@ -1388,9 +1425,13 @@ export async function processWorkstreamAuthorityMigration(
     let succeeded = true;
     for (const [index, result] of results.entries()) {
       if (result.status === "fulfilled") continue;
+      // Transient infrastructure failures pause the tick instead of
+      // quarantining; see processWorkspaceProductRoutes.
       succeeded = false;
       const route = routes[index];
-      if (route) await quarantineRoute(env, route, result.reason);
+      if (route && !isTransientCampaignError(result.reason)) {
+        await quarantineRoute(env, route, result.reason);
+      }
     }
     return succeeded;
   };
@@ -1500,4 +1541,5 @@ export async function processWorkstreamAuthorityMigration(
 export const __workstreamAuthorityMigrationTesting = {
   workspaceProductSourceQuery,
   productImportRow,
+  isTransientCampaignError,
 };
