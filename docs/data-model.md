@@ -662,6 +662,27 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-18 — Opportunity batches have an indexed retention boundary
+
+**What changed:** WorkspaceDO's initial SQLite schema adds partial indexes for
+processing leases and completed-window retention. Its alarm query now reads
+queued and processing windows through separate indexable predicates, and each
+alarm reaps a bounded page of completed windows older than 30 days; event rows
+cascade with their window.
+
+**Why:** Completed admission batches are operational receipts, not permanent
+workspace history. Keeping them forever made every alarm scan grow with the
+workspace's lifetime even though the product state they produced already lives
+in `work_opportunities` and provenance tables.
+
+**Considered and rejected:** An unbounded periodic delete and retaining every
+input event indefinitely. Bounded local cleanup preserves alarm latency and the
+30-day window remains long enough for incident diagnosis.
+
+**Consequences:** Opportunity product state is unchanged; only terminal batch
+machinery expires. Because the Durable Object schema has not shipped, these
+indexes remain part of its single initial migration.
+
 ### 2026-08-18 — Imports and compatibility SQL enforce authority shape
 
 **What changed:** Workspace product imports distinguish JSON-object and

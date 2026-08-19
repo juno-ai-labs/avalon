@@ -1520,6 +1520,7 @@ export class AutomationService {
       this.auth.workspaceId,
       workstreamId,
     );
+    let controlRunInserted = false;
     try {
       const statements = [
         executionEnv.DB.prepare(
@@ -1539,7 +1540,8 @@ export class AutomationService {
       if (authority.phase === "durable_object_open") {
         // The regional row is a control-plane run record; the root, transcript,
         // run and resource links below belong to the newly bootstrapped object.
-        await runStatement.run();
+        const inserted = await runStatement.run();
+        controlRunInserted = (inserted.meta.changes ?? 0) > 0;
       } else {
         statements.push(runStatement);
       }
@@ -1593,6 +1595,9 @@ export class AutomationService {
         ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at, triggerMessageId));
       }
       await executionEnv.DB.batch(statements);
+      // The child authority now exists. Later attachment/telemetry failures
+      // must not compensate the control row away from a real work stream.
+      controlRunInserted = false;
       await this.recordRunCreationTelemetry(workstreamId, triggerType);
       if (authority.phase === "durable_object_open") {
         const resourceRows = await this.env.DB.prepare(
@@ -1627,6 +1632,23 @@ export class AutomationService {
         }
       }
     } catch (error) {
+      if (controlRunInserted) {
+        try {
+          const deleted = await this.env.DB.prepare(
+            `DELETE FROM automation_runs
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
+          ).bind(runId, this.auth.workspaceId).run();
+          if ((deleted.meta.changes ?? 0) !== 1) {
+            throw new Error("automation_run_compensation_not_applied", { cause: error });
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "automation_run_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+      }
       if (plannedFor && isConstraintError(error)) {
         const existing = await this.env.DB.prepare(
           `SELECT id AS run_id, workstream_id FROM automation_runs WHERE automation_subscription_id = ? AND planned_for = ?`,
@@ -1780,12 +1802,21 @@ export class AutomationService {
         this.auth.workspaceId,
         run.workstreamId,
       );
-      await executionEnv.DB.prepare(
-        "UPDATE harness_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
-      ).bind(run.workflowInstanceId, run.harnessRunId, this.auth.workspaceId).run();
-      await this.env.DB.prepare(
-        "UPDATE automation_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
-      ).bind(run.workflowInstanceId, run.runId, this.auth.workspaceId).run();
+      const reconcile = () => Promise.all([
+        executionEnv.DB.prepare(
+          "UPDATE harness_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
+        ).bind(run.workflowInstanceId, run.harnessRunId, this.auth.workspaceId).run(),
+        this.env.DB.prepare(
+          "UPDATE automation_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
+        ).bind(run.workflowInstanceId, run.runId, this.auth.workspaceId).run(),
+      ]);
+      try {
+        await reconcile();
+      } catch {
+        // Both writes are idempotent. Repeating both repairs whichever side of
+        // the cross-object pair did not commit before the transient failure.
+        await reconcile();
+      }
       return;
     }
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, {

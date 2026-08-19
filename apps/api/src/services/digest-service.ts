@@ -178,7 +178,7 @@ const RECONCILE_LIMIT = 200;
 interface MemberWithoutDigestRow {
   workspace_id: string;
   user_id: string;
-  email: string;
+  email: string | null;
   timezone: string;
 }
 
@@ -211,10 +211,9 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   ).first<{ after_workspace_id: string; after_user_id: string }>();
   const members = await regionalDatabase.prepare(
     `SELECT m.workspace_id, m.user_id, u.email, u.timezone
-       FROM workspace_members m
-       JOIN users u ON u.id = m.user_id
+      FROM workspace_members m
+      JOIN users u ON u.id = m.user_id
       WHERE m.status = 'active'
-        AND u.email IS NOT NULL AND trim(u.email) <> ''
         AND (m.workspace_id > ? OR (m.workspace_id = ? AND m.user_id > ?))
       ORDER BY m.workspace_id, m.user_id
       LIMIT ?`,
@@ -237,6 +236,7 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
       id: string; workspace_id: string; enabled: number; day_mask: number;
     }>();
     if (!digest) {
+      if (!member.email?.trim()) continue;
       const scheduleId = newId();
       const inserted = await workspaceEnv.DB.batch([
         workspaceEnv.DB.prepare(

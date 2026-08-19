@@ -213,7 +213,8 @@ export async function fireDigestSchedule(
     if (harnessRunId === null && !workflowInstanceWasCreated(error)) {
       await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
         .bind(deliveryId).run().catch(() => undefined);
-      // Messages, the run row and the memory context cascade with it.
+      // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
+      // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
         const authority = await readWorkstreamAuthorityControl(env);
         if (authority.phase === "durable_object_open") {
@@ -226,6 +227,10 @@ export async function fireDigestSchedule(
             `UPDATE workstreams SET archived_at = ?, updated_at = ?
               WHERE id = ? AND system_kind = 'digest'`,
           ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+          // A Durable Object identity cannot be deleted transactionally with
+          // its parent delivery claim. This authoritative tombstone keeps the
+          // never-started system stream unlistable and is safer than a
+          // cross-object purge that could race a late Workflow creation.
         } else {
           await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
             .bind(workstreamId).run().catch(() => undefined);

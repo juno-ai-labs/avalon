@@ -957,6 +957,30 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-18 — Cross-authority retries converge without weakening ownership
+
+**What changed:** Slack elicitation reads now enter the owning SubstreamAgent
+runtime, the compatibility SQL router strips UPSERT only for rewritten views,
+and regional effects acknowledge superseded authority generations and composite
+receipt replays. Workspace resource-watch and automation-run split writes now
+compensate or repeat their idempotent pair, and draft deletion checks the
+WorkspaceDO's archive-agnostic work-stream resource links in the same SQL
+statement that deletes the resource.
+
+**Why:** A transient failure between two Durable Objects is not a transaction.
+Treating it like one left one-sided watch/run state, while reading child-owned
+elicitations or resource links through a parent projection made correctness
+depend on deliberately removed D1 copies.
+
+**Considered and rejected:** Restoring D1 projections, routing every operation
+through a Queue, and accepting an archive-filtered preflight check. The first
+two create another authority; the last has a check/delete race and can destroy
+an attachment still referenced by an archived transcript.
+
+**Consequences:** Cross-object mutations use idempotent retry or explicit
+compensation. Old-generation Queue deliveries drain terminally, but a delivery
+for a missing, inactive, or future generation still fails closed.
+
 ### 2026-08-18 — Runtime SQL routing preserves SQLite statement boundaries
 
 **What changed:** The WorkspaceDO and SubstreamAgent compatibility adapters now

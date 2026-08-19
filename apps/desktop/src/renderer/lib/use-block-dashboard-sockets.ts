@@ -133,6 +133,14 @@ export function useBlockDashboardSockets(
       updateConnectionState(blockId, connection.attempt === 0 ? 'connecting' : 'reconnecting');
       if (connection.reconnectTimer !== null) window.clearTimeout(connection.reconnectTimer);
       connection.reconnectTimer = null;
+      const scheduleReconnect = (): void => {
+        if (stopped || connection.revoked || connection.reconnectTimer !== null || navigator.onLine === false) return;
+        connection.attempt += 1;
+        connection.reconnectTimer = window.setTimeout(() => {
+          connection.reconnectTimer = null;
+          void connect(blockId);
+        }, reconnectDelay(connection.attempt));
+      };
       try {
         const ticket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
         if (stopped || !connections.has(blockId)) return;
@@ -150,14 +158,6 @@ export function useBlockDashboardSockets(
               if (!stopped && connection.socket === socket && socket.readyState === WebSocket.OPEN) socket.close();
             }, PONG_TIMEOUT_MS);
           }, HEARTBEAT_MS);
-        };
-        const scheduleReconnect = (): void => {
-          if (stopped || connection.revoked || connection.reconnectTimer !== null || navigator.onLine === false) return;
-          connection.attempt += 1;
-          connection.reconnectTimer = window.setTimeout(() => {
-            connection.reconnectTimer = null;
-            void connect(blockId);
-          }, reconnectDelay(connection.attempt));
         };
         socket.addEventListener('open', () => {
           if (stopped || connection.socket !== socket) return;
@@ -236,16 +236,12 @@ export function useBlockDashboardSockets(
         });
         socket.addEventListener('error', () => socket.close());
       } catch {
-        connection.attempt += 1;
         if (browserIsOffline()) {
           updateConnectionState(blockId, 'offline');
           return;
         }
         updateConnectionState(blockId, 'reconnecting');
-        connection.reconnectTimer = window.setTimeout(() => {
-          connection.reconnectTimer = null;
-          void connect(blockId);
-        }, reconnectDelay(connection.attempt));
+        scheduleReconnect();
       } finally {
         connection.connecting = false;
       }
@@ -271,6 +267,8 @@ export function useBlockDashboardSockets(
     }
     const online = (): void => {
       for (const [blockId, connection] of connections) {
+        if (connection.socket?.readyState === WebSocket.OPEN
+          || connection.socket?.readyState === WebSocket.CONNECTING) continue;
         updateConnectionState(blockId, connection.attempt === 0 ? 'connecting' : 'reconnecting');
         void connect(blockId);
       }

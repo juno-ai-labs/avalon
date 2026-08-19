@@ -137,6 +137,102 @@ function workspaceSyncNamespace() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("the WorkstreamDO regional effect inbox", () => {
+  it("acknowledges effects from an authority generation superseded by re-cutover", async () => {
+    const database = seedAuthority();
+    database.prepare(
+      `UPDATE workstream_authority_routes SET generation = 2 WHERE workstream_id = ?`,
+    ).run(WORKSTREAM_ID);
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const effect: WorkstreamRegionalEffect = {
+      kind: "activity_event",
+      eventId: EVENT_ID,
+      eventType: "workstream.message.posted",
+      subjectSequenceNumber: 1,
+      actorType: "system",
+      actorUserId: null,
+      actorLabel: "Avalon",
+      title: "Old generation",
+      body: "Do not replay",
+      canonicalUrl: null,
+      digestible: false,
+      occurredAt: AT,
+      sourceKind: "message",
+      sourceId: MESSAGE_ID,
+      dedupeKey: `message:${MESSAGE_ID}`,
+      metadata: {},
+      targets: [],
+    };
+    try {
+      await expect(applyWorkstreamRegionalEffect(env, message(effect, {
+        messageId: `activity:${MESSAGE_ID}`,
+        partitionKey: `activity:${MESSAGE_ID}`,
+        sourceVersion: 1,
+      }))).resolves.toEqual({ replayed: true, notificationIntentId: null });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("treats the composite source receipt as a replay and adopts the current message id", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+    });
+    const effect: WorkstreamRegionalEffect = {
+      kind: "activity_event",
+      eventId: EVENT_ID,
+      eventType: "workstream.message.posted",
+      subjectSequenceNumber: 1,
+      actorType: "system",
+      actorUserId: null,
+      actorLabel: "Avalon",
+      title: "Already applied",
+      body: "Replay",
+      canonicalUrl: null,
+      digestible: false,
+      occurredAt: AT,
+      sourceKind: "message",
+      sourceId: MESSAGE_ID,
+      dedupeKey: `message:${MESSAGE_ID}`,
+      metadata: {},
+      targets: [],
+    };
+    const envelope = message(effect, {
+      messageId: `activity:${MESSAGE_ID}:current`,
+      partitionKey: `activity:${MESSAGE_ID}`,
+      sourceVersion: 1,
+    });
+    database.prepare(
+      `INSERT INTO workstream_regional_effect_receipts
+         (message_id, workspace_id, workstream_id, generation, partition_key,
+          source_version, effect_kind, payload_hash, applied_at)
+       VALUES (?, ?, ?, 1, ?, 1, 'activity_event', ?, ?)`,
+    ).run(
+      `activity:${MESSAGE_ID}:previous`,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      envelope.partitionKey,
+      envelope.payloadHash,
+      AT,
+    );
+    try {
+      await expect(applyWorkstreamRegionalEffect(env, envelope)).resolves.toEqual({
+        replayed: true,
+        notificationIntentId: null,
+      });
+      expect(database.prepare(
+        "SELECT message_id FROM workstream_regional_effect_receipts",
+      ).get()).toEqual({ message_id: envelope.messageId });
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+
   it("routes an opaque directory wake-up through Queue into WorkspaceDO and acknowledges the child outbox", async () => {
     const database = seedAuthority();
     const common: WorkstreamRegionalEffect = {
