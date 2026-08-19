@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import {
   calculateNextOccurrence,
+  runIsolatedSchedulerMaintenance,
   schedulerRetryDelay,
   type ScheduleTiming,
   WorkspaceScheduler,
@@ -52,6 +53,19 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it("isolates scheduler maintenance failures so later work still runs", async () => {
+    const later = vi.fn(async () => undefined);
+    const rejected = vi.fn();
+
+    await runIsolatedSchedulerMaintenance([
+      () => { throw new Error("reaper_failed"); },
+      later,
+    ], rejected);
+
+    expect(later).toHaveBeenCalledOnce();
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ message: "reaper_failed" }), 0);
+  });
+
   it.each([
     ["global", "-122.4194", "wnam"],
     ["global", "-73.9857", "enam"],

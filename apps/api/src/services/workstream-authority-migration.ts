@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { sha256Hex } from "../lib/crypto";
 import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
@@ -16,6 +17,7 @@ import { substreamAgentName } from "../durable-objects/substream-agent";
 import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import {
   WORKSPACE_PRODUCT_IMPORT_STAGES,
+  isWorkspaceRelationalImportStage,
   type WorkspaceProductImportStage,
   type WorkspaceProductImportRow,
 } from "../durable-objects/workspace-product-import";
@@ -79,12 +81,197 @@ function workspaceProductSourceQuery(stage: WorkspaceProductImportStage): string
                 JOIN work_opportunities opportunity ON opportunity.id = snapshot.opportunity_id
                WHERE opportunity.workspace_id = ?1 AND snapshot.rowid > ?2
                ORDER BY snapshot.rowid LIMIT ?3`;
+    case "workspace_connector_events":
+      return `SELECT activity.rowid AS source_rowid, activity.*,
+                     connection.connector_type AS connector_type
+                FROM activities activity
+                JOIN connector_connections connection ON connection.id = activity.connection_id
+               WHERE activity.workspace_id = ?1 AND activity.rowid > ?2
+               ORDER BY activity.rowid LIMIT ?3`;
+    case "connector_connections":
+    case "connector_oauth_attempts":
+    case "external_user_identities":
+    case "workspace_sandbox_network_policies":
+    case "workspace_sandbox_network_domains":
+    case "workspace_sandbox_network_policy_mutations":
+    case "slack_user_links":
+    case "slack_agent_feedback":
+    case "slack_agent_sessions":
+    case "slack_ingress_jobs":
+    case "slack_unfurled_links":
+    case "automation_templates":
+    case "automation_subscriptions":
+    case "automation_runs":
+    case "automation_delivery_targets":
+    case "automation_email_receipts":
+    case "automation_email_rate_windows":
+    case "digest_schedules":
+    case "digest_delivery_targets":
+    case "digest_deliveries":
+    case "schedules":
+    case "resources":
+    case "resource_watches":
+    case "resource_object_deletion_outbox":
+    case "notes":
+    case "note_privacy_change_outbox":
+    case "memory_scopes":
+    case "memory_items":
+    case "memory_mutations":
+    case "memory_index_outbox":
+    case "memory_tables":
+    case "memory_table_rows":
+    case "memory_table_mutations":
+    case "workstream_notification_intents":
+      return `SELECT rowid AS source_rowid, * FROM ${stage}
+               WHERE workspace_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`;
+    case "webhook_receipts":
+      return `SELECT receipt.rowid AS source_rowid, receipt.*, connection.workspace_id
+                FROM webhook_receipts receipt
+                JOIN connector_connections connection ON connection.id = receipt.connection_id
+               WHERE connection.workspace_id = ?1 AND receipt.rowid > ?2
+               ORDER BY receipt.rowid LIMIT ?3`;
+    case "slack_agent_policies":
+    case "slack_agent_channel_allowlist":
+    case "slack_delivery_preferences":
+    case "slack_agent_contexts":
+    case "slack_agent_thread_claims":
+    case "slack_link_challenges":
+    case "slack_agent_pending_prompts":
+      return `SELECT child.rowid AS source_rowid, child.* FROM ${stage} child
+               JOIN connector_connections connection ON connection.id = child.connection_id
+               WHERE connection.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "automation_template_versions":
+      return `SELECT child.rowid AS source_rowid, child.* FROM automation_template_versions child
+               JOIN automation_templates parent ON parent.id = child.template_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "automation_resources":
+      return `SELECT child.rowid AS source_rowid, child.* FROM automation_resources child
+               JOIN automation_subscriptions parent ON parent.id = child.automation_subscription_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "digest_schedule_times":
+      return `SELECT child.rowid AS source_rowid, child.* FROM digest_schedule_times child
+               JOIN digest_schedules parent ON parent.id = child.digest_schedule_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "note_transcript_segments":
+      return `SELECT child.rowid AS source_rowid, child.* FROM note_transcript_segments child
+               JOIN notes parent ON parent.id = child.note_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "memory_table_columns":
+      return `SELECT child.rowid AS source_rowid, child.* FROM memory_table_columns child
+               JOIN memory_tables parent ON parent.memory_table_id = child.memory_table_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
+    case "memory_table_cells":
+      return `SELECT child.rowid AS source_rowid, child.* FROM memory_table_cells child
+               JOIN memory_table_rows parent ON parent.memory_table_row_id = child.memory_table_row_id
+               WHERE parent.workspace_id = ?1 AND child.rowid > ?2
+               ORDER BY child.rowid LIMIT ?3`;
   }
 }
 
-function productImportRow(row: SourceRow): WorkspaceProductImportRow {
+function parseJsonValue(value: unknown, fallback: unknown): unknown {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return fallback;
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+  )).join(",")}}`;
+}
+
+async function productImportRow(
+  stage: WorkspaceProductImportStage,
+  row: SourceRow,
+  region: Env["AVALON_REGION"],
+): Promise<WorkspaceProductImportRow> {
+  if (stage === "workspace_connector_events") {
+    const event = {
+      connectorType: String(row.connector_type),
+      activity: {
+        id: "",
+        workspaceId: String(row.workspace_id),
+        region,
+        connectionId: String(row.connection_id),
+        connectionScope: row.connection_scope,
+        connectionOwnerUserId: row.connection_owner_user_id,
+        provider: row.provider,
+        providerEventId: row.provider_event_id,
+        eventType: row.event_type,
+        resourceType: row.resource_type,
+        providerResourceId: row.provider_resource_id,
+        actor: parseJsonValue(row.actor_json, {}),
+        subject: parseJsonValue(row.subject_json, {}),
+        occurredAt: row.occurred_at,
+        receivedAt: "",
+        title: row.title,
+        summary: row.summary,
+        textSnippet: row.text_snippet,
+        payloadRef: row.payload_ref,
+        visibility: parseJsonValue(row.visibility_json, {}),
+        targetUserIds: parseJsonValue(row.target_user_ids_json, []),
+        entityKeys: parseJsonValue(row.entity_keys_json, []),
+        dedupeKey: row.dedupe_key,
+        rawContentHash: row.raw_content_hash,
+        metadata: parseJsonValue(row.metadata_json, {}),
+        externalPeople: parseJsonValue(row.external_people_json, []),
+      },
+    };
+    const receivedAt = epoch(row, "received_at");
+    return {
+      event_sequence: row.source_rowid,
+      event_id: String(row.id),
+      payload_hash: `sha256:${await sha256Hex(canonicalJson(event))}`,
+      connection_id: String(row.connection_id),
+      connection_scope: String(row.connection_scope),
+      connection_owner_user_id: nullableText(row, "connection_owner_user_id"),
+      connector_type: String(row.connector_type),
+      provider: String(row.provider),
+      provider_event_id: String(row.provider_event_id),
+      event_type: String(row.event_type),
+      resource_type: nullableText(row, "resource_type"),
+      provider_resource_id: nullableText(row, "provider_resource_id"),
+      actor_json: json(row, "actor_json", "{}"),
+      subject_json: json(row, "subject_json", "{}"),
+      occurred_at: epoch(row, "occurred_at"),
+      received_at: receivedAt,
+      title: String(row.title),
+      summary: String(row.summary ?? ""),
+      text_snippet: String(row.text_snippet ?? ""),
+      payload_ref: nullableText(row, "payload_ref"),
+      visibility_json: json(row, "visibility_json", "{}"),
+      target_user_ids_json: json(row, "target_user_ids_json", "[]"),
+      entity_keys_json: json(row, "entity_keys_json", "[]"),
+      dedupe_key: String(row.dedupe_key),
+      raw_content_hash: nullableText(row, "raw_content_hash"),
+      metadata_json: json(row, "metadata_json", "{}"),
+      external_people_json: json(row, "external_people_json", "[]"),
+      processing_status: String(row.processing_status),
+      processing_attempt: row.processing_status === "processed" ? 0 : -1,
+      workflow_instance_id: null,
+      claimed_at: null,
+      processed_at: row.processing_status === "processed" ? receivedAt : null,
+      processing_error: null,
+      created_at: receivedAt,
+      updated_at: receivedAt,
+    };
+  }
   return Object.fromEntries(Object.entries(row).flatMap(([key, value]) => {
-    if (key === "source_rowid" || key === "workspace_id") return [];
+    if (key === "source_rowid" || (key === "workspace_id" && !isWorkspaceRelationalImportStage(stage))) {
+      return [];
+    }
     return typeof value === "string" || typeof value === "number" || value === null
       ? [[key, value]]
       : [];
@@ -930,7 +1117,7 @@ async function importWorkspaceProductPage(env: Env, route: WorkspaceProductRoute
   const accepted = await workspace.importWorkspaceProductRows({
     workspaceId: route.workspace_id,
     stage,
-    rows: rows.results.map(productImportRow),
+    rows: await Promise.all(rows.results.map((row) => productImportRow(stage, row, env.AVALON_REGION))),
   });
   if (accepted !== rows.results.length) throw new Error("workspace_product_import_incomplete");
   const nextCursor = Math.max(...rows.results.map((row) => row.source_rowid));
@@ -984,6 +1171,75 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
   const nodeIds = `SELECT id FROM opportunity_provenance_nodes WHERE workspace_id = ?`;
   const at = new Date().toISOString();
   await env.DB.batch([
+    // WorkspaceDO is already verified. Remove the old relational authority in
+    // FK order before activating its route; D1 keeps only global routing and
+    // identity/control rows after this transaction.
+    env.DB.prepare(`DELETE FROM workstream_notification_intents WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM note_privacy_change_outbox WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM note_transcript_segments WHERE note_id IN
+      (SELECT id FROM notes WHERE workspace_id = ?)`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM notes WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_email_receipts WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_email_rate_windows WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_delivery_targets WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_runs WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM schedules WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_resources WHERE automation_subscription_id IN
+      (SELECT id FROM automation_subscriptions WHERE workspace_id = ?)`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_subscriptions WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_template_versions WHERE template_id IN
+      (SELECT id FROM automation_templates WHERE workspace_id = ?)`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM automation_templates WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM digest_deliveries WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM digest_delivery_targets WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM digest_schedule_times WHERE digest_schedule_id IN
+      (SELECT id FROM digest_schedules WHERE workspace_id = ?)`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM digest_schedules WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM resource_watches WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM resources WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM memory_scopes WHERE workspace_id = ?`).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM external_user_identities WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM workspace_sandbox_network_policy_mutations WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM workspace_sandbox_network_domains WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM workspace_sandbox_network_policies WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM slack_unfurled_links WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM slack_ingress_jobs WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM slack_agent_feedback WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM slack_agent_sessions WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM slack_user_links WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM activities WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM connector_oauth_attempts WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM connector_connections WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    // Deleting note/resource rows fires the old R2 cleanup triggers. Those
+    // receipts refer to objects now owned by WorkspaceDO and must never run.
+    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox`),
     env.DB.prepare(
       `DELETE FROM work_opportunity_snapshots WHERE opportunity_id IN (${opportunityIds})`,
     ).bind(route.workspace_id),
@@ -1190,3 +1446,8 @@ export async function processWorkstreamAuthorityMigration(
     return;
   }
 }
+
+export const __workstreamAuthorityMigrationTesting = {
+  workspaceProductSourceQuery,
+  productImportRow,
+};

@@ -44,6 +44,10 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
@@ -108,7 +112,13 @@ export interface InboundAutomationOpeningInput {
 }
 
 export class AutomationService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  private readonly env: Env;
+  private readonly auth: AuthContext;
+
+  constructor(env: Env, auth: AuthContext) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
+  }
 
   private async recordAutomationAction(
     row: Record<string, unknown>,
@@ -1134,8 +1144,8 @@ export class AutomationService {
       // The deletion is already committed, and a retry would 404 because the
       // subscription no longer loads — so failing here would strand the caller
       // on work that actually succeeded. Nothing is lost by tolerating it: the
-      // alarm re-reads enabled schedules from D1 on every firing, so a stale
-      // armed alarm wakes, finds nothing due, and clears itself.
+      // alarm re-reads enabled schedules from WorkspaceDO on every firing, so
+      // a stale armed alarm wakes, finds nothing due, and clears itself.
     }
     await this.recordAutomationAction(subscription, 'delete', 'deleted');
   }
@@ -1186,19 +1196,27 @@ export class AutomationService {
 
   async listTemplates() {
     const result = await this.env.DB.prepare(
-      `SELECT t.*, u.name AS author_name,
+      `SELECT t.*,
        (SELECT COUNT(*) FROM automation_subscriptions s
          WHERE s.template_id = t.id AND s.lifecycle_state = 'visible') AS use_count,
        v.required_capabilities_json, v.trigger_definitions_json
-       FROM automation_templates t JOIN users u ON u.id = t.owner_user_id
+       FROM automation_templates t
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
        WHERE t.workspace_id = ? AND t.sharing_state = 'workspace' AND t.archived_at IS NULL
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId).all<Record<string, unknown>>();
+    const ownerIds = [...new Set(result.results.flatMap((row) =>
+      typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
+    const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
+    ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
+    const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
     return { items: (result.results ?? []).map((row) => ({
       id: row.id,
       name: row.name,
-      author: row.author_name,
+      author: typeof row.owner_user_id === "string"
+        ? ownerNames.get(row.owner_user_id) ?? "Unknown member"
+        : "Unknown member",
       description: row.description,
       usedBy: Number(row.use_count),
       requiredCapabilities: parseJson(row.required_capabilities_json, []),

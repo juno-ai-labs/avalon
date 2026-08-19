@@ -62,6 +62,183 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("backfills and maintains the minimal connector ingress directory", () => {
+    const database = migrateDatabaseThrough("0080_workspace_durable_object_placement_affinity.sql");
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('route-owner', 'route-subject', 'route@example.com', 'Route Owner', '2026-08-18', '2026-08-18');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('route-workspace', 'Route Workspace', 'route-workspace', 'global',
+                'route-owner', '2026-08-18', '2026-08-18');
+        INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, model_plugin_id, status, config_json,
+           created_at, updated_at)
+        VALUES
+          ('route-provider', 'route-workspace', 'github', 'personal', 'route-owner', 'installation-1',
+           'Provider user', '[]', 'plugin_route_provider', 'healthy', '{"providerUserId":"provider-user"}',
+           '2026-08-18', '2026-08-18'),
+          ('route-github', 'route-workspace', 'github', 'workspace', NULL, 'installation-2',
+           'GitHub user', '[]', 'plugin_route_github', 'healthy', '{"githubUserId":"github-user"}',
+           '2026-08-18', '2026-08-18'),
+          ('route-disabled', 'route-workspace', 'slack', 'workspace', NULL, 'team-disabled',
+           'Disabled', '[]', 'plugin_route_disabled', 'disabled', '{}',
+           '2026-08-18', '2026-08-18');
+      `);
+      database.exec(readFileSync(
+        new URL("../migrations/0081_workspace_product_do_authority.sql", import.meta.url),
+        "utf8",
+      ));
+
+      expect(database.prepare(
+        `SELECT connection_id, region, provider_user_id, status
+           FROM connector_ingress_routes ORDER BY connection_id`,
+      ).all()).toEqual([
+        { connection_id: "route-disabled", region: "global", provider_user_id: null, status: "disabled" },
+        { connection_id: "route-github", region: "global", provider_user_id: "github-user", status: "active" },
+        { connection_id: "route-provider", region: "global", provider_user_id: "provider-user", status: "active" },
+      ]);
+
+      database.exec(`
+        INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, model_plugin_id, status, config_json,
+           created_at, updated_at)
+        VALUES ('route-trigger', 'route-workspace', 'github', 'workspace', NULL, 'installation-3',
+                'Trigger', '[]', 'plugin_route_trigger', 'healthy',
+                '{"providerUserId":"first-user"}', '2026-08-18', '2026-08-18');
+        UPDATE connector_connections
+           SET config_json = '{"githubUserId":"second-user"}', status = 'disabled',
+               updated_at = '2026-08-18T01:00:00.000Z'
+         WHERE id = 'route-trigger';
+      `);
+      expect(database.prepare(
+        `SELECT provider_account_id, provider_user_id, status, updated_at
+           FROM connector_ingress_routes WHERE connection_id = 'route-trigger'`,
+      ).get()).toEqual({
+        provider_account_id: "installation-3",
+        provider_user_id: "second-user",
+        status: "disabled",
+        updated_at: "2026-08-18T01:00:00.000Z",
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("fails closed on illegal cutover phases and requires a new generation after quarantine", () => {
+    const database = migrateFreshDatabase();
+    try {
+      expect(() => database.exec(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      )).toThrow(/workstream_authority_invalid_phase_transition/u);
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1,
+               started_at = '2026-08-18T00:00:00.000Z', updated_at = '2026-08-18T00:00:00.000Z'
+         WHERE id = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '2026-08-18T00:01:00.000Z'
+         WHERE id = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'quarantined', updated_at = '2026-08-18T00:02:00.000Z'
+         WHERE id = 1;
+      `);
+      expect(() => database.exec(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_draining' WHERE id = 1`,
+      )).toThrow(/workstream_authority_invalid_phase_transition/u);
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 2,
+               updated_at = '2026-08-18T00:03:00.000Z'
+         WHERE id = 1;
+      `);
+      expect(database.prepare(
+        `SELECT phase, generation FROM workstream_authority_control WHERE id = 1`,
+      ).get()).toEqual({ phase: "maintenance_draining", generation: 2 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks import while any workspace-domain handoff remains drainable", () => {
+    const database = migrateFreshDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('drain-owner', 'drain-subject', 'drain@example.com', 'Drain Owner', '2026-08-18', '2026-08-18');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('drain-workspace', 'Drain Workspace', 'drain-workspace', 'global',
+                'drain-owner', '2026-08-18', '2026-08-18');
+        INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, model_plugin_id, status, config_json,
+           created_at, updated_at)
+        VALUES ('drain-slack', 'drain-workspace', 'slack', 'workspace', NULL, 'team-drain',
+                'Drain Slack', '[]', 'plugin_drain_slack', 'healthy', '{}',
+                '2026-08-18', '2026-08-18');
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1,
+               started_at = '2026-08-18T00:00:00.000Z', updated_at = '2026-08-18T00:00:00.000Z'
+         WHERE id = 1;
+      `);
+      const assertGuarded = (insert: string, cleanup: string): void => {
+        database.exec(insert);
+        expect(() => database.exec(
+          `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+        )).toThrow(/workspace_domain_handoffs_not_drained/u);
+        database.exec(cleanup);
+      };
+      assertGuarded(
+        `INSERT INTO note_resource_deletion_outbox
+           (resource_id, content_ref, model_content_ref, created_at)
+         VALUES ('note-resource', 'content', NULL, '2026-08-18')`,
+        `DELETE FROM note_resource_deletion_outbox`,
+      );
+      assertGuarded(
+        `INSERT INTO resource_object_deletion_outbox
+           (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+         VALUES ('object-ref', 'drain-workspace', 'resource', 'original', '2026-08-18', '2026-08-18')`,
+        `DELETE FROM resource_object_deletion_outbox`,
+      );
+      for (const status of ["pending", "processing"] as const) {
+        assertGuarded(
+          `INSERT INTO activities
+             (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+              event_type, occurred_at, received_at, title, dedupe_key, processing_status)
+           VALUES ('activity-${status}', 'drain-workspace', 'drain-slack', 'workspace', 'slack',
+                   'event-${status}', 'message', '2026-08-18', '2026-08-18', 'Activity',
+                   'dedupe-${status}', '${status}')`,
+          `DELETE FROM activities`,
+        );
+      }
+      for (const [status, payload, attempts] of [
+        ["queued", "{}", 0],
+        ["processing", "{}", 1],
+        ["failed", "{}", 19],
+      ] as const) {
+        assertGuarded(
+          `INSERT INTO slack_ingress_jobs
+             (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
+              status, attempt_count, received_at, updated_at)
+           VALUES ('slack-${status}', 'drain-workspace', 'drain-slack', 'team-drain',
+                   'hash-${status}', 'event', '${payload}', '${status}', ${attempts},
+                   '2026-08-18', '2026-08-18')`,
+          `DELETE FROM slack_ingress_jobs`,
+        );
+      }
+      database.exec(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      );
+      expect(database.prepare(
+        `SELECT phase FROM workstream_authority_control WHERE id = 1`,
+      ).get()).toEqual({ phase: "maintenance_importing" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("fences the maintenance cutover and leaves the workspace directory out of D1", () => {
     const database = migrateFreshDatabase();
     try {

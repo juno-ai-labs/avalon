@@ -8,6 +8,7 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const SlackMentionConnectionSchema = z.object({
   id: z.string().uuid(),
@@ -52,6 +53,7 @@ export async function sendWorkstreamMentionSlack(
   request: typeof fetch = fetch,
   sleep: (milliseconds: number) => Promise<void> = delay,
 ): Promise<SlackMentionDelivery> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   let connectionId: string | null = null;
   let postedChunks = 0;
   try {

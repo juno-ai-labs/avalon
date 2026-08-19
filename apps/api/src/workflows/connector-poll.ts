@@ -16,6 +16,7 @@ import {
   pollConnectorConnection,
   type ConnectorCursorCommit,
 } from "../services/integrations";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 
 const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
@@ -45,9 +46,10 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
   ): Promise<{ activityCount: number }> {
     const input = ConnectorPollWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
 
     const connection = await step.do("load-connector-poll-state", async (): Promise<{ id: string; provider: string }> => {
-      const connection = await this.env.DB.prepare(
+      const connection = await workspaceEnv.DB.prepare(
         `SELECT c.id, c.connector_type, c.cursor_json
            FROM connector_connections c
           WHERE c.id = ?2
@@ -91,7 +93,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
             workflow_step: "poll-and-persist-provider-page",
             attempt: context.attempt,
           });
-          const parsed = PollResultSchema.parse(await pollConnectorConnection(this.env, input));
+          const parsed = PollResultSchema.parse(await pollConnectorConnection(workspaceEnv, input));
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
             connection_id: input.connectionId,
@@ -116,7 +118,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
       const code = timedOut ? "connector_poll_timeout" : "connector_poll_failed";
       const message = timedOut ? "Connector poll timed out" : "Connector poll failed after retries";
-      await this.env.DB.prepare(
+      await workspaceEnv.DB.prepare(
         `UPDATE connector_connections
          SET status = 'error', error_json = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ?`,
@@ -134,6 +136,10 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
     }
 
     await step.do("enqueue-normalized-activities", async () => {
+      // WorkspaceDO cutover enqueues each normalized event from the provider
+      // persistence step itself, so no D1 activity-body handoff exists to read
+      // here. Legacy deployments retain the separate ID-only queue step.
+      if (this.env.WORKSPACE_DOS) return;
       for (let offset = 0; offset < result.activityIds.length; offset += 100) {
         const chunk = result.activityIds.slice(offset, offset + 100);
         await this.env.ACTIVITY_QUEUE.sendBatch(
@@ -152,13 +158,13 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
 
     const cursorCommit = await step.do("commit-connector-cursor", async (): Promise<ConnectorCursorCommit> => {
       const now = new Date().toISOString();
-      return commitConnectorCursor(this.env.DB, input, result, now);
+      return commitConnectorCursor(workspaceEnv.DB, input, result, now);
     });
 
     if (result.nextPollAt && cursorCommit !== "superseded") {
       await step.do("advance-owning-poll-target", async (): Promise<boolean> =>
         advanceOwningPollTarget(
-          this.env.DB,
+          workspaceEnv.DB,
           input,
           result.nextPollAt!,
           new Date().toISOString(),

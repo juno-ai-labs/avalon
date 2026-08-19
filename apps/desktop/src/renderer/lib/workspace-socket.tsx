@@ -161,17 +161,20 @@ export function WorkspaceSocketProvider({
       for (const entry of pending.values()) socket.send(JSON.stringify(entry.command));
       for (const entry of pendingWorkstreamPages.values()) socket.send(JSON.stringify(entry.command));
     };
+    const rejectPendingWorkstreamPages = (error: Error): void => {
+      for (const entry of pendingWorkstreamPages.values()) {
+        window.clearTimeout(entry.timeout);
+        entry.reject(error);
+      }
+      pendingWorkstreamPages.clear();
+    };
     const rejectPending = (error: Error): void => {
       for (const entry of pending.values()) {
         window.clearTimeout(entry.timeout);
         entry.reject(error);
       }
       pending.clear();
-      for (const entry of pendingWorkstreamPages.values()) {
-        window.clearTimeout(entry.timeout);
-        entry.reject(error);
-      }
-      pendingWorkstreamPages.clear();
+      rejectPendingWorkstreamPages(error);
     };
     const scheduleReconnect = (): void => {
       if (stopped || accessRevoked || reconnectTimer !== null) return;
@@ -382,6 +385,11 @@ export function WorkspaceSocketProvider({
       clearReconnect();
       clearHeartbeat();
       setState('unavailable');
+      rejectPendingWorkstreamPages(new ApiError(
+        'The work-stream directory cannot be loaded while offline.',
+        0,
+        'workspace_directory_offline',
+      ));
       socket?.close();
     };
     window.addEventListener('online', online);

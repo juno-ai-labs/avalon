@@ -97,7 +97,7 @@ Knowledge of a resource ID or cursor does not bypass this query.
 `workstream_list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and a monotonic work-stream
-inventory revision. D1 advances that revision for relationship, message-
+inventory revision. SubstreamAgent advances that revision for relationship, message-
 attachment, classification/content identity, and note-visibility mutations, but
 not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
@@ -136,8 +136,8 @@ entries remain discoverable by paging `workstream_list_resources` until
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
 summarization. Avalon runs the grouped inventory query once when rendering the
-appendix, verifies the revision there, and includes it in the conditional D1
-statement that persists the checkpoint. Replay uses
+appendix, verifies the revision there, and includes it in the conditional
+SubstreamAgent SQL statement that persists the checkpoint. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
 revocation, private-note visibility, or principal changes invalidate it and fall
 back to durable transcript replay. Relevant resource IDs and consulted
@@ -204,7 +204,7 @@ queued.
 
 The derivative service accepts a resource that its caller has already
 authorized. It reads the exact original R2 object, claims conversion through a
-fenced, time-bounded conditional D1 update, writes one generation-unique content
+fenced, time-bounded conditional WorkspaceDO update, writes one generation-unique content
 object, then advances the current resource pointer only when that object is
 complete and the same claim still owns publication. A concurrent caller sees
 `processing`; an abandoned claim becomes reclaimable after five minutes. An
@@ -277,9 +277,10 @@ character envelope.
 
 This module owns model-facing attachment identity, classification, derivative
 selection, hydration contracts, continuation, recovery, and compaction
-rediscovery. It depends on `resources`, `workstream_resources`,
-`message_attachments`, note visibility, regional D1/R2 bindings, and the harness
-tool loop.
+rediscovery. It depends on WorkspaceDO `resources`/notes/R2 lifecycle state,
+SubstreamAgent work-stream links/part attachments/inventory revision, the
+regional R2 binding, and the harness tool loop. Cross-object reads are separate
+and version-fenced; no SQL join spans the two object databases.
 
 It does not own composer upload UX or the desktop lightbox presentation; those
 remain with the composer and renderer modules. It does not turn an ID into
@@ -373,27 +374,29 @@ tests use an explicit clock value; do not replace it with sleeps or retries.
 
 ## Data model
 
-`resources` owns original and current model refs plus original SHA-256,
+WorkspaceDO `resources` owns original and current model refs plus original SHA-256,
 derivative status, extractor version, readable-character count, extraction time,
 bounded error code, and fenced claim ID/time.
-`resource_object_deletion_outbox` owns failed, superseded, and deleted regional
+WorkspaceDO `resource_object_deletion_outbox` owns failed, superseded, and deleted regional
 objects until bounded cleanup succeeds.
-`attachment_tool_receipts` maps completed read, search, view, and summary
+SubstreamAgent `attachment_tool_receipts` maps completed read, search, view, and summary
 receipts to the exact derivative hashes they used. A replacement or deletion
 invalidates the complete invocation and queues its JSON replay object. Receipt
 registration itself is conditional on those hashes still being current, and
 replay additionally rechecks current principal visibility; the map stores no
 excerpts, prompts, image parts, or data URIs.
-`message_attachments` and `workstream_resources` remain relationship and
-visibility authorities. [`data-model.md`](data-model.md) and migrations are
+SubstreamAgent part attachments and work-stream resource links remain
+relationship and visibility authorities; WorkspaceDO note scope and resource
+metadata are rechecked separately. [`data-model.md`](data-model.md) and migrations are
 authoritative.
 
 ## Regional impact
 
 Contracts, lifecycle, and conversion execute identically in both regions. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
-originals and model derivatives remain in that region's R2 bucket and
-relationship, lifecycle, and outbox rows in its D1 database. Scheduled cleanup
+originals and model derivatives remain in that region's R2 bucket;
+WorkspaceDO owns lifecycle/outbox rows and SubstreamAgent owns work-stream
+relationships. Scheduled cleanup
 uses the same regional R2 binding. No new Global-plane storage or bridge payload
 is introduced by this phase.
 
@@ -431,6 +434,27 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-18 — Resource authority moves into WorkspaceDO
+
+**What changed:** WorkspaceDO now owns resource/note metadata, current original
+and derivative refs, watches, automation relationships, and R2 deletion
+outboxes. SubstreamAgent owns the work-stream link, part attachment, inventory
+revision, tool receipt, and compaction fence. Terminal and attachment services
+perform separate reads across that boundary.
+
+**Why:** Resource bytes and metadata are workspace-reusable, while visibility in
+one conversation is a child relationship. D1 and a cross-table join represented
+neither authority correctly.
+
+**Considered and rejected:** Copying resource metadata into each child, leaving
+a D1 projection, or joining WorkspaceDO and SubstreamAgent through the SQL
+compatibility port. Those approaches create stale copies or imply atomicity the
+platform cannot provide.
+
+**Consequences:** R2 remains the byte store only; every authoritative pointer and
+cleanup intent is WorkspaceDO-local. Receipt replay first proves the child link
+and then rechecks the current workspace resource/note row and hashes.
 
 ### 2026-08-13 — Terminal imports and publications reuse resource authority
 

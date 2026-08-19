@@ -619,8 +619,8 @@ export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPri
 /**
  * Recompute the workspace alarm.
  *
- * Every canonical mutation of a due time has to do this, or the wake-up sits in
- * D1 until some unrelated schedule happens to wake the same Durable Object.
+ * Every canonical mutation of a due time has to do this, or the row sits in its
+ * durable authority until some unrelated schedule wakes the same scheduler.
  */
 export async function refreshWorkspaceSchedulerAlarm(
   env: Pick<Env, "DB" | "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,

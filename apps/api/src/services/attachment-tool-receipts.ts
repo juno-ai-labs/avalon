@@ -170,9 +170,8 @@ async function registerObjectAttachmentToolReceipt(
       WHERE workspace_id = ? AND id = ?`,
   ).bind(input.workspaceId, input.invocationId).first<{ id: string }>();
   if (!invocation) throw new Error("attachment_receipt_version_changed");
-  const regional = regionalDatabase(env);
   for (const dependency of dependencies) {
-    const resource = await regional.prepare(
+    const resource = await env.DB.prepare(
       `SELECT model_content_sha256 FROM resources
         WHERE workspace_id = ? AND id = ?`,
     ).bind(input.workspaceId, dependency.resourceId)
@@ -232,10 +231,9 @@ async function validateObjectAttachmentToolReceiptReplay(
     resourceIds: dependencies.map((dependency) => dependency.resource_id),
   });
   const visibleIds = new Set(visible.map((resource) => resource.id));
-  const regional = regionalDatabase(env);
   for (const dependency of dependencies) {
     if (!visibleIds.has(dependency.resource_id)) return "invalid";
-    const resource = await regional.prepare(
+    const resource = await env.DB.prepare(
       `SELECT model_content_sha256 FROM resources
         WHERE workspace_id = ? AND id = ?`,
     ).bind(input.workspaceId, dependency.resource_id)
@@ -255,7 +253,7 @@ async function invalidateObjectAttachmentToolReplay(
   ).bind(workspaceId, invocationId).first<{ output_ref: string | null }>();
   if (invocation?.output_ref) {
     const at = new Date().toISOString();
-    await regionalDatabase(env).prepare(
+    await env.DB.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
          (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
        VALUES (?, ?, ?, 'receipt', ?, ?)`,

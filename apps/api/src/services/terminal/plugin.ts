@@ -31,11 +31,13 @@ import {
   emitProductUsageTelemetry,
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
+import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
 ): Promise<HarnessPlugin | null> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
 

@@ -12,6 +12,7 @@ import { ApiError } from "../../lib/api-error";
 import { readWorkstreamAuthorityControl } from "../workstream-authority";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
@@ -55,11 +56,19 @@ interface SandboxRow {
 }
 
 export class TerminalSettingsService {
+  private readonly env: Env;
+  private readonly auth: AuthContext;
+  private readonly provider: TerminalSandboxProvider | null;
+
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
-    private readonly provider: TerminalSandboxProvider | null,
-  ) {}
+    env: Env,
+    auth: AuthContext,
+    provider: TerminalSandboxProvider | null,
+  ) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
+    this.provider = provider;
+  }
 
   async get(): Promise<TerminalWorkspaceSettings> {
     const policy = await this.loadOrCreatePolicy();

@@ -15,6 +15,7 @@ import {
   type MemoryScope,
   type MemoryScopeKind,
 } from "./memory-service";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 type ColumnType = MemoryTableColumnType;
 
@@ -288,6 +289,7 @@ export function buildAutomationMemoryTableStatements(
     createdAt: string;
   },
 ): { statements: D1PreparedStatement[]; tables: MaterializedMemoryTable[] } {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const definitions = parseDefinitions(input.definitions);
   if (definitions.length === 0) return { statements: [], tables: [] };
   const memoryScopeId = newId();
@@ -365,6 +367,7 @@ export async function loadAutomationMemoryTableContext(
   automationSubscriptionId: string,
   definitions?: unknown,
 ): Promise<MaterializedMemoryTable[]> {
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const declaredNames = definitions === undefined
     ? null
     : new Set(parseDefinitions(definitions).map((table) => table.name.toLocaleLowerCase()));
@@ -458,6 +461,7 @@ export async function ensureAutomationMemoryTables(
     createdByUserId: string;
   },
 ): Promise<MaterializedMemoryTable[]> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const definitions = parseDefinitions(input.definitions);
   if (definitions.length === 0) return [];
   let scope = await env.DB.prepare(
@@ -1509,6 +1513,7 @@ const columnJsonSchema = {
 };
 
 export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   return [
     {
       definition: {

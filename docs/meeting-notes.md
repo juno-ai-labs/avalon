@@ -187,6 +187,12 @@ note anything outside this module has. Each key is fixed per note and every writ
 overwrites it, so the objects are the current note rather than a history of
 briefings.
 
+The `notes`, `note_transcript_segments`, linked `resources`, privacy outbox and
+R2 lifecycle refs are authoritative in WorkspaceDO. R2 owns the two byte
+objects; D1 has no note/resource serving projection. Work-stream attachment
+links remain in the selected SubstreamAgent and resolve the current WorkspaceDO
+resource separately.
+
 ## Invariants
 
 - **A refresh is preceded by a segment commit.** Decoupling them silently
@@ -385,6 +391,23 @@ knob.
 
 ## Changelog
 
+### 2026-08-18 — Note and resource authority moves into WorkspaceDO
+
+**What changed:** Note rows, transcript segments, linked resource metadata,
+privacy delivery and R2 lifecycle state now share WorkspaceDO SQLite. R2 remains
+the note byte store; child agents retain only their work-stream links.
+
+**Why:** A note is reusable workspace product data and its generated resource is
+updated in the same lifecycle. D1 was a second authority with no ownership
+advantage.
+
+**Considered and rejected:** Copying note metadata into every work stream and a
+D1 resource projection. Both create stale visibility/lifecycle state.
+
+**Consequences:** Briefing compare-and-set and resource pointer updates execute
+against one workspace authority. Cross-work-stream consumers authorize through
+WorkspaceDO rather than joining through D1.
+
 ### 2026-08-14 — The live pass declines the harness's transport retry
 
 **What changed:** `transportRetries` is `0` for the live pass and the
@@ -432,7 +455,6 @@ expose content, or erase the stable capture configuration.
 **Consequences:** Events follow Product analytics and regional routing. The
 meeting path remains authoritative; failed state changes emit nothing, and
 telemetry failure cannot affect recording or finalization.
-
 ### 2026-08-12 — Closing a recording window asks first, and Command-W can now do the closing
 
 **What changed:** `meeting:close-requested` carries a reason — `user` or `quit`.

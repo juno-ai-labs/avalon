@@ -20,11 +20,11 @@ import { z } from "zod";
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { workspaceDOName } from "../durable-objects/names";
 import {
+  WorkspaceConnectorEventQueueMessageSchema,
   WorkspaceConnectorEventSchema,
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
-import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -72,6 +72,8 @@ import {
   markWorkstreamRegionalEffectAcknowledged,
   processWorkstreamNotificationIntent,
 } from "../services/workstream-regional-effect-service";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
 
 interface ActivityRow {
   id: string;
@@ -217,30 +219,6 @@ function workspaceConnectorEvent(activity: ActivityRow): WorkspaceConnectorEvent
   });
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => (
-    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
-  )).join(",")}}`;
-}
-
-async function connectorEventPayloadHash(event: WorkspaceConnectorEvent): Promise<string> {
-  // Ingress IDs and receipt time describe delivery, not provider identity. A
-  // provider/Queue replay with a new UUID or receive timestamp must still hash
-  // to the canonical event selected by the WorkspaceDO unique keys.
-  const content = {
-    ...event,
-    activity: {
-      ...event.activity,
-      id: "",
-      receivedAt: "",
-    },
-  };
-  return `sha256:${await sha256Hex(canonicalJson(content))}`;
-}
-
 function deepEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -263,7 +241,7 @@ function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boo
   return restrictedUserIds == null || restrictedUserIds.includes(ownerUserId);
 }
 
-/** Cloudflare Queue entrypoint: only opaque activity identifiers arrive here. */
+/** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   await Promise.all(batch.messages.map((message) => consumeOne(message, env)));
 }
@@ -272,6 +250,9 @@ export const activityQueueConsumer = consumeActivityQueue;
 
 /** Repairs the commit-before-queue-send window for every connector ingress. */
 export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
+  // Post-cutover the Queue payload is the handoff and WorkspaceDO owns retry
+  // state. This scan exists only for an interrupted legacy D1 deployment.
+  if (env.WORKSPACE_DOS) return 0;
   const staleBefore = new Date(Date.now() - 60_000).toISOString();
   const pending = await env.DB.prepare(
     `SELECT a.id, a.workspace_id, w.region, a.processing_status,
@@ -334,7 +315,11 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       }
       const applied = await applyWorkstreamRegionalEffect(env, envelope);
       if (applied.notificationIntentId) {
-        const outcome = await processWorkstreamNotificationIntent(env, applied.notificationIntentId);
+        const outcome = await processWorkstreamNotificationIntent(
+          env,
+          regionalEffect.data.workspaceId,
+          applied.notificationIntentId,
+        );
         if (outcome === "busy") {
           message.retry({ delaySeconds: 30 });
           return;
@@ -362,7 +347,10 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       return;
     }
     try {
-      await new SlackAgentService(env).processQueuedIngress(slackIngress.data.jobId);
+      await new SlackAgentService(env).processQueuedIngress(
+        slackIngress.data.workspaceId,
+        slackIngress.data.jobId,
+      );
       message.ack();
     } catch (error) {
       logWarn(env, "slack_ingress_queue_processing_failed", {
@@ -373,6 +361,28 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
       const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
       message.retry({ delaySeconds: Math.min(43_200, Math.max(exponentialDelay, providerDelay)) });
+    }
+    return;
+  }
+
+  const connectorIngress = WorkspaceConnectorEventQueueMessageSchema.safeParse(message.body);
+  if (connectorIngress.success) {
+    const input = connectorIngress.data;
+    if (input.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await admitConnectorEvent(env, input.request, input.attempt);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "connector_event_queue_admission_failed", {
+        workspace_id: input.request.workspaceId,
+        ingress_event_id: input.request.ingressEventId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
     return;
   }
@@ -389,6 +399,16 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
+  // A maintenance cutover drains this legacy ID-only handoff before opening
+  // WorkspaceDO authority. Once open, the canonical event and its retry state
+  // already live in WorkspaceDO; consulting the frozen D1 source row would
+  // reintroduce a second connector-event authority.
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    message.ack();
+    return;
+  }
+
   try {
     const activity = await loadActivity(env, input);
     if (!activity) {
@@ -396,38 +416,12 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       return;
     }
     const event = workspaceConnectorEvent(activity);
-    const workspace = await workspaceDirectory(env, input.workspaceId);
-    const accepted = await workspace.ingestConnectorEvent({
+    const admission = await admitConnectorEvent(env, {
       workspaceId: input.workspaceId,
       ingressEventId: activity.id,
-      payloadHash: await connectorEventPayloadHash(event),
+      payloadHash: await workspaceConnectorEventPayloadHash(event),
       event,
-    });
-    const workflowAttempt = accepted.processingStatus === "processing"
-      ? accepted.processingAttempt
-      : accepted.processingStatus === "failed"
-        ? Math.max(input.attempt, accepted.processingAttempt + 1)
-        : Math.max(0, input.attempt);
-    const recordedAttempt = Math.min(workflowAttempt, 5);
-    const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
-    if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
-      try {
-        await env.CONNECTOR_EVENT_WORKFLOW.create({
-          id: workflowInstanceId,
-          params: {
-            region: input.region,
-            workspaceId: input.workspaceId,
-            eventId: accepted.eventId,
-            workflowInstanceId,
-            attempt: workflowAttempt,
-          },
-        });
-      } catch (error) {
-        if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
-          throw error;
-        }
-      }
-    }
+    }, input.attempt);
     await env.DB.prepare(
       `UPDATE activities
           SET processing_status = ?1,
@@ -443,12 +437,12 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         WHERE id = ?5 AND workspace_id = ?6`
     )
       .bind(
-        accepted.processingStatus === "processed"
+        admission.accepted.processingStatus === "processed"
           ? "processed"
-          : workflowAttempt <= 5 ? "processing" : "failed",
-        accepted.eventId,
-        workflowInstanceId,
-        recordedAttempt,
+          : admission.workflowAttempt <= 5 ? "processing" : "failed",
+        admission.accepted.eventId,
+        admission.workflowInstanceId,
+        admission.recordedAttempt,
         activity.id,
         activity.workspace_id,
       )
@@ -483,12 +477,48 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   }
 }
 
+async function admitConnectorEvent(
+  env: Env,
+  request: Parameters<Awaited<ReturnType<typeof workspaceDirectory>>["ingestConnectorEvent"]>[0],
+  requestedAttempt: number,
+) {
+  const workspace = await workspaceDirectory(env, request.workspaceId);
+  const accepted = await workspace.ingestConnectorEvent(request);
+  const workflowAttempt = accepted.processingStatus === "processing"
+    ? accepted.processingAttempt
+    : accepted.processingStatus === "failed"
+      ? Math.max(requestedAttempt, accepted.processingAttempt + 1)
+      : Math.max(0, requestedAttempt);
+  const recordedAttempt = Math.min(workflowAttempt, 5);
+  const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
+  if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
+    try {
+      await env.CONNECTOR_EVENT_WORKFLOW.create({
+        id: workflowInstanceId,
+        params: {
+          region: env.AVALON_REGION,
+          workspaceId: request.workspaceId,
+          eventId: accepted.eventId,
+          workflowInstanceId,
+          attempt: workflowAttempt,
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
+        throw error;
+      }
+    }
+  }
+  return { accepted, workflowAttempt, recordedAttempt, workflowInstanceId };
+}
+
 /** The connector-event Workflow's idempotent product processing step. */
 export async function processConnectorEvent(
   env: Env,
-  event: WorkspaceConnectorEvent,
+  event: WorkspaceConnectorEvent
 ): Promise<void> {
   const activity = activityRowFromWorkspaceEvent(event);
+  env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
   const directWorkstreamIds = await routeDirectWatches(env, activity);
   const automationWorkstreamIds = await runMatchingAutomations(env, activity);
   for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
@@ -658,10 +688,10 @@ function connectorActorLabel(activity: ActivityRow): string {
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
   return env.DB.prepare(
-    `SELECT a.*, w.region AS workspace_region, c.connector_type
+    `SELECT a.*, w.region AS workspace_region, route.connector_type
        FROM activities a
        JOIN workspaces w ON w.id = a.workspace_id
-       JOIN connector_connections c ON c.id = a.connection_id
+       JOIN connector_ingress_routes route ON route.connection_id = a.connection_id
       WHERE a.id = ?1 AND a.workspace_id = ?2 AND w.region = ?3
       LIMIT 1`
   )
