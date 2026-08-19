@@ -456,6 +456,37 @@ describe("the D1 to WorkspaceDO authority source", () => {
     }
   });
 
+  it("classifies infrastructure blips as retryable and import errors as terminal", () => {
+    // A transient rejection must pause the tick, not quarantine the campaign:
+    // generation 4 died when one platform blip quarantined the phase and the
+    // in-flight sibling operations cascaded `not_active` over the first cause.
+    const { isTransientCampaignError } = __workstreamAuthorityMigrationTesting;
+    for (const transient of [
+      "d1 fetch failed",
+      "Network connection lost.",
+      "Too many API requests by single worker invocation.",
+      "Too many subrequests.",
+      "internal error",
+      "The Durable Object's code was updated, causing the object to be reset because its code was updated",
+      "Durable Object is overloaded",
+      "connect ETIMEDOUT 104.16.0.1:443",
+      "HTTP 503 from the D1 gateway",
+    ]) {
+      expect(isTransientCampaignError(new Error(transient)), transient).toBe(true);
+    }
+    for (const terminal of [
+      "workspace_product_import_conflict:work_opportunity_provenance_roots",
+      "workspace_product_import_not_active",
+      "workspace_product_import_integer_invalid:attempt_count",
+      "workspace_import_conflict:notes",
+      "workstream_import_page_chain_missing",
+      "no such table: users",
+    ]) {
+      expect(isTransientCampaignError(new Error(terminal)), terminal).toBe(false);
+    }
+    expect(isTransientCampaignError("fetch failed")).toBe(false);
+  });
+
   it("translates historical connector events into stable WorkspaceDO payload identities", async () => {
     const source = {
       source_rowid: 17,
