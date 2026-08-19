@@ -23,14 +23,14 @@ or touching what the tracker stores, serves, or lets in.
 | `packages/contracts/src/durable-object-migrations.ts` | The one report contract both Workers parse against, and `isOpaqueDurableObjectName` — the guard that decides what may cross the regional boundary. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`: wraps a Durable Object's migration call, keeps the object-local report ledger, and delivers the report without ever being able to break the object. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | The migration runner itself, unchanged by this subsystem. Its `_sql_schema_migrations` ledger is what a report reads. |
-| `apps/migration-tracker/src/index.ts` | The Worker's three entry points: the site's `fetch`, the `MigrationReportBridge` RPC entrypoint, and the scheduled sweep. |
+| `apps/migration-tracker/src/index.ts` | The Worker's three entry points: the site's `fetch`, the report-queue consumer, and the scheduled sweep. |
 | `apps/migration-tracker/src/registry.ts` | `MigrationRegistry`, the single SQLite Durable Object that holds everything the tracker knows, and every query the site runs. |
 | `apps/migration-tracker/src/schema.ts` | The registry's append-only schema and its own migration runner. |
 | `apps/migration-tracker/src/inventory.ts` | The Cloudflare API sweep: namespaces, then paged object IDs per namespace. |
 | `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification and the email-domain policy. |
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger. |
-| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_TRACKER` service binding in each region. |
+| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding in each region. |
 
 ## How it works
 
@@ -55,14 +55,25 @@ A wake that would tell the tracker nothing new sends nothing. The object keeps a
 one-row `_migration_report_state` table — created idempotently by the reporter,
 the same way the runner bootstraps its own ledger — holding the version, status,
 and build it last had accepted. Delivery is fire-and-forget through
-`state.waitUntil`, and the ledger row is written only after the tracker accepts,
-so a refused or unreachable delivery is retried on the next wake rather than
-being recorded as delivered.
+`state.waitUntil`, and the ledger row is written only after the queue accepts the
+message, so a refused send is retried on the next wake rather than being recorded
+as delivered.
 
-The report travels over a service binding to `MigrationReportBridge`, a
-`WorkerEntrypoint`. It is not an HTTP route: an RPC entrypoint has no public
-address at all, so the ingress cannot be reached from the internet, with or
-without a credential.
+The report goes onto the `avalon-migration-reports` Queue, consumed by this
+Worker. One queue serves both regions, unlike the per-region activity queues:
+both regions' reports converge on the single registry object by design, so a
+second queue would split the transport without splitting the destination. The
+region travels in the message body, where the contract validates it. Not a service-binding
+RPC, for the reasons in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md):
+every object in the fleet converges on one registry object, which is
+single-threaded and tops out near a thousand requests a second, and an
+operator-driven fan-out wakes hundreds of objects at once. A queue also means the
+report path has no public address, and that neither API Worker's deploy depends
+on this script existing.
+
+The consumer folds a whole batch into **one registry transaction**, so a herd
+costs one write rather than one per reporter. That is what lets the registry stay
+a single object.
 
 ### The sweep
 
@@ -112,9 +123,18 @@ full report history. Every page has a JSON twin under `/api/`.
   and a monitoring outage becomes a product outage, on every object at once.
 - **A migration failure is always reported, before the constructor rethrows.**
   Skip it and the one case the subsystem exists for is the one case it misses.
-- **A report is written only after the tracker accepts it.** Recording delivery
-  optimistically turns one dropped RPC into an object that is silently
+- **A report is written only after the queue accepts the message.** Recording
+  delivery optimistically turns one dropped send into an object that is silently
   unreported until its next migration.
+- **The consumer is safe against redelivery and reordering**, because Queues
+  guarantee neither. Every report carries a `reportId` with a unique index
+  behind it, and the object row is only updated when the arriving report's
+  `occurredAt` is at least the one already stored. Drop either guard and a
+  redelivered batch doubles an object's history, or a late message rewinds a
+  current object to a version it has already left.
+- **A message that can never be valid is acknowledged, not retried.** An
+  unacknowledged failure redelivers the *whole* batch, so one malformed message
+  would otherwise hold every valid report beside it hostage.
 - **A report crosses the regional boundary carrying only a region and opaque
   record identifiers.** `isOpaqueDurableObjectName` is the enforcement, and its
   allowlist of fixed name segments is the review gate: adding a role word is a
@@ -134,9 +154,9 @@ full report history. Every page has a JSON twin under `/api/`.
 ## Boundary
 
 The tracker owns the inventory of Durable Objects, their reported schema
-versions, the report history, and the operator site over both. It exposes
-exactly one write surface, `MigrationReportBridge.report`, and reads Cloudflare's
-account API with a read-only token.
+versions, the report history, and the operator site over both. It exposes exactly
+one write surface — the two regional report queues it consumes — and reads
+Cloudflare's account API with a read-only token.
 
 `apps/api` owns migrations themselves. The tracker never applies one, never
 repairs an object, and has no binding to any object it tracks — it is a
@@ -154,9 +174,13 @@ owns that — and adding a product signal to a report is out of scope by design.
 
 | Situation | Behavior |
 | --- | --- |
-| `MIGRATION_TRACKER` unbound (local development, tests) | Nothing is sent. Not an error. |
-| Tracker unreachable or throwing | Logged as `migration_report_delivery_failed` on the API side; the object is unaffected and retries on its next wake. |
-| Report refused by the contract | The bridge throws `migration_report_rejected`; the producer treats it as a delivery failure and logs `migration_report_invalid` if its own parse was the one that failed. |
+| `MIGRATION_REPORT_QUEUE` unbound (local development, tests) | Nothing is sent. Not an error. |
+| Queue send fails | Logged as `migration_report_enqueue_failed` on the API side; the object is unaffected and retries on its next wake. |
+| Report refused by the producer's own contract | Logged as `migration_report_invalid`; nothing is sent. |
+| Message refused by the consumer's contract | Logged as `migration_report_rejected`, acknowledged, and dropped. It could never become valid. |
+| Registry write throws | The batch is left unacknowledged and redelivered, up to `max_retries`, then dead-lettered. |
+| Report delivered twice | The second is ignored — `report_id` carries a unique index. |
+| Reports delivered out of order | The older one updates nothing on the object row; both stay in the history. |
 | Cloudflare API unavailable | The sweep records a `failed` receipt with the reason rather than throwing. Nothing is marked absent. |
 | One namespace's listing fails | That namespace's objects stay `null`; the sweep is `partial` and names the namespace in `migration_inventory_sweep_completed`. |
 | Namespace larger than the page cap | Listing stops at 20 pages of 1,000, the namespace is recorded as truncated, and the site shows the sweep as `partial`. |
@@ -164,9 +188,10 @@ owns that — and adding a product signal to a report is out of scope by design.
 | Registry object unavailable | The site fails; reports fail and are retried by their objects. The API is unaffected. |
 
 Numeric limits: report heartbeat **24 hours**; sweep cadence **hourly**; object
-listing **20 pages × 1,000**; retained report events **20,000**, sweep receipts
-**200**, per-object history shown **100**; failure message bounded to **1,000
-characters**; object list page size **1–200**, default **50**.
+listing **20 pages × 1,000**; consumer batch **100 messages / 10 seconds** with
+**5 retries** before the dead-letter queue; retained report events **20,000**,
+sweep receipts **200**, per-object history shown **100**; failure message bounded
+to **1,000 characters**; object list page size **1–200**, default **50**.
 
 The overview shows a banner when the last sweep finished more than three hours
 ago, because a stale sweep makes the `unreported` count meaningless.
@@ -175,7 +200,7 @@ ago, because a stale sweep makes the `unreported` count meaningless.
 
 | Suite | Covers |
 | --- | --- |
-| `pnpm --filter @avalon/migration-tracker test` | The registry's SQL and derived statuses, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. |
+| `pnpm --filter @avalon/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. |
 | `pnpm --filter @avalon/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
 | `pnpm --filter @avalon/contracts test` | The report contract and the opaque-name guard. |
 
@@ -190,6 +215,12 @@ Traps:
   assertion depend on execution order.
 - Delivery happens in `state.waitUntil`, so those tests `await settle()` before
   asserting rather than racing it.
+- A `MessageBatch` cannot be constructed, so the consumer tests drive
+  `createTestMessageBatch` from `test/helpers/cloudflare-test.ts`, which records
+  each message's `ack()`/`retry()`. Assert on those flags — they are the
+  consumer's actual contract with the runtime.
+- Report fixtures need a **distinct `reportId` per report**, or the registry's
+  dedupe silently collapses them and the test asserts on one row instead of two.
 
 ## Data model
 
@@ -206,19 +237,35 @@ clock comparison silently skip the step.
 
 ## Regional impact
 
-The tracker is one account-wide Worker, so an EU object's report reaches a store
-that is not EU-resident. That is admissible only because of what the report
-contains, which is the same class of data
-[`regionalization.md`](regionalization.md) already permits on Queues and
-Workflows: a region plus opaque record identifiers. Concretely — a Durable Object
+One tracker and one queue serve both regions, because **a migration report is
+operational metadata about infrastructure, not workspace content**: an opaque
+object identifier, a class name, a schema version, and a migration error that
+describes code. There is no personal data in it and nothing a workspace owns, so
+there is nothing here for a per-region boundary to protect.
+
+That is the same class of data [`regionalization.md`](regionalization.md) already
+permits on Queues and Workflows — a region plus opaque record identifiers — and
+the point of the guard below is to keep it that way as the system changes, not to
+gate a crossing that needs gating today. The report now literally
+travels on a Queue, so it is the same crossing under the same rule rather than an
+analogous one.
+
+The queue is shared between the regions rather than split like
+`avalon-eu-activities`. The split there exists because an EU activity's payload
+must be handled in region. Nothing in a migration report has that property, and
+the destination is one account-wide registry object either way, so a second queue
+would double the resources while isolating nothing. Concretely — a Durable Object
 ID, a name whose every segment is a region token, a UUID, or one of a small fixed
 allowlist of role words, a class name, a component key, schema version numbers, a
 build identifier, and migration error text that describes code.
 
 The guard is `isOpaqueDurableObjectName`, applied twice: the producer drops a
 name that does not match, and the tracker refuses the whole report if one reaches
-it anyway. Anything a future change wants to add to a report has to clear the
-same bar, in this document and in the contract.
+it anyway. It costs nothing and it exists for the change nobody has made yet —
+the day a Durable Object name grows a workspace slug or an address, this report
+stops carrying it instead of quietly shipping it. Anything a future change wants
+to add to a report has to clear the same bar, in this document and in the
+contract.
 
 ## Security and trust model
 
@@ -263,15 +310,24 @@ goes through `hono/html` escaping.
 
 ## Performance and cost
 
-The design's budget is one subrequest per object per schema change, plus one per
+The design's budget is one queue send per object per schema change, plus one per
 object per day. A report on every wake was rejected for that reason: it would
-scale with hibernation churn rather than with deploys, and every one of those
-writes lands on a single Durable Object. The sweep costs one Cloudflare API call
-per namespace per hour, plus one per additional 1,000 objects.
+scale with hibernation churn rather than with deploys.
 
-The registry is a single object on purpose. Both writers are low-volume and every
+The registry is a single object on purpose, and the queue is what keeps that
+affordable. One Durable Object is single-threaded with a soft ceiling near a
+thousand requests a second, so a synchronous hop would serialize a herd of
+reporters behind each other; batching turns a batch of 100 into one transaction,
+which is roughly two orders of magnitude of headroom on the same object. Every
 read the site performs is a cross-cutting aggregate, so sharding would buy
 throughput nothing needs and turn each read into a scatter-gather.
+
+The steady state is not the case this is built for. Objects do not wake *because*
+of a deploy, so an ordinary release produces a trickle shaped by user traffic.
+The herd is `scripts/run-authority-cutover.mjs` walking every workspace and
+work-stream route, and `WorkspaceScheduler` fanning out over due work — both of
+which touch hundreds of objects at once, on a build whose `APP_VERSION` has just
+changed.
 
 ## Changelog
 
@@ -280,8 +336,9 @@ throughput nothing needs and turn each read into a scatter-gather.
 **What changed:** A new Worker, `avalon-migration-tracker`, serves
 `migrations.internal.with-avalon.com` behind Cloudflare Access. Every Durable
 Object in `apps/api` now reports its migration outcome — version on success,
-error on failure — through a service binding, and an hourly sweep enumerates the
-account so objects that have never woken are visible as `unreported`.
+error on failure — onto a regional Queue that the tracker consumes in batches,
+and an hourly sweep enumerates the account so objects that have never woken are
+visible as `unreported`.
 
 **Why:** Nothing could say which objects were on which schema version. The
 migration runner is careful — append-only, hash-checked, transactional — but its
@@ -306,24 +363,47 @@ only at the moment it applies one.
   Wrangler file before the first deploy. This Worker's whole job is to still work
   when a deploy went wrong, and a Durable Object namespace is created by the
   deploy itself.
+- *A service-binding RPC to a `WorkerEntrypoint` on the tracker.* This was built
+  first and replaced before shipping. It is the obvious shape — the report is
+  one small call — and it is wrong for the load: every object in the account
+  converges on one registry object, which is single-threaded with a soft ceiling
+  near a thousand requests a second, so a herd serializes behind itself. Each
+  reporter is a Durable Object held open on `waitUntil` for the whole wait, and
+  an RPC that times out defers the report to the object's next wake, which for a
+  hibernating object may be days. The herd is real: `run-authority-cutover.mjs`
+  and the scheduler's fan-out each touch hundreds of objects at once. Batching
+  100 messages into one transaction is what makes the single registry object
+  affordable, and only a queue can hand a consumer a batch.
 - *An HTTP ingest route with a shared secret.* Another secret to rotate in three
-  places, protecting a path that would still be publicly addressable. A
-  `WorkerEntrypoint` has no public address, which is a stronger statement than
-  any secret on a public path.
+  places, protecting a path that would still be publicly addressable. Neither a
+  queue nor a `WorkerEntrypoint` has a public address, which is a stronger
+  statement than any secret on a public path.
+- *Keeping RPC alongside the queue for the failure path*, so a migration that is
+  about to break an object reports without waiting for a batch. Rejected as two
+  code paths for one message, where the rarely-exercised one is the one that
+  matters: the queue's retry and dead-letter queue are a better home for exactly
+  that report, and ten seconds of batch latency is nothing to a monitor. See
+  [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md).
 - *Reusing Avalon's Google OAuth for the site.* Access already supports Google as
   a login method and `email_domain` policies, so reusing the product's identity
   system would add an authorization surface without adding a capability, and
   would put the operator boundary inside the product.
 
-**Consequences:** Both API Workers now have a hard deploy-order dependency on
-`avalon-migration-tracker`; deploying the API first fails on the missing service.
-A new Durable Object class must wrap its migration call in `withMigrationReport`
-or it is invisible to the tracker — nothing enforces that automatically. Any
-field added to the report has to clear the opaque-identifier bar in **Regional
-impact**, and any new fixed segment in a Durable Object name has to be added to
-the allowlist in `isOpaqueDurableObjectName` or every report from that object
-loses its name. The reporter creates `_migration_report_state` in every tracked
-object's SQLite outside the migration history, deliberately, for the same reason
-the runner bootstraps its own ledger that way.
+**Consequences:** `avalon-migration-reports` and its dead-letter queue are hosted
+resources that must exist before either Worker deploys; in exchange there is no
+script-to-script deploy ordering, which an RPC binding would have imposed. It is
+one queue for both regions on purpose — see **Regional impact** — so anything
+that later needs per-region isolation of the transport has to justify why the
+shared destination is no longer acceptable. A new Durable Object class must wrap its migration call in
+`withMigrationReport` or it is invisible to the tracker — nothing enforces that
+automatically. The consumer may never assume a message arrives once or in order;
+the `report_id` unique index and the `occurredAt` guard on the object row are
+load-bearing, not defensive. Any field added to the report has to clear the
+opaque-identifier bar in **Regional impact**, and any new fixed segment in a
+Durable Object name has to be added to the allowlist in
+`isOpaqueDurableObjectName` or every report from that object loses its name. The
+reporter creates `_migration_report_state` in every tracked object's SQLite
+outside the migration history, deliberately, for the same reason the runner
+bootstraps its own ledger that way.
 
 Shipped in the pull request for `claude/do-migration-tracker-d1fkab`.

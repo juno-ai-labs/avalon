@@ -15,8 +15,22 @@ function objectId(seed: string): string {
   return seed.repeat(64).slice(0, 64);
 }
 
+let reportSequence = 0;
+
+/** A fresh id per report; the registry dedupes on it, so fixtures must differ. */
+function nextReportId(): string {
+  reportSequence += 1;
+  return `00000000-0000-7000-8000-${String(reportSequence).padStart(12, "0")}`;
+}
+
+/** One report at a time, against the batch method the consumer actually calls. */
+function record(registry: MigrationRegistry, ...reports: DurableObjectMigrationReport[]): void {
+  registry.recordReports(reports);
+}
+
 function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableObjectMigrationReport {
   return {
+    reportId: nextReportId(),
     objectId: objectId("a"),
     objectName: `global:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
     className: "SubstreamAgent",
@@ -74,7 +88,7 @@ beforeEach(async () => {
 describe("recordReport", () => {
   it("records a successful migration and marks the object current", async () => {
     const page = await withRegistry((registry) => {
-      registry.recordReport(report());
+      record(registry, report());
       return registry.listObjects(ObjectQuerySchema.parse({}));
     });
 
@@ -88,8 +102,8 @@ describe("recordReport", () => {
 
   it("marks an object behind once another object reports a higher head", async () => {
     const page = await withRegistry((registry) => {
-      registry.recordReport(report({ objectId: objectId("a"), schemaVersion: 3, latestVersion: 3 }));
-      registry.recordReport(report({
+      record(registry, report({ objectId: objectId("a"), schemaVersion: 3, latestVersion: 3 }));
+      record(registry, report({
         objectId: objectId("b"),
         objectName: null,
         schemaVersion: 4,
@@ -108,8 +122,8 @@ describe("recordReport", () => {
 
   it("keeps the component head monotonic across a rollback", async () => {
     const overview = await withRegistry((registry) => {
-      registry.recordReport(report({ schemaVersion: 4, latestVersion: 4 }));
-      registry.recordReport(report({
+      record(registry, report({ schemaVersion: 4, latestVersion: 4 }));
+      record(registry, report({
         objectId: objectId("b"),
         objectName: null,
         schemaVersion: 3,
@@ -126,7 +140,7 @@ describe("recordReport", () => {
 
   it("keeps a failure visible with its message and version", async () => {
     const detail = await withRegistry((registry) => {
-      registry.recordReport(report({
+      record(registry, report({
         status: "failed",
         schemaVersion: 2,
         appliedVersions: [],
@@ -144,13 +158,13 @@ describe("recordReport", () => {
 
   it("clears a failure when the object next reports success", async () => {
     const object = await withRegistry((registry) => {
-      registry.recordReport(report({
+      record(registry, report({
         status: "failed",
         schemaVersion: 2,
         appliedVersions: [],
         failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
       }));
-      registry.recordReport(report({ status: "applied", schemaVersion: 3, appliedVersions: [3] }));
+      record(registry, report({ status: "applied", schemaVersion: 3, appliedVersions: [3] }));
       return registry.objectDetail(objectId("a"))?.object;
     });
 
@@ -163,8 +177,8 @@ describe("recordReport", () => {
 
   it("appends one event per report and preserves the applied versions", async () => {
     const detail = await withRegistry((registry) => {
-      registry.recordReport(report({ schemaVersion: 3, appliedVersions: [1, 2, 3] }));
-      registry.recordReport(report({ status: "current", appliedVersions: [] }));
+      record(registry, report({ schemaVersion: 3, appliedVersions: [1, 2, 3] }));
+      record(registry, report({ status: "current", appliedVersions: [] }));
       return registry.objectDetail(objectId("a"));
     });
 
@@ -208,7 +222,7 @@ describe("recordSweep", () => {
           objects: [{ objectId: objectId("a"), hasStoredData: true }],
         }],
       }));
-      registry.recordReport(report());
+      record(registry, report());
       return registry.objectDetail(objectId("a"));
     });
 
@@ -272,7 +286,7 @@ describe("recordSweep", () => {
         namespaces: [{ ...namespace, objects: [{ objectId: objectId("a"), hasStoredData: true }] }],
       }));
       registry.recordSweep(sweep({ namespaces: [{ ...namespace, objects: [] }] }));
-      registry.recordReport(report());
+      record(registry, report());
       return registry.objectDetail(objectId("a"));
     });
 
@@ -307,14 +321,14 @@ describe("recordSweep", () => {
 describe("listObjects", () => {
   it("filters by status, component, region, and identifier prefix", async () => {
     const results = await withRegistry((registry) => {
-      registry.recordReport(report({ objectId: objectId("a"), schemaVersion: 4, latestVersion: 4 }));
-      registry.recordReport(report({
+      record(registry, report({ objectId: objectId("a"), schemaVersion: 4, latestVersion: 4 }));
+      record(registry, report({
         objectId: objectId("b"),
         objectName: null,
         schemaVersion: 3,
         latestVersion: 3,
       }));
-      registry.recordReport(report({
+      record(registry, report({
         objectId: objectId("c"),
         objectName: null,
         component: "workspace_do",
@@ -337,7 +351,7 @@ describe("listObjects", () => {
 
   it("treats a wildcard in the search box as a literal", async () => {
     const page = await withRegistry((registry) => {
-      registry.recordReport(report());
+      record(registry, report());
       return registry.listObjects(ObjectQuerySchema.parse({ search: "%" }));
     });
 
@@ -347,9 +361,9 @@ describe("listObjects", () => {
   it("orders failures first and pages through the rest", async () => {
     const page = await withRegistry((registry) => {
       for (const seed of ["1", "2", "3", "4"]) {
-        registry.recordReport(report({ objectId: objectId(seed), objectName: null }));
+        record(registry, report({ objectId: objectId(seed), objectName: null }));
       }
-      registry.recordReport(report({
+      record(registry, report({
         objectId: objectId("9"),
         objectName: null,
         status: "failed",

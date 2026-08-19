@@ -1822,9 +1822,10 @@ primitive if ever reachable).
 ### 2026-08-19 — Every Durable Object reports its migration outcome
 
 **What changed:** All five constructors now run their migration call inside
-`withMigrationReport`, which tells `avalon-migration-tracker` the version the
-object landed on, or the error it failed with. Nothing about the migration
-runner, the schemas, or the objects' behavior changed.
+`withMigrationReport`, which puts the version the object landed on — or the error
+it failed with — onto a regional Queue that `avalon-migration-tracker` consumes.
+Nothing about the migration runner, the schemas, or the objects' behavior
+changed.
 
 **Why:** The runner's verdict was unreadable. Success is silent, and failure is
 an exception thrown inside a constructor on one isolate — so a deploy that
@@ -1842,7 +1843,10 @@ observer dependency it would then have to be tested with.
 
 **Consequences:** A new Durable Object class in this hierarchy must wrap its
 migration call or it is invisible to the tracker; nothing enforces that
-automatically. The reporter creates a `_migration_report_state` table in each
+automatically. The send is a queue send, not an RPC, so it must stay
+fire-and-forget — see
+[`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) before making anything
+here wait on the tracker. The reporter creates a `_migration_report_state` table in each
 object's SQLite outside the migration history — deliberately, for the same
 reason the runner bootstraps `_sql_schema_migrations` that way — so a schema
 audit will find a table that is in no migration list. Reporting is

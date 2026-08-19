@@ -92,15 +92,6 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
     {
-      // The account-wide migration tracker. Deploy `avalon-migration-tracker`
-      // before either API Worker: a service binding to a script that does not
-      // exist fails the deploy. The reporter treats the binding as optional at
-      // runtime, so removing it only costs visibility.
-      "binding": "MIGRATION_TRACKER",
-      "service": "avalon-migration-tracker",
-      "entrypoint": "MigrationReportBridge"
-    },
-    {
       "binding": "EU_IDENTITY_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "RegionalIdentityBridge"
@@ -185,7 +176,20 @@
   ],
   "queues": {
     "producers": [
-      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" }
+      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" },
+      // Durable Object migration reports. A queue rather than a service
+      // binding to the tracker: the whole fleet converges on one registry
+      // object, nothing waits on the outcome, and a queue is a resource both
+      // sides bind to, so neither Worker's deploy depends on the other's
+      // script existing. See docs/choosing-queues-or-rpc.md.
+      //
+      // Deliberately not region-prefixed, unlike every other queue here. The
+      // activity queues are per-region because their payloads must be handled
+      // in region; a migration report is the opposite case — both regions'
+      // reports converge on one account-wide registry object by design, so a
+      // second queue would split the transport without splitting the
+      // destination. The region travels in the message body.
+      { "binding": "MIGRATION_REPORT_QUEUE", "queue": "avalon-migration-reports" }
     ],
     "consumers": [
       {

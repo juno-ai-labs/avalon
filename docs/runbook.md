@@ -380,11 +380,24 @@ every Durable Object in both API Workers.
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
 owns the design; this is the provisioning and deployment procedure.
 
-**Deploy it before either API Worker.** Both regional Wrangler files carry a
-`MIGRATION_TRACKER` service binding, and Wrangler fails a deploy whose service
-binding names a script that does not exist. The binding is optional at runtime,
-so an API Worker deployed before the tracker existed keeps working and simply
-reports nothing.
+Reports travel on a Queue rather than a service binding, so **there is no
+deploy-order dependency between the tracker and either API Worker** — a queue is
+a resource both sides bind to. What both sides do require is that the queues
+exist first. The producer binding is optional at runtime, so an API Worker
+deployed before the tracker existed keeps working and simply reports nothing.
+
+Create the queue and its dead-letter queue once, before the first deployment of
+either side. There is one pair for both regions, not one per region as with the
+activity queues: every report converges on the single registry object regardless
+of where it came from, so splitting the transport would isolate nothing. The
+region travels in the message body.
+
+```text
+pnpm --filter @avalon/migration-tracker exec wrangler queues create avalon-migration-reports
+pnpm --filter @avalon/migration-tracker exec wrangler queues create avalon-migration-reports-dead-letter
+```
+
+Then deploy in any order:
 
 ```text
 pnpm deploy:migration-tracker
@@ -392,9 +405,9 @@ pnpm deploy:global
 pnpm deploy:eu
 ```
 
-It needs no D1 database, R2 bucket, or Queue: its entire store is the
+The tracker needs no D1 database and no R2 bucket: its entire store is the
 `MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
-one-time steps are required outside the repository.
+further one-time steps are required outside the repository.
 
 **1. The hostname.** `migrations.internal.with-avalon.com` is declared as a
 custom domain in `wrangler.jsonc`; the `with-avalon.com` zone must be able to
@@ -439,8 +452,17 @@ a local Wrangler, and the bypass is honoured in no other environment.
 
 After deployment, watch `migration_inventory_sweep_completed` for a `partial`
 status — it names the namespaces whose listing was truncated or failed — and
-`migration_report_recorded` at `error` level, which is a Durable Object whose
-migration threw and which the site lists under **Open failures**.
+`migration_reports_recorded` at `error` level, whose `failed_objects` field names
+each Durable Object whose migration threw and which the site lists under **Open
+failures**.
+
+Check `avalon-migration-reports-dead-letter` when reports stop arriving. A
+message reaches it only after five failed attempts to write it to the registry, so a non-empty
+dead-letter queue means the registry object itself was failing, not that a
+migration did. `migration_report_rejected` is the other direction: a message the
+consumer refused because it did not match the contract, which means a producer
+was changed without the shared contract in `packages/contracts` being changed
+with it.
 
 For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
 configuration, deploy, and inspect one scheduled plan before authorizing live

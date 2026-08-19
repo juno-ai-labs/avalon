@@ -1,6 +1,10 @@
 /**
  * The registry's own SQLite schema, and the append-only runner that applies it.
  *
+ * Version 1 is still unshipped, so it is edited in place rather than appended
+ * to; once this Worker is deployed the same append-only rule applies here as in
+ * `apps/api`.
+ *
  * This is a deliberate second copy of the runner in
  * `apps/api/src/durable-objects/sqlite-migrations.ts`, not an import: the
  * tracker deploys on its own and must not take a dependency on the Worker it
@@ -57,6 +61,9 @@ const V1_DURABLE_OBJECTS = `
     failure_version INTEGER,
     first_seen_at INTEGER NOT NULL,
     last_swept_at INTEGER,
+    -- The producer's occurredAt, not the tracker's write clock. Queues do not
+    -- guarantee ordering, so this is what lets a late-arriving older report be
+    -- recognised and dropped instead of overwriting a newer one.
     last_reported_at INTEGER,
     last_failed_at INTEGER,
     absent_since INTEGER
@@ -68,10 +75,15 @@ const V1_DURABLE_OBJECTS = `
  * object now"; this table answers "how did it get there", which is the question
  * a half-landed deploy actually raises. It is capped rather than kept forever —
  * see `MIGRATION_EVENT_RETENTION`.
+ *
+ * `report_id` is the producer's per-send UUID and carries a unique index.
+ * Cloudflare Queues deliver at least once, so a redelivered batch would
+ * otherwise append the same report twice and make a single wake look like two.
  */
 const V1_MIGRATION_EVENTS = `
   CREATE TABLE IF NOT EXISTS migration_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id TEXT NOT NULL,
     object_id TEXT NOT NULL,
     object_name TEXT,
     class_name TEXT NOT NULL,
@@ -151,6 +163,8 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
        ON durable_objects (script_name, class_name)`,
     `CREATE INDEX IF NOT EXISTS durable_objects_by_failure
        ON durable_objects (last_failed_at)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS migration_events_report_id
+       ON migration_events (report_id)`,
     `CREATE INDEX IF NOT EXISTS migration_events_by_object
        ON migration_events (object_id, id DESC)`,
     `CREATE INDEX IF NOT EXISTS migration_events_by_time
