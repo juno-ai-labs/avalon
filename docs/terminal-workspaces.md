@@ -33,7 +33,7 @@ which exposes all nine tools and the language guidance but performs no provider
 operation. The first tool execution asks `TerminalSandboxCoordinator` for the
 work stream's exclusive Terminal mutation lease. It creates, starts, or restores
 the stable private sandbox and records the provider result in the owning
-WorkstreamDO. A later tool in
+SubstreamAgent. A later tool in
 the same work stream reuses that generation only while its execution-principal,
 selected repository, connection, and visible-resource authority fingerprint
 still match.
@@ -279,10 +279,11 @@ reviews.
 ## Data model
 
 Migration `0075_terminal_workspaces.sql` created the legacy D1 source. Serving
-contract 1 imports the work-stream-owned rows into these normalized local tables:
+contract 1 imports work-stream-owned rows into the main SubstreamAgent and
+workspace policy into WorkspaceDO:
 
-- `workspace_sandbox_network_policies`, `_domains`, and `_mutations` for the
-  revisioned preview/confirm/read-back protocol;
+- WorkspaceDO `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
+  for the revisioned preview/confirm/read-back protocol and full history;
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state;
 - `terminal_tasks` and `terminal_commands` for durable command submission and one final result;
@@ -293,9 +294,12 @@ contract 1 imports the work-stream-owned rows into these normalized local tables
   optional typed publisher; and
 - `repository_publications` for convergent trusted-write reconciliation.
 
-The object identity supplies the workspace/work-stream tenant boundary. Regional
-D1 remains authoritative for workspace network policy and GitHub connection
-authority, which are rechecked before local mutations. Provider IDs are
+The two object identities supply the workspace and work-stream tenant
+boundaries. WorkspaceDO is authoritative for workspace network policy, GitHub
+connection state, and resource metadata; those are read separately from the
+SubstreamAgent's repository/import/task rows and rechecked before local
+mutations. A multi-table SQL statement never pretends to join the two objects.
+Provider IDs are
 reconciliation facts and never authorize a request.
 
 ## Regional impact
@@ -380,6 +384,29 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-18 — Workspace Terminal policy moves into WorkspaceDO
+
+**What changed:** Terminal network/egress policy, domains, verified revision,
+and preview/confirm mutation history now live in WorkspaceDO. The main
+SubstreamAgent continues to own sandbox generation, tasks, imported-resource
+provenance, selected repository, grants, and publication receipts. Runtime
+reads split those authorities explicitly; each bootstrap rechecks WorkspaceDO
+connector state before reusing a child repository.
+
+**Why:** Policy and connector/resource authority apply to every work stream in
+one workspace, while sandbox execution receipts belong to one substream. D1 was
+neither ownership boundary.
+
+**Considered and rejected:** Copying policy into every SubstreamAgent,
+broadcasting revocation to all children, and joining resource metadata to child
+links in one compatibility SQL statement. Those choices create stale copies,
+unbounded fan-out, or impossible cross-object transactions.
+
+**Consequences:** Disabling a connector needs no fleet fan-out to all children:
+the next bootstrap/use fails its WorkspaceDO check. The layered repository
+adapter routes workspace and child reads to their separate objects, and R2
+remains only the byte store.
 
 ### 2026-08-17 — Terminal persistence follows its work stream into the object
 

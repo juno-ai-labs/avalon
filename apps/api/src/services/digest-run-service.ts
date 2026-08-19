@@ -17,6 +17,10 @@ import {
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 /**
  * How far back a person's first ever digest reads. Without a floor, switching a
@@ -74,17 +78,24 @@ export async function fireDigestSchedule(
   env: Env,
   input: DigestScheduleFireInput,
 ): Promise<DigestFireOutcome> {
-  const schedule = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.user_id, u.timezone, d.enabled,
-            d.execution_principal_json,
-            u.name AS user_name, w.name AS workspace_name
-       FROM digest_schedules d
-       JOIN users u ON u.id = d.user_id
-       JOIN workspaces w ON w.id = d.workspace_id
-       JOIN workspace_members m
-         ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
-      WHERE d.id = ? AND d.workspace_id = ?`,
-  ).bind(input.scheduleId, input.workspaceId).first<DigestScheduleRow>();
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  const digest = await env.DB.prepare(
+    `SELECT id, workspace_id, user_id, enabled, execution_principal_json
+       FROM digest_schedules WHERE id = ? AND workspace_id = ?`,
+  ).bind(input.scheduleId, input.workspaceId).first<Pick<
+    DigestScheduleRow,
+    "id" | "workspace_id" | "user_id" | "enabled" | "execution_principal_json"
+  >>();
+  const identity = digest ? await workspaceRegionalDatabase(env).prepare(
+    `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
+       FROM users u JOIN workspaces w ON w.id = ?
+       JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = u.id AND m.status = 'active'
+      WHERE u.id = ?`,
+  ).bind(input.workspaceId, digest.user_id).first<Pick<
+    DigestScheduleRow,
+    "timezone" | "user_name" | "workspace_name"
+  >>() : null;
+  const schedule: DigestScheduleRow | null = digest && identity ? { ...digest, ...identity } : null;
   // A revoked membership or a deleted schedule is a decision, not a failure:
   // retrying would only reach the same answer.
   if (!schedule) return { started: false, reason: "unauthorized" };

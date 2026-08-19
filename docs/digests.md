@@ -31,9 +31,9 @@ mention, or changing what a connector can deliver to a person.
 `WorkspaceDO.workspace_connector_events` is provider ingest authority. It is
 keyed by connection-scoped provider identity and dedupe constraints, written
 before anyone has decided what an event means, and settled by its processing
-Workflow. It answers *what did GitHub tell this workspace*. Regional D1
-`activities` is only the bounded ingress/relational handoff and its event body
-is redacted after 24 hours; it is not a second source of provider history.
+Workflow. It answers *what did GitHub tell this workspace*. Legacy regional D1
+`activities` rows are maintenance import input and are scrubbed before cutover;
+live ingest writes no D1 event body.
 
 `WorkspaceDO.workspace_activity_events` answers a different question: *what happened in Avalon that
 this person should hear about*. An Avalon mention has no connection. A
@@ -218,8 +218,8 @@ Saving replaces everything: destinations are resolved and frozen *before*
 anything is written, so a destination that has gone away fails the request rather
 than leaving a schedule that fires into nowhere. A disabled digest keeps its
 configuration and loses its schedule rows, so re-enabling is a save rather than a
-rebuild. The workspace alarm is refreshed *after* the write — the Durable Object
-reads D1, so refreshing early would arm it from the rows the save just replaced.
+rebuild. The workspace alarm is refreshed *after* the write — the scheduler
+reads WorkspaceDO, so refreshing early would arm it from the rows the save just replaced.
 
 #### The run
 
@@ -379,6 +379,12 @@ Each destination settles independently and records its own
 not landed. The delivery is marked `delivered` only after every destination has
 settled. A destination the provider permanently rejects is moved to
 `needs_input` and surfaced on the digest rather than failing silently forever.
+Digest configuration, schedule rows, frozen targets, occurrence cursors, and
+per-target `last_delivered_delivery_id` fences all live in WorkspaceDO. The
+regional sender resolves current D1 member/user identity before sending; a
+future transport needing a multi-destination lease can use the object-local
+`external_delivery_attempts` ledger, but D1 is never a delivery-state projection
+or fallback.
 
 #### The email
 
@@ -519,7 +525,7 @@ cannot change a saved schedule, cursor, or settlement.
 - **Destinations are resolved and frozen before anything is written on save**, so a
   destination that has gone away fails the request rather than leaving a schedule
   that fires into nowhere. The workspace alarm is refreshed *after* the write,
-  because the Durable Object reads D1.
+  because the scheduler reads WorkspaceDO.
 - **A digest row is never deleted.** Switching one off keeps the row with
   `enabled = 0`, so absence unambiguously means "never had one" and the reconciler
   cannot resurrect it.
@@ -532,7 +538,7 @@ first consumer. It does not own:
 | For | Read |
 | --- | --- |
 | Which connector activity types are worth telling someone about | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
-| The WorkspaceDO connector-event authority, D1 handoff, Queue, and processing Workflow | [`connectors.md`](connectors.md) |
+| The WorkspaceDO connector-event authority, global route, Queue, and processing Workflow | [`connectors.md`](connectors.md) |
 | The agent loop a digest run rides on | [`agent-harness.md`](agent-harness.md) |
 | WorkspaceDO directory paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
 | The scheduler and its alarm | [`architecture.md`](architecture.md) |
@@ -603,6 +609,23 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-18 — Digest scheduling and delivery move beside the activity log
+
+**What changed:** Digest schedules/times/targets/deliveries, their canonical
+`schedules` rows, and external-delivery attempts now live in WorkspaceDO with
+the activity cursor they consume. WorkspaceScheduler reads those rows through
+typed RPC; the sender rechecks D1 identity but settles attempts in WorkspaceDO.
+
+**Why:** A digest and all of its state belong to one workspace. Keeping timing
+and delivery state in D1 split each occurrence across two authorities.
+
+**Considered and rejected:** D1 schedule/delivery projections and copying the
+activity cursor into D1. Either makes the control plane authoritative again.
+
+**Consequences:** Save-before-arm and idempotent occurrence semantics are
+unchanged, but their transaction boundary is local to WorkspaceDO. An object
+outage fails closed rather than reading or writing legacy D1 rows.
 
 ### 2026-08-18 — The first-party activity log moves into WorkspaceDO
 

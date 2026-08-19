@@ -138,8 +138,8 @@ export async function buildAttachmentDerivative(
 
 /**
  * Materializes a reusable text derivative after the caller has authorized the
- * resource. D1 owns the claim/current pointer; R2 objects become visible to
- * readers only after the final conditional row update succeeds.
+ * resource. WorkspaceDO owns the claim/current pointer; R2 objects become
+ * visible to readers only after the final conditional row update succeeds.
  */
 export async function materializeAttachmentDerivative(
   database: D1Database,
@@ -230,8 +230,9 @@ export async function materializeAttachmentDerivative(
   const contentBytes = new TextEncoder().encode(converted.text);
   const derivativeSha256 = await sha256Hex(contentBytes);
   // Register the unique generation key before the R2 write. A failed
-  // write, stale publisher, or failed D1 publication remains recoverable by the
-  // regional cleanup worker; a successful active pointer cancels the outbox row.
+  // write, stale publisher, or failed WorkspaceDO publication remains
+  // recoverable by the regional cleanup worker; a successful active pointer
+  // cancels the object-local outbox row.
   await database.prepare(
     `INSERT OR IGNORE INTO resource_object_deletion_outbox
       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)

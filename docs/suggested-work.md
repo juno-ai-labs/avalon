@@ -255,6 +255,10 @@ What the scheduler will not do:
 - **Rank more than the bounded per-alarm claim batch.** Each claimed member is a
   separate Workflow, and the next WorkspaceDO alarm continues from durable due
   rows rather than holding one regional cron invocation open.
+- **Turn an ambiguous terminal callback into a fence error.** Once a batch
+  window is `completed`, repeating either its final event mutation or settlement
+  is a successful no-op. A different lease against a nonterminal window still
+  fails, so Workflow redelivery cannot duplicate attempts or requeue evidence.
 
 One known defect remains:
 
@@ -316,6 +320,21 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-18 — Completed opportunity windows settle idempotently
+
+**What changed:** Duplicate event-mutation and window-settlement callbacks
+return success after completion; nonterminal lease mismatches remain fenced.
+
+**Why:** A Workflow may retry after the object committed but before the caller
+observed its response. Treating that ambiguity as a fresh failure can
+double-count attempts or create duplicate retry windows.
+
+**Considered and rejected:** Persisting every callback receipt separately and
+accepting a stale lease while a window is still processing.
+
+**Consequences:** Terminal retries converge without extra rows. Active work
+still requires the exact current lease.
 
 ### 2026-08-18 — Suggested work becomes WorkspaceDO-owned Workflow compute
 

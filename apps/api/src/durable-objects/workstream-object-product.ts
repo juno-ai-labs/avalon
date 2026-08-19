@@ -30,6 +30,10 @@ import { connectionFromRow } from "../mappers/connection";
 import { pinnedModelRouting, resolveAgentModelRouting } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
 import { memberSafeHarnessError } from "../services/workstream-service";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "../services/workspace-runtime-database";
 import type { WorkstreamObjectStore } from "./workstream-object-storage";
 
 type SqlRow = Record<string, SqlStorageValue>;
@@ -257,8 +261,8 @@ function userFromRow(row: UserRow) {
  *
  * Every method reads or mutates only this object's normalized SQL for product
  * state. Regional D1 is consulted only for current workspace membership,
- * profiles, workspace-owned resource descriptors, connector display data, and
- * other control-plane facts that are deliberately not copied into the object.
+ * profiles, and other control-plane facts. Workspace-owned resources,
+ * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
 export class WorkstreamObjectProductService {
   constructor(
@@ -266,6 +270,10 @@ export class WorkstreamObjectProductService {
     private readonly objectStore: WorkstreamObjectStore,
     private readonly env: Env,
   ) {}
+
+  private workspaceDatabase(workspaceId: string): D1Database {
+    return withWorkspaceRuntimeDatabase(this.env, workspaceId).DB;
+  }
 
   private root(): RootRow {
     const row = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
@@ -330,7 +338,8 @@ export class WorkstreamObjectProductService {
     if ((members.results ?? []).length !== memberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
-    const attachments = input.attachmentIds.length === 0 ? [] : (await this.env.DB.prepare(
+    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
+    const attachments = input.attachmentIds.length === 0 ? [] : (await workspaceDatabase.prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
               canonical_url, metadata_json, created_at, updated_at
          FROM resources WHERE workspace_id = ? AND uploaded_by_user_id = ?
@@ -341,7 +350,7 @@ export class WorkstreamObjectProductService {
     if (attachments.length !== input.attachmentIds.length) {
       throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
     }
-    const originResources = input.originResourceIds.length === 0 ? [] : (await this.env.DB.prepare(
+    const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceDatabase.prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
               canonical_url, metadata_json, created_at, updated_at
          FROM resources WHERE workspace_id = ?
@@ -367,6 +376,10 @@ export class WorkstreamObjectProductService {
         `SELECT run_id FROM runs WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
       ));
       if (!part || !run) throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
+      // The authoritative root and first run commit before projection effects
+      // are built. A retry repairs an effect-construction failure; unchanged
+      // snapshots are suppressed by projection_keys.
+      await this.enqueueDirectorySnapshot();
       return {
         workstream: await this.summary(existingRoot, auth.userId),
         messageId: part.id,
@@ -599,11 +612,12 @@ export class WorkstreamObjectProductService {
       ?? (latest > attention.seen_attention_ordinal
         ? Math.min(latest, attention.seen_attention_ordinal + 1)
         : null);
-    const pin = await this.env.DB.prepare(
-      `SELECT position FROM workstream_pins WHERE workstream_id = ? AND user_id = ?`,
+    const workspaceDatabase = this.workspaceDatabase(root.parent_workspace_key);
+    const pin = await workspaceDatabase.prepare(
+      `SELECT position FROM workspace_workstream_pins WHERE workstream_id = ? AND user_id = ?`,
     ).bind(root.workstream_key, userId).first<{ position: number }>();
     const subscription = root.automation_subscription_id
-      ? await this.env.DB.prepare(
+      ? await workspaceDatabase.prepare(
         `SELECT template.name AS name
            FROM automation_subscriptions subscription
            JOIN automation_templates template ON template.id = subscription.template_id
@@ -1083,8 +1097,9 @@ export class WorkstreamObjectProductService {
   private async messageResources(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>> {
     if (ids.length === 0) return new Map();
     const workspaceId = this.root().parent_workspace_key;
-    const results = await this.env.DB.batch<Record<string, unknown>>(chunks(ids, D1_ID_CHUNK_SIZE - 1)
-      .map((chunk) => this.env.DB.prepare(
+    const database = this.workspaceDatabase(workspaceId);
+    const results = await database.batch<Record<string, unknown>>(chunks(ids, D1_ID_CHUNK_SIZE - 1)
+      .map((chunk) => database.prepare(
         `SELECT id, title, mime_type, metadata_json, content_ref, created_at
            FROM resources WHERE workspace_id = ? AND id IN (${chunk.map(() => "?").join(",")})`,
       ).bind(workspaceId, ...chunk)));
@@ -1129,7 +1144,7 @@ export class WorkstreamObjectProductService {
     ).toArray();
     if (links.length === 0) return [];
     const placeholders = links.map(() => "?").join(",");
-    const rows = await this.env.DB.prepare(
+    const rows = await this.workspaceDatabase(this.root().parent_workspace_key).prepare(
       `SELECT resource.*,
               CASE WHEN watch.id IS NULL THEN 0 ELSE 1 END AS active_watch
          FROM resources resource
@@ -1174,15 +1189,26 @@ export class WorkstreamObjectProductService {
   }
 
   private async connections(viewerUserId: string): Promise<WorkstreamDetail["connections"]> {
-    const result = await this.env.DB.prepare(
-      `SELECT connection.*, owner.name AS owner_name
+    const workspaceId = this.root().parent_workspace_key;
+    const result = await this.workspaceDatabase(workspaceId).prepare(
+      `SELECT connection.*
          FROM connector_connections connection
-         LEFT JOIN users owner ON owner.id = connection.owner_user_id
         WHERE connection.workspace_id = ?
           AND (connection.scope = 'workspace' OR connection.owner_user_id = ?)
         ORDER BY connection.display_name`,
-    ).bind(this.root().parent_workspace_key, viewerUserId).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => connectionFromRow(row));
+    ).bind(workspaceId, viewerUserId).all<Record<string, unknown>>();
+    const ownerIds = [...new Set(result.results.flatMap((row) =>
+      typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
+    const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
+    ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
+    const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
+    return (result.results ?? []).map((row) => connectionFromRow({
+      ...row,
+      owner_name: typeof row.owner_user_id === "string"
+        ? ownerNames.get(row.owner_user_id) ?? null
+        : null,
+    }));
   }
 
   async addParticipant(
@@ -1245,7 +1271,7 @@ export class WorkstreamObjectProductService {
 
   async attachResource(auth: AuthContext, resourceId: string): Promise<Resource> {
     await this.authorize(auth);
-    const resource = await this.env.DB.prepare(
+    const resource = await this.workspaceDatabase(auth.workspaceId).prepare(
       `SELECT resource.*, connection.scope AS connection_scope,
               connection.owner_user_id, note.scope AS note_scope
          FROM resources resource
@@ -1295,7 +1321,7 @@ export class WorkstreamObjectProductService {
     return ResourceSchema.parse(attached);
   }
 
-  /** Attach a resource already durably created by this run in regional D1. */
+  /** Attach a resource already durably created by this run in WorkspaceDO. */
   async attachRuntimeResource(
     workspaceId: string,
     resourceId: string,
@@ -1306,7 +1332,7 @@ export class WorkstreamObjectProductService {
     if (root.parent_workspace_key !== workspaceId) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
     }
-    const resource = await this.env.DB.prepare(
+    const resource = await this.workspaceDatabase(workspaceId).prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
               mime_type, content_ref, canonical_url, metadata_json
          FROM resources WHERE id = ? AND workspace_id = ?`,
@@ -1595,19 +1621,18 @@ export class WorkstreamObjectProductService {
     activityId: string,
     workspaceId: string,
   ): Promise<{ id: string; descriptor: Record<string, unknown> } | null> {
-    const row = await this.env.DB.prepare(
+    const row = await this.workspaceDatabase(workspaceId).prepare(
       `SELECT resource.id, resource.connection_id, resource.resource_type,
               resource.provider, resource.provider_resource_id, resource.title,
               resource.mime_type, resource.content_ref, resource.canonical_url,
               resource.metadata_json
-         FROM activities activity
+         FROM workspace_connector_events activity
          JOIN resources resource
-           ON resource.workspace_id = activity.workspace_id
-          AND resource.provider = activity.provider
+           ON resource.provider = activity.provider
           AND resource.provider_resource_id = activity.provider_resource_id
           AND (resource.connection_id = activity.connection_id
                OR (resource.connection_id IS NULL AND activity.connection_id IS NULL))
-        WHERE activity.id = ? AND activity.workspace_id = ? LIMIT 1`,
+        WHERE activity.event_id = ? AND resource.workspace_id = ? LIMIT 1`,
     ).bind(activityId, workspaceId).first<Record<string, unknown>>();
     if (!row) return null;
     return {
@@ -1876,7 +1901,9 @@ export class WorkstreamObjectProductService {
       });
     }
     const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
-    const attachmentRows = input.attachmentIds.length === 0 ? [] : (await this.env.DB.prepare(
+    const attachmentRows = input.attachmentIds.length === 0 ? [] : (await this.workspaceDatabase(
+      auth.workspaceId,
+    ).prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
               canonical_url, metadata_json, created_at, updated_at
          FROM resources

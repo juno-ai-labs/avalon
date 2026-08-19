@@ -97,7 +97,10 @@ new work stream. The received message is its explicit opening input and attached
 resource, labelled as untrusted external data before it reaches the model. A
 provider retry uses the Resend email ID as the idempotency key, so it resolves to
 the same work stream and run. Regional receipt rows use reclaimable processing
-leases so an interrupted delivery can continue after the lease expires.
+leases so an interrupted delivery can continue after the lease expires. The
+automation receipt, rate window and resulting product state are WorkspaceDO
+rows; the Global address registry remains only the opaque address-to-region/
+workspace/owner route needed before the regional object can be selected.
 
 For a personal automation, the normalized From mailbox must match its owner. For a
 workspace automation, it must match an active workspace member. This check is
@@ -129,6 +132,12 @@ idempotency on the delivery target and the run's work stream, and the target rec
 the work stream it last received so a workflow retry cannot mail the same result
 twice. Empty results and the "nothing qualified" phrasings suppressed for Slack are
 suppressed for email too.
+
+`automation_delivery_targets`, its per-run last-delivery fence, and email
+receipts live in WorkspaceDO. The regional sender uses a stable provider
+idempotency key and settles the target there. Delivery paths that need a
+multi-destination lease may use the object-local `external_delivery_attempts`
+ledger; D1 does not retain an outbound payload or delivery-state projection.
 
 ### The frozen v1 vocabulary
 
@@ -326,8 +335,20 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the format and the registry — beyond the reasons already written inline — was not
-recorded here and was not reconstructed. The next substantial change to the address
-scheme starts the record, and that entry is that change, written in full.
+### 2026-08-18 — Regional email product state moves into WorkspaceDO
+
+**What changed:** Automation email receipts/rate windows, frozen outbound
+targets, and external-delivery attempts are WorkspaceDO rows. The permanent
+Global address registry remains an opaque pre-workspace routing/tombstone plane.
+
+**Why:** The delivery lifecycle belongs to one workspace, while the friendly
+address namespace must be globally unique before a regional object can be
+resolved.
+
+**Considered and rejected:** Moving the global address registry into a regional
+object and retaining outbound delivery projections in D1. The former breaks
+global uniqueness; the latter recreates split product authority.
+
+**Consequences:** Global D1 still resolves an inbound address, but regional
+idempotency, leases, payload hashes and provider receipts live with the owning
+automation/digest/notification state in WorkspaceDO.

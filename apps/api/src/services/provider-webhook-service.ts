@@ -35,6 +35,8 @@ import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { enqueueWorkspaceConnectorEvent } from "./workspace-connector-event-ingress";
 
 export type ProviderWebhookRawBody = string | Uint8Array | ArrayBuffer;
 export type ProviderWebhookHeaders = Headers | HeadersInit;
@@ -524,40 +526,112 @@ export class ProviderWebhookService {
     );
 
     const activityIds = normalized.map(() => newId());
-    const activityStatements = normalized.map(({ activity }, index) =>
+    const legacyRegionalAuthority = !this.env.WORKSPACE_DOS;
+    const activityStatements = legacyRegionalAuthority ? normalized.map(({ activity }, index) =>
       this.activityInsertStatement(
         activityIds[index]!,
         activity,
         input.provider,
         input.deliveryId,
         payloadRef,
-      ));
-    const lifecycleStatements = lifecycleUpdates.map((update) =>
-      this.lifecycleUpdateStatement(
-        input.provider,
-        input.deliveryId,
-        payloadRef,
-        update,
-      ));
-    const resourceStatements = discoveredResources.map(({ connection, resources }) =>
-      this.resourceUpsertStatement(
-        connection,
-        resources,
-        input.provider,
-        input.deliveryId,
-        input.eventType,
-        payloadRef,
-      ));
+      )) : [];
+    const legacyLifecycleStatements = legacyRegionalAuthority
+      ? lifecycleUpdates.map((update) => this.lifecycleUpdateStatement(
+          this.env.DB,
+          input.provider,
+          update,
+          input.deliveryId,
+          payloadRef,
+        ))
+      : [];
+    const legacyResourceStatements = legacyRegionalAuthority
+      ? discoveredResources.map(({ connection, resources }) => this.resourceUpsertStatement(
+          this.env.DB,
+          connection,
+          resources,
+          input.provider,
+          input.deliveryId,
+          input.eventType,
+          payloadRef,
+        ))
+      : [];
     const results = await this.env.DB.batch([
       receipt,
       ...activityStatements,
-      ...lifecycleStatements,
-      ...resourceStatements,
+      ...legacyLifecycleStatements,
+      ...legacyResourceStatements,
     ]);
     const duplicate = resultChanges(results[0]) === 0;
+    const existingWorkspaceReceipt = !legacyRegionalAuthority && duplicate
+      ? await this.loadReceipt(input.provider, input.deliveryId)
+      : null;
+    if (existingWorkspaceReceipt) {
+      this.assertMatchingReceipt(existingWorkspaceReceipt, input.eventType, payloadRef);
+    }
     const insertedActivityIds = activityIds.filter(
       (_id, index) => resultChanges(results[index + 1]) > 0,
     );
+    if (!legacyRegionalAuthority) {
+      // A null receipt is new; a pending duplicate repairs a crash after the
+      // global receipt commit. An already processed duplicate must not replay
+      // an older lifecycle update over a newer connector state.
+      const shouldApplyWorkspaceEffects = !duplicate
+        || existingWorkspaceReceipt?.processed_at === null;
+      if (shouldApplyWorkspaceEffects) {
+        for (const { connection, resources } of discoveredResources) {
+          const workspaceDatabase = withWorkspaceRuntimeDatabase(
+            this.env,
+            connection.workspaceId,
+          ).DB;
+          await this.resourceUpsertStatement(
+            workspaceDatabase,
+            connection,
+            resources,
+            input.provider,
+            input.deliveryId,
+            input.eventType,
+          ).run();
+        }
+        const connectionWorkspace = new Map(connections.map((connection) => [
+          connection.id,
+          connection.workspaceId,
+        ]));
+        for (const update of lifecycleUpdates) {
+          const workspaceId = connectionWorkspace.get(update.connectionId);
+          if (!workspaceId) continue;
+          await this.lifecycleUpdateStatement(
+            withWorkspaceRuntimeDatabase(this.env, workspaceId).DB,
+            input.provider,
+            update,
+          ).run();
+        }
+      }
+    }
+
+    if (!legacyRegionalAuthority) {
+      const queueActivities = existingWorkspaceReceipt?.processed_at
+        ? []
+        : normalized.map(({ activity }, index) => ({
+            connectorType: input.provider,
+            activity: { id: activityIds[index]!, ...activity },
+          }));
+      await this.finishWorkspaceReceipt(
+        input.provider,
+        input.deliveryId,
+        payloadRef,
+        queueActivities,
+      );
+      await this.publishWorkspaceChanges(matchedWorkspaceIds, [
+        "connector_connections",
+        "resources",
+        "activity",
+      ]);
+      return {
+        accepted: true,
+        duplicate,
+        activityCount: duplicate ? 0 : normalized.length,
+      };
+    }
 
     let queueActivities = insertedActivityIds.map((activityId) => ({
       activityId,
@@ -639,6 +713,46 @@ export class ProviderWebhookService {
         JSON.stringify({
           code: "activity_enqueue_failed",
           message: "Canonical webhook activities could not be enqueued",
+        }),
+        provider,
+        deliveryId,
+        payloadRef,
+      ).run();
+      throw new ConnectorError(
+        "provider_error",
+        "The webhook was stored but could not be queued for processing",
+        error,
+      );
+    }
+
+    await this.env.DB.prepare(
+      `UPDATE provider_webhook_receipts
+       SET processed_at = COALESCE(processed_at, ?), error_json = NULL
+       WHERE provider = ? AND delivery_id = ? AND payload_ref = ?`,
+    ).bind(nowIso(), provider, deliveryId, payloadRef).run();
+  }
+
+  private async finishWorkspaceReceipt(
+    provider: Provider,
+    deliveryId: string,
+    payloadRef: string,
+    queueActivities: Array<{
+      connectorType: string;
+      activity: NormalizedActivity;
+    }>,
+  ): Promise<void> {
+    try {
+      for (const activity of queueActivities) {
+        await enqueueWorkspaceConnectorEvent(this.env, activity);
+      }
+    } catch (error) {
+      await this.env.DB.prepare(
+        `UPDATE provider_webhook_receipts SET error_json = ?
+         WHERE provider = ? AND delivery_id = ? AND payload_ref = ?`,
+      ).bind(
+        JSON.stringify({
+          code: "activity_enqueue_failed",
+          message: "Workspace connector events could not be enqueued",
         }),
         provider,
         deliveryId,
@@ -766,12 +880,13 @@ export class ProviderWebhookService {
   }
 
   private resourceUpsertStatement(
+    database: D1Database,
     connection: ConnectorConnectionContext,
     resources: GitHubWebhookResourceHint[],
     provider: Provider,
     deliveryId: string,
     eventType: string,
-    payloadRef: string,
+    receiptPayloadRef?: string,
   ): D1PreparedStatement {
     const at = nowIso();
     const rows = resources.map((resource) => ({
@@ -786,7 +901,12 @@ export class ProviderWebhookService {
         discoveredDeliveryId: deliveryId,
       }),
     }));
-    return this.env.DB.prepare(
+    const receiptFence = receiptPayloadRef === undefined ? "" : `WHERE EXISTS (
+         SELECT 1 FROM provider_webhook_receipts
+          WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
+            AND processed_at IS NULL
+       )`;
+    return database.prepare(
       `INSERT INTO resources
        (id, workspace_id, connection_id, resource_type, provider,
         provider_resource_id, title, canonical_url, metadata_json,
@@ -799,11 +919,7 @@ export class ProviderWebhookService {
          json_extract(value, '$.canonicalUrl'),
          json_extract(value, '$.metadataJson'), ?, ?
        FROM json_each(?)
-       WHERE EXISTS (
-         SELECT 1 FROM provider_webhook_receipts
-         WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
-           AND processed_at IS NULL
-       )
+       ${receiptFence}
        ON CONFLICT(workspace_id, connection_id, provider, provider_resource_id)
        WHERE connection_id IS NOT NULL AND provider_resource_id IS NOT NULL
        DO UPDATE SET
@@ -819,36 +935,38 @@ export class ProviderWebhookService {
       at,
       at,
       JSON.stringify(rows),
-      provider,
-      deliveryId,
-      payloadRef,
+      ...(receiptPayloadRef === undefined ? [] : [provider, deliveryId, receiptPayloadRef]),
     );
   }
 
   private lifecycleUpdateStatement(
+    database: D1Database,
     provider: Provider,
-    deliveryId: string,
-    payloadRef: string,
     update: LifecycleUpdate,
+    deliveryId?: string,
+    receiptPayloadRef?: string,
   ): D1PreparedStatement {
-    return this.env.DB.prepare(
+    const receiptFence = deliveryId === undefined || receiptPayloadRef === undefined
+      ? ""
+      : `AND EXISTS (
+           SELECT 1 FROM provider_webhook_receipts
+            WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
+              AND processed_at IS NULL
+         )`;
+    return database.prepare(
       `UPDATE connector_connections
        SET status = ?, error_json = ?, updated_at = ?
        WHERE id = ? AND connector_type = ?
-         AND EXISTS (
-           SELECT 1 FROM provider_webhook_receipts
-           WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
-             AND processed_at IS NULL
-         )`,
+       ${receiptFence}`,
     ).bind(
       update.status,
       update.error === null ? null : JSON.stringify(update.error),
       nowIso(),
       update.connectionId,
       provider,
-      provider,
-      deliveryId,
-      payloadRef,
+      ...(deliveryId === undefined || receiptPayloadRef === undefined
+        ? []
+        : [provider, deliveryId, receiptPayloadRef]),
     );
   }
 
@@ -884,32 +1002,90 @@ export class ProviderWebhookService {
     if (provider === "notion" && (!routingAccountIds || routingAccountIds.length === 0)) {
       return [];
     }
-    // One clause, and no parameter selecting between two. The old
-    // `includeRecoverable` split let some inbound deliveries reach a connection
-    // this row believed was broken while others could not, which made whether a
-    // provider's event was processed depend on a belief rather than on the
-    // event. A webhook is a request Avalon can usually answer, so it is
-    // answered; `disabled` is the person's decision and stays excluded.
-    const statusClause = "status <> 'disabled'";
+    if (!this.env.WORKSPACE_DOS) {
+      return this.loadLegacyMatchingConnections(
+        provider,
+        accountId,
+        routingAccountIds,
+        routingUserId,
+      );
+    }
+    const routeQuery = provider === "notion"
+      ? `SELECT connection_id, workspace_id FROM connector_ingress_routes
+          WHERE region = ? AND connector_type = 'notion' AND scope = 'workspace'
+            AND status = 'active'
+            AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})`
+      : provider === "github" && accountId === null
+        ? `SELECT connection_id, workspace_id FROM connector_ingress_routes
+            WHERE region = ? AND connector_type = 'github' AND scope = 'personal'
+              AND status = 'active' AND provider_user_id = ?`
+      : provider === "linear" && routingUserId
+        ? `SELECT connection_id, workspace_id FROM connector_ingress_routes
+            WHERE region = ? AND connector_type = 'linear' AND scope = 'personal'
+              AND status = 'active' AND provider_account_id = ? AND provider_user_id = ?`
+      : `SELECT connection_id, workspace_id FROM connector_ingress_routes
+          WHERE region = ? AND connector_type = ? AND provider_account_id = ?
+            AND status = 'active'`;
+    const routeStatement = this.env.DB.prepare(routeQuery);
+    const routes = provider === "notion"
+      ? await routeStatement.bind(this.env.AVALON_REGION, ...routingAccountIds!).all<{
+          connection_id: string; workspace_id: string;
+        }>()
+      : provider === "github" && accountId === null
+        ? await routeStatement.bind(this.env.AVALON_REGION, routingUserId!).all<{
+            connection_id: string; workspace_id: string;
+          }>()
+      : provider === "linear" && routingUserId
+        ? await routeStatement.bind(this.env.AVALON_REGION, accountId, routingUserId).all<{
+            connection_id: string; workspace_id: string;
+          }>()
+      : await routeStatement.bind(this.env.AVALON_REGION, provider, accountId).all<{
+          connection_id: string; workspace_id: string;
+        }>();
+    const byWorkspace = new Map<string, string[]>();
+    for (const route of routes.results) {
+      byWorkspace.set(route.workspace_id, [
+        ...(byWorkspace.get(route.workspace_id) ?? []),
+        route.connection_id,
+      ]);
+    }
+    const rows = (await Promise.all([...byWorkspace].map(async ([workspaceId, connectionIds]) => {
+      const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, workspaceId);
+      return (await workspaceEnv.DB.prepare(
+        `SELECT * FROM connector_connections
+          WHERE workspace_id = ? AND connector_type = ? AND status <> 'disabled'
+            AND id IN (${connectionIds.map(() => "?").join(",")})`,
+      ).bind(workspaceId, provider, ...connectionIds).all<StoredProviderConnection>()).results;
+    }))).flat();
+    return Promise.all(rows.map((row) => this.connectionContext(row)));
+  }
+
+  /** Pre-cutover/test path while connector rows still share the regional database. */
+  private async loadLegacyMatchingConnections(
+    provider: Provider,
+    accountId: string | null,
+    routingAccountIds: string[] | undefined,
+    routingUserId: string | undefined,
+  ): Promise<ConnectorConnectionContext[]> {
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
-         WHERE connector_type = 'notion' AND scope = 'workspace'
-           AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})
-           AND ${statusClause}`
+          WHERE connector_type = 'notion' AND scope = 'workspace'
+            AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})
+            AND status <> 'disabled'`
       : provider === "github" && accountId === null
         ? `SELECT * FROM connector_connections
-           WHERE connector_type = 'github' AND scope = 'personal'
-             AND CAST(json_extract(config_json, '$.githubUserId') AS TEXT) = ?
-             AND ${statusClause}`
+            WHERE connector_type = 'github' AND scope = 'personal'
+              AND CAST(json_extract(config_json, '$.githubUserId') AS TEXT) = ?
+              AND status <> 'disabled'`
       : provider === "linear" && routingUserId
         ? `SELECT * FROM connector_connections
-           WHERE connector_type = 'linear' AND scope = 'personal'
-             AND provider_account_id = ?
-             AND CAST(json_extract(config_json, '$.providerUserId') AS TEXT) = ?
-             AND ${statusClause}`
+            WHERE connector_type = 'linear' AND scope = 'personal'
+              AND provider_account_id = ?
+              AND CAST(json_extract(config_json, '$.providerUserId') AS TEXT) = ?
+              AND status <> 'disabled'`
       : `SELECT * FROM connector_connections
-         WHERE connector_type = ? AND provider_account_id = ?
-           AND ${statusClause}`;
+          WHERE connector_type = ? AND provider_account_id = ?
+            AND status <> 'disabled'`;
     const statement = this.env.DB.prepare(query);
     const rows = provider === "notion"
       ? await statement.bind(...routingAccountIds!).all<StoredProviderConnection>()
@@ -918,7 +1094,7 @@ export class ProviderWebhookService {
       : provider === "linear" && routingUserId
         ? await statement.bind(accountId, routingUserId).all<StoredProviderConnection>()
       : await statement.bind(provider, accountId).all<StoredProviderConnection>();
-    return Promise.all((rows.results ?? []).map((row) => this.connectionContext(row)));
+    return Promise.all(rows.results.map((row) => this.connectionContext(row)));
   }
 
   private async connectionContext(
@@ -986,7 +1162,7 @@ export class ProviderWebhookService {
         if (hasAccess) accepted.push(connection);
       } catch (error) {
         if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
-        await this.env.DB.prepare(
+        await withWorkspaceRuntimeDatabase(this.env, connection.workspaceId).DB.prepare(
           `UPDATE connector_connections
            SET status = 'needs_reconnect', error_json = ?, updated_at = ?
            WHERE id = ? AND connector_type = 'github' AND status = 'healthy'`,
@@ -1038,7 +1214,7 @@ export class ProviderWebhookService {
           return hasAccess ? connection : null;
         } catch (error) {
           if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
-          await this.env.DB.prepare(
+          await withWorkspaceRuntimeDatabase(this.env, connection.workspaceId).DB.prepare(
             `UPDATE connector_connections
              SET status = 'needs_reconnect', error_json = ?, updated_at = ?
              WHERE id = ? AND connector_type = 'linear' AND status = 'healthy'`,
@@ -1066,7 +1242,7 @@ export class ProviderWebhookService {
       this.env.CONNECTOR_CREDENTIALS_KEY,
       connection.id,
     );
-    await this.env.DB.prepare(
+    await withWorkspaceRuntimeDatabase(this.env, connection.workspaceId).DB.prepare(
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            updated_at = ?

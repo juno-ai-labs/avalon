@@ -21,6 +21,7 @@ import {
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
  * Rewrite Slack unfurl cards whose work stream has changed status since the
@@ -79,7 +80,9 @@ interface SlackUnfurlConnection {
 
 const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).loose();
 
-export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
+export async function refreshSlackWorkstreamUnfurls(env: Env, workspaceId?: string): Promise<void> {
+  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("slack_unfurl_workspace_required");
+  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const since = new Date(Date.now() - REFRESH_WINDOW_DAYS * 86_400_000).toISOString();
   const audienceCutoff = new Date(Date.now() - AUDIENCE_REVALIDATION_HOURS * 3_600_000).toISOString();
   // Three independent reasons to look at a card, none of which subsumes the
@@ -206,15 +209,30 @@ async function loadDurableObjectStaleUnfurls(
       }
     }
   }
-  const stale: Record<string, unknown>[] = (links.results ?? []).flatMap((link) => {
+  const checkedAt = nowIso();
+  const stale: Record<string, unknown>[] = [];
+  for (const link of links.results ?? []) {
     const item = directory.get(`${String(link.workspace_id)}:${String(link.workstream_id)}`);
-    if (!item || item.archived_at !== null) return [];
+    if (!item || item.archived_at !== null) continue;
     const changed = item.harness_status !== link.rendered_status
       || String(item.updated_at) > String(link.refreshed_at)
       || String(link.audience_checked_at) < audienceCutoff
       || link.rendered_hash === null;
-    return changed ? [{ ...link, ...item, ordered_activity_at: item.last_activity_at }] : [];
-  });
+    if (changed) {
+      stale.push({ ...link, ...item, ordered_activity_at: item.last_activity_at });
+      continue;
+    }
+    await env.DB.prepare(
+      `UPDATE slack_unfurled_links SET refreshed_at = ?
+        WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
+    ).bind(
+      checkedAt,
+      link.connection_id,
+      link.slack_channel_id,
+      link.slack_message_ts,
+      link.url,
+    ).run();
+  }
   const perConnection = new Map<string, number>();
   return stale.sort((left, right) => (
     String(right.ordered_activity_at).localeCompare(String(left.ordered_activity_at))

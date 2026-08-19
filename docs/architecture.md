@@ -115,9 +115,12 @@ flowchart LR
   T --> M["Signed webhook"]
 ```
 
-Authority follows the data boundary. Regional D1 owns workspace, membership,
-connector, automation, routing, schedule, activity-ingestion, and cross-work-stream
-projection state. After cutover, `SubstreamAgent` SQLite owns substream product
+Authority follows the data boundary. Regional D1 is the thin identity/routing
+plane: workspace/member/user identity, opaque connector/object routes,
+migration controls, and bounded operational audit/telemetry. WorkspaceDO owns
+workspace connector/product state, Terminal policy, automation/digest/schedule,
+resources/notes/memory/R2 references, external delivery, activity, discovery,
+and cross-work-stream query state. After cutover, `SubstreamAgent` SQLite owns substream product
 state and the full conversation agent loop; each `BlockDashboardAgent` owns
 one derived block's execution lifecycle; `WorkstreamDO` owns aggregate metadata,
 HyperSight configuration/published results, and its outboxes. Large activity
@@ -237,11 +240,9 @@ SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
 serves work-stream product rows;
 afterward each child owns its ordered parts, runs/tools, compaction, timers,
 suggestions, and Terminal state, while its parent aggregates common/user
-metadata and `WorkspaceDO` owns the authoritative cross-work-stream directory,
-viewer overlays, pins, resource inverted index, and suggestion-feedback index.
-D1 retains identity/membership, regional routing/migration, external delivery,
-and relational workspace modules that have not moved behind a DO; it has no
-rebuildable work-stream serving projections. The normalized schemas, fleet import, and authority states are in
+metadata and `WorkspaceDO` owns the authoritative workspace product database.
+D1 retains identity/membership, regional routing/migration, and operational
+records; it has no rebuildable workspace/work-stream serving projections. The normalized schemas, fleet import, and authority states are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
 `WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
@@ -273,14 +274,13 @@ waterline and UUIDv7 identity, and owns the sole parent outbox. The direct
 WorkstreamDO socket can publish that committed row immediately. Its alarm sends
 an opaque Queue wake-up for every directory, viewer, resource-link,
 suggestion-feedback, activity-log, and mention-delivery effect. The regional
-consumer fetches the payload from WorkstreamDO, then either RPCs the named
-WorkspaceDO or commits the minimal D1 activity/notification-intent transaction.
+consumer fetches the payload from WorkstreamDO and RPCs the named WorkspaceDO.
 WorkspaceDO rejects stale/duplicate per-key waterlines, persists the current
 row with the same UUIDv7 for the affected common or viewer field, and publishes
 it on the workspace socket before the
-consumer acknowledges the source object. D1
-resolves current membership, profile, Slack, and email state, while mention
-delivery asks WorkspaceDO for the causally required viewer version so Queue
+consumer acknowledges the source object. D1 resolves current membership and
+profile identity; WorkspaceDO resolves Slack/email destinations and mention
+delivery's causally required viewer version so Queue
 reordering cannot outrun a removal. The
 object therefore owns the fact that a mention or state change occurred without
 acquiring workspace credentials, placing product text in Queue storage, or
@@ -388,7 +388,7 @@ plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
 one private Daytona sandbox for that work stream. The owning `SubstreamAgent` is the
 authority for generation, mutation leases, tasks, retention, resource links,
-and GitHub publication receipts; regional D1 owns workspace egress policy,
+and GitHub publication receipts; WorkspaceDO owns workspace egress policy,
 connector authority, and resource metadata. The provider supplies isolation and process/
 filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
@@ -456,9 +456,9 @@ and non-blocking aggregate point; neither is canonical sandbox state.
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
 the model — derives the searchable scope union from the frozen execution principal
-and run origin. D1 FTS5 and the regional Vectorize index are searched
+and run origin. WorkspaceDO FTS5 and the regional Vectorize index are searched
 concurrently, merged with reciprocal-rank fusion, and rechecked against canonical
-D1 authorization, revision, expiry, and invalidation state. Admission freezes
+WorkspaceDO revision, expiry, and invalidation state plus current D1 membership. Admission freezes
 recalled items and their context hash for retries. Memory writes use receipt
 replay, revision compare-and-swap, append-only mutation records, and a
 transactional indexing outbox; lexical search remains available while embeddings
@@ -475,8 +475,8 @@ template holds reusable behavior; a subscription pins a version and owns scope,
 execution principal, connector bindings, overrides, and schedule state.
 
 One WorkspaceScheduler Durable Object per workspace maintains one alarm for the
-earliest due item. D1 uniqueness constraints are authoritative under repeated
-alarms. It starts generic workflow instances rather than deploying per-automation
+earliest due item. WorkspaceDO uniqueness constraints are authoritative under
+repeated alarms. It starts generic workflow instances rather than deploying per-automation
 code. A planned run and its work stream are reused when the scheduled instant
 arrives.
 
@@ -534,23 +534,26 @@ produces `drive.file_changed`, `docs.document_changed`, or
 implementation; Avalon watches operate after a polled activity has been
 normalized.
 
-Normalized activities store compact metadata in D1 and opaque payload references
-to R2. Provider objects discovered from events are upserted as durable regional
-resources; attaching one to a work stream does not copy provider content, and
-hydration remains capability-checked through its originating connection. Queue
-messages contain only IDs and routing metadata. Deterministic trigger/watch checks
+Normalized events are committed to their one owning WorkspaceDO before a
+Workflow processes them; the regional Queue carries a bounded normalized event
+plus its workspace route/hash, while R2 holds large/raw provider bytes. Provider
+objects discovered from events are upserted as
+WorkspaceDO resources; attaching one to a work stream does not copy provider content, and
+hydration remains capability-checked through its originating connection.
+Deterministic trigger/watch checks
 precede any LLM classification.
 
 ## Invariants
 
 - **Authority follows the declared storage boundary.** Regional D1 owns
-  membership/identity, connector/automation/activity modules, routing,
-  migration, external delivery, schedule, and audit state. `WorkspaceDO` owns
-  cross-work-stream serving indexes. After a work-stream generation opens, each
+  membership/identity, opaque ingress/object routing, migration, and operational
+  audit/telemetry. `WorkspaceDO` owns workspace-scoped connector, Terminal
+  policy, automation, digest/schedule, resource/note/memory/R2-reference,
+  activity/discovery, directory, and external-delivery state. After a work-stream generation opens, each
   `SubstreamAgent` owns its substream product state, the model-free
   `WorkstreamDO` owns aggregate metadata/outbox, and legacy D1 product and pin
-  writers fail. R2 holds large payloads; the authority that names
-  each reference stays in the owning regional database.
+  writers fail. R2 holds large payloads; the authority that names each
+  workspace reference stays in the owning WorkspaceDO database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
   Workflow params and step results, Durable Object fetches and their stored state,
@@ -730,6 +733,35 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-18 — D1 becomes a thin identity and routing plane
+
+**What changed:** WorkspaceDO now owns all workspace-scoped product domains:
+connector credentials/connection-scoped replay receipts/OAuth attempt status/local
+handoff, Terminal egress policy history,
+automations, digests/schedules, resources/notes/watches and R2 lifecycle refs,
+memory, activity/discovery, notification intents, and external delivery
+state. Services keep their repository contracts through a typed
+WorkspaceDO SQL port; mixed WorkspaceDO/D1 or WorkspaceDO/SubstreamAgent
+transactions are rejected. WorkspaceScheduler reads due work from WorkspaceDO.
+
+**Why:** Every moved record has one workspace owner. Leaving those records in
+D1 preserved a second product database and forced agent/workflow paths to cross
+authority boundaries for data that can be joined transactionally inside the
+workspace object.
+
+**Considered and rejected:** D1 serving projections, per-domain Durable
+Objects, and dual writes. The maintenance window permits direct cutover, and one
+WorkspaceDO provides the required relational boundary without adding
+distributed joins. Connector Queue messages deliberately contain the bounded
+normalized event because the ID-only alternative needs a D1 event-body relay;
+large/raw provider bytes remain in R2.
+
+**Consequences:** D1 remains on authorization and pre-workspace routing paths,
+not product serving paths. Connector ingress uses global routing -> regional
+Queue -> WorkspaceDO -> Workflow. R2 stores bytes while WorkspaceDO stores the
+only authoritative pointers and deletion intents. Terminal paths explicitly
+split child provenance from workspace resource/policy reads.
 
 ### 2026-08-18 — Work-stream state uses Queue plus dual-socket waterlines
 

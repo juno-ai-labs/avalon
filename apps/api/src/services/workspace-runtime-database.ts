@@ -1,0 +1,285 @@
+import { z } from "zod";
+
+import { workspaceDOName } from "../durable-objects/names";
+import { rpcResultBody } from "../durable-objects/rpc-result";
+import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
+import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
+
+type RuntimeValue = string | number | null;
+
+const REGIONAL_DATABASE = Symbol("workspace-regional-database");
+
+interface BoundStatement {
+  sql: string;
+  params: RuntimeValue[];
+  local: boolean;
+}
+
+type LocalStatementExecutor = (
+  statements: Array<{ sql: string; params: RuntimeValue[] }>,
+) => Promise<WorkspaceRuntimeSqlResult[]>;
+
+const responseSchema = z.object({
+  results: z.array(z.object({
+    columns: z.array(z.string()),
+    rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))),
+    changes: z.number().int().nonnegative(),
+  })),
+});
+
+/** Tables whose only live authority is the WorkspaceDO SQLite database. */
+export const WORKSPACE_LOCAL_TABLES = [
+  "connector_connections",
+  "webhook_receipts",
+  "connector_oauth_attempts",
+  "external_user_identities",
+  "workspace_connector_events",
+  "workspace_connector_event_ingress_receipts",
+  "automation_templates",
+  "automation_template_versions",
+  "slack_agent_policies",
+  "slack_agent_channel_allowlist",
+  "slack_delivery_preferences",
+  "slack_user_links",
+  "slack_agent_contexts",
+  "slack_agent_feedback",
+  "slack_agent_sessions",
+  "slack_agent_thread_claims",
+  "slack_ingress_jobs",
+  "slack_link_challenges",
+  "slack_agent_pending_prompts",
+  "slack_unfurled_links",
+  "workspace_sandbox_network_policies",
+  "workspace_sandbox_network_domains",
+  "workspace_sandbox_network_policy_mutations",
+  "automation_subscriptions",
+  "automation_runs",
+  "automation_delivery_targets",
+  "automation_email_receipts",
+  "automation_email_rate_windows",
+  "automation_resources",
+  "digest_schedules",
+  "digest_schedule_times",
+  "digest_delivery_targets",
+  "digest_deliveries",
+  "schedules",
+  "resources",
+  "resource_watches",
+  "notes",
+  "note_transcript_segments",
+  "note_privacy_change_outbox",
+  "note_resource_deletion_outbox",
+  "resource_object_deletion_outbox",
+  "memory_scopes",
+  "memory_items",
+  "memory_items_fts",
+  "memory_mutations",
+  "memory_index_outbox",
+  "memory_tables",
+  "memory_table_columns",
+  "memory_table_rows",
+  "memory_table_rows_fts",
+  "memory_table_cells",
+  "memory_table_mutations",
+  "workstream_notification_intents",
+  "external_delivery_attempts",
+  "workspace_workstream_pins",
+] as const;
+
+function localStatement(sql: string): boolean {
+  const localTables = WORKSPACE_LOCAL_TABLES.filter(
+    (table) => new RegExp(`\\b${table}\\b`, "iu").test(sql),
+  );
+  if (localTables.length === 0) return false;
+
+  // A regional mutation must never be routed into WorkspaceDO merely because
+  // its SELECT/subquery happens to name a local table. That SQL is a cross-
+  // authority join and cannot execute correctly in either database.
+  const writeTarget = /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+([\w"]+)/iu
+    .exec(sql)?.[1]?.replaceAll('"', "").toLowerCase();
+  if (writeTarget && !WORKSPACE_LOCAL_TABLES.some((table) => table === writeTarget)) {
+    throw new Error("workspace_runtime_cross_authority_statement");
+  }
+  return true;
+}
+
+function d1Result<T>(result: WorkspaceRuntimeSqlResult): D1Result<T> {
+  return {
+    success: true,
+    results: result.rows as T[],
+    meta: {
+      changes: result.changes,
+      duration: 0,
+      last_row_id: 0,
+      rows_read: result.rows.length,
+      rows_written: result.changes,
+      changed_db: result.changes > 0,
+      size_after: 0,
+    },
+  } as D1Result<T>;
+}
+
+class WorkspaceRuntimePreparedStatement implements D1PreparedStatement {
+  constructor(
+    private readonly database: WorkspaceRuntimeDatabase,
+    readonly statement: BoundStatement,
+  ) {}
+
+  bind(...values: unknown[]): D1PreparedStatement {
+    const params = values.map((value) => {
+      if (value === null || typeof value === "string" || typeof value === "number") return value;
+      throw new Error("workspace_runtime_bind_value_unsupported");
+    });
+    return new WorkspaceRuntimePreparedStatement(this.database, { ...this.statement, params });
+  }
+
+  async first<T = Record<string, unknown>>(column?: string): Promise<T | null> {
+    const result = await this.database.execute(this.statement);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return (column === undefined ? row : row[column]) as T;
+  }
+
+  async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+    return d1Result<T>(await this.database.execute(this.statement));
+  }
+
+  async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+    return d1Result<T>(await this.database.execute(this.statement));
+  }
+
+  raw<T = unknown[]>(options: { columnNames: true }): Promise<[string[], ...T[]]>;
+  raw<T = unknown[]>(options?: { columnNames?: false }): Promise<T[]>;
+  async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[] | [string[], ...T[]]> {
+    const result = await this.database.execute(this.statement);
+    const values = result.rows.map((row) => result.columns.map((column) => row[column]));
+    return options?.columnNames ? [result.columns, ...values as T[]] : values as T[];
+  }
+}
+
+class WorkspaceRuntimeDatabase implements D1Database {
+  constructor(
+    private readonly env: Env,
+    private readonly workspaceId: string,
+    private readonly localExecutor?: LocalStatementExecutor,
+  ) {}
+
+  prepare(sql: string): D1PreparedStatement {
+    return new WorkspaceRuntimePreparedStatement(this, { sql, params: [], local: localStatement(sql) });
+  }
+
+  async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    const bound = statements.map((statement) => {
+      if (!(statement instanceof WorkspaceRuntimePreparedStatement)) {
+        throw new Error("workspace_runtime_foreign_statement");
+      }
+      return statement.statement;
+    });
+    const localCount = bound.filter((statement) => statement.local).length;
+    if (localCount !== 0 && localCount !== bound.length) {
+      throw new Error("workspace_runtime_cross_authority_transaction");
+    }
+    if (localCount === 0) {
+      return this.env.DB.batch(bound.map((statement) =>
+        this.env.DB.prepare(statement.sql).bind(...statement.params))) as Promise<D1Result<T>[]>;
+    }
+    return (await this.executeLocal(bound)).map((result) => d1Result<T>(result));
+  }
+
+  async execute(statement: BoundStatement): Promise<WorkspaceRuntimeSqlResult> {
+    if (!statement.local) {
+      const result = await this.env.DB.prepare(statement.sql).bind(...statement.params).all();
+      return {
+        columns: result.results.length === 0 ? [] : Object.keys(result.results[0] as object),
+        rows: result.results as Array<Record<string, string | number | null>>,
+        changes: Number(result.meta.changes ?? 0),
+      };
+    }
+    const [result] = await this.executeLocal([statement]);
+    if (!result) throw new Error("workspace_runtime_result_missing");
+    return result;
+  }
+
+  private async executeLocal(statements: BoundStatement[]): Promise<WorkspaceRuntimeSqlResult[]> {
+    if (this.localExecutor) {
+      return this.localExecutor(statements.map(({ sql, params }) => ({ sql, params })));
+    }
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.workspaceId),
+    );
+    const response = await stub.executeRuntimeSql({
+      workspaceId: this.workspaceId,
+      requestId: uuidV7(),
+      statements: statements.map(({ sql, params }) => ({ sql, params })),
+    });
+    if (response.status < 200 || response.status >= 300) {
+      const body = rpcResultBody(response) as { error?: unknown } | null;
+      throw new Error(typeof body?.error === "string" ? body.error : "workspace_runtime_sql_failed");
+    }
+    return responseSchema.parse(rpcResultBody(response)).results;
+  }
+
+  async exec(query: string): Promise<D1ExecResult> {
+    const statements = query.split(";").map((entry) => entry.trim()).filter(Boolean).map((sql) => ({
+      sql,
+      params: [] as RuntimeValue[],
+      local: localStatement(sql),
+    }));
+    const localCount = statements.filter((statement) => statement.local).length;
+    if (localCount !== 0 && localCount !== statements.length) {
+      throw new Error("workspace_runtime_cross_authority_transaction");
+    }
+    if (localCount === 0) return this.env.DB.exec(query);
+    await this.executeLocal(statements);
+    return { count: statements.length, duration: 0 } as D1ExecResult;
+  }
+
+  dump(): Promise<ArrayBuffer> {
+    return Promise.reject(new Error("workspace_runtime_dump_unsupported"));
+  }
+
+  withSession(): D1DatabaseSession {
+    throw new Error("workspace_runtime_sessions_unsupported");
+  }
+}
+
+/** D1-compatible router: workspace product SQL goes to WorkspaceDO; control SQL stays in D1. */
+export function workspaceRuntimeDatabase(
+  env: Env,
+  workspaceId: string,
+  localExecutor?: LocalStatementExecutor,
+): D1Database {
+  return new WorkspaceRuntimeDatabase(env, workspaceId, localExecutor);
+}
+
+/** Preserve every binding while substituting the workspace-authority database port. */
+export function withWorkspaceRuntimeDatabase(
+  env: Env,
+  workspaceId: string,
+  localExecutor?: LocalStatementExecutor,
+): Env {
+  // Focused unit environments and maintenance utilities may intentionally omit
+  // the namespace. Production cannot reach this path because the environment
+  // contract requires WORKSPACE_DOS before request dispatch.
+  if (!env.WORKSPACE_DOS && !localExecutor) return env;
+  const database = workspaceRuntimeDatabase(env, workspaceId, localExecutor);
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === "DB") return database;
+      if (property === REGIONAL_DATABASE) return target.DB;
+      return Reflect.get(target, property, receiver) as unknown;
+    },
+  });
+}
+
+/** Escape hatch for explicitly global/regional control-plane SQL. */
+export function workspaceRegionalDatabase(env: Env): D1Database {
+  return (env as Env & { [REGIONAL_DATABASE]?: D1Database })[REGIONAL_DATABASE] ?? env.DB;
+}
+
+export const __workspaceRuntimeDatabaseTesting = { localStatement };

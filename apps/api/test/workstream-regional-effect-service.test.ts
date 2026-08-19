@@ -1,3 +1,4 @@
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +7,7 @@ import {
   type WorkstreamRegionalEffect,
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
   consumeActivityQueue,
 } from "../src/queues/activity-consumer";
@@ -13,6 +15,7 @@ import {
   applyWorkstreamRegionalEffect,
   loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
+  reapSettledWorkspaceNotificationIntents,
 } from "../src/services/workstream-regional-effect-service";
 import {
   createCloudflareTestBinding,
@@ -85,12 +88,40 @@ function message(
 }
 
 function workspaceSyncNamespace() {
-  return createCloudflareTestBinding<DurableObjectNamespace>({
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
+    for (const statement of migration.statements) database.exec(statement);
+  }
+  database.prepare(
+    `INSERT INTO workspace_identity
+       (id, workspace_id, region, placement_affinity, created_at, updated_at)
+     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
+  ).run(WORKSPACE_ID);
+  const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
       initializeWorkspace: vi.fn(async () => undefined),
       publishSync: vi.fn(async () => 1),
       recordActivityEvent: vi.fn(async (input: { eventId?: string }) => input.eventId),
+      executeRuntimeSql: vi.fn(async (input: {
+        statements: Array<{ sql: string; params: Array<string | number | null> }>;
+      }) => ({
+        status: 200,
+        bodyJson: JSON.stringify({
+          results: input.statements.map((statement) => {
+            const rows = database.prepare(statement.sql).all(
+              ...statement.params as SQLInputValue[],
+            ) as Array<Record<string, string | number | null>>;
+            const changes = database.prepare("SELECT changes() AS changes").get() as { changes: number };
+            return {
+              columns: rows[0] ? Object.keys(rows[0]) : [],
+              rows,
+              changes: Number(changes.changes),
+            };
+          }),
+        }),
+      })),
       notificationDirectoryState: vi.fn(async () => ({
         authorityGeneration: 1,
         viewerVersion: 1,
@@ -100,6 +131,7 @@ function workspaceSyncNamespace() {
       })),
     }),
   });
+  return { database, namespace };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -221,10 +253,11 @@ describe("the WorkstreamDO regional effect inbox", () => {
 
   it("rejects workspace-owned directory effects from the regional Queue consumer", async () => {
     const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
-      WORKSPACE_DOS: workspaceSyncNamespace(),
+      WORKSPACE_DOS: workspace.namespace,
     });
     try {
       const common: WorkstreamRegionalEffect = {
@@ -251,15 +284,23 @@ describe("the WorkstreamDO regional effect inbox", () => {
       ).get()).toEqual({ count: 0 });
     } finally {
       database.close();
+      workspace.database.close();
     }
   });
 
-  it("stores activity in WorkspaceDO and mention intent in D1, then erases delivered content", async () => {
+  it("stores activity and mention intent in WorkspaceDO, then erases delivered content", async () => {
     const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const refreshScheduler = vi.fn(async () => ({ alarmAt: null }));
+    const schedulers = createCloudflareTestBinding<DurableObjectNamespace>({
+      idFromName: () => createTestDurableObjectId("workspace-scheduler"),
+      get: () => ({ refresh: refreshScheduler }),
+    });
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
-      WORKSPACE_DOS: workspaceSyncNamespace(),
+      WORKSPACE_DOS: workspace.namespace,
+      WORKSPACE_SCHEDULERS: schedulers,
       APP_ENV: "test",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     });
@@ -309,13 +350,51 @@ describe("the WorkstreamDO regional effect inbox", () => {
         sourceVersion: 3,
       }));
       expect(applied.notificationIntentId).toBe(mention.intentId);
-      await expect(processWorkstreamNotificationIntent(env, mention.intentId)).resolves.toBe("delivered");
-      expect(database.prepare(
+      await expect(
+        processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId),
+      ).resolves.toBe("delivered");
+      expect(workspace.database.prepare(
         `SELECT state, payload_json, attempts FROM workstream_notification_intents
           WHERE intent_id = ?`,
       ).get(mention.intentId)).toEqual({ state: "delivered", payload_json: null, attempts: 1 });
+      expect(refreshScheduler).toHaveBeenCalledWith(WORKSPACE_ID);
     } finally {
       database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("reaps terminal mention shells only from their owning WorkspaceDO", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+    });
+    const intentId = `mention:${MESSAGE_ID}:${USER_ID}:expired`;
+    workspace.database.prepare(
+      `INSERT INTO workstream_notification_intents
+         (intent_id, workspace_id, workstream_id, recipient_user_id,
+          source_message_id, source_generation, source_version,
+          required_directory_version, notification_kind, payload_json,
+          payload_hash, state, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 1, 1, 'mention', NULL, 'expired-hash',
+               'delivered', 1, '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z')`,
+    ).run(intentId, WORKSPACE_ID, WORKSTREAM_ID, USER_ID, MESSAGE_ID);
+
+    try {
+      await expect(reapSettledWorkspaceNotificationIntents(env, WORKSPACE_ID, 10))
+        .resolves.toBe(1);
+      expect(workspace.database.prepare(
+        "SELECT COUNT(*) AS count FROM workstream_notification_intents",
+      ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        "SELECT COUNT(*) AS count FROM workstream_notification_intents",
+      ).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+      workspace.database.close();
     }
   });
 });

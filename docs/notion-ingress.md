@@ -26,7 +26,7 @@ boundary this module bends is defined in
 | `apps/api/src/notion-regional-bridge.ts` | EU-side `WorkerEntrypoint`: completes callbacks, ingests forwarded bytes, stores the replicated challenge. |
 | `apps/api/src/notion-routing-bridge.ts` | Global-side `WorkerEntrypoint` the EU Worker calls to register and retire routes. |
 | `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **both** regions. |
-| `packages/db/migrations/0066_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
+| `packages/db/migrations/0082_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
 | `packages/db/migrations/0071_notion_webhook_setup_nonces.sql` | Short-lived setup nonces and their link to the active encrypted verification token. |
 | `packages/db/migrations/0072_notion_connection_scope_split.sql` | Converts historical public-integration bot grants from personal to workspace scope without touching hosted-MCP rows. |
 | `scripts/notion-webhook-setup.mjs` | Prepares a one-time subscription URL and copies the captured token without server-side plaintext output. |
@@ -252,6 +252,20 @@ subscription handshake. Registration steps are in
 [`provider-apps.md`](provider-apps.md).
 
 ## Changelog
+
+### 2026-08-18 — Shared ingress migration receives a unique sequence
+
+**What changed:** The unshipped shared Notion routing migration moved from the
+duplicate `0066` prefix to `0082`.
+
+**Why:** Duplicate numeric prefixes make deployment ordering and operator
+reporting ambiguous even when filename sorting is deterministic.
+
+**Considered and rejected:** Leaving the collision documented. This branch has
+not shipped, so preserving that historical number has no compatibility value.
+
+**Consequences:** Apply `0082_shared_notion_connection_routing.sql`; no data
+transform or compatibility alias is required.
 
 ### 2026-08-12 — Existing bot routes retain their migrated connection
 

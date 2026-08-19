@@ -10,6 +10,7 @@ import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logStructuredEvent } from "../observability/logger";
 import { processConnectorEvent } from "../queues/activity-consumer";
+import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 
 /**
  * Durable product processing for one WorkspaceDO-owned connector event.
@@ -60,12 +61,6 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
           outcome: "failed",
           error: reason,
         });
-        await this.env.DB.prepare(
-          `UPDATE activities
-              SET processing_status = 'failed',
-                  metadata_json = json_set(COALESCE(metadata_json, '{}'), '$._processing_error', ?)
-            WHERE id = ? AND workspace_id = ?`,
-        ).bind(reason, input.eventId, input.workspaceId).run();
       });
       logStructuredEvent(this.env, "error", "connector_event_workflow_failed", {
         workspace_id: input.workspaceId,
@@ -75,10 +70,9 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       });
       if (input.attempt < 5) {
         await step.do("enqueue-connector-event-redrive", async () => {
-          await this.env.ACTIVITY_QUEUE.send({
-            region: input.region,
-            workspaceId: input.workspaceId,
-            activityId: input.eventId,
+          await enqueueWorkspaceConnectorEvent(this.env, {
+            connectorType: claim.event.connectorType,
+            activity: claim.event.activity,
             attempt: input.attempt + 1,
           });
         });
@@ -93,14 +87,6 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
         outcome: "processed",
         error: null,
       });
-    });
-    await step.do("settle-connector-event-d1-handoff", async () => {
-      await this.env.DB.prepare(
-        `UPDATE activities
-            SET processing_status = 'processed',
-                metadata_json = json_remove(COALESCE(metadata_json, '{}'), '$._processing_error')
-          WHERE id = ? AND workspace_id = ?`,
-      ).bind(input.eventId, input.workspaceId).run();
     });
     return { outcome: "processed" };
   }

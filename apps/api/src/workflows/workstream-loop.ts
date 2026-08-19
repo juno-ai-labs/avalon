@@ -34,6 +34,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 const HarnessWorkflowOutcomeSchema = z.object({
@@ -139,6 +140,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         limit: 25,
+        automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
       });
     });
 
@@ -330,6 +332,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     input: WorkstreamWorkflowInput,
     outcome: HarnessWorkflowOutcome,
   ): Promise<void> {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const messages = outcome.messageId
       ? await createDatabase(runtimeDb).workstreams.listMessages(input.workspaceId, input.workstreamId, 250)
       : [];
@@ -346,7 +349,13 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       // which is right for a work stream someone is watching and wrong for a
       // digest — mailing it would consume the window and say nothing. Pass what
       // the run actually wrote, or nothing.
-      await settleDigestRun(this.env, input.digestDeliveryId, outcome.status, message?.textContent ?? null);
+      await settleDigestRun(
+        this.env,
+        input.workspaceId,
+        input.digestDeliveryId,
+        outcome.status,
+        message?.textContent ?? null,
+      );
       return;
     }
     const slack = new SlackAgentService(this.env);
@@ -359,7 +368,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       input.slackOrigin?.actorSlackUserId ?? null,
     );
     if (input.automationSubscriptionId) {
-      const automation = await this.env.DB.prepare(
+      const automation = await workspaceEnv.DB.prepare(
         `SELECT t.name FROM automation_subscriptions s
          JOIN automation_templates t ON t.id = s.template_id
          WHERE s.id = ? AND s.workspace_id = ?`,
@@ -376,7 +385,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       // retried by this step without holding back the other.
       const failures = (await Promise.allSettled([
         slack.deliverAutomationResult(result),
-        deliverAutomationResultEmail(this.env, result),
+        deliverAutomationResultEmail(workspaceEnv, result),
       ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
       // Only the first is rethrown, so the rest would otherwise be lost — and
       // which one that is depends on settle order rather than on severity.
@@ -424,7 +433,8 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     if (!owned) throw new Error("automation_run_terminal_fence_missing");
     const now = new Date().toISOString();
     const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
-    await this.env.DB.prepare(
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
+    await workspaceEnv.DB.prepare(
       `UPDATE automation_runs
           SET status = ?1,
               completed_at = CASE WHEN ?1 IN ('completed', 'failed') THEN ?2 ELSE completed_at END,

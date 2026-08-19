@@ -152,19 +152,10 @@ export async function suggestionAdmission(
       workspaceId: input.workspaceId,
       source: "contextual_routing",
       since,
+      provider: input.provider,
+      eventType: input.eventType,
     });
-    const matchingActivityIds = new Set<string>();
-    for (let offset = 0; offset < feedback.items.length; offset += 80) {
-      const ids = feedback.items.slice(offset, offset + 80).map((item) => item.activityId);
-      if (ids.length === 0) continue;
-      const placeholders = ids.map(() => "?").join(",");
-      const rows = await env.DB.prepare(
-        `SELECT id FROM activities WHERE id IN (${placeholders}) AND provider = ? AND event_type = ?`,
-      ).bind(...ids, input.provider, input.eventType).all<{ id: string }>();
-      for (const row of rows.results ?? []) matchingActivityIds.add(row.id);
-    }
     for (const item of feedback.items) {
-      if (!matchingActivityIds.has(item.activityId)) continue;
       if (item.status === "accepted") accepted += 1;
       else {
         dismissed += 1;

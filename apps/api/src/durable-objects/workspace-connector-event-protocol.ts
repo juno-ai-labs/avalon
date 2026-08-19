@@ -28,6 +28,17 @@ export const WorkspaceConnectorEventIngestRequestSchema = z.object({
   }
 });
 
+/**
+ * Queue handoff used after WorkspaceDO cutover. The normalized event travels
+ * with the message; regional D1 is not an event-body staging database.
+ */
+export const WorkspaceConnectorEventQueueMessageSchema = z.object({
+  kind: z.literal("workspace_connector_event"),
+  region: RegionSchema,
+  attempt: z.number().int().min(0).max(5).default(0),
+  request: WorkspaceConnectorEventIngestRequestSchema,
+}).strict();
+
 export const WorkspaceConnectorEventIngestResultSchema = z.object({
   eventId: IdSchema,
   duplicate: z.boolean(),
@@ -71,6 +82,7 @@ export const ConnectorEventWorkflowInputSchema = z.object({
 export type WorkspaceConnectorEvent = z.infer<typeof WorkspaceConnectorEventSchema>;
 export type WorkspaceConnectorEventIngestRequest = z.infer<typeof WorkspaceConnectorEventIngestRequestSchema>;
 export type WorkspaceConnectorEventIngestResult = z.infer<typeof WorkspaceConnectorEventIngestResultSchema>;
+export type WorkspaceConnectorEventQueueMessage = z.infer<typeof WorkspaceConnectorEventQueueMessageSchema>;
 export type WorkspaceConnectorEventRequest = z.infer<typeof WorkspaceConnectorEventRequestSchema>;
 export type WorkspaceConnectorEventClaimRequest = z.infer<typeof WorkspaceConnectorEventClaimRequestSchema>;
 export type WorkspaceConnectorEventClaimResult = z.infer<typeof WorkspaceConnectorEventClaimResultSchema>;

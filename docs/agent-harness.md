@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. Regional D1 remains authoritative for workspace/connector authority and cross-work-stream projections, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -356,9 +356,9 @@ memory. Personal automations search workspace, owner-user, and automation memory
 Workspace automations search workspace and automation memory. All work streams
 created by one automation subscription therefore share one automation scope.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. D1 FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable D1 outbox. Hybrid hits are always reloaded from D1 before exposure, and each root run stores an immutable admission-recall snapshot and hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
-Root runs also receive the separate stable `avalon_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous D1 FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
+Root runs also receive the separate stable `avalon_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
 
 Memory and table mutations return identifiers and current revisions. On a revision
 conflict, the failed result directs the model to re-read those exact identifiers,
@@ -622,6 +622,24 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-18 — Durable memory authority moves into WorkspaceDO
+
+**What changed:** Prose memory, structured tables, local FTS, mutation receipts,
+revision state and the vector-index outbox now live in WorkspaceDO. A run still
+freezes its admitted memory context in SubstreamAgent, and current membership is
+revalidated from D1.
+
+**Why:** Memory scopes cross work streams but never cross their workspace.
+WorkspaceDO is the relational boundary that can authorize workspace/user/
+automation/work-stream scopes without leaving a product authority in D1.
+
+**Considered and rejected:** Per-work-stream memory copies and a D1 search
+projection. Both make invalidation and revision compare-and-swap split-brain.
+
+**Consequences:** Vectorize remains a derived regional index. Every hybrid hit
+is reloaded from WorkspaceDO before model exposure, and an object outage fails
+closed rather than trusting the projection.
 
 ### 2026-08-18 — HyperSight loops use the BlockDashboard runtime role
 

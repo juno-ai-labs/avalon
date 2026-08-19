@@ -904,6 +904,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       limit: 25,
+      automationDatabase: null,
     });
     const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;

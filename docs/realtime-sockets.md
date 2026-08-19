@@ -321,6 +321,12 @@ The client treats every one of these as a failed connect and reconnects with
 jittered backoff; it does not distinguish them, which is why the status is worth
 keeping correct for whoever reads the logs.
 
+Directory pages are read-only and are not reconnect-resend commands. If
+Electron receives the browser `offline` signal while a page is in flight, it
+clears that request's 120-second timer and rejects immediately with
+`workspace_directory_offline`. Message commands remain pending because their
+client message IDs make reconnect resend idempotent.
+
 ## Testing
 
 | Suite | Command | Covers |
@@ -329,7 +335,7 @@ keeping correct for whoever reads the logs.
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages/pagination, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
@@ -364,6 +370,22 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — Offline directory reads fail immediately
+
+**What changed:** The workspace socket rejects only pending directory-page
+requests when the desktop goes offline, while keeping idempotent message
+commands eligible for reconnect resend.
+
+**Why:** A read-only page cannot succeed offline and previously held its caller
+for the full command timeout. Mutations have different recovery semantics and
+must not be discarded with reads.
+
+**Considered and rejected:** Rejecting every pending command and waiting for the
+generic 120-second timeout.
+
+**Consequences:** Infinite-scroll callers can render their offline state
+promptly; message delivery retains ambiguous-result recovery.
 
 ### 2026-08-18 — Both control sockets share field-level waterlines
 

@@ -305,4 +305,43 @@ describe('WorkspaceSocketProvider', () => {
       items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
     });
   });
+
+  it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    let online = true;
+    vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
+    function Probe(): null {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => {
+        listWorkstreams = workspaceSocket.listWorkstreams;
+      }, [workspaceSocket.listWorkstreams]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    const result = listWorkstreams!({ limit: 20, includeSystem: false });
+    const rejection = expect(result).rejects.toMatchObject({ code: 'workspace_directory_offline' });
+
+    online = false;
+    act(() => window.dispatchEvent(new Event('offline')));
+
+    await rejection;
+  });
 });
