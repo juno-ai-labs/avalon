@@ -422,11 +422,16 @@
 [data-theme='airy'] {
   color-scheme: dark;
 
+  /* Airy has one ground, not two. `--canvas` and `--surface` are the same
+   * colour and the navigation adds no tint of its own, so the page — and the
+   * light cast across it — runs the full width of the window, under the
+   * navigation and the message feed alike, broken only by `--sidebar-edge`.
+   * The other themes keep a distinct pane; this is the theme choosing not to. */
   --canvas: #0a0806;
-  --sidebar: rgba(150, 118, 78, 0.1);
-  --sidebar-solid: #18130d;
+  --sidebar: transparent;
+  --sidebar-solid: #0c0a07;
   --sidebar-edge: #1f1a12;
-  --surface: #0c0a07;
+  --surface: #0a0806;
   --surface-2: #110e0a;
   --sunken: #080604;
   --raised: #16110b;
