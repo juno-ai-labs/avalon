@@ -875,6 +875,16 @@ export class WorkspaceDO extends DurableObject<Env> {
     await this.initialized;
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
+    // While a maintenance campaign is running, the frozen D1 snapshot is the
+    // authority for this object's product tables and the importer re-verifies
+    // every page it sends. Claiming a window or reaping a completed one here
+    // would mutate exactly those rows between a page and its retry, so product
+    // work waits for the region to open. The import itself re-arms this alarm.
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase !== "durable_object_open" && authority.phase !== "legacy_open") {
+      await this.refreshProductAlarm({ suppressPastDue: true });
+      return;
+    }
     const now = Date.now();
     this.reapExpiredActivityEvents(now);
     const product = this.productStorage();
