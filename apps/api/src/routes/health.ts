@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import {
+  durableObjectStubForRegionalSingleton,
+} from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
@@ -79,9 +81,12 @@ healthRoutes.get("/", async (c) => {
     checks.r2 = { ok: false, message: "unavailable" };
   }
   try {
-    const rooms = durableObjectNamespaceForRegion(c.env.WORKSTREAM_ROOMS, c.env.AVALON_REGION, c.env.APP_ENV);
-    const id = rooms.idFromName(`health:${c.env.AVALON_REGION}`);
-    const response = await rooms.get(id).fetch("https://room.internal/health");
+    const agent = durableObjectStubForRegionalSingleton(
+      c.env,
+      c.env.SUBSTREAM_AGENTS,
+      `health:${c.env.AVALON_REGION}`,
+    );
+    const response = await agent.fetch("https://room.internal/health");
     checks.durableObjects = { ok: response.ok, message: response.ok ? "available" : `returned ${response.status}` };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown Durable Object error";
@@ -96,8 +101,16 @@ healthRoutes.get("/", async (c) => {
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
   checks.workflows = {
-    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function",
-    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" ? "bindings available" : "binding unavailable",
+    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
+      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function",
+    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
+      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function"
+      ? "bindings available"
+      : "binding unavailable",
   };
   // Flagship bindings are always remote, so this is unavailable under
   // `wrangler dev --local` by design and is only required in production, where

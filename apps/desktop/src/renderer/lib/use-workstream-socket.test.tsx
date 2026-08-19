@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
@@ -21,6 +21,12 @@ import {
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
+
+const workspaceCreateMessage = vi.hoisted(() => vi.fn());
+vi.mock('./workspace-socket', () => ({
+  useWorkspaceSocket: () => ({ state: 'connected', createMessage: workspaceCreateMessage }),
+}));
+vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -91,8 +97,9 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
   return {
     getMessages: vi.fn(unexpected),
     getSocketTicket: vi.fn(unexpected),
+    getWorkstreamControlSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
-    getWorkstreams: vi.fn(unexpected),
+    messageMentionPayload: vi.fn(async () => []),
     ...overrides,
   } satisfies WorkstreamSocketApi;
 }
@@ -135,24 +142,216 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  workspaceCreateMessage.mockReset();
   FakeWebSocket.instances = [];
 });
 
 describe('useWorkstreamSocket', () => {
+  it('routes a message command through the shared workspace connection', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000601';
+    const messageId = '00000000-0000-7000-8000-000000000604';
+    const clientMessageId = 'client-message-reconnect';
+    const savedMessage: Message = {
+      id: messageId,
+      clientMessageId,
+      workstreamId,
+      sequenceNumber: 9,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Please continue.',
+      mentions: [],
+      attachments: [],
+      createdAt: '2026-08-17T12:00:01.000Z',
+    };
+    workspaceCreateMessage.mockResolvedValue(savedMessage);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload: vi.fn(async () => []),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    await expect(result.current.createMessage({
+        text: 'Please continue.',
+        clientId: clientMessageId,
+      })).resolves.toEqual(savedMessage);
+    expect(workspaceCreateMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'create_message',
+      workstreamId,
+      substreamId: '0',
+      payload: {
+        text: 'Please continue.',
+        clientMessageId,
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+  });
+
+  it('shows durable compaction activity and ignores a stale finish', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000611';
+    const harnessRunId = '00000000-0000-7000-8000-000000000612';
+    const attemptId = '00000000-0000-7000-8000-000000000613';
+    const recoveredAttemptId = '00000000-0000-7000-8000-000000000614';
+    const startedAt = '2026-08-18T12:00:00.000Z';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'compaction_started',
+      sequence: 1,
+      occurredAt: startedAt,
+      compaction: {
+        harnessRunId,
+        attemptId,
+        compactionIndex: 1,
+        trigger: 'auto',
+        startedAt,
+      },
+    }));
+    expect(result.current.activeCompaction).toEqual({
+      harnessRunId,
+      attemptId,
+      compactionIndex: 1,
+      trigger: 'auto',
+      startedAt,
+    });
+
+    act(() => socket.message({
+      type: 'compaction_started',
+      sequence: 2,
+      occurredAt: startedAt,
+      compaction: {
+        harnessRunId,
+        attemptId: recoveredAttemptId,
+        compactionIndex: 1,
+        trigger: 'manual',
+        startedAt,
+      },
+    }));
+    act(() => socket.message({
+      type: 'compaction_finished',
+      sequence: 3,
+      occurredAt: startedAt,
+      harnessRunId,
+      attemptId,
+      compactionIndex: 1,
+      outcome: 'completed',
+    }));
+    expect(result.current.activeCompaction).toMatchObject({
+      attemptId: recoveredAttemptId,
+      compactionIndex: 1,
+    });
+
+    act(() => socket.message({
+      type: 'compaction_finished',
+      sequence: 4,
+      occurredAt: startedAt,
+      harnessRunId,
+      attemptId: recoveredAttemptId,
+      compactionIndex: 1,
+      outcome: 'failed',
+    }));
+    expect(result.current.activeCompaction).toBeNull();
+  });
+
+  it('loads an older message page through a correlated SubstreamAgent socket read', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000621';
+    const messageId = '00000000-0000-7000-8000-000000000622';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const pagePromise = result.current.loadMessagePage({ before: '42', limit: 25 });
+    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
+      type: string;
+      requestId: string;
+      limit: number;
+      cursor: { direction: string; value: string };
+    };
+    expect(command).toMatchObject({
+      type: 'load_message_page',
+      limit: 25,
+      cursor: { direction: 'before', value: '42' },
+    });
+
+    act(() => socket.message({
+      type: 'message_page',
+      requestId: command.requestId,
+      occurredAt: '2026-08-18T12:00:00.000Z',
+      page: {
+        items: [{
+          id: messageId,
+          clientMessageId: null,
+          workspaceId: '00000000-0000-7000-8000-000000000623',
+          workstreamId,
+          sequenceNumber: 21,
+          author: { type: 'agent' },
+          messageType: 'text',
+          textContent: 'An older message',
+          structuredContent: null,
+          mentions: [],
+          attachments: [],
+          createdAt: '2026-08-18T11:00:00.000Z',
+          editedAt: null,
+        }],
+        nextCursor: '21',
+        newerCursor: null,
+      },
+    }));
+
+    await expect(pagePromise).resolves.toMatchObject({
+      items: [{ id: messageId, text: 'An older message' }],
+      nextCursor: '21',
+      newerCursor: null,
+    });
+  });
+
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000301';
     const versionId = '00000000-0000-7000-8000-000000000302';
     const blockId = '00000000-0000-7000-8000-000000000303';
-    const initial: HyperSight = {
+    const initial: BlockDashboard = {
       versionId,
       versionNumber: 1,
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
       updatedAt: '2026-08-07T12:00:00.000Z',
     };
-    queryClient.setQueryData(['hypersight', workstreamId], initial);
-    queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', workstreamId], {
+    queryClient.setQueryData(['block-dashboard', workstreamId], initial);
+    queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId], {
       visible: false,
       updatedAt: null,
     });
@@ -171,7 +370,7 @@ describe('useWorkstreamSocket', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 1,
       occurredAt: '2026-08-07T12:00:01.000Z',
       run: {
@@ -187,11 +386,11 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:03.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun)
       .toMatchObject({ status: 'completed', markdown: '- First result' });
 
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 2,
       occurredAt: '2026-08-07T12:00:04.000Z',
       run: {
@@ -208,7 +407,7 @@ describe('useWorkstreamSocket', () => {
       },
     }));
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 3,
       occurredAt: '2026-08-07T12:00:05.000Z',
       run: {
@@ -224,11 +423,11 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:05.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
       .toBe('Newest result');
 
     act(() => socket.message({
-      type: 'hypersight_block_run_updated',
+      type: 'block_dashboard_block_run_updated',
       sequence: 4,
       occurredAt: '2026-08-07T12:00:05.000Z',
       run: {
@@ -244,29 +443,29 @@ describe('useWorkstreamSocket', () => {
         completedAt: '2026-08-07T12:00:05.000Z',
       },
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
       .toBe('Newest result');
 
-    const next: HyperSight = {
+    const next: BlockDashboard = {
       versionId: '00000000-0000-7000-8000-000000000306',
       versionNumber: 2,
       blocks: [{ id: blockId, prompt: 'List decisions', latestRun: null }],
       updatedAt: '2026-08-07T12:00:05.000Z',
     };
     act(() => socket.message({
-      type: 'hypersight_configuration_updated',
+      type: 'block_dashboard_configuration_updated',
       sequence: 5,
       occurredAt: '2026-08-07T12:00:05.000Z',
-      hypersight: next,
+      blockDashboard: next,
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])).toEqual(next);
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])).toEqual(next);
 
     act(() => socket.message({
-      type: 'hypersight_preference_updated',
+      type: 'block_dashboard_preference_updated',
       occurredAt: '2026-08-07T12:00:06.000Z',
       preference: { visible: true, updatedAt: '2026-08-07T12:00:06.000Z' },
     }));
-    expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId]))
+    expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
       .toEqual({ visible: true, updatedAt: '2026-08-07T12:00:06.000Z' });
 
   });
@@ -1026,8 +1225,8 @@ describe('useWorkstreamSocket', () => {
       toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'completed' },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
-    queryClient.setQueryData(['hypersight', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
-    queryClient.setQueryData(['hypersight-preference', workstreamId], { visible: false, updatedAt: null });
+    queryClient.setQueryData(['block-dashboard', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
+    queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: false, updatedAt: null });
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
@@ -1036,7 +1235,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1051,8 +1249,8 @@ describe('useWorkstreamSocket', () => {
 
     expect(api.getMessages).toHaveBeenCalledOnce();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
-    expect(queryClient.getQueryState(['hypersight', workstreamId])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['hypersight-preference', workstreamId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['block-dashboard-preference', workstreamId])?.isInvalidated).toBe(true);
   });
 
   it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {
@@ -1206,7 +1404,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1237,7 +1434,8 @@ describe('useWorkstreamSocket', () => {
         createdAt: '2026-08-06T05:00:00.000Z',
       },
     } as WorkstreamDetail;
-    const canonicalSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'running' });
+    const cachedSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'completed' });
+    setCachedWorkstreams(queryClient, [cachedSummary]);
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
@@ -1252,7 +1450,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => canonicalWorkstream),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [canonicalSummary], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1271,10 +1468,13 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual(
       canonicalWorkstream.latestHarnessRun,
     );
-    // `getWorkstreams` returns a page, while this cache deliberately remains a
-    // flat array. This is the socket reconciliation path that once stored the
-    // page object and crashed the sidebar's first `.filter`.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([canonicalSummary]);
+    // Cross-workstream serving belongs to the WorkspaceDO socket. A substream
+    // recovery invalidates that query but never merges a parallel REST list.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([{
+      ...cachedSummary,
+      harnessStatus: 'running',
+    }]);
+    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
   });
 
   it('pushes a status change into the sidebar list without waiting for a refetch', async () => {
@@ -1298,7 +1498,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1366,7 +1565,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages,
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1435,7 +1633,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1502,7 +1699,6 @@ describe('useWorkstreamSocket', () => {
         harnessStatus: 'running',
       })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
 
     function Socket({ workstreamId }: { workstreamId: string }): null {
@@ -1680,7 +1876,7 @@ describe('useWorkstreamSocket', () => {
     const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
-    expect(result.current).toBe('unavailable');
+    expect(result.current.state).toBe('unavailable');
     expect(getSocketTicket).not.toHaveBeenCalled();
 
     online = true;
@@ -1752,22 +1948,18 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'running',
       latestHarnessRunId: harnessRunId,
     });
-    const canonicalWorkstreamPage = {
-      items: [workstreamSummary({ id: 'workstream-one', title: 'Canonical' })],
-      nextCursor: null,
-    } satisfies Awaited<ReturnType<WorkstreamSocketApi['getWorkstreams']>>;
     const getWorkstream = vi.fn(async () => canonicalWorkstream);
     const getMessages = vi.fn()
       .mockRejectedValueOnce(new Error('transient D1 failure'))
       .mockResolvedValueOnce([]);
-    const getWorkstreams = vi.fn(async () => canonicalWorkstreamPage);
     const api = socketApiWith({
       getSocketTicket,
       getWorkstream,
       getMessages,
-      getWorkstreams,
     });
-    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]?.open());
@@ -1789,7 +1981,15 @@ describe('useWorkstreamSocket', () => {
         roomSequence: 14,
         createdAt: '2026-07-31T19:59:59.000Z',
       }],
+      activeCompaction: {
+        harnessRunId,
+        attemptId: '00000000-0000-7000-8000-000000000504',
+        compactionIndex: 2,
+        trigger: 'auto',
+        startedAt: '2026-07-31T19:59:58.000Z',
+      },
     }));
+    expect(result.current.activeCompaction).toMatchObject({ harnessRunId, compactionIndex: 2 });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
     expect(getMessages).toHaveBeenCalledOnce();
@@ -1807,14 +2007,21 @@ describe('useWorkstreamSocket', () => {
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
     expect(queryClient.getQueryData(['workstreams'])).toEqual([
-      ...canonicalWorkstreamPage.items,
+      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
       laterPage,
       debugRow,
     ]);
     expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
     act(() => FakeWebSocket.instances[1]?.message({
-      type: 'stream_delta',
+      type: 'harness_status_changed',
       sequence: 15,
+      occurredAt: '2026-07-31T20:00:01.000Z',
+      status: 'completed',
+    }));
+    expect(result.current.activeCompaction).toBeNull();
+    act(() => FakeWebSocket.instances[1]?.message({
+      type: 'stream_delta',
+      sequence: 16,
       occurredAt: '2026-07-31T20:00:01.000Z',
       messageId,
       harnessRunId,

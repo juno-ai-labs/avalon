@@ -93,8 +93,8 @@ describe("automation template version adoption", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T00:00:00.000Z"));
     const database = new AdoptionDatabase();
-    const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
-    const schedulerGet = vi.fn(() => ({ fetch: schedulerFetch }));
+    const schedulerRefresh = vi.fn(async () => undefined);
+    const schedulerGet = vi.fn(() => ({ refresh: schedulerRefresh }));
     const schedulerId = vi.fn(() => ({ toString: () => "scheduler-id" }));
     const env = createTestEnv({
       DB: database.binding,
@@ -149,10 +149,7 @@ describe("automation template version adoption", () => {
       ],
     });
     expect(schedulerId).toHaveBeenCalledWith("global:workspace-1");
-    expect(schedulerFetch).toHaveBeenCalledWith(
-      "https://scheduler.internal/refresh",
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(schedulerRefresh).toHaveBeenCalledWith("workspace-1");
     expect(get).toHaveBeenCalledWith("subscription-1");
   });
 });

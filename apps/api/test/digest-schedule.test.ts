@@ -44,7 +44,7 @@ function envFor(database: DatabaseSync): Env {
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
     },
   });
 }
@@ -240,9 +240,8 @@ describe("digest schedule", () => {
       WORKSPACE_SCHEDULERS: {
         idFromName: () => createTestDurableObjectId("scheduler"),
         get: () => ({
-          fetch: async () => {
+          refresh: async () => {
             scheduleCountAtRefresh(database.prepare("SELECT COUNT(*) AS count FROM schedules").get());
-            return new Response(null, { status: 204 });
           },
         }),
       },

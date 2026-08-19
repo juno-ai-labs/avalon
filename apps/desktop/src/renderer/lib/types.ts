@@ -98,6 +98,7 @@ export interface WorkstreamSummary {
   objective?: string;
   emailAddress?: string;
   origin: 'ad_hoc' | 'automation';
+  createdByUserId?: string;
   automationName?: string;
   /**
    * Set when an automation generated this work stream, which is what makes its
@@ -105,14 +106,20 @@ export interface WorkstreamSummary {
    * that decides who reads it, so it is not offered as one.
    */
   automationSubscriptionId?: string;
+  automationRunId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;
   readThroughSequenceNumber: number;
   manualUnreadFromSequenceNumber: number | null;
   manualUnreadGeneration: number;
   hasUnread: boolean;
+  /** A person mention exists above this viewer's read waterline. */
+  youAreMentioned?: boolean;
   firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string;
   plannedFor?: string;
   preview?: string;
   /**
@@ -234,7 +241,7 @@ export interface ActivitySuggestionData {
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
-export interface HyperSightBlockRun {
+export interface BlockDashboardBlockRun {
   id: string;
   blockId: string;
   configurationVersionId: string;
@@ -247,20 +254,20 @@ export interface HyperSightBlockRun {
   completedAt: string | null;
 }
 
-export interface HyperSightBlock {
+export interface BlockDashboardBlock {
   id: string;
   prompt: string;
-  latestRun: HyperSightBlockRun | null;
+  latestRun: BlockDashboardBlockRun | null;
 }
 
-export interface HyperSight {
+export interface BlockDashboard {
   versionId: string | null;
   versionNumber: number;
-  blocks: HyperSightBlock[];
+  blocks: BlockDashboardBlock[];
   updatedAt: string | null;
 }
 
-export interface HyperSightPreference {
+export interface BlockDashboardPreference {
   visible: boolean;
   updatedAt: string | null;
 }

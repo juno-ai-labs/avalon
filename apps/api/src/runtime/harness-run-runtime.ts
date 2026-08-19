@@ -1,5 +1,7 @@
 import type { StructuredFailureDetail, WorkstreamWorkflowInput } from "@avalon/contracts";
 
+import { uuidV7 } from "../lib/uuid-v7";
+
 const TERMINAL_STATUSES = new Set(["completed", "needs_input", "failed", "stopped"]);
 
 export type HarnessTerminalStatus = "completed" | "needs_input" | "failed" | "stopped";
@@ -242,7 +244,7 @@ export async function claimHarnessAttempt(
   options: AttemptIdentity & { leaseSeconds?: number },
 ): Promise<AttemptClaim> {
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `UPDATE harness_runs
@@ -265,14 +267,14 @@ export async function claimHarnessAttempt(
             OR lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           )
           AND (
-            harness_runs.origin = 'hypersight_block'
+            harness_runs.origin = 'block_dashboard_block'
             OR NOT EXISTS (
               SELECT 1
                 FROM harness_runs active
                WHERE active.workspace_id = ?2
                  AND active.workstream_id = ?3
                  AND active.id != ?1
-                 AND active.origin != 'hypersight_block'
+                 AND active.origin != 'block_dashboard_block'
                  AND active.parent_tool_call_id IS NULL
                  AND active.status = 'running'
                  AND active.terminalized_at IS NULL
@@ -316,7 +318,7 @@ export async function claimHarnessAttempt(
           AND EXISTS (
             SELECT 1 FROM harness_runs
              WHERE id = ?3 AND workspace_id = ?2 AND workstream_id = ?1
-               AND origin != 'hypersight_block'
+               AND origin != 'block_dashboard_block'
                AND parent_tool_call_id IS NULL
                AND attempt_id = ?4 AND lease_owner = ?5
                AND status = 'running' AND terminalized_at IS NULL
@@ -361,7 +363,7 @@ export async function claimHarnessAttempt(
             (SELECT MAX(active.lease_expires_at)
                FROM harness_runs active
               WHERE active.workspace_id = ?2 AND active.workstream_id = ?3
-                AND (harness_runs.origin = 'hypersight_block' OR active.origin != 'hypersight_block')
+                AND (harness_runs.origin = 'block_dashboard_block' OR active.origin != 'block_dashboard_block')
                 AND active.parent_tool_call_id IS NULL
                 AND active.status = 'running' AND active.terminalized_at IS NULL)
               AS active_lease_expires_at
@@ -401,11 +403,11 @@ export async function admitInlineChildAttempt(
   );
   const maxDepth = Math.max(1, Math.min(16, Math.trunc(options.maxDepth ?? 2)));
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const childHarnessRunId = options.childHarnessRunId ?? crypto.randomUUID();
-  const attemptId = options.attemptId ?? crypto.randomUUID();
+  const childHarnessRunId = options.childHarnessRunId ?? uuidV7();
+  const attemptId = options.attemptId ?? uuidV7();
   const owner = options.owner ?? `inline-child:${childHarnessRunId}:${attemptId}`;
   const objectiveHash = await sha256Hex(options.objective);
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const now = new Date().toISOString();
 
   // This early assertion gives callers a precise cancellation/ownership error.
@@ -777,7 +779,7 @@ export async function terminalizeQueuedHarnessRun(
   status: "failed" | "stopped" = "failed",
 ): Promise<"terminalized" | "already_terminal"> {
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const memberSafePayload = stableJson({ code: error.code.slice(0, 120) });
   const errorJson = safeErrorJson(error);
   const results = await db.batch([
@@ -830,13 +832,13 @@ export async function terminalizeQueuedHarnessRun(
           AND EXISTS (
             SELECT 1 FROM harness_runs
              WHERE id = ?4 AND attempt_id = ?5 AND terminalized_at = ?1
-               AND origin != 'hypersight_block'
+               AND origin != 'block_dashboard_block'
           )
           AND NOT EXISTS (
             SELECT 1 FROM harness_runs active
              WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
                AND active.id != ?4
-               AND active.origin != 'hypersight_block'
+               AND active.origin != 'block_dashboard_block'
                AND active.parent_tool_call_id IS NULL
                AND active.status IN ('scheduled', 'running')
                AND active.terminalized_at IS NULL
@@ -1242,7 +1244,7 @@ export async function persistHarnessFinalMessage(
   } else {
     await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   }
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const eventPayload = stableJson({
     finalMessageId: message.id,
     hostOutcome: {
@@ -1518,7 +1520,7 @@ async function replanCompletedReadReceipt(
 ): Promise<ToolPlanClaim> {
   // Its own id rather than the one the planning batch minted: that one is bound
   // to an insert that did not land here, and keeping the two apart costs a UUID.
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `INSERT INTO tool_invocation_checkpoints
@@ -1593,14 +1595,14 @@ export async function persistToolExecutionPlan(
   plan: ToolExecutionPlan,
 ): Promise<ToolPlanClaim> {
   await assertHarnessAttemptOwned(db, plan.harnessRunId, lease);
-  const invocationId = plan.invocationId ?? crypto.randomUUID();
+  const invocationId = plan.invocationId ?? uuidV7();
   const executionPlanJson = stableJson(plan.plan);
   const executionPlanHash = await sha256Hex(executionPlanJson);
   const compatiblePriorPlanHashes = new Set(await Promise.all(
     (plan.compatiblePriorPlans ?? []).map((compatiblePlan) => sha256Hex(stableJson(compatiblePlan))),
   ));
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `INSERT INTO tool_invocations
@@ -1736,7 +1738,7 @@ export async function checkpointToolInvocation(
 ): Promise<void> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const index = Math.max(1, Math.trunc(input.checkpointIndex));
   const results = await db.batch([
     db.prepare(
@@ -1812,7 +1814,7 @@ export async function completeToolInvocation(
 ): Promise<"persisted" | "already_persisted"> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const index = Math.max(1, Math.trunc(input.checkpointIndex));
   const boundedSummary = input.outputSummary.slice(0, 4_000);
   const results = await db.batch([
@@ -1922,7 +1924,7 @@ export async function finalizeToolInvocationFailure(
 ): Promise<"persisted" | "already_persisted"> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const phase = input.phase.slice(0, 120);
   const code = input.error.code.slice(0, 120);
   const message = input.error.message.slice(0, 500);
@@ -2216,7 +2218,7 @@ export async function terminalizeInlineChildAttempt(
   const resultJson = stableJson(sanitizedOutcome);
   const resultHash = await sha256Hex(resultJson);
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const memberPayload = stableJson({
     ...(sanitizedOutcome.error ? { code: sanitizedOutcome.error.code } : {}),
   });
@@ -2350,13 +2352,13 @@ export async function terminalizeHarnessAttempt(
   ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ origin: string }>();
   if (!target) throw new Error("harness_run_not_found");
   if (outcome.status === "completed") {
-    if (target.origin === "hypersight_block") {
+    if (target.origin === "block_dashboard_block") {
       const result = await db.prepare(
-        `SELECT id FROM hypersight_block_runs
+        `SELECT id FROM block_dashboard_block_runs
           WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?
             AND status = 'completed' AND markdown IS NOT NULL`,
       ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ id: string }>();
-      if (!result) throw new Error("hypersight_result_not_persisted");
+      if (!result) throw new Error("block_dashboard_result_not_persisted");
     } else {
       if (!outcome.finalMessageId) throw new Error("final_message_required");
       const finalMessage = await db.prepare(
@@ -2379,7 +2381,7 @@ export async function terminalizeHarnessAttempt(
     }
   }
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const payload = stableJson(outcome.memberSafePayload ?? {});
   const workstreamStatus = outcome.status === "stopped" ? "idle" : outcome.status;
   const results = await db.batch([
@@ -2438,13 +2440,13 @@ export async function terminalizeHarnessAttempt(
             SELECT 1 FROM harness_runs
              WHERE id = ?5 AND attempt_id = ?6 AND terminalized_at = ?2
                AND parent_tool_call_id IS NULL
-               AND origin != 'hypersight_block'
+               AND origin != 'block_dashboard_block'
           )
           AND NOT EXISTS (
             SELECT 1 FROM harness_runs active
              WHERE active.workspace_id = ?4 AND active.workstream_id = ?3
                AND active.id != ?5
-               AND active.origin != 'hypersight_block'
+               AND active.origin != 'block_dashboard_block'
                AND active.parent_tool_call_id IS NULL
                AND active.status IN ('scheduled', 'running')
                AND active.terminalized_at IS NULL
@@ -2486,7 +2488,7 @@ export async function recordInferenceAttempt(
   db: D1Database,
   record: InferenceAttemptRecord,
 ): Promise<string> {
-  const id = record.id ?? crypto.randomUUID();
+  const id = record.id ?? uuidV7();
   await db.prepare(
     `INSERT INTO inference_attempts
      (id, harness_run_id, workspace_id, workstream_id, attempt_id, turn_id,
@@ -2528,7 +2530,13 @@ export async function recordInferenceAttempt(
 
 export async function reapStaleHarnessRuns(
   db: D1Database,
-  options: { workspaceId?: string; workstreamId?: string; limit?: number } = {},
+  options: {
+    workspaceId?: string;
+    workstreamId?: string;
+    limit?: number;
+    /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
+    automationDatabase?: D1Database | null;
+  } = {},
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
   // Ordinary attempts are the only runs whose expired lease is itself a
@@ -2536,7 +2544,7 @@ export async function reapStaleHarnessRuns(
   // parent still owns a live attempt, so including children in this query
   // races the child's idempotent takeover path.
   const rows = await db.prepare(
-    `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at
+    `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at, origin
        FROM harness_runs
       WHERE status = 'running' AND terminalized_at IS NULL
         AND parent_tool_call_id IS NULL
@@ -2553,11 +2561,12 @@ export async function reapStaleHarnessRuns(
       workstream_id: string;
       attempt_id: string;
       lease_expires_at: string;
+      origin: string;
     }>();
   const reaped: string[] = [];
   for (const row of rows.results ?? []) {
     const now = new Date().toISOString();
-    const eventId = crypto.randomUUID();
+    const eventId = uuidV7();
     const results = await db.batch([
       db.prepare(
         `INSERT INTO harness_run_lifecycle_events
@@ -2586,45 +2595,28 @@ export async function reapStaleHarnessRuns(
             AND EXISTS (
               SELECT 1 FROM harness_runs
                WHERE id = ?4 AND terminalized_at = ?1 AND parent_tool_call_id IS NULL
-                 AND origin != 'hypersight_block'
+                 AND origin != 'block_dashboard_block'
             )
             AND NOT EXISTS (
               SELECT 1 FROM harness_runs active
                WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
                  AND active.id != ?4 AND active.status = 'running'
-                 AND active.origin != 'hypersight_block'
+                 AND active.origin != 'block_dashboard_block'
                  AND active.parent_tool_call_id IS NULL
                  AND active.terminalized_at IS NULL
                  AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             )`,
       ).bind(now, row.workstream_id, row.workspace_id, row.id),
       db.prepare(
-        `UPDATE hypersight_block_runs
+        `UPDATE block_dashboard_block_runs
             SET status = 'failed', completed_at = ?1,
                 error_json = '{"code":"stale_run_reaped","message":"The HyperSight refresh lost its durable lease"}'
           WHERE harness_run_id = ?2 AND status IN ('queued', 'running')
             AND EXISTS (
               SELECT 1 FROM harness_runs
-               WHERE id = ?2 AND terminalized_at = ?1 AND origin = 'hypersight_block'
+               WHERE id = ?2 AND terminalized_at = ?1 AND origin = 'block_dashboard_block'
             )`,
       ).bind(now, row.id),
-      db.prepare(
-        `UPDATE automation_runs
-            SET status = 'failed', completed_at = ?1,
-                result_summary = COALESCE(
-                  result_summary,
-                  'The harness executor lost its durable lease'
-                )
-          WHERE workstream_id = ?2 AND workspace_id = ?3
-            AND status IN ('scheduled', 'running', 'needs_input')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs
-               WHERE id = ?4 AND workstream_id = ?2 AND workspace_id = ?3
-                 AND terminalized_at = ?1 AND status = 'failed'
-                 AND parent_tool_call_id IS NULL
-                 AND origin != 'hypersight_block'
-            )`,
-      ).bind(now, row.workstream_id, row.workspace_id, row.id),
       db.prepare(
         `UPDATE harness_runs
             SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
@@ -2641,6 +2633,21 @@ export async function reapStaleHarnessRuns(
     ]);
     if (d1Changes(results[1]) > 0) {
       reaped.push(row.id);
+      const automationDatabase = options.automationDatabase === undefined
+        ? db
+        : options.automationDatabase;
+      if (automationDatabase && row.origin !== "block_dashboard_block") {
+        await automationDatabase.prepare(
+          `UPDATE automation_runs
+              SET status = 'failed', completed_at = ?1,
+                  result_summary = COALESCE(
+                    result_summary,
+                    'The harness executor lost its durable lease'
+                  )
+            WHERE workstream_id = ?2 AND workspace_id = ?3
+              AND status IN ('scheduled', 'running', 'needs_input')`,
+        ).bind(now, row.workstream_id, row.workspace_id).run();
+      }
     }
   }
 
@@ -2691,7 +2698,7 @@ export async function reapStaleHarnessRuns(
 
   for (const row of childRows.results ?? []) {
     const now = new Date().toISOString();
-    const eventId = crypto.randomUUID();
+    const eventId = uuidV7();
     const status = row.cancellation_requested_at ? "stopped" : "failed";
     const error = row.cancellation_requested_at
       ? { code: "run_cancelled", message: "The child run was cancelled" }

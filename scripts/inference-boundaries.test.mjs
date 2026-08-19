@@ -63,6 +63,18 @@ test("requires renderer WebSockets to consume an authenticated ticket URL", () =
     const ticket = await api.getSocketTicket(id);
     const socket = new WebSocket(ticket.url);
   `, "require-websocket-ticket").length, 0);
+  assert.equal(lint(`
+    const workspaceTicket = await api.getWorkspaceSocketTicket();
+    const commandSocket = new WebSocket(workspaceTicket.url, workspaceTicket.protocols);
+  `, "require-websocket-ticket").length, 0);
+  assert.equal(lint(`
+    const workstreamTicket = await api.getWorkstreamControlSocketTicket(workstreamId);
+    const metadataSocket = new WebSocket(workstreamTicket.url, workstreamTicket.protocols);
+  `, "require-websocket-ticket").length, 0);
+  assert.equal(lint(`
+    const blockTicket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
+    const blockSocket = new WebSocket(blockTicket.url, blockTicket.protocols);
+  `, "require-websocket-ticket").length, 0);
   assert.equal(lint("const socket = new WebSocket(url);", "require-websocket-ticket").length, 1);
 });
 

@@ -12,6 +12,15 @@ import {
 import { publishWorkstreamEvent } from "./integrations";
 import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { launchWorkstreamHarness } from "./workstream-service";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 /**
  * How far back a person's first ever digest reads. Without a floor, switching a
@@ -69,17 +78,24 @@ export async function fireDigestSchedule(
   env: Env,
   input: DigestScheduleFireInput,
 ): Promise<DigestFireOutcome> {
-  const schedule = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.user_id, u.timezone, d.enabled,
-            d.execution_principal_json,
-            u.name AS user_name, w.name AS workspace_name
-       FROM digest_schedules d
-       JOIN users u ON u.id = d.user_id
-       JOIN workspaces w ON w.id = d.workspace_id
-       JOIN workspace_members m
-         ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
-      WHERE d.id = ? AND d.workspace_id = ?`,
-  ).bind(input.scheduleId, input.workspaceId).first<DigestScheduleRow>();
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  const digest = await env.DB.prepare(
+    `SELECT id, workspace_id, user_id, enabled, execution_principal_json
+       FROM digest_schedules WHERE id = ? AND workspace_id = ?`,
+  ).bind(input.scheduleId, input.workspaceId).first<Pick<
+    DigestScheduleRow,
+    "id" | "workspace_id" | "user_id" | "enabled" | "execution_principal_json"
+  >>();
+  const identity = digest ? await workspaceRegionalDatabase(env).prepare(
+    `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
+       FROM users u JOIN workspaces w ON w.id = ?
+       JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = u.id AND m.status = 'active'
+      WHERE u.id = ?`,
+  ).bind(input.workspaceId, digest.user_id).first<Pick<
+    DigestScheduleRow,
+    "timezone" | "user_name" | "workspace_name"
+  >>() : null;
+  const schedule: DigestScheduleRow | null = digest && identity ? { ...digest, ...identity } : null;
   // A revoked membership or a deleted schedule is a decision, not a failure:
   // retrying would only reach the same answer.
   if (!schedule) return { started: false, reason: "unauthorized" };
@@ -197,10 +213,28 @@ export async function fireDigestSchedule(
     if (harnessRunId === null && !workflowInstanceWasCreated(error)) {
       await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
         .bind(deliveryId).run().catch(() => undefined);
-      // Messages, the run row and the memory context cascade with it.
+      // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
+      // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
-        await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
-          .bind(workstreamId).run().catch(() => undefined);
+        const authority = await readWorkstreamAuthorityControl(env);
+        if (authority.phase === "durable_object_open") {
+          const executionEnv = await workstreamExecutionEnvironment(
+            env,
+            schedule.workspace_id,
+            workstreamId,
+          );
+          await executionEnv.DB.prepare(
+            `UPDATE workstreams SET archived_at = ?, updated_at = ?
+              WHERE id = ? AND system_kind = 'digest'`,
+          ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+          // A Durable Object identity cannot be deleted transactionally with
+          // its parent delivery claim. This authoritative tombstone keeps the
+          // never-started system stream unlistable and is safer than a
+          // cross-object purge that could race a late Workflow creation.
+        } else {
+          await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
+            .bind(workstreamId).run().catch(() => undefined);
+        }
       }
     }
     throw error;
@@ -292,8 +326,13 @@ async function createDigestWorkstream(
 ): Promise<string> {
   const workstreamId = newId();
   const at = nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
+  const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+    env,
+    schedule.workspace_id,
+    workstreamId,
+  );
+  await executionEnv.DB.batch([
+    executionEnv.DB.prepare(
       `INSERT INTO workstreams
          (id, workspace_id, title, objective, origin_type, created_by_user_id,
           harness_status, last_activity_at, created_at, updated_at, system_kind, scope)
@@ -312,18 +351,17 @@ async function createDigestWorkstream(
     ),
     // The recipient is the sole participant, which is what makes every tool the
     // run reaches for resolve against their own access and nobody else's.
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `INSERT OR IGNORE INTO workstream_participants
          (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
        VALUES (?, ?, ?, 'creator', ?, NULL)`,
     ).bind(workstreamId, schedule.user_id, schedule.user_id, at),
-    // Linked from the occurrence that owns it. Settlement reads this rather than
-    // joining back through `harness_runs`, so the note it writes lands even when
-    // the run never recorded itself on the delivery.
-    env.DB.prepare(
-      "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
-    ).bind(workstreamId, at, occurrence.deliveryId),
   ]);
+  // The occurrence is regional coordination state; it references the D1
+  // identity anchor but never owns the work-stream record.
+  await env.DB.prepare(
+    "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
+  ).bind(workstreamId, at, occurrence.deliveryId).run();
   return workstreamId;
 }
 
@@ -337,11 +375,16 @@ async function appendDigestBriefMessage(
   env: Env,
   input: { workspaceId: string; workstreamId: string; deliveryId: string; brief: string },
 ): Promise<string> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
   const messageId = newId();
   const clientMessageId = `digest:${input.deliveryId}`;
   const at = nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
+  await executionEnv.DB.batch([
+    executionEnv.DB.prepare(
       `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at)
@@ -349,14 +392,14 @@ async function appendDigestBriefMessage(
          FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
        ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
     ).bind(messageId, clientMessageId, input.workspaceId, input.brief, at, input.workstreamId, input.workspaceId),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `UPDATE workstreams
           SET next_sequence_number = next_sequence_number + 1, last_activity_at = ?, updated_at = ?
         WHERE id = ? AND workspace_id = ?
           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
     ).bind(at, at, input.workstreamId, input.workspaceId, messageId),
   ]);
-  const stored = await createDatabase(env.DB).workstreams.getMessageByClientId(
+  const stored = await createDatabase(executionEnv.DB).workstreams.getMessageByClientId(
     input.workspaceId,
     input.workstreamId,
     clientMessageId,

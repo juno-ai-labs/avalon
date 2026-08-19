@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   calculateNextOccurrence,
+  runIsolatedSchedulerMaintenance,
   schedulerRetryDelay,
   type ScheduleTiming,
   WorkspaceScheduler,
@@ -10,15 +12,29 @@ import {
 } from "../src/durable-objects/workspace-scheduler";
 import {
   applyActiveStreamCheckpointEvent,
-  consumeSocketTicket,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
   planSocketReplay,
   splitActiveStreamCheckpointText,
-  workstreamRoomName,
-} from "../src/durable-objects/workstream-room";
-import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
-import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+  substreamAgentName,
+} from "../src/durable-objects/substream-agent";
+import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import {
+  assertDurableObjectJurisdiction,
+  deriveWorkspacePlacementAffinity,
+  durableObjectStubForRegion,
+  durableObjectStubForWorkspace,
+} from "../src/lib/durable-object-namespace";
+import type { Env } from "../src/env";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestDurableObjectId,
+  createTestEnv,
+  createTestJurisdictionalDurableObjectId,
+} from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -37,8 +53,47 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it("isolates scheduler maintenance failures so later work still runs", async () => {
+    const later = vi.fn(async () => undefined);
+    const rejected = vi.fn();
+
+    await runIsolatedSchedulerMaintenance([
+      () => { throw new Error("reaper_failed"); },
+      later,
+    ], rejected);
+
+    expect(later).toHaveBeenCalledOnce();
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ message: "reaper_failed" }), 0);
+  });
+
+  it.each([
+    ["global", "-122.4194", "wnam"],
+    ["global", "-73.9857", "enam"],
+    ["eu", "-0.1276", "weur"],
+    ["eu", "30.5234", "eeur"],
+  ] as const)("derives %s workspace affinity from request longitude %s", (region, longitude, expected) => {
+    expect(deriveWorkspacePlacementAffinity(region, { longitude })).toEqual({
+      affinity: expected,
+      source: "request_longitude",
+    });
+  });
+
+  it.each([
+    ["global", undefined, "wnam"],
+    ["eu", { longitude: "not-a-coordinate" }, "weur"],
+  ] as const)("uses the %s migration/background fallback when request metadata is absent", (
+    region,
+    metadata,
+    expected,
+  ) => {
+    expect(deriveWorkspacePlacementAffinity(region, metadata)).toEqual({
+      affinity: expected,
+      source: "missing_request_metadata",
+    });
+  });
+
   it("uses a region/workspace/work-stream stable room name", () => {
-    expect(workstreamRoomName("eu", "workspace-id", "workstream-id")).toBe(
+    expect(substreamAgentName("eu", "workspace-id", "workstream-id")).toBe(
       "eu:workspace-id:workstream-id"
     );
     expect(workspaceSchedulerName("global", "workspace-id")).toBe("global:workspace-id");
@@ -49,15 +104,108 @@ describe("runtime component invariants", () => {
     expect(isPersonalEventAudience("user-two", "user-one")).toBe(false);
   });
 
-  it("pins EU Durable Object IDs to the EU jurisdiction namespace", () => {
-    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({});
-    const jurisdiction = vi.fn(() => euNamespace);
+  it("locks Durable Object IDs and first placement to the product region", () => {
+    const usStub = {};
+    const euStub = {};
+    const usId = createTestDurableObjectId("us-id");
+    const euId = createTestDurableObjectId("eu-id");
+    const usGet = vi.fn(() => usStub);
+    const euGet = vi.fn(() => euStub);
+    const usIdFromName = vi.fn(() => usId);
+    const euIdFromName = vi.fn(() => euId);
+    const usNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get: usGet,
+      idFromName: usIdFromName,
+    });
+    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get: euGet,
+      idFromName: euIdFromName,
+    });
+    const jurisdiction = vi.fn((value: DurableObjectJurisdiction) => (
+      value === "us" ? usNamespace : euNamespace
+    ));
     const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
-    expect(durableObjectNamespaceForRegion(namespace, "eu")).toBe(euNamespace);
-    expect(jurisdiction).toHaveBeenCalledWith("eu");
-    expect(durableObjectNamespaceForRegion(namespace, "global")).toBe(namespace);
-    expect(durableObjectNamespaceForRegion(namespace, "eu", "development")).toBe(namespace);
+    expect(durableObjectStubForRegion(
+      namespace,
+      "global",
+      "workspace-one",
+      "production",
+      "wnam",
+    )).toBe(usStub);
+    expect(durableObjectStubForRegion(
+      namespace,
+      "eu",
+      "workspace-two",
+      "production",
+      "weur",
+    )).toBe(euStub);
+    expect(jurisdiction.mock.calls).toEqual([["us"], ["eu"]]);
+    expect(usIdFromName).toHaveBeenCalledWith("workspace-one");
+    expect(euIdFromName).toHaveBeenCalledWith("workspace-two");
+    expect(usGet).toHaveBeenCalledWith(usId, { locationHint: "wnam" });
+    expect(euGet).toHaveBeenCalledWith(euId, { locationHint: "weur" });
+  });
+
+  it("uses one persisted workspace affinity for every child lookup", async () => {
+    const first = vi.fn(async () => ({ placement_affinity: "enam" }));
+    const bind = vi.fn();
+    const statement = createTestD1PreparedStatement({
+      bind,
+      first,
+    });
+    bind.mockReturnValue(statement);
+    const database = createTestD1Database({ prepare: vi.fn(() => statement) });
+    const get = vi.fn(() => ({}));
+    const regionalNamespace = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get,
+    });
+    const namespace = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      jurisdiction: vi.fn(() => regionalNamespace),
+    });
+    const env = createTestEnv({
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      DB: database,
+    });
+
+    await durableObjectStubForWorkspace(env, namespace, "workspace-east", "child-one");
+    await durableObjectStubForWorkspace(env, namespace, "workspace-east", "child-two");
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenNthCalledWith(1, expect.anything(), { locationHint: "enam" });
+    expect(get).toHaveBeenNthCalledWith(2, expect.anything(), { locationHint: "enam" });
+  });
+
+  it("omits unsupported jurisdiction and location options in local workerd", () => {
+    const stub = {};
+    const id = createTestDurableObjectId("local-id");
+    const get = vi.fn(() => stub);
+    const idFromName = vi.fn(() => id);
+    const jurisdiction = vi.fn();
+    const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get,
+      idFromName,
+      jurisdiction,
+    });
+
+    expect(durableObjectStubForRegion(namespace, "eu", "local", "test", "eeur")).toBe(stub);
+    expect(jurisdiction).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith(id);
+  });
+
+  it("fails closed when a production object was created outside its jurisdiction", () => {
+    expect(() => assertDurableObjectJurisdiction(
+      createTestJurisdictionalDurableObjectId("us-object", "us"),
+      "global",
+      "production",
+    )).not.toThrow();
+    expect(() => assertDurableObjectJurisdiction(
+      createTestJurisdictionalDurableObjectId("eu-object", "eu"),
+      "global",
+      "production",
+    )).toThrow("durable_object_jurisdiction_mismatch:us:eu");
   });
 
   it("replays an available in-memory window and explicitly resyncs after hibernation", () => {
@@ -188,7 +336,7 @@ describe("runtime component invariants", () => {
     const chunks = splitActiveStreamCheckpointText(text);
 
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => chunk.length <= 30_000)).toBe(true);
+    expect(chunks.every((chunk) => new TextEncoder().encode(chunk).byteLength <= 60 * 1024)).toBe(true);
     expect(chunks.join("")).toBe(text);
     expect(chunks.every((chunk) => {
       const last = chunk.charCodeAt(chunk.length - 1);
@@ -220,6 +368,43 @@ describe("runtime component invariants", () => {
     expect(schedulerRetryDelay(99, () => 0.999)).toBeLessThanOrEqual(30 * 60_000);
   });
 
+  it("parks workspace alarms without reading due work during maintenance", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const setAlarm = vi.fn(async () => undefined);
+    const objectDatabase = new DatabaseSync(":memory:");
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      setAlarm,
+      transactionSync: <T>(body: () => T) => body(),
+      sql: createTestSqlStorage(objectDatabase),
+    });
+    const first = vi.fn(async () => ({
+      phase: "maintenance_draining",
+      generation: 2,
+      required_serving_contract_version: 1,
+      serving_contract_version: 0,
+    }));
+    const prepare = vi.fn(() => ({ first }));
+    const scheduler = new WorkspaceScheduler(
+      createCloudflareTestBinding<DurableObjectState>({
+        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+        storage,
+      }),
+      { DB: { prepare } } as never,
+    );
+    storage.sql.exec(
+      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+       VALUES (1, ?, 0, 0)`,
+      "00000000-0000-7000-8000-000000000001",
+    );
+
+    await scheduler.alarm();
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(setAlarm).toHaveBeenCalledWith(Date.now() + 5 * 60_000);
+    objectDatabase.close();
+  });
+
   it("persists a retry gate so a failed due target cannot create a one-second alarm loop", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -243,17 +428,27 @@ describe("runtime component invariants", () => {
       created_at: "2025-12-31T23:54:00.000Z",
       updated_at: "2025-12-31T23:54:00.000Z",
     };
-    const values = new Map<string, unknown>([["workspaceId", workspaceId]]);
+    const objectDatabase = new DatabaseSync(":memory:");
     const setAlarm = vi.fn(async (at: number) => { void at; });
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      get: async <T>(key: string) => values.get(key) as T | undefined,
-      put: async (key: string, value: unknown) => { values.set(key, value); },
-      delete: async (key: string) => values.delete(key),
       setAlarm,
       deleteAlarm: vi.fn(async () => undefined),
+      transactionSync: <T>(body: () => T) => body(),
+      sql: createTestSqlStorage(objectDatabase),
     });
     let auditWrites = 0;
     const prepare = vi.fn((sql: string) => ({
+      first: async () => {
+        if (sql.includes("FROM workstream_authority_control")) {
+          return {
+            phase: "legacy_open",
+            generation: 0,
+            required_serving_contract_version: 1,
+            serving_contract_version: 0,
+          };
+        }
+        throw new Error(`Unexpected first query: ${sql}`);
+      },
       bind: vi.fn(() => ({
         all: async () => {
           // The alarm-target union names every due-dated table, so it has to be
@@ -284,8 +479,16 @@ describe("runtime component invariants", () => {
       })),
     }));
     const scheduler = new WorkspaceScheduler(
-      createCloudflareTestBinding<DurableObjectState>({ storage }),
+      createCloudflareTestBinding<DurableObjectState>({
+        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+        storage,
+      }),
       { DB: { prepare } } as never,
+    );
+    storage.sql.exec(
+      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+       VALUES (1, ?, 0, 0)`,
+      workspaceId,
     );
 
     await scheduler.alarm();
@@ -296,6 +499,7 @@ describe("runtime component invariants", () => {
     await scheduler.alarm();
     expect(setAlarm.mock.calls.at(-1)?.[0]).toBe(firstAlarm);
     expect(auditWrites).toBe(1);
+    objectDatabase.close();
   });
 
   it("keeps a local calendar hour across the daylight-saving boundary", () => {
@@ -313,26 +517,32 @@ describe("runtime component invariants", () => {
   });
 
   it("consumes each signed socket ticket identity only once", async () => {
+    const database = new DatabaseSync(":memory:");
     const values = new Map<string, unknown>();
-    type Transaction = {
-      get<T>(key: string): Promise<T | undefined>;
-      put(key: string, value: unknown): Promise<void>;
-    };
-    const transaction: Transaction = {
-      get: async <T>(key: string) => values.get(key) as T | undefined,
-      put: async (key: string, value: unknown) => { values.set(key, value); },
-    };
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      transaction: async (callback: (value: Transaction) => Promise<boolean>) => callback(transaction),
-      list: async () => new Map(values) as Map<string, number>,
-      delete: async (keys: string[]) => {
-        for (const key of keys) values.delete(key);
-        return true;
+      get: async (key: string | string[]) => Array.isArray(key)
+        ? new Map(key.flatMap((entry) => values.has(entry) ? [[entry, values.get(entry)]] : []))
+        : values.get(key),
+      list: async ({ prefix = "" }: { prefix?: string } = {}) => new Map(
+        [...values].filter(([key]) => key.startsWith(prefix)),
+      ),
+      delete: async (key: string | string[]) => {
+        if (Array.isArray(key)) {
+          let deleted = 0;
+          for (const entry of key) if (values.delete(entry)) deleted += 1;
+          return deleted;
+        }
+        return values.delete(key);
       },
+      transactionSync: (callback: () => unknown) => callback(),
+      sql: createTestSqlStorage(database),
     });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    await store.waitUntilReady();
 
-    await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(true);
-    await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(false);
+    expect(store.consumeSocketTicket("ticket-1", 2_000, 1_000)).toBe(true);
+    expect(store.consumeSocketTicket("ticket-1", 2_000, 1_000)).toBe(false);
+    database.close();
   });
 
   it("keeps active participants out of the ephemeral viewer list", () => {

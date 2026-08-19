@@ -106,7 +106,7 @@ const COMMAND_SHORTCUT_LIMIT = 9;
  * intending to follow the row.
  *
  * The wait is normally one render. It is bounded because the alternative is a
- * reveal that stays armed: the list polls every fifteen seconds, so an intent
+ * reveal that stays armed: socket state can rerender the list, so an intent
  * that is never honoured is re-evaluated forever and fires the moment the state
  * happens to match — scrolling, and moving focus, under somebody who pinned
  * something a minute ago and has long since moved on. Following a row is only

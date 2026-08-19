@@ -6,6 +6,12 @@ import {
   resourceTelemetryEventId,
   telemetryCountBucket,
 } from "../telemetry/product-usage";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 /**
  * Settles one digest run: record what it wrote, then send it.
@@ -84,6 +90,7 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
 
 export async function settleDigestRun(
   env: Env,
+  workspaceId: string,
   deliveryId: string,
   outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
   /**
@@ -94,15 +101,24 @@ export async function settleDigestRun(
    */
   text: string | null,
 ): Promise<void> {
-  const delivery = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.user_id, d.planned_for, d.event_count,
-            d.highlight_count, d.status,
-            u.timezone, u.name AS user_name, w.name AS workspace_name
-       FROM digest_deliveries d
-       JOIN users u ON u.id = d.user_id
-       JOIN workspaces w ON w.id = d.workspace_id
-      WHERE d.id = ?`,
-  ).bind(deliveryId).first<DigestDeliveryRow>();
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const localDelivery = await env.DB.prepare(
+    `SELECT id, workspace_id, user_id, planned_for, event_count, highlight_count, status
+       FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
+  ).bind(deliveryId, workspaceId).first<Omit<
+    DigestDeliveryRow,
+    "timezone" | "user_name" | "workspace_name"
+  >>();
+  const identity = localDelivery ? await workspaceRegionalDatabase(env).prepare(
+    `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
+       FROM users u JOIN workspaces w ON w.id = ? WHERE u.id = ?`,
+  ).bind(workspaceId, localDelivery.user_id).first<Pick<
+    DigestDeliveryRow,
+    "timezone" | "user_name" | "workspace_name"
+  >>() : null;
+  const delivery: DigestDeliveryRow | null = localDelivery && identity
+    ? { ...localDelivery, ...identity }
+    : null;
   if (!delivery) return;
   // Already settled by an earlier attempt of this step. The cursor has moved and
   // the destinations have their copy; re-sending would duplicate it.
@@ -208,6 +224,44 @@ async function noteDeliveryInTranscript(
   destinations: number,
 ): Promise<void> {
   const at = nowIso();
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const delivery = await env.DB.prepare(
+      `SELECT workspace_id, workstream_id FROM digest_deliveries WHERE id = ?`,
+    ).bind(deliveryId).first<{ workspace_id: string; workstream_id: string | null }>();
+    if (!delivery?.workstream_id) return;
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      delivery.workspace_id,
+      delivery.workstream_id,
+    );
+    const clientMessageId = `digest-delivered:${deliveryId}`;
+    const messageId = newId();
+    await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
+        `INSERT INTO messages
+           (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+            message_type, text_content, structured_content_json, sequence_number, created_at)
+         SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
+                w.next_sequence_number, ?
+           FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
+         ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+      ).bind(
+        messageId,
+        clientMessageId,
+        `Delivered to ${destinations} destination${destinations === 1 ? "" : "s"}.`,
+        at,
+        delivery.workstream_id,
+        delivery.workspace_id,
+      ),
+      executionEnv.DB.prepare(
+        `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1, updated_at = ?
+          WHERE id = ? AND workspace_id = ?
+            AND EXISTS (SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id)`,
+      ).bind(at, delivery.workstream_id, delivery.workspace_id, clientMessageId),
+    ]);
+    return;
+  }
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO messages

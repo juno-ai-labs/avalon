@@ -1,7 +1,11 @@
 import { newId, nowIso } from "@avalon/db";
 
+import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceActivityEventListResultSchema } from "../durable-objects/workspace-activity-event-protocol";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * The first-party activity log: what happened in Avalon, for whoever should
@@ -34,6 +38,8 @@ export type ActivityEventAudience =
 
 export interface ActivityEventInput {
   workspaceId: string;
+  /** Stable producer identity when a durable upstream fact already owns one. */
+  eventId?: string;
   /** Dotted past-tense verb, e.g. `workstream.message.posted`. */
   eventType: string;
   subjectType: string;
@@ -128,8 +134,18 @@ export async function recordActivityEventOrThrow(
   env: Env,
   input: ActivityEventInput,
 ): Promise<string> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, input.workspaceId),
+    );
+    return workspace.recordActivityEvent(input);
+  }
   const at = nowIso();
-  const proposedId = newId();
+  const proposedId = input.eventId ?? newId();
   const audienceUserId = input.audience.kind === "user" ? input.audience.userId : null;
   const audienceWorkstreamId = input.audience.kind === "workstream" ? input.audience.workstreamId : null;
 
@@ -236,6 +252,51 @@ export async function listActivityEventsForUser(
   },
 ): Promise<ActivityEventRow[]> {
   const from = input.from ?? null;
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, input.workspaceId),
+    );
+    const result = WorkspaceActivityEventListResultSchema.parse(await workspace.listActivityEvents({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      from,
+      through: input.through,
+      notBefore: input.notBefore ?? null,
+      digestibleOnly: input.digestibleOnly,
+      limit: input.limit,
+    }));
+    return result.items.map((item) => ({
+      log_sequence: item.sequence,
+      id: item.id,
+      event_type: item.eventType,
+      subject_type: item.subjectType,
+      subject_id: item.subjectId,
+      subject_sequence_number: item.subjectSequenceNumber,
+      actor_type: item.actorType,
+      actor_user_id: item.actorUserId,
+      actor_label: item.actorLabel,
+      title: item.title,
+      body: item.body,
+      canonical_url: item.canonicalUrl,
+      occurred_at: item.occurredAt,
+      created_at: item.createdAt,
+      metadata_json: JSON.stringify(item.metadata),
+      is_target: item.isTarget ? 1 : 0,
+      target_relations: item.targetRelations.length > 0 ? item.targetRelations.join(",") : null,
+    }));
+  }
+  const visibleWorkstreamIds = (await env.DB.prepare(
+    `SELECT participant.workstream_id
+       FROM workstream_participants participant
+       JOIN workstreams workstream ON workstream.id = participant.workstream_id
+      WHERE workstream.workspace_id = ? AND participant.user_id = ?
+        AND participant.removed_at IS NULL AND workstream.system_kind IS NULL`,
+  ).bind(input.workspaceId, input.userId).all<{ workstream_id: string }>()).results
+    .map((row) => row.workstream_id);
   const result = await env.DB.prepare(
     `SELECT e.log_sequence, e.id, e.event_type, e.subject_type, e.subject_id, e.subject_sequence_number,
             e.actor_type, e.actor_user_id, e.actor_label, e.title, e.body, e.canonical_url,
@@ -257,17 +318,9 @@ export async function listActivityEventsForUser(
         AND (
           e.audience_kind = 'workspace'
           OR (e.audience_kind = 'user' AND e.audience_user_id = ?2)
-          OR (e.audience_kind = 'workstream' AND EXISTS (
-                SELECT 1
-                  FROM workstream_participants p
-                  JOIN workstreams w ON w.id = p.workstream_id
-                 WHERE p.workstream_id = e.audience_workstream_id
-                   AND p.user_id = ?2
-                   AND p.removed_at IS NULL
-                   -- Machinery never feeds a digest, even for its own
-                   -- participant: a digest must not summarize itself.
-                   AND w.system_kind IS NULL
-              ))
+          OR (e.audience_kind = 'workstream' AND e.audience_workstream_id IN (
+            SELECT value FROM json_each(?8)
+          ))
         )
         -- The reader must still be a member. A revoked membership stops the log
         -- at once rather than at the next configuration change.
@@ -285,6 +338,7 @@ export async function listActivityEventsForUser(
     input.notBefore ?? null,
     input.limit,
     input.digestibleOnly ? 1 : 0,
+    JSON.stringify(visibleWorkstreamIds),
   ).all<ActivityEventRow>();
   return result.results ?? [];
 }
@@ -314,6 +368,7 @@ const ACTIVITY_EVENT_REAP_MAX_BATCHES = 10;
  * cap bounds one tick's work; whatever is left waits for the next.
  */
 export async function reapExpiredActivityEvents(env: Env): Promise<number> {
+  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") return 0;
   const cutoff = new Date(Date.now() - ACTIVITY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1_000).toISOString();
   let reaped = 0;
   for (let batch = 0; batch < ACTIVITY_EVENT_REAP_MAX_BATCHES; batch += 1) {
@@ -338,6 +393,16 @@ export async function latestActivityEventCursor(
   env: Env,
   workspaceId: string,
 ): Promise<ActivityEventCursor> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    return workspace.latestActivityEventCursor({ workspaceId });
+  }
   const row = await env.DB.prepare(
     "SELECT MAX(log_sequence) AS log_sequence FROM activity_events WHERE workspace_id = ?",
   ).bind(workspaceId).first<{ log_sequence: number | null }>();

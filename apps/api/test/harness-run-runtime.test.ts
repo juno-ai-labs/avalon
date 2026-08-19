@@ -263,25 +263,25 @@ describe("durable harness attempt runtime", () => {
     const runThree = "00000000-0000-4000-8000-000000000005";
     const runFour = "00000000-0000-4000-8000-000000000006";
     sqlite.database.exec(`
-      UPDATE harness_runs SET origin = 'hypersight_block', status = 'scheduled';
+      UPDATE harness_runs SET origin = 'block_dashboard_block', status = 'scheduled';
       UPDATE workstreams SET harness_status = 'idle' WHERE id = '${WORKSTREAM_ID}';
       INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
       VALUES
         ('${runThree}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'human_message',
          '{"type":"user","userId":"user-runtime"}', 'running', '2026-08-03'),
-        ('${runFour}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'hypersight_block',
+        ('${runFour}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'block_dashboard_block',
          '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}', 'scheduled', '2026-08-03');
     `);
 
     const [firstBlock, secondBlock] = await Promise.all([
       claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
-        attemptId: "attempt-hypersight-one",
-        owner: "owner-hypersight-one",
+        attemptId: "attempt-block-dashboard-one",
+        owner: "owner-block-dashboard-one",
       }),
       claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
-        attemptId: "attempt-hypersight-two",
-        owner: "owner-hypersight-two",
+        attemptId: "attempt-block-dashboard-two",
+        owner: "owner-block-dashboard-two",
       }),
     ]);
     expect(firstBlock.state).toBe("claimed");
@@ -296,8 +296,8 @@ describe("durable harness attempt runtime", () => {
     });
     expect(interactive.state).toBe("claimed");
     const laterBlock = await claimHarnessAttempt(sqlite.binding, input(runFour), {
-      attemptId: "attempt-hypersight-four",
-      owner: "owner-hypersight-four",
+      attemptId: "attempt-block-dashboard-four",
+      owner: "owner-block-dashboard-four",
     });
     expect(laterBlock.state).toBe("claimed");
   });
@@ -339,32 +339,32 @@ describe("durable harness attempt runtime", () => {
     sqlite.database.exec(`
       DELETE FROM harness_runs WHERE id = '${RUN_TWO}';
       UPDATE harness_runs
-         SET origin = 'hypersight_block', status = 'scheduled', model = 'x-ai/grok-4.3'
+         SET origin = 'block_dashboard_block', status = 'scheduled', model = 'x-ai/grok-4.3'
        WHERE id = '${RUN_ONE}';
       UPDATE workstreams SET harness_status = 'completed' WHERE id = '${WORKSTREAM_ID}';
-      INSERT INTO hypersight_configuration_versions
+      INSERT INTO block_dashboard_configuration_versions
         (id, workspace_id, workstream_id, version_number, blocks_json,
          created_by_user_id, created_at)
-      VALUES ('hypersight-runtime-version', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 1,
+      VALUES ('block-dashboard-runtime-version', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 1,
               '[{"id":"block-runtime","prompt":"Summarize"}]', 'user-runtime', '2026-08-03');
-      INSERT INTO hypersight_block_runs
+      INSERT INTO block_dashboard_block_runs
         (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
          trigger_sequence, harness_run_id, status, created_at)
-      VALUES ('hypersight-runtime-run', '${WORKSPACE_ID}', '${WORKSTREAM_ID}',
-              'hypersight-runtime-version', 'block-runtime', 'Summarize', 12,
+      VALUES ('block-dashboard-runtime-run', '${WORKSPACE_ID}', '${WORKSTREAM_ID}',
+              'block-dashboard-runtime-version', 'block-runtime', 'Summarize', 12,
               '${RUN_ONE}', 'queued', '2026-08-03');
     `);
 
     const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
-      attemptId: "attempt-hypersight",
-      owner: "owner-hypersight",
+      attemptId: "attempt-block-dashboard",
+      owner: "owner-block-dashboard",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
     expect(sqlite.database.prepare(
       "SELECT harness_status FROM workstreams WHERE id = ?",
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
     sqlite.database.prepare(
-      "UPDATE hypersight_block_runs SET status = 'completed', markdown = '# Current view' WHERE harness_run_id = ?",
+      "UPDATE block_dashboard_block_runs SET status = 'completed', markdown = '# Current view' WHERE harness_run_id = ?",
     ).run(RUN_ONE);
 
     await expect(terminalizeHarnessAttempt(

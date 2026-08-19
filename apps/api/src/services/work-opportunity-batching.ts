@@ -1,5 +1,9 @@
 import { newId, nowIso } from "@avalon/db";
+import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const DEBOUNCE_MS = 10 * 60_000;
 const MAX_DELAY_MS = 60 * 60_000;
@@ -23,6 +27,25 @@ function processAfter(firstEventAt: string, lastEventAt: string): string {
 }
 
 async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, input.workspaceId),
+    );
+    await workspace.enqueueOpportunitySource({
+      workspaceId: input.workspaceId,
+      partitionKey: input.partitionKey,
+      audience: { scope: input.audienceScope, userId: input.audienceUserId },
+      sourceKind: input.sourceKind,
+      sourceId: input.sourceId,
+      occurredAt: input.occurredAt,
+      inputCharacters: input.inputCharacters,
+    });
+    return;
+  }
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const at = nowIso();
     let window = await env.DB.prepare(
@@ -91,8 +114,34 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
   throw new Error("Opportunity aggregation event could not be queued");
 }
 
-export async function enqueueActivityOpportunity(env: Env, activityId: string): Promise<void> {
-  const activity = await env.DB.prepare(
+export async function enqueueActivityOpportunity(
+  env: Env,
+  activityId: string,
+  knownWorkspaceId?: string,
+): Promise<void> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  const durableActivity = authority.phase === "durable_object_open" && knownWorkspaceId
+    ? WorkspaceConnectorEventSchema.nullable().parse(await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      knownWorkspaceId,
+      workspaceDOName(env.AVALON_REGION, knownWorkspaceId),
+    ).then((workspace) => workspace.connectorEvent({ workspaceId: knownWorkspaceId, eventId: activityId })))
+    : null;
+  const activity = durableActivity ? {
+    workspace_id: durableActivity.activity.workspaceId,
+    connection_id: durableActivity.activity.connectionId,
+    connection_scope: durableActivity.activity.connectionScope,
+    connection_owner_user_id: durableActivity.activity.connectionOwnerUserId,
+    occurred_at: durableActivity.activity.occurredAt,
+    title: durableActivity.activity.title,
+    summary: durableActivity.activity.summary,
+    text_snippet: durableActivity.activity.textSnippet,
+    actor_json: JSON.stringify(durableActivity.activity.actor),
+    subject_json: JSON.stringify(durableActivity.activity.subject),
+    visibility_json: JSON.stringify(durableActivity.activity.visibility),
+    target_user_ids_json: JSON.stringify(durableActivity.activity.targetUserIds),
+  } : await env.DB.prepare(
     `SELECT a.workspace_id, a.connection_id, a.connection_scope, a.connection_owner_user_id, a.occurred_at,
             a.title, a.summary, a.text_snippet, a.actor_json, a.subject_json,
             a.visibility_json, a.target_user_ids_json
@@ -165,14 +214,33 @@ export async function enqueueMentionOpportunities(
     "SELECT created_at, text_content FROM messages WHERE id = ? AND workspace_id = ? LIMIT 1",
   ).bind(messageId, workspaceId).first<{ created_at: string; text_content: string }>();
   if (!message) return;
-  await Promise.all([...new Set(targetUserIds)].map((userId) => enqueue(env, {
+  await enqueueMentionOpportunitySnapshot(env, {
     workspaceId,
+    messageId,
+    targetUserIds,
+    occurredAt: message.created_at,
+    inputCharacters: message.text_content.length,
+  });
+}
+
+export async function enqueueMentionOpportunitySnapshot(
+  env: Env,
+  input: {
+    workspaceId: string;
+    messageId: string;
+    targetUserIds: string[];
+    occurredAt: string;
+    inputCharacters: number;
+  },
+): Promise<void> {
+  await Promise.all([...new Set(input.targetUserIds)].map((userId) => enqueue(env, {
+    workspaceId: input.workspaceId,
     partitionKey: `mention:${userId}`,
     audienceScope: "personal",
     audienceUserId: userId,
     sourceKind: "message",
-    sourceId: messageId,
-    occurredAt: message.created_at,
-    inputCharacters: message.text_content.length,
+    sourceId: input.messageId,
+    occurredAt: input.occurredAt,
+    inputCharacters: input.inputCharacters,
   })));
 }

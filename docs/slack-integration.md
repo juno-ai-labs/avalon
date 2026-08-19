@@ -277,6 +277,10 @@ App Home is a personalized control surface published per user. Avalon publishes 
 App Home adds a workspace-administration card for Avalon owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
 
 Home is updated on `app_home_opened`, after account linking, and after settings changes. Blocks contain user-specific data only after the Slack user has been linked and active membership is revalidated.
+Recent/pinned work-stream summaries and link unfurls come from the authoritative
+WorkspaceDO directory after cutover; installation, account-link, connection, and
+Slack delivery coordinates remain in regional D1. A WorkspaceDO failure withholds
+or delays that product summary rather than reading a frozen D1 work-stream row.
 
 ### Interactions
 
@@ -599,8 +603,26 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 ## Changelog
 
 This document predates the [module document](module-documents.md) convention and
-had no changelog until the entry below; the reasoning behind everything above it
+had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-18 — Slack work-stream discovery reads WorkspaceDO
+
+**What changed:** App Home recent work, unfurl creation, and unfurl refresh now
+batch their work-stream summary reads through WorkspaceDO. D1 continues to own
+Slack installation/link/delivery state, not title/status/sidebar projections.
+
+**Why:** Connector state and work-stream product state have different
+authorities. Joining them in application code preserves each without cloning the
+work-stream directory back into D1.
+
+**Considered and rejected:** D1 summary projections retained only for Slack and
+one WorkstreamDO call per result. The first recreates split authority; the second
+needlessly multiplies object calls.
+
+**Consequences:** Slack summary surfaces fail closed or retry when WorkspaceDO is
+unavailable. Typed batched directory RPCs must stay bounded, while connector
+authorization and credentials never enter the object.
 
 ### 2026-08-15 — Multi-member delivery follows the run, not the opener
 
@@ -624,7 +646,6 @@ run or view.
 their actual triggering member. A stale link on a retired installation cannot suppress the connect
 prompt. An unlinked viewer may open the feedback modal but cannot submit it. Roster enrichment is
 best effort within the shared deadline, and participant-event consumers must remain idempotent.
-
 ### 2026-08-12 — Slack MCP tools come from the active server
 
 **What changed:** Personal Slack connections now request one

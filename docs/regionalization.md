@@ -26,7 +26,8 @@ bridges, or any code that selects a Durable Object namespace.
 | `apps/api/src/routes/telemetry.ts`, `apps/api/src/telemetry/` | Immediate route bootstrap, regional acceptance, EU internal sink, and Global PostHog delivery. |
 | `apps/site/src/telemetry.ts` | Uses the content-free Cloudflare route before choosing a persistent Global or page-scoped EU anonymous identity. |
 | `apps/api/src/lib/rpc-contracts.ts` | The schema every bridge argument is parsed against at the hop. |
-| `apps/api/src/lib/durable-object-namespace.ts` | The shared helper that selects a namespace, pinning EU with `jurisdiction("eu")`. |
+| `apps/api/src/lib/durable-object-namespace.ts` | The sole product-object resolver: US/EU namespace restriction, persisted workspace affinity, explicit non-workspace fallback, and in-object jurisdiction assertion. |
+| `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct or aliased Durable Object namespace routing outside that resolver. |
 | `apps/api/src/lib/region-routed-state.ts` | Region-prefixed provider state, so a callback knows where it started. |
 | `apps/api/src/env.ts` | `assertEnvContract` — region-scoped, not just environment-scoped. |
 | `apps/api/src/services/terminal/contract.ts`, `daytona-provider.ts` | Independent regional Terminal capability gate and Daytona target/credential boundary. |
@@ -72,7 +73,7 @@ The same Worker source is deployed twice:
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
 | Telemetry R2 | dedicated `avalon-global-telemetry` bucket | dedicated `avalon-eu-telemetry` bucket with EU jurisdiction |
-| Durable Objects | global namespace calls | namespace calls pinned with `jurisdiction("eu")` |
+| Durable Objects | `jurisdiction("us")`, workspace affinity `wnam` or `enam` | `jurisdiction("eu")`, workspace affinity `weur` or `eeur` |
 | Secrets | global key set | independent EU key set |
 | Identity onboarding | canonical platform identity and opaque workspace binding | regional membership/invitation operations exposed only by named Worker RPC |
 | GitHub App ingress | signature verification and installation-to-region directory | exact signed delivery forwarded through named Worker RPC only when connected in EU |
@@ -186,10 +187,17 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 - **Repositories never choose a region from a user-controlled object ID.** Every
   service receives a fixed regional dependency container; the region comes from the
   deployment and the session, never from the request body.
-- **All WorkstreamRoom and WorkspaceScheduler call sites select the namespace
-  through the shared region helper**, and EU IDs are created and resolved with
-  `jurisdiction("eu")`. A namespace selected by hand in one call site is an EU
-  object created outside the EU jurisdiction.
+- **Every workspace-scoped Avalon Durable Object stub is created by
+  `durableObjectStubForWorkspace`.** Staging and production derive IDs from
+  `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU, then apply
+  the affinity persisted by the workspace's Global binding and regional D1 row.
+  Creation splits Global at 100°W and EU at 15°E to map request longitude to
+  `wnam`/`enam` or `weur`/`eeur`; only
+  migrations, background-created workspaces, and missing request metadata use
+  the western fallback. Non-workspace regional singletons use a separate
+  explicit fallback resolver. ESLint rejects direct/aliased namespace routing
+  and the low-level region-only resolver. Each product object also checks
+  `ctx.id.jurisdiction` at construction and fails closed on a mismatch.
 - **Regional D1 is never an allocation fallback for a work-stream email name.**
   Every non-Global Worker calls the named Global router and fails closed without
   it; disabled and deleted names remain Global tombstones forever.
@@ -282,8 +290,12 @@ Under `apps/api`, run with `pnpm --filter @avalon/api exec vitest run <path>`
 | `test/telemetry-bootstrap.test.ts` | Cloudflare-country classification, immediate routing, capability binding, and the EU crash-saving decision. |
 | `test/telemetry-preference.test.ts`, `test/telemetry-identity-link.test.ts` | Opaque cross-region preference projection and same-region anonymous linking. |
 | `test/crash-symbolicator-config.test.ts`, `test/env-contract.test.ts` | Dedicated per-region telemetry buckets, EU jurisdiction, Container bindings, and Global-only PostHog configuration. |
+| `test/runtime-components.test.ts` | US/EU namespace restriction, first-placement hints, local-runtime behavior, and fail-closed object jurisdiction checks. |
 | `test/notion-routing.test.ts` | The region-prefixed OAuth state and the unrouted-delivery refusal. |
 | `test/workstream-email-address.test.ts` | The Global reservation registry and its fail-closed behavior. |
+
+`pnpm test:scripts` also exercises the custom region-routing rule against
+direct, computed, optional, aliased, destructured, and typed namespace access.
 
 Both Wrangler dry-run builds run in CI and are what catch whether Cloudflare can
 build each complete deployment. Focused config tests also read both regional files
@@ -326,6 +338,51 @@ resident.
 
 ## Changelog
 
+### 2026-08-17 — Workspace routing persists west/east Durable Object affinity
+
+**What changed:** The initiating Cloudflare request selects one region-compatible
+west/east affinity during workspace creation. The Global binding, regional D1
+workspace row, and WorkspaceDO SQL persist it, and every descendant lookup uses
+it with the existing hard US/EU jurisdiction.
+
+**Why:** Residency and latency are different controls. A fixed western hint kept
+the residency boundary but imposed avoidable latency on eastern users; choosing
+again for each child would split a hierarchy across locations.
+
+**Considered and rejected:** Treating current requester location as child
+placement and putting WorkspaceDO on every data-plane lookup. The first is
+unstable and the second recreates a shared control-plane bottleneck.
+
+**Consequences:** Selecting `wnam`/`weur` solely from jurisdiction remains a
+migration, background, and missing-metadata fallback only. A western request
+still legitimately selects those values. Affinity is immutable, cached from the
+regional routing projection, and never substitutes for the jurisdiction guarantee.
+
+### 2026-08-17 — Product Durable Objects are jurisdiction-locked in both regions
+
+**What changed:** One resolver now derives every staging/production object ID
+from a US- or EU-restricted namespace, supplies a regional location hint on
+every possible first `get()`, and validates `ctx.id.jurisdiction` inside product
+objects. A custom ESLint rule prevents direct or aliased namespace routing.
+
+**Why:** EU-only restriction left the Global graph in Cloudflare's unrestricted
+namespace, and several child-to-parent/queue paths bypassed the shared helper.
+Because the same name maps to a different ID in each jurisdiction and a location
+hint is honored only on the first `get()`, one bypass can defeat either the
+residency boundary or intended initial placement.
+
+**Considered and rejected:** Relying on region text embedded in object names,
+applying a hint only on nominal creation, and reviewing direct binding calls by
+convention. Names do not constrain placement, and a workflow, alarm, queue, or
+health path may win the first lookup.
+
+**Consequences:** Global product objects use the US jurisdiction and `wnam`
+default; EU uses the EU jurisdiction and `weur` default. Hints remain best effort
+and do not move existing objects. The maintenance authority import targets the
+jurisdictional ID graph; an unrestricted predecessor is never reopened as a
+fallback. Local workerd skips jurisdictions and hints because it does not
+implement them.
+
 ### 2026-08-13 — Invitation conversion is measured by the regional authority
 
 **What changed:** The service that commits each invitation lifecycle transition
@@ -367,7 +424,6 @@ or create a 90-day control row for a request that only needed a two-value route.
 **Consequences:** EU public-site funnels are aggregate across page loads; Global
 can form anonymous acquisition paths. The route endpoint grants no event or
 account authority and remains Global-only.
-
 ### 2026-08-13 — Terminal activation stays within the Global US target
 
 **What changed:** The Global Worker now declares Terminal supported with the

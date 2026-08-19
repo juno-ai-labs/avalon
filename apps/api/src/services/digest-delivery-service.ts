@@ -7,6 +7,10 @@ import { logWarn } from "../observability/logger";
 import { digestEmailHtml, digestMarkdownToText } from "./digest-email-content";
 import { sendResendEmail, singleLine } from "./resend";
 import { SlackAgentService } from "./slack-agent-service";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 const EMAIL_ERRORS = {
   unavailable: { code: "digest_email_unavailable", message: "Digest email is temporarily unavailable" },
@@ -81,17 +85,22 @@ export async function deliverDigest(
   context: DigestDeliveryContext,
   request: typeof fetch = fetch,
 ): Promise<{ delivered: number; skipped: number; failed: number }> {
+  env = withWorkspaceRuntimeDatabase(env, context.workspaceId);
+  const membership = await workspaceRegionalDatabase(env).prepare(
+    `SELECT 1 FROM workspace_members
+      WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+  ).bind(context.workspaceId, context.userId).first();
+  if (!membership) return { delivered: 0, skipped: 0, failed: 0 };
   const result = await env.DB.prepare(
     `SELECT t.id, t.target_type, t.connection_id, t.provider_tenant_id, t.provider_user_id,
             t.email_address, t.last_delivered_delivery_id
        FROM digest_delivery_targets t
        JOIN digest_deliveries d ON d.id = ?
-       JOIN workspace_members m
-         ON m.workspace_id = t.workspace_id AND m.user_id = t.user_id AND m.status = 'active'
       WHERE t.digest_schedule_id = d.digest_schedule_id
+        AND t.workspace_id = ? AND t.user_id = ?
         AND t.status IN ('active', 'needs_input')
       ORDER BY t.target_type ASC`,
-  ).bind(context.deliveryId).all<DigestDeliveryTargetRow>();
+  ).bind(context.deliveryId, context.workspaceId, context.userId).all<DigestDeliveryTargetRow>();
 
   let delivered = 0;
   let skipped = 0;

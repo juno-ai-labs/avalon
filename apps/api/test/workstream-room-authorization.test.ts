@@ -1,15 +1,17 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { WorkstreamRoom } from "../src/durable-objects/workstream-room";
+import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000c0";
 const PARTICIPANT = "00000000-0000-7000-8000-0000000000c1";
 const MEMBER = "00000000-0000-7000-8000-0000000000c2";
 const OUTSIDER = "00000000-0000-7000-8000-0000000000c3";
 const WORKSTREAM = "00000000-0000-7000-8000-0000000000c4";
+const SESSION = "00000000-0000-7000-8000-0000000000c5";
 const at = "2026-08-11T09:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
@@ -39,6 +41,10 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${WORKSPACE}', '${PARTICIPANT}', 'owner', 'active', '${at}'),
            ('${WORKSPACE}', '${MEMBER}', 'member', 'active', '${at}');
+    INSERT INTO sessions
+      (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+    VALUES ('${SESSION}', '${PARTICIPANT}', '${WORKSPACE}', 'global',
+            'substream-agent-session-hash', '2099-08-11T09:00:00.000Z', '${at}');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
@@ -70,7 +76,9 @@ function fakeSocket(userId: string): FakeSocket {
     connectionId: "8f14e45f-ceea-467a-9e6f-1a9f9c8b3f21",
     workspaceId: WORKSPACE,
     workstreamId: WORKSTREAM,
+    substreamId: "0",
     userId,
+    sessionId: SESSION,
     connectedAt: at,
     afterSequence: 0,
     subscribed: true,
@@ -86,18 +94,38 @@ function fakeSocket(userId: string): FakeSocket {
   };
 }
 
-function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): WorkstreamRoom {
+function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamAgent {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
+  const objectDatabase = new DatabaseSync(":memory:");
+  databases.push(objectDatabase);
+  const sql = createTestSqlStorage(objectDatabase);
   const state = createCloudflareTestBinding<DurableObjectState>({
+    blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
     setWebSocketAutoResponse: () => undefined,
     getWebSockets: () => sockets,
+    waitUntil: () => undefined,
     storage: {
-      get: async (key: string) => storage.get(key),
+      get: async (key: string | string[]) => Array.isArray(key)
+        ? new Map(key.flatMap((entry) => storage.has(entry) ? [[entry, storage.get(entry)]] : []))
+        : storage.get(key),
       put: async (key: string, value: unknown) => { storage.set(key, value); },
-      delete: async (key: string) => { storage.delete(key); },
+      delete: async (key: string | string[]) => {
+        if (Array.isArray(key)) {
+          let deleted = 0;
+          for (const entry of key) if (storage.delete(entry)) deleted += 1;
+          return deleted;
+        }
+        return storage.delete(key);
+      },
+      list: async ({ prefix = "" }: { prefix?: string } = {}) => new Map(
+        [...storage].filter(([key]) => key.startsWith(prefix)),
+      ),
       setAlarm: async () => undefined,
+      getAlarm: async () => null,
+      transactionSync: (body: () => unknown) => body(),
+      sql,
       transaction: async (body: (t: unknown) => Promise<unknown>) => body({
         get: async (key: string) => storage.get(key),
         put: async (key: string, value: unknown) => { storage.set(key, value); },
@@ -105,19 +133,47 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
       }),
     },
   });
-  return new WorkstreamRoom(
+  return new SubstreamAgent(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
 }
 
-function publish(room: WorkstreamRoom, event: Record<string, unknown>): Promise<Response> {
+describe("message commands over the SubstreamAgent socket", () => {
+  it("rejects writes because user messages enter through the WorkspaceDO socket", async () => {
+    const socket = fakeSocket(PARTICIPANT);
+    const operationId = "00000000-0000-7000-8000-0000000000c7";
+    const clientMessageId = "socket-client-message";
+    const room = roomFor(seededDatabase(), [socket]);
+
+    await room.webSocketMessage(socket as unknown as WebSocket, JSON.stringify({
+      type: "create_message",
+      operationId,
+      payload: {
+        text: "Continue",
+        clientMessageId,
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
+      type: "error",
+      code: "workspace_socket_required",
+    });
+    expect(socket.closes).toEqual([]);
+  });
+});
+
+function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<Response> {
   return room.fetch(new Request("https://room.internal/internal/events", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-avalon-workspace-id": WORKSPACE,
       "x-avalon-workstream-id": WORKSTREAM,
+      "x-avalon-substream-id": "0",
     },
     body: JSON.stringify(event),
   }));
@@ -131,13 +187,15 @@ function publish(room: WorkstreamRoom, event: Record<string, unknown>): Promise<
  * step later, and the difference between "refused at the gate" and "let
  * through" is legible as 403 against 401.
  */
-function connectAs(room: WorkstreamRoom, userId: string): Promise<Response> {
+function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {
       Upgrade: "websocket",
       "x-avalon-workspace-id": WORKSPACE,
       "x-avalon-workstream-id": WORKSTREAM,
+      "x-avalon-substream-id": "0",
       "x-avalon-user-id": userId,
+      "x-avalon-session-id": "test-session",
       "x-avalon-socket-ticket-id": "3f1b0f4a-59cb-4f5f-8d1e-6d3e5a2a9c11",
       "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
     },
@@ -170,6 +228,51 @@ describe("who the work-stream room lets connect", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "socket_ticket_replayed" });
+  });
+
+  it("refuses an internal event that cannot pin the room identity", async () => {
+    const response = await roomFor(seededDatabase()).fetch(new Request(
+      "https://room.internal/internal/events",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "harness_status_changed", status: "running" }),
+      },
+    ));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_room_identity" });
+  });
+
+  it("refuses late room events after the source snapshot is frozen", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_draining', generation = 1, updated_at = '2026-08-17T00:00:00.000Z'
+       WHERE id = 1;
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_importing', updated_at = '2026-08-17T00:01:00.000Z'
+       WHERE id = 1;
+    `);
+    const response = await roomFor(database).fetch(new Request(
+      "https://room.internal/internal/events",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-avalon-workspace-id": WORKSPACE,
+          "x-avalon-workstream-id": WORKSTREAM,
+        },
+        body: JSON.stringify({ type: "harness_status_changed", status: "running" }),
+      },
+    ));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "workstream_maintenance",
+      phase: "maintenance_importing",
+      generation: 1,
+    });
   });
 });
 

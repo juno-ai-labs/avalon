@@ -21,7 +21,7 @@
 ## Phase 3 — work streams and multiplayer
 
 - [x] Add work-stream CRUD, participants, paged messages, resources, mentions, and viewing-without-participation rules.
-- [x] Add WorkstreamRoom Durable Object, hibernating sockets, sequence-aware reconnects, ephemeral presence, and batched model deltas.
+- [x] Add SubstreamAgent Durable Object, hibernating sockets, sequence-aware reconnects, ephemeral presence, and batched model deltas.
 - [x] Add nonparticipant mention confirmation, structured elicitation, activity suggestions, tool events, and stop behavior.
 
 ## Phase 4 — OpenRouter harness

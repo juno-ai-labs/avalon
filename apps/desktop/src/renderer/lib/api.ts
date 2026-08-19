@@ -12,8 +12,8 @@ import {
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
   ElicitationSchema as WireElicitationSchema,
-  HyperSightPreferenceSchema as WireHyperSightPreferenceSchema,
-  HyperSightSchema as WireHyperSightSchema,
+  BlockDashboardPreferenceSchema as WireBlockDashboardPreferenceSchema,
+  BlockDashboardSchema as WireBlockDashboardSchema,
   NoteDetailSchema as WireNoteDetailSchema,
   NoteSummarySchema as WireNoteSummarySchema,
   NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
@@ -74,8 +74,8 @@ import type {
   DigestSchedule,
   ElicitationData,
   HarnessStatus,
-  HyperSight,
-  HyperSightPreference,
+  BlockDashboard,
+  BlockDashboardPreference,
   Message,
   MessagePage,
   NoteDetail,
@@ -141,24 +141,6 @@ async function rejectedTheBearer(response: Response): Promise<boolean> {
     ? (payload as { error?: { code?: string } }).error?.code
     : undefined;
   return code !== undefined && sessionRejectionCodes.has(code);
-}
-
-function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
-      return;
-    }
-    const onAbort = (): void => {
-      window.clearTimeout(timer);
-      reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
-    };
-    const timer = window.setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 interface RequestOptions<T> {
@@ -231,17 +213,6 @@ export interface MentionIdentity {
   connectorType: string | null;
 }
 
-/**
- * How many work streams one sidebar page asks for.
- *
- * The service's ceiling, kept there rather than lowered now that the list pages:
- * a first page this size means the overwhelming majority of workspaces are one
- * request as they always were, and paging engages only where it was needed —
- * past the point a single page could hold the list at all.
- */
-const WORKSTREAM_PAGE_SIZE = 250;
-
-const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
@@ -351,7 +322,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
   };
 }
 
-function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
+export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
   return {
     id: workstream.id,
     title: workstream.title,
@@ -359,18 +330,24 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     origin: workstream.originType,
+    ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
     ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
     ...(workstream.automationSubscriptionId
       ? { automationSubscriptionId: workstream.automationSubscriptionId }
       : {}),
+    ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
     readThroughSequenceNumber: workstream.readThroughSequenceNumber,
     manualUnreadFromSequenceNumber: workstream.manualUnreadFromSequenceNumber,
     manualUnreadGeneration: workstream.manualUnreadGeneration,
     hasUnread: workstream.hasUnread,
+    youAreMentioned: workstream.youAreMentioned,
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
+    createdAt: workstream.createdAt,
+    updatedAt: workstream.updatedAt,
+    ...(workstream.archivedAt ? { archivedAt: workstream.archivedAt } : {}),
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
@@ -1008,31 +985,6 @@ export class AvalonApi {
     };
   }
 
-  /**
-   * `includeSystem` widens what the sidebar shows, not who may see it: the API
-   * still only returns a system work stream to someone who participates in it.
-   */
-  /**
-   * One page of the work-stream list, with the cursor for the next one.
-   *
-   * `before` is the previous page's `nextCursor`, which the service derives from
-   * the paged rows alone — pinned and system work streams arrive appended to the
-   * first page and are excluded from the paging, so following the cursor never
-   * returns them twice.
-   */
-  async getWorkstreams(
-    signal?: AbortSignal,
-    includeSystem = false,
-    before?: string,
-  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
-    const page = await this.request(
-      `/workstreams?limit=${WORKSTREAM_PAGE_SIZE}${includeSystem ? '&includeSystem=true' : ''}`
-      + `${before ? `&before=${encodeURIComponent(before)}` : ''}`,
-      { schema: wireWorkstreamPageSchema, signal },
-    );
-    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
-  }
-
   async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {
     const page = await this.request('/work-opportunities?limit=4', {
       schema: WireWorkOpportunityPageSchema,
@@ -1304,36 +1256,36 @@ export class AvalonApi {
     });
   }
 
-  async getHyperSight(id: string, signal?: AbortSignal): Promise<HyperSight> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
-      schema: WireHyperSightSchema,
+  async getBlockDashboard(id: string, signal?: AbortSignal): Promise<BlockDashboard> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
+      schema: WireBlockDashboardSchema,
       signal,
     });
   }
 
-  async getHyperSightPreference(id: string, signal?: AbortSignal): Promise<HyperSightPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
-      schema: WireHyperSightPreferenceSchema,
+  async getBlockDashboardPreference(id: string, signal?: AbortSignal): Promise<BlockDashboardPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
+      schema: WireBlockDashboardPreferenceSchema,
       signal,
     });
   }
 
-  async updateHyperSightPreference(id: string, visible: boolean): Promise<HyperSightPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
+  async updateBlockDashboardPreference(id: string, visible: boolean): Promise<BlockDashboardPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
       method: 'PUT',
       body: { visible },
-      schema: WireHyperSightPreferenceSchema,
+      schema: WireBlockDashboardPreferenceSchema,
     });
   }
 
-  async updateHyperSight(
+  async updateBlockDashboard(
     id: string,
     input: { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> },
-  ): Promise<HyperSight> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
+  ): Promise<BlockDashboard> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
       method: 'PUT',
       body: input,
-      schema: WireHyperSightSchema,
+      schema: WireBlockDashboardSchema,
     });
   }
 
@@ -1396,7 +1348,7 @@ export class AvalonApi {
     return (await this.getMessagePage(id, { signal })).items;
   }
 
-  private async mentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
+  async messageMentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
     connectorType: string | null;
@@ -1441,7 +1393,7 @@ export class AvalonApi {
     confirmedParticipantUserIds?: string[];
     attachmentIds?: string[];
   }): Promise<Message> {
-    const mentions = await this.mentionPayload(id, input.text, input.mentions);
+    const mentions = await this.messageMentionPayload(id, input.text, input.mentions);
     const operationId = uuidV7();
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
@@ -1642,8 +1594,28 @@ export class AvalonApi {
     return { enabled: false };
   }
 
-  getSocketTicket(id: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/socket`, { schema: socketTicketSchema });
+  getSocketTicket(id: string, substreamId = '0'): Promise<SocketTicket> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket`,
+      { schema: socketTicketSchema },
+    );
+  }
+
+  getWorkspaceSocketTicket(): Promise<SocketTicket> {
+    return this.request('/workspace/socket', { schema: socketTicketSchema });
+  }
+
+  getWorkstreamControlSocketTicket(id: string): Promise<SocketTicket> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+      schema: socketTicketSchema,
+    });
+  }
+
+  getBlockDashboardBlockSocketTicket(id: string, blockId: string): Promise<SocketTicket> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(id)}/block-dashboard/blocks/${encodeURIComponent(blockId)}/socket`,
+      { schema: socketTicketSchema },
+    );
   }
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
@@ -2059,25 +2031,6 @@ export class AvalonApi {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
     });
-  }
-
-  async waitForConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {
-    const deadline = Date.now() + 16 * 60_000;
-    let retryDelayMs = 750;
-    while (Date.now() < deadline) {
-      signal?.throwIfAborted();
-      try {
-        const attempt = await this.getConnectorOAuthAttempt(attemptId, signal);
-        if (attempt.status !== 'pending') return attempt;
-        retryDelayMs = 1_000;
-      } catch (error) {
-        if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
-        if (error instanceof ApiError && error.status > 0 && error.status < 500) throw error;
-        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
-      }
-      await abortableDelay(retryDelayMs, signal);
-    }
-    throw new ApiError('Connector authorization could not be confirmed.', 408, 'oauth_attempt_timeout');
   }
 
   async testConnection(id: string): Promise<{ ok: boolean; message: string }> {

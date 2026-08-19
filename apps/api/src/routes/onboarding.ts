@@ -83,7 +83,7 @@ onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSch
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   try {
     const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
-      .createWorkspace(body.name, body.region));
+      .createWorkspace(body.name, body.region, c.req.raw.cf));
     deferOnboardingOutcome(c, auth, session, 'workspace_create_completed', body.region, operationId, 'success');
     return c.json(SessionSchema.parse(session), 201);
   } catch (error) {

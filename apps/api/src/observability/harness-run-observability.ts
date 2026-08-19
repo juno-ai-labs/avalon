@@ -53,7 +53,7 @@ interface HarnessRunObservation {
   workspaceId: string;
   workstreamId: string;
   harnessRunId: string;
-  source: "workstream" | "hypersight";
+  source: "workstream" | "block_dashboard";
   status: "completed" | "needs_input" | "failed" | "stopped";
   failureCode?: string;
   metrics: HarnessRunMetrics;

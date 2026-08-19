@@ -1,8 +1,10 @@
 import { newId, nowIso } from "@avalon/db";
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
 
 /**
  * Which decision produced this card.
@@ -28,24 +30,23 @@ interface CreateActivitySuggestionInput {
   source: ActivitySuggestionSource;
 }
 
-export async function publishWorkstreamRoomEvent(
+export async function publishSubstreamAgentEvent(
   env: Env,
   region: "global" | "eu",
   workspaceId: string,
   workstreamId: string,
   event: unknown,
 ): Promise<void> {
-  const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, region, env.APP_ENV);
-  const id = rooms.idFromName(workstreamRoomName(region, workspaceId, workstreamId));
-  const response = await rooms.get(id).fetch(
-    "https://workstream-room/internal/events",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event }),
-    },
+  const agent = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    workspaceId,
+    substreamAgentName(region, workspaceId, workstreamId),
   );
-  if (!response.ok) throw new Error(`workstream_event_rejected:${response.status}`);
+  const response = await agent.publishEvent({ workspaceId, workstreamId, event });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`workstream_event_rejected:${response.status}`);
+  }
 }
 
 export async function createActivitySuggestion(
@@ -57,6 +58,24 @@ export async function createActivitySuggestion(
   const title = truncateUtf16Safe(input.activityTitle, 300);
   const summary = truncateUtf16Safe(input.activitySummary, 2_000);
   const reason = truncateUtf16Safe(input.reason, 1_200);
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const result = await createWorkstreamRuntimeSuggestion(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      suggestion: {
+        id,
+        activityId: input.activityId,
+        title,
+        summary,
+        confidence: Math.max(0, Math.min(1, input.confidence)),
+        reason,
+        matchedEntities: input.matchedEntities.slice(0, 100),
+        source: input.source,
+      },
+    });
+    return result.inserted;
+  }
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_suggestions (
        id, workspace_id, activity_id, workstream_id, confidence, reason,
@@ -75,7 +94,7 @@ export async function createActivitySuggestion(
   ).run();
   if (Number(inserted.meta.changes ?? 0) === 0) return false;
 
-  await publishWorkstreamRoomEvent(env, input.region, input.workspaceId, input.workstreamId, {
+  await publishSubstreamAgentEvent(env, input.region, input.workspaceId, input.workstreamId, {
     type: "activity_suggestion_created",
     suggestion: {
       id,

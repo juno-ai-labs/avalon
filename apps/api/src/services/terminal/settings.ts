@@ -9,6 +9,10 @@ import type { z } from "zod";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
+import { readWorkstreamAuthorityControl } from "../workstream-authority";
+import { WorkstreamDirectoryService } from "../workstream-directory-service";
+import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
@@ -52,11 +56,19 @@ interface SandboxRow {
 }
 
 export class TerminalSettingsService {
+  private readonly env: Env;
+  private readonly auth: AuthContext;
+  private readonly provider: TerminalSandboxProvider | null;
+
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
-    private readonly provider: TerminalSandboxProvider | null,
-  ) {}
+    env: Env,
+    auth: AuthContext,
+    provider: TerminalSandboxProvider | null,
+  ) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
+    this.provider = provider;
+  }
 
   async get(): Promise<TerminalWorkspaceSettings> {
     const policy = await this.loadOrCreatePolicy();
@@ -103,16 +115,8 @@ export class TerminalSettingsService {
     ) {
       throw new ApiError(409, "terminal_policy_unchanged", "The Terminal network policy is unchanged. Edit the mode or destinations before reviewing it.");
     }
-    const sandboxes = await this.env.DB.prepare(
-      `SELECT sandbox.workstream_id, sandbox.provider_sandbox_id, sandbox.state,
-              sandbox.generation, workstream.title
-         FROM workstream_sandboxes sandbox
-         JOIN workstreams workstream ON workstream.id = sandbox.workstream_id
-        WHERE sandbox.workspace_id = ? AND sandbox.provider_sandbox_id IS NOT NULL
-          AND sandbox.state NOT IN ('absent', 'expired', 'failed')
-        ORDER BY sandbox.workstream_id`,
-    ).bind(this.auth.workspaceId).all<SandboxRow>();
-    const affectedWorkstreamIds = (sandboxes.results ?? []).map((sandbox) => sandbox.workstream_id);
+    const sandboxes = await this.loadActiveSandboxes();
+    const affectedWorkstreamIds = sandboxes.map((sandbox) => sandbox.workstream_id);
     const mutationId = newId();
     const timestamp = nowIso();
     await this.env.DB.prepare(
@@ -140,7 +144,7 @@ export class TerminalSettingsService {
       customDomains: compiled.customDomains,
       remainingCustomSlots: compiled.remainingCustomSlots,
       affectedWorkstreamIds,
-      affectedWorkstreams: (sandboxes.results ?? []).map((sandbox) => ({ id: sandbox.workstream_id, title: sandbox.title })),
+      affectedWorkstreams: sandboxes.map((sandbox) => ({ id: sandbox.workstream_id, title: sandbox.title })),
       warning: input.mode === "full_internet"
         ? "Full internet lets Terminal code contact arbitrary public destinations. Active sandboxes will stop and stay stopped until the next Terminal tool call."
         : "Trusted only applies Avalon-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
@@ -189,16 +193,7 @@ export class TerminalSettingsService {
       throw new ApiError(409, "terminal_policy_preview_stale", "This preview is no longer current. Reload settings and preview the policy again before confirming.");
     }
 
-    const sandboxes = await this.env.DB.prepare(
-      `SELECT sandbox.workstream_id, sandbox.provider_sandbox_id, sandbox.state,
-              sandbox.generation, workstream.title
-         FROM workstream_sandboxes sandbox
-         JOIN workstreams workstream ON workstream.id = sandbox.workstream_id
-        WHERE sandbox.workspace_id = ? AND sandbox.provider_sandbox_id IS NOT NULL
-          AND sandbox.state NOT IN ('absent', 'expired', 'failed')
-        ORDER BY sandbox.workstream_id`,
-    ).bind(this.auth.workspaceId).all<SandboxRow>();
-    const affected = sandboxes.results ?? [];
+    const affected = await this.loadActiveSandboxes();
     if (affected.length > 0 && !this.provider) {
       await this.failApplication(mutation.id, current, "terminal_provider_unavailable");
       throw new ApiError(503, "terminal_provider_unavailable", "Terminal is unavailable in this region, so active sandbox network policy cannot be changed.");
@@ -207,7 +202,12 @@ export class TerminalSettingsService {
     const failures: string[] = [];
     const deleted = new Set<string>();
     for (const sandbox of affected) {
-      await this.env.DB.prepare(
+      const executionEnv = await workstreamExecutionEnvironment(
+        this.env,
+        this.auth.workspaceId,
+        sandbox.workstream_id,
+      );
+      await executionEnv.DB.prepare(
         `UPDATE sandbox_tasks SET state = 'cancelled', termination_reason = 'cancelled',
                 completed_at = ?, updated_at = ?
           WHERE workspace_id = ? AND workstream_id = ?
@@ -215,7 +215,7 @@ export class TerminalSettingsService {
       ).bind(timestamp, timestamp, this.auth.workspaceId, sandbox.workstream_id).run();
       if (sandbox.state === "running") {
         await createTerminalFinalDiffPreserver(
-          this.env,
+          executionEnv,
           this.provider!,
           this.auth.workspaceId,
           sandbox.workstream_id,
@@ -227,7 +227,7 @@ export class TerminalSettingsService {
         await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
         const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
         if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
-        await this.env.DB.prepare(
+        await executionEnv.DB.prepare(
           `UPDATE workstream_sandboxes
               SET state = 'stopped', operation_run_id = NULL, operation_lease_expires_at = NULL,
                   version = version + 1, updated_at = ?
@@ -245,7 +245,7 @@ export class TerminalSettingsService {
         try {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id);
           deleted.add(sandbox.workstream_id);
-          await this.env.DB.prepare(
+          await executionEnv.DB.prepare(
             `UPDATE workstream_sandboxes
                 SET state = 'failed', provider_sandbox_id = NULL,
                     operation_run_id = NULL, operation_lease_expires_at = NULL,
@@ -261,7 +261,7 @@ export class TerminalSettingsService {
           ).run();
         } catch {
           failures.push(`${sandbox.workstream_id}:delete`);
-          await this.env.DB.prepare(
+          await executionEnv.DB.prepare(
             `UPDATE workstream_sandboxes
                 SET state = 'failed', operation_run_id = NULL, operation_lease_expires_at = NULL,
                     failure_code = 'policy_quarantine_failed', version = version + 1, updated_at = ?
@@ -298,6 +298,11 @@ export class TerminalSettingsService {
     if (failures.length > 0) {
       for (const sandbox of affected) {
         if (deleted.has(sandbox.workstream_id)) continue;
+        const executionEnv = await workstreamExecutionEnvironment(
+          this.env,
+          this.auth.workspaceId,
+          sandbox.workstream_id,
+        );
         try {
           await this.provider!.updateNetworkPolicy(
             sandbox.provider_sandbox_id,
@@ -309,7 +314,7 @@ export class TerminalSettingsService {
         } catch {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id).then(async () => {
             deleted.add(sandbox.workstream_id);
-            await this.env.DB.prepare(
+            await executionEnv.DB.prepare(
               `UPDATE workstream_sandboxes SET state = 'failed', provider_sandbox_id = NULL,
                       failure_code = 'policy_rollback_deleted', version = version + 1, updated_at = ?
                 WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
@@ -347,9 +352,13 @@ export class TerminalSettingsService {
       `INSERT INTO workspace_sandbox_network_domains
        (workspace_id, domain, created_by_user_id, created_at) VALUES (?, ?, ?, ?)`,
     ).bind(this.auth.workspaceId, domain, this.auth.userId, timestamp));
-    const verifiedSandboxUpdates = affected
-      .filter((sandbox) => !deleted.has(sandbox.workstream_id))
-      .map((sandbox) => this.env.DB.prepare(
+    for (const sandbox of affected.filter((entry) => !deleted.has(entry.workstream_id))) {
+      const executionEnv = await workstreamExecutionEnvironment(
+        this.env,
+        this.auth.workspaceId,
+        sandbox.workstream_id,
+      );
+      await executionEnv.DB.prepare(
         `UPDATE workstream_sandboxes
             SET applied_network_revision = ?, state = 'stopped',
                 version = version + 1, updated_at = ?
@@ -362,7 +371,8 @@ export class TerminalSettingsService {
         sandbox.workstream_id,
         sandbox.generation,
         sandbox.provider_sandbox_id,
-      ));
+      ).run();
+    }
     await this.env.DB.batch([
       domainDeletes,
       ...domainInserts,
@@ -381,7 +391,6 @@ export class TerminalSettingsService {
             SET state = 'verified', completed_at = ?, updated_at = ?
           WHERE workspace_id = ? AND id = ? AND state = 'pending'`,
       ).bind(timestamp, timestamp, this.auth.workspaceId, mutation.id),
-      ...verifiedSandboxUpdates,
     ]);
     const telemetryMode = (mode: TerminalNetworkMode, domains: string[]) => mode === "full_internet"
       ? "unrestricted" as const
@@ -401,6 +410,55 @@ export class TerminalSettingsService {
       eventId: mutation.id,
     }).catch(() => undefined);
     return this.get();
+  }
+
+  private async loadActiveSandboxes(): Promise<SandboxRow[]> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase !== "durable_object_open") {
+      const legacy = await this.env.DB.prepare(
+        `SELECT sandbox.workstream_id, sandbox.provider_sandbox_id, sandbox.state,
+                sandbox.generation, workstream.title
+           FROM workstream_sandboxes sandbox
+           JOIN workstreams workstream ON workstream.id = sandbox.workstream_id
+          WHERE sandbox.workspace_id = ? AND sandbox.provider_sandbox_id IS NOT NULL
+            AND sandbox.state NOT IN ('absent', 'expired', 'failed')
+          ORDER BY sandbox.workstream_id`,
+      ).bind(this.auth.workspaceId).all<SandboxRow>();
+      return legacy.results ?? [];
+    }
+    const directory: Array<{ workstream_id: string; title: string }> = [];
+    const service = new WorkstreamDirectoryService(this.env, this.auth);
+    let before: string | undefined;
+    do {
+      const page = await service.list(250, before, true);
+      directory.push(...page.items.map((workstream) => ({
+        workstream_id: workstream.id,
+        title: workstream.title,
+      })));
+      before = page.nextCursor ?? undefined;
+    } while (before);
+    const rows: SandboxRow[] = [];
+    const entries = directory;
+    for (let offset = 0; offset < entries.length; offset += 20) {
+      const page = entries.slice(offset, offset + 20);
+      const loaded = await Promise.all(page.map(async (entry) => {
+        const executionEnv = await workstreamExecutionEnvironment(
+          this.env,
+          this.auth.workspaceId,
+          entry.workstream_id,
+        );
+        const sandbox = await executionEnv.DB.prepare(
+          `SELECT workstream_id, provider_sandbox_id, state, generation
+             FROM workstream_sandboxes
+            WHERE workspace_id = ? AND workstream_id = ?
+              AND provider_sandbox_id IS NOT NULL
+              AND state NOT IN ('absent', 'expired', 'failed')`,
+        ).bind(this.auth.workspaceId, entry.workstream_id).first<Omit<SandboxRow, "title">>();
+        return sandbox ? { ...sandbox, title: entry.title } : null;
+      }));
+      rows.push(...loaded.filter((row): row is SandboxRow => row !== null));
+    }
+    return rows;
   }
 
   private async restoreCurrentPolicy(current: PolicyRow, failureCode: string): Promise<void> {

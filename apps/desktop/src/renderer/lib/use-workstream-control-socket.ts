@@ -1,0 +1,258 @@
+import {
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkstreamControlSocketEventSchema,
+  type BlockDashboard,
+  type BlockDashboardPreference,
+  type WorkstreamControlMetadata,
+} from '@avalon/contracts';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { logWarn } from '../../common/logger';
+import { normalizeHarnessStatus, type AvalonApi } from './api';
+import type { WorkstreamSummary } from './types';
+import { applyVersionedWorkstreamState } from './workstream-state-store';
+import { setCachedWorkstreams } from './workstreams-cache';
+
+type WorkstreamControlSocketApi = Pick<AvalonApi, 'getWorkstreamControlSocketTicket'>;
+const HEARTBEAT_MS = 50_000;
+const PONG_TIMEOUT_MS = 15_000;
+
+function reconnectDelay(attempt: number): number {
+  const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
+  return Math.floor(ceiling / 2 + Math.random() * ceiling / 2);
+}
+
+function metadataState(metadata: WorkstreamControlMetadata): {
+  common: Partial<WorkstreamSummary>;
+  viewer: Partial<WorkstreamSummary>;
+  seed: WorkstreamSummary;
+} {
+  const manual = metadata.viewer.manualUnreadFromSequenceNumber;
+  const seen = metadata.viewer.readThroughSequenceNumber;
+  const latest = metadata.latestAttentionSequenceNumber;
+  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  const common: Partial<WorkstreamSummary> = {
+    id: metadata.id,
+    title: metadata.title,
+    titleStatus: metadata.titleStatus,
+    objective: metadata.description,
+    // Full snapshots must overwrite nullable fields too. Omitting a field here
+    // would preserve an old value after another client cleared it.
+    emailAddress: metadata.emailAddress ?? undefined,
+    origin: metadata.originType,
+    createdByUserId: metadata.createdByUserId ?? undefined,
+    automationSubscriptionId: metadata.automationSubscriptionId ?? undefined,
+    automationRunId: metadata.automationRunId ?? undefined,
+    plannedFor: metadata.plannedFor ?? undefined,
+    harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
+    latestAttentionSequenceNumber: latest,
+    lastActivityAt: metadata.lastActivityAt,
+    createdAt: metadata.createdAt,
+    updatedAt: metadata.updatedAt,
+    archivedAt: metadata.archivedAt ?? undefined,
+    scope: metadata.scope,
+    systemKind: metadata.systemKind ?? undefined,
+    nextPendingWakeup: metadata.nextPendingWakeup,
+    preview: metadata.preview,
+  };
+  const viewer: Partial<WorkstreamSummary> = {
+    readThroughSequenceNumber: seen,
+    manualUnreadFromSequenceNumber: manual,
+    manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
+    hasUnread: firstUnread !== null,
+    youAreMentioned: metadata.viewer.youAreMentioned,
+    firstUnreadSequenceNumber: firstUnread,
+  };
+  return {
+    common,
+    viewer,
+    seed: {
+      id: metadata.id,
+      title: metadata.title,
+      titleStatus: metadata.titleStatus,
+      objective: metadata.description,
+      emailAddress: metadata.emailAddress ?? undefined,
+      origin: metadata.originType,
+      createdByUserId: metadata.createdByUserId ?? undefined,
+      automationSubscriptionId: metadata.automationSubscriptionId ?? undefined,
+      automationRunId: metadata.automationRunId ?? undefined,
+      plannedFor: metadata.plannedFor ?? undefined,
+      harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
+      latestAttentionSequenceNumber: latest,
+      readThroughSequenceNumber: seen,
+      manualUnreadFromSequenceNumber: manual,
+      manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
+      hasUnread: firstUnread !== null,
+      youAreMentioned: metadata.viewer.youAreMentioned,
+      firstUnreadSequenceNumber: firstUnread,
+      lastActivityAt: metadata.lastActivityAt,
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
+      archivedAt: metadata.archivedAt ?? undefined,
+      scope: metadata.scope,
+      systemKind: metadata.systemKind ?? undefined,
+      nextPendingWakeup: metadata.nextPendingWakeup,
+      pinPosition: null,
+      preview: metadata.preview,
+    },
+  };
+}
+
+/** Keep WorkstreamDO-owned metadata coherent independently of the agent feed. */
+export function useWorkstreamControlSocket(
+  api: WorkstreamControlSocketApi | null,
+  workstreamId: string,
+  enabled: boolean,
+): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!api || !enabled) return;
+    let stopped = false;
+    let accessRevoked = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
+    let pongTimer: number | null = null;
+    let connecting = false;
+    let attempt = 0;
+    let protocolWarningReported = false;
+
+    const clearReconnect = (): void => {
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+    const clearHeartbeat = (): void => {
+      if (heartbeatTimer !== null) window.clearTimeout(heartbeatTimer);
+      if (pongTimer !== null) window.clearTimeout(pongTimer);
+      heartbeatTimer = null;
+      pongTimer = null;
+    };
+    const scheduleHeartbeat = (target: WebSocket): void => {
+      clearHeartbeat();
+      heartbeatTimer = window.setTimeout(() => {
+        heartbeatTimer = null;
+        if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+        target.send('ping');
+        pongTimer = window.setTimeout(() => {
+          pongTimer = null;
+          if (!stopped && socket === target && target.readyState === WebSocket.OPEN) target.close();
+        }, PONG_TIMEOUT_MS);
+      }, HEARTBEAT_MS);
+    };
+    const scheduleReconnect = (): void => {
+      if (stopped || accessRevoked || reconnectTimer !== null) return;
+      if (navigator.onLine === false) return;
+      attempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, reconnectDelay(attempt));
+    };
+    const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
+      if (metadata.id !== workstreamId) return;
+      const state = metadataState(metadata);
+      const applied = applyVersionedWorkstreamState(queryClient, {
+        workstreamId,
+        stateVersion: metadata.stateVersion,
+        ...state,
+        visible: metadata.viewer.listable,
+      });
+      if (applied.commonApplied) {
+        void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', workstreamId], exact: true });
+      }
+    };
+    const connect = async (): Promise<void> => {
+      if (stopped || accessRevoked || connecting) return;
+      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (navigator.onLine === false) return;
+      connecting = true;
+      clearReconnect();
+      try {
+        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId);
+        if (stopped) return;
+        const next = new WebSocket(ticket.url, ticket.protocols);
+        socket = next;
+        next.addEventListener('open', () => {
+          if (stopped || socket !== next) return;
+          attempt = 0;
+          next.send(JSON.stringify({ type: 'subscribe' }));
+          scheduleHeartbeat(next);
+        });
+        next.addEventListener('message', (messageEvent) => {
+          if (stopped || socket !== next) return;
+          if (String(messageEvent.data) === 'pong') {
+            scheduleHeartbeat(next);
+            return;
+          }
+          try {
+            const event = WorkstreamControlSocketEventSchema.safeParse(JSON.parse(String(messageEvent.data)));
+            if (!event.success) {
+              if (!protocolWarningReported) {
+                protocolWarningReported = true;
+                logWarn('avalon', 'Ignored invalid WorkstreamDO socket event', event.error.issues);
+              }
+              return;
+            }
+            if (event.data.type === 'workstream_metadata') {
+              applyMetadata(event.data.metadata);
+            } else if (event.data.type === 'block_dashboard_configuration_updated') {
+              queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.data.blockDashboard);
+            } else if (event.data.type === 'block_dashboard_preference_updated') {
+              queryClient.setQueryData<BlockDashboardPreference>(
+                ['block-dashboard-preference', workstreamId],
+                event.data.preference,
+              );
+            }
+          } catch (error) {
+            // A reconnect always returns a complete authoritative metadata snapshot.
+            if (!protocolWarningReported) {
+              protocolWarningReported = true;
+              logWarn(
+                'avalon',
+                'Ignored unreadable WorkstreamDO socket event',
+                error instanceof Error ? error.message : 'unknown',
+              );
+            }
+          }
+        });
+        next.addEventListener('close', (event) => {
+          if (socket !== next) return;
+          clearHeartbeat();
+          socket = null;
+          if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
+            accessRevoked = true;
+            setCachedWorkstreams(queryClient, (current) => current?.filter((item) => item.id !== workstreamId));
+            queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+            return;
+          }
+          scheduleReconnect();
+        });
+        next.addEventListener('error', () => next.close());
+      } catch {
+        scheduleReconnect();
+      } finally {
+        connecting = false;
+      }
+    };
+    const online = (): void => {
+      clearReconnect();
+      void connect();
+    };
+    const offline = (): void => {
+      clearReconnect();
+      clearHeartbeat();
+      socket?.close();
+    };
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
+    void connect();
+    return () => {
+      stopped = true;
+      window.removeEventListener('online', online);
+      window.removeEventListener('offline', offline);
+      clearReconnect();
+      clearHeartbeat();
+      socket?.close();
+    };
+  }, [api, enabled, queryClient, workstreamId]);
+}

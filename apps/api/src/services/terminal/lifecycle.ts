@@ -2,6 +2,8 @@ import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
+import { attachWorkstreamRuntimeResource } from "../workstream-object-client";
+import { regionalDatabase } from "../workstream-runtime-database";
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
 
@@ -193,12 +195,13 @@ export async function reconcileDueTerminalSandbox(
  * corrupt partial patch.
  */
 export function createTerminalFinalDiffPreserver(
-  env: Pick<Env, "AVALON_REGION" | "DB" | "PAYLOADS">,
+  env: Env,
   provider: TerminalSandboxProvider,
   workspaceId: string,
   workstreamId: string,
 ): (providerSandboxId: string, generation: number) => Promise<void> {
   return async (providerSandboxId, generation) => {
+    const regional = regionalDatabase(env);
     const alreadyCaptured = await env.DB.prepare(
       `SELECT final_diff_resource_id FROM workstream_sandboxes
         WHERE workspace_id = ? AND workstream_id = ?`,
@@ -228,7 +231,7 @@ export function createTerminalFinalDiffPreserver(
     const digest = await sha256Hex(bytes);
     const timestamp = new Date().toISOString();
     const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${resourceId}/terminal-final-diff/${digest}`;
-    await env.DB.prepare(
+    await regional.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
        VALUES (?, ?, ?, 'original', ?, ?)`,
@@ -237,8 +240,7 @@ export function createTerminalFinalDiffPreserver(
       httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
       customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
     });
-    await env.DB.batch([
-      env.DB.prepare(
+    const resourceStatement = regional.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
           content_ref, content_sha256, metadata_json, last_hydrated_at, attachment_status,
@@ -257,20 +259,33 @@ export function createTerminalFinalDiffPreserver(
         timestamp,
         timestamp,
         timestamp,
-      ),
-      env.DB.prepare(
+      );
+    const attachmentStatement = env.DB.prepare(
         `INSERT INTO workstream_resources
          (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
          VALUES (?, ?, NULL, 0, 'generated', ?)`,
-      ).bind(workstreamId, resourceId, timestamp),
-      env.DB.prepare(
+      ).bind(workstreamId, resourceId, timestamp);
+    const terminalStatement = env.DB.prepare(
         `UPDATE workstream_sandboxes SET final_diff_resource_id = ?
           WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(resourceId, workspaceId, workstreamId),
-      env.DB.prepare(
+      ).bind(resourceId, workspaceId, workstreamId);
+    const cleanupStatement = regional.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-      ).bind(workspaceId, objectRef),
-    ]);
+      ).bind(workspaceId, objectRef);
+    if (regional === env.DB) {
+      await env.DB.batch([resourceStatement, attachmentStatement, terminalStatement, cleanupStatement]);
+    } else {
+      await resourceStatement.run();
+      await attachWorkstreamRuntimeResource(env, {
+        workspaceId,
+        workstreamId,
+        resourceId,
+        attachedByUserId: null,
+        relationshipType: "generated",
+      });
+      await terminalStatement.run();
+      await cleanupStatement.run();
+    }
   };
 }
 
@@ -281,7 +296,7 @@ export function createTerminalFinalDiffPreserver(
  * of local refs remain in the archive.
  */
 export function createTerminalWorkspaceBackup(
-  env: Pick<Env, "AVALON_REGION" | "DB" | "PAYLOADS">,
+  env: Env,
   provider: TerminalSandboxProvider,
   input: {
     workspaceId: string;
@@ -296,6 +311,7 @@ export function createTerminalWorkspaceBackup(
   return createWorkspaceBackup();
 
   async function createWorkspaceBackup(): Promise<TerminalWorkspaceBackup | null> {
+    const regional = regionalDatabase(env);
     const providerResourceId = `terminal-workspace-backup:${input.toolCallId}`;
     const existing = await env.DB.prepare(
       `SELECT id, title, mime_type, content_sha256, metadata_json, created_at
@@ -396,7 +412,7 @@ export function createTerminalWorkspaceBackup(
     const createdAt = new Date().toISOString();
     const title = `Terminal backup before ${input.repositoryFullName}`;
     const objectRef = `${env.AVALON_REGION}/${input.workspaceId}/resources/${resourceId}/terminal-workspace-backup/${actualSha256}`;
-    await env.DB.prepare(
+    await regional.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
        VALUES (?, ?, ?, 'original', ?, ?)`,
@@ -405,8 +421,7 @@ export function createTerminalWorkspaceBackup(
       httpMetadata: { contentType: "application/gzip" },
       customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
     });
-    await env.DB.batch([
-      env.DB.prepare(
+    const resourceStatement = regional.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
           content_ref, content_sha256, metadata_json, last_hydrated_at, attachment_status,
@@ -430,16 +445,28 @@ export function createTerminalWorkspaceBackup(
         createdAt,
         createdAt,
         createdAt,
-      ),
-      env.DB.prepare(
+      );
+    const attachmentStatement = env.DB.prepare(
         `INSERT INTO workstream_resources
          (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
          VALUES (?, ?, NULL, 0, 'generated', ?)`,
-      ).bind(input.workstreamId, resourceId, createdAt),
-      env.DB.prepare(
+      ).bind(input.workstreamId, resourceId, createdAt);
+    const cleanupStatement = regional.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-      ).bind(input.workspaceId, objectRef),
-    ]);
+      ).bind(input.workspaceId, objectRef);
+    if (regional === env.DB) {
+      await env.DB.batch([resourceStatement, attachmentStatement, cleanupStatement]);
+    } else {
+      await resourceStatement.run();
+      await attachWorkstreamRuntimeResource(env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        resourceId,
+        attachedByUserId: null,
+        relationshipType: "generated",
+      });
+      await cleanupStatement.run();
+    }
     return {
       resourceId,
       title,
