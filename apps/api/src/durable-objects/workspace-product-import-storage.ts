@@ -4,7 +4,7 @@ import type {
 } from "./workspace-product-import";
 import { isWorkspaceRelationalImportStage } from "./workspace-product-import";
 
-type Kind = "value" | "epoch" | "integer" | "json_object" | "json_array" | "suggested_status" | "window_status";
+type Kind = "value" | "epoch" | "integer" | "json_object" | "json_array" | "suggested_status" | "window_status" | "attempt_cap3";
 type Column = readonly [target: string, source?: string, kind?: Kind, fallback?: string | number | null];
 
 interface ImportShape {
@@ -82,7 +82,13 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
     columns: [
       value("batch_event_id", "id"), value("window_id"), value("partition_key"), value("source_kind"),
       value("source_id"), at("occurred_at"), integer("input_characters"), value("status"),
-      integer("attempt_count"), value("error_text"), at("created_at"), at("updated_at"),
+      // The legacy consumer retried past the object's 0..3 bound; an
+      // over-limit count means "retries exhausted", which is exactly what the
+      // cap value says. INSERT OR IGNORE would otherwise swallow the CHECK
+      // violation and fail the exact-match verification with no explanation —
+      // the Global generation-2 quarantine.
+      ["attempt_count", "attempt_count", "attempt_cap3", 0],
+      value("error_text"), at("created_at"), at("updated_at"),
     ],
   },
   work_opportunities: {
@@ -305,6 +311,13 @@ function converted(row: WorkspaceProductImportRow, column: Column): SqlStorageVa
   // The legacy D1 window rows say 'queued' where the object vocabulary says
   // 'pending' — one token per role across the fleet.
   if (kind === "window_status") return raw === "queued" ? "pending" : String(raw);
+  if (kind === "attempt_cap3") {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`workspace_product_import_integer_invalid:${source}`);
+    }
+    return Math.min(Math.max(Math.trunc(parsed), 0), 3);
+  }
   return raw;
 }
 
