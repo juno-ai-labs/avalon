@@ -427,7 +427,9 @@ export function workstreamAuthoritySourceQuery(stage: WorkstreamAuthorityImportS
                      tool.execution_plan_json AS transcript_tool_execution_plan_json
                 FROM messages m
                 LEFT JOIN harness_runs r ON r.id = m.harness_run_id
-                LEFT JOIN tool_invocations tool ON tool.id = m.id
+                LEFT JOIN tool_invocations tool
+                  ON tool.id = m.id
+                  OR tool.id = json_extract(m.structured_content_json, '$.invocation.id')
                WHERE m.workspace_id = ?1 AND m.workstream_id = ?2 AND m.rowid > ?3
                ORDER BY m.rowid LIMIT ?4`;
     case "part_attachments":
@@ -639,6 +641,24 @@ export function normalizeWorkstreamAuthoritySourceRow(
       const transcriptToolRow = messageType === "tool"
         ? { ...row, execution_plan_json: row.transcript_tool_execution_plan_json }
         : row;
+      // The earliest production tool messages predate a tool_invocations row
+      // whose id matches either the message or the embedded invocation. Their
+      // structured content still carries the invocation, so the transcript
+      // fact survives from there; a truly bare row gets an explicit legacy
+      // name and an 'ambiguous' outcome — never NULLs the parts CHECK
+      // rejects, and never 'pending', which would pin context fences on a
+      // tool call that finished long ago.
+      const embeddedInvocation = messageType === "tool"
+        ? (parseJsonValue(row.structured_content_json, {}) as {
+          invocation?: { toolName?: unknown; status?: unknown };
+        }).invocation ?? {}
+        : {};
+      const legacyToolName = typeof embeddedInvocation.toolName === "string"
+        && embeddedInvocation.toolName.length > 0
+        ? embeddedInvocation.toolName
+        : "legacy.tool";
+      const rawToolStatus = text(row, "transcript_tool_status")
+        || (typeof embeddedInvocation.status === "string" ? embeddedInvocation.status : "");
       return { id: text(row, "id"), substream_id: "0", sequence_number: integer(row, "sequence_number"),
         attention_ordinal: messageType === "tool" ? null : integer(row, "sequence_number"),
         role: author === "human" ? "user" : author === "agent" ? "assistant" : "system",
@@ -647,10 +667,12 @@ export function normalizeWorkstreamAuthoritySourceRow(
         author_user_id: nullableText(row, "author_user_id"), external_actor_json: nullableText(row, "external_actor_json"),
         content: text(row, "text_content"), client_message_id: nullableText(row, "client_message_id"),
         effect_intent_id: messageType === "tool" ? text(row, "id") : null,
-        tool_name: messageType === "tool" ? nullableText(row, "transcript_tool_name") : null,
+        tool_name: messageType === "tool"
+          ? nullableText(row, "transcript_tool_name") ?? legacyToolName
+          : null,
         tool_mode: messageType === "tool" ? toolMode(transcriptToolRow) : null,
         tool_status: messageType === "tool"
-          ? transcriptToolStatus(text(row, "transcript_tool_status"))
+          ? (rawToolStatus === "" ? "ambiguous" : transcriptToolStatus(rawToolStatus))
           : null,
         produced_by_run_id: nullableText(row, "harness_run_id"), attempt_epoch: nullableInteger(row, "run_attempt_number"),
         visibility: modelVisible ? "both" : "people", pinned: 0, message_type: messageType,

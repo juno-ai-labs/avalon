@@ -59,12 +59,23 @@ export function sqlLiteral(text) {
 
 async function wranglerD1Execute(region, sql) {
   const apiDirectory = fileURLToPath(new URL("../apps/api/", import.meta.url));
-  const { stdout } = await execFileAsync("pnpm", [
-    "exec", "wrangler", "d1", "execute", "DB",
-    "--remote", "--json",
-    "--config", REGION_CONFIGS[region],
-    "--command", sql,
-  ], { cwd: apiDirectory, maxBuffer: 16 * 1024 * 1024 });
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync("pnpm", [
+      "exec", "wrangler", "d1", "execute", "DB",
+      "--remote", "--json",
+      "--config", REGION_CONFIGS[region],
+      "--command", sql,
+    ], { cwd: apiDirectory, maxBuffer: 16 * 1024 * 1024 }));
+  } catch (error) {
+    // execFile's message is just the command line; the D1 trigger name the
+    // caller matches on (e.g. workstream_authority_runs_not_drained) arrives
+    // on wrangler's stdout/stderr, so surface both in the thrown error.
+    const detail = [error?.stdout, error?.stderr]
+      .filter((chunk) => typeof chunk === "string" && chunk.trim().length > 0)
+      .join("\n");
+    throw new Error(`d1 execute failed: ${detail.slice(0, 2000) || String(error)}`, { cause: error });
+  }
   const parsed = JSON.parse(stdout);
   const first = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!first || first.success === false) {
