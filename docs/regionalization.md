@@ -236,6 +236,7 @@ to cross it.
 | Provider app registrations and their callbacks | [`provider-apps.md`](provider-apps.md) |
 | Telemetry routing, opt-out, identities, and lifecycle | [`telemetry.md`](telemetry.md) |
 | What a Durable Object's migration report may carry out of its region | [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md) |
+| Whether a queue or binding is split per region or shared, and why | [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#splitting-per-region) |
 | Deploying and verifying both regions | [`runbook.md`](runbook.md) |
 
 A module document that touches identity, the Global registry, a cross-region

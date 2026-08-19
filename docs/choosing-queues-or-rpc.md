@@ -190,6 +190,103 @@ terms, which is why RPC is right when someone is waiting. And one Durable Object
 tops out around 1,000 requests per second on one thread, which is why RPC is
 wrong when everyone is converging on one.
 
+## Splitting per region
+
+Avalon deploys the same Worker twice, as Global and EU, with separate D1, R2,
+Durable Object namespaces, keys, and secrets. So every hop raises a second
+question after the mechanism is chosen: **one resource for both regions, or one
+per region?** `avalon-global-activities` and `avalon-eu-activities` are split.
+`avalon-migration-reports` is not. Both are right, and the difference between
+them is the whole of this section.
+
+[`regionalization.md`](regionalization.md) owns the boundary itself — what is
+Global, what is regional, and what is allowed to cross. This section is only
+about the shape of the resource carrying it.
+
+### The decisive test
+
+**Would splitting the transport change where the data comes to rest, or who
+processes it?** If it would not, do not split. Two pipes into one funnel is not
+isolation; it is two of everything to provision, configure, monitor, and keep in
+step, bought for nothing.
+
+### Go — split per region when any of these holds
+
+- **The consumer must be regional.** A queue has exactly one consumer, so if the
+  work has to be done by the EU Worker against EU-resident stores, it needs its
+  own queue. This is a platform constraint, not a preference, and it settles most
+  cases on its own.
+- **The payload is workspace or user content.** Anything a workspace owns has to
+  be handled in its region. This is the reason the activity queues are split: an
+  EU activity's body is processed by EU code against EU D1 and EU R2.
+- **The regions genuinely need different policy** — retention, retry budget, or
+  batch window differing for a stated compliance or product reason, not from
+  drift.
+- **One region's volume alone approaches a per-resource ceiling.** Real, but rare
+  at Avalon's scale; measure before claiming it.
+
+### No-go — share one resource when all of these hold
+
+- **The destination is already shared.** One store, one consumer, one object at
+  the far end means splitting the near end isolates nothing.
+- **The payload is operational metadata, not workspace content** — opaque
+  identifiers, versions, class names, error strings that describe code. There is
+  nothing here for a residency boundary to protect.
+- **Volume is nowhere near the ceiling**, so the split would buy no headroom
+  either.
+
+That combination is exactly the migration-report queue: an opaque object id, a
+schema version, and an error describing code, all converging on one account-wide
+registry object by design. A second queue would have doubled the resources and
+isolated nothing, so there is one.
+
+### Best practices when you do split
+
+- **Name by region, consistently**: `avalon-<region>-<purpose>`, plus a
+  region-named dead-letter queue for each. A shared DLQ behind split queues
+  defeats the split at exactly the moment it matters.
+- **Keep one binding name across both configs.** `ACTIVITY_QUEUE` points at a
+  different queue in each regional Wrangler file, so one code path serves both
+  regions and region selection stays deployment configuration rather than
+  application logic. Never branch on region in code to pick a binding.
+- **Keep the consumer configuration identical unless there is a reason**, and
+  record the reason where it diverges. Avalon's EU activity consumer carries the
+  comment `Matches Global; the reasoning is recorded there` — that one line is
+  what stops the two drifting apart silently.
+- **Never let a regional consumer reach into the other region's stores.** A
+  regional queue with cross-region bindings behind it is not a regional
+  subsystem; it is a residency hole with a tidy name.
+- **Still carry the region in the message body.** The queue implies it, but a
+  message that states it is self-describing in a log and in a stored row, and it
+  catches a misrouted producer that the queue's name never would.
+- **No Global fallback.** A message that cannot be handled in its region fails
+  and retries there; it does not get rerouted to the other one.
+
+### Best practices when you do not split
+
+- **Say why in the configuration**, next to the resource. A name that breaks the
+  `avalon-<region>-` convention will look like an oversight to the next reader,
+  and they will "fix" it.
+- **Put the region in the message body and validate it in the contract.** It is
+  the only thing carrying the region now.
+- **Hold the payload to the bar that justified sharing**, and make the contract
+  enforce it rather than a comment. The migration report's
+  `isOpaqueDurableObjectName` guard exists for exactly this: the day a field
+  starts carrying something legible, the message is refused rather than
+  quietly shipped.
+- **Revisit if the destination becomes regional.** The decision follows the far
+  end, so a change there reopens this one.
+
+### The same question for RPC
+
+A service binding does not have a per-region shape to choose — it names a script,
+and the regional deployment names a different script. The equivalent question is
+whether the call crosses the boundary at all, and Avalon's answer is that it may,
+through a small number of named bridges that parse their argument at the hop
+against `apps/api/src/lib/rpc-contracts.ts`. Adding a cross-region RPC is a
+change to that boundary and belongs in
+[`regionalization.md`](regionalization.md), not here.
+
 ## Trust the primitives
 
 **Take Cloudflare's guarantees at face value and build on them optimistically.**
@@ -262,13 +359,13 @@ it.
 
 ## Where Avalon stands today
 
-| Hop | Mechanism | Why |
-| --- | --- | --- |
-| Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue | Fan-in from webhooks and polls; nothing waits on the outcome. |
-| Durable Object migration reports into the tracker | Queue | Many objects converge on one registry object, and a deploy or a cutover wakes them together. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
-| Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
-| Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Reads and writes whose results the request returns to the desktop. |
-| `WorkspaceDO` typed product SQL | RPC | A conversation with one specific object, with rows coming back. |
+| Hop | Mechanism | Regional shape | Why |
+| --- | --- | --- | --- |
+| Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue | Split | Fan-in from webhooks and polls; nothing waits on the outcome. Split because the payload is workspace content and the consumer must be the region's own Worker. |
+| Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for both regions and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | Crosses, by design | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
+| Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Same region | Reads and writes whose results the request returns to the desktop. |
+| `WorkspaceDO` typed product SQL | RPC | Same region | A conversation with one specific object, with rows coming back. |
 
 ## Related documents
 
