@@ -63,18 +63,45 @@ function workspaceProductSourceQuery(stage: WorkspaceProductImportStage): string
     case "work_opportunities":
     case "opportunity_provenance_nodes":
     case "opportunity_provenance_edges":
-    case "work_opportunity_user_links":
     case "work_opportunity_user_states":
     case "suggested_work_sets":
     case "suggested_work_ranking_rounds":
       return `SELECT rowid AS source_rowid, * FROM ${stage}
                WHERE workspace_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`;
     case "work_opportunity_provenance_roots":
-      return `SELECT root.rowid AS source_rowid, root.*
+      // Legacy D1 only enforced PRIMARY KEY (opportunity_id, node_id); repeated
+      // re-rootings stacked several node sets onto the same positions. The
+      // object additionally enforces UNIQUE (opportunity_id, position), so the
+      // position exported here is the row's dense rank within its opportunity,
+      // ordered by (position, node_id) — deterministic across pages and
+      // retries, and the original relative order survives.
+      return `SELECT root.rowid AS source_rowid, root.opportunity_id, root.node_id,
+                     (SELECT COUNT(*) FROM work_opportunity_provenance_roots prior
+                       WHERE prior.opportunity_id = root.opportunity_id
+                         AND (prior.position < root.position
+                              OR (prior.position = root.position AND prior.node_id < root.node_id))
+                     ) AS position
                 FROM work_opportunity_provenance_roots root
                 JOIN work_opportunities opportunity ON opportunity.id = root.opportunity_id
                WHERE opportunity.workspace_id = ?1 AND root.rowid > ?2
                ORDER BY root.rowid LIMIT ?3`;
+    case "work_opportunity_user_links":
+      // The object's identity index allows one link per (opportunity, user,
+      // role, resolution, provenance node); legacy D1 keyed rows only by id and
+      // accumulated duplicate assertions of the same identity. The latest row
+      // (highest rowid) wins; older duplicates are deliberately not exported.
+      return `SELECT link.rowid AS source_rowid, link.*
+                FROM work_opportunity_user_links link
+               WHERE link.workspace_id = ?1 AND link.rowid > ?2
+                 AND link.rowid = (
+                   SELECT MAX(other.rowid) FROM work_opportunity_user_links other
+                    WHERE other.opportunity_id = link.opportunity_id
+                      AND COALESCE(other.user_id, '') = COALESCE(link.user_id, '')
+                      AND other.role = link.role
+                      AND other.resolution = link.resolution
+                      AND COALESCE(other.provenance_node_id, '') = COALESCE(link.provenance_node_id, '')
+                 )
+               ORDER BY link.rowid LIMIT ?3`;
     case "work_opportunity_snapshots":
       return `SELECT snapshot.rowid AS source_rowid, snapshot.*
                 FROM work_opportunity_snapshots snapshot
