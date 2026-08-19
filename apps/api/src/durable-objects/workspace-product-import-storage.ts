@@ -255,6 +255,9 @@ function importRelationalRows(
   if (!keys) throw new Error(`workspace_import_keys_missing:${stage}`);
   return storage.transactionSync(() => {
     let accepted = 0;
+    // See the shaped path: a repeated key inside one page is a defect, not a
+    // retry, and must not be reconciled away.
+    const written = new Set<string>();
     for (const row of rows) {
       const columns = Object.keys(row).sort();
       if (columns.length === 0 || columns.some((column) => !/^[a-z][a-z0-9_]*$/u.test(column))) {
@@ -267,14 +270,32 @@ function importRelationalRows(
         ...values,
       );
       const keyValues = keys.map((key) => row[key] ?? null) as SqlStorageValue[];
-      const stored = storage.sql.exec<Record<string, SqlStorageValue>>(
-        `SELECT ${columns.join(", ")} FROM ${stage}
-          WHERE ${keys.map((key) => `${key} IS ?`).join(" AND ")} LIMIT 1`,
+      const keyPredicate = keys.map((key) => `${key} IS ?`).join(" AND ");
+      const read = (): Record<string, SqlStorageValue> | undefined => storage.sql.exec<
+        Record<string, SqlStorageValue>
+      >(
+        `SELECT ${columns.join(", ")} FROM ${stage} WHERE ${keyPredicate} LIMIT 1`,
         ...keyValues,
       ).toArray()[0];
-      if (!stored || columns.some((column, index) => stored[column] !== values[index])) {
-        throw new Error(`workspace_import_conflict:${stage}`);
+      const agrees = (stored: Record<string, SqlStorageValue> | undefined): boolean =>
+        stored !== undefined && columns.every((column, index) => stored[column] === values[index]);
+      const identity = JSON.stringify(keyValues);
+      if (!agrees(read())) {
+        // Reconcile a row that disagrees with the frozen source snapshot; see
+        // the shaped path above for why one can exist.
+        if (written.has(identity)) throw new Error(`workspace_import_conflict:${stage}`);
+        const updatable = columns.filter((column) => !(keys as readonly string[]).includes(column));
+        if (updatable.length > 0) {
+          storage.sql.exec(
+            `UPDATE ${stage} SET ${updatable.map((column) => `${column} = ?`).join(", ")}
+              WHERE ${keyPredicate}`,
+            ...updatable.map((column) => row[column] ?? null) as SqlStorageValue[],
+            ...keyValues,
+          );
+        }
+        if (!agrees(read())) throw new Error(`workspace_import_conflict:${stage}`);
       }
+      written.add(identity);
       accepted += 1;
     }
     return accepted;
@@ -333,6 +354,10 @@ export function importWorkspaceProductRows(
   const placeholders = columns.map(() => "?").join(", ");
   return storage.transactionSync(() => {
     let accepted = 0;
+    // Two source rows carrying one object key is a mapper defect, not a retry,
+    // so reconciliation below must never paper over it. Only a key this page
+    // has not already written may be reconciled.
+    const written = new Set<string>();
     for (const row of rows) {
       const values = shape.columns.map((column) => converted(row, column));
       storage.sql.exec(
@@ -341,13 +366,37 @@ export function importWorkspaceProductRows(
       );
       const expected = Object.fromEntries(columns.map((column, index) => [column, values[index]]));
       const keyValues = shape.key.map((column) => expected[column] ?? null);
-      const stored = storage.sql.exec<Record<string, SqlStorageValue>>(
-        `SELECT ${columns.join(", ")} FROM ${shape.table}
-          WHERE ${shape.key.map((column) => `${column} IS ?`).join(" AND ")} LIMIT 1`,
+      const keyPredicate = shape.key.map((column) => `${column} IS ?`).join(" AND ");
+      const read = (): Record<string, SqlStorageValue> | undefined => storage.sql.exec<
+        Record<string, SqlStorageValue>
+      >(
+        `SELECT ${columns.join(", ")} FROM ${shape.table} WHERE ${keyPredicate} LIMIT 1`,
         ...keyValues,
       ).toArray()[0];
-      const matches = stored !== undefined && columns.every((column) => stored[column] === expected[column]);
-      if (!matches) throw new Error(`workspace_product_import_conflict:${stage}`);
+      const agrees = (stored: Record<string, SqlStorageValue> | undefined): boolean =>
+        stored !== undefined && columns.every((column) => stored[column] === expected[column]);
+      const identity = JSON.stringify(keyValues);
+      if (!agrees(read())) {
+        // The row is present but disagrees with the frozen source snapshot,
+        // which the campaign — not this object — is authority for until the
+        // region opens. That happens when a page is re-sent after the object's
+        // own product alarm claimed or reaped the rows it carried, and when a
+        // new generation re-imports over an earlier one's rows. Reconcile to
+        // the source; a second source row under the same key, or a value the
+        // converter cannot produce, still fails.
+        if (written.has(identity)) throw new Error(`workspace_product_import_conflict:${stage}`);
+        const updatable = columns.filter((column) => !shape.key.includes(column));
+        if (updatable.length > 0) {
+          storage.sql.exec(
+            `UPDATE ${shape.table} SET ${updatable.map((column) => `${column} = ?`).join(", ")}
+              WHERE ${keyPredicate}`,
+            ...updatable.map((column) => expected[column] ?? null),
+            ...keyValues,
+          );
+        }
+        if (!agrees(read())) throw new Error(`workspace_product_import_conflict:${stage}`);
+      }
+      written.add(identity);
       accepted += 1;
     }
     return accepted;
