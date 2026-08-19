@@ -5,6 +5,9 @@ import {
   WorkstreamViewResourceOutputSchema,
   type ExecutionPrincipal,
 } from "@avalon/contracts";
+import type { Env } from "../env";
+import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
+import { regionalDatabase } from "./workstream-runtime-database";
 
 interface ReceiptDependency {
   resourceId: string;
@@ -14,7 +17,7 @@ interface ReceiptDependency {
 export type AttachmentReceiptReplayValidation = "not_attachment" | "valid" | "invalid";
 
 export async function registerAttachmentToolReceipt(
-  database: D1Database,
+  target: D1Database | Env,
   input: {
     workspaceId: string;
     invocationId: string;
@@ -22,6 +25,10 @@ export async function registerAttachmentToolReceipt(
     output: unknown;
   },
 ): Promise<void> {
+  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
+    return registerObjectAttachmentToolReceipt(target, input);
+  }
+  const database = isEnv(target) ? target.DB : target;
   const dependencies = attachmentReceiptDependencies(input.canonicalToolName, input.output);
   if (dependencies.length === 0) return;
   const at = new Date().toISOString();
@@ -55,7 +62,7 @@ export async function registerAttachmentToolReceipt(
 }
 
 export async function validateAttachmentToolReceiptReplay(
-  database: D1Database,
+  target: D1Database | Env,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -64,6 +71,10 @@ export async function validateAttachmentToolReceiptReplay(
     capability: string;
   },
 ): Promise<AttachmentReceiptReplayValidation> {
+  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
+    return validateObjectAttachmentToolReceiptReplay(target, input);
+  }
+  const database = isEnv(target) ? target.DB : target;
   if (!input.capability.startsWith("workstream.resources.")) return "not_attachment";
   if (input.capability === "workstream.resources.list") return "invalid";
   const result = await database.prepare(
@@ -116,10 +127,14 @@ export async function validateAttachmentToolReceiptReplay(
 }
 
 export async function invalidateAttachmentToolReplay(
-  database: D1Database,
+  target: D1Database | Env,
   workspaceId: string,
   invocationId: string,
 ): Promise<void> {
+  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
+    return invalidateObjectAttachmentToolReplay(target, workspaceId, invocationId);
+  }
+  const database = isEnv(target) ? target.DB : target;
   const at = new Date().toISOString();
   await database.batch([
     database.prepare(
@@ -133,6 +148,126 @@ export async function invalidateAttachmentToolReplay(
       "DELETE FROM tool_invocations WHERE workspace_id = ? AND id = ?",
     ).bind(workspaceId, invocationId),
   ]);
+}
+
+function isEnv(target: D1Database | Env): target is Env {
+  return "DB" in target;
+}
+
+async function registerObjectAttachmentToolReceipt(
+  env: Env,
+  input: {
+    workspaceId: string;
+    invocationId: string;
+    canonicalToolName: string;
+    output: unknown;
+  },
+): Promise<void> {
+  const dependencies = attachmentReceiptDependencies(input.canonicalToolName, input.output);
+  if (dependencies.length === 0) return;
+  const invocation = await env.DB.prepare(
+    `SELECT id FROM tool_invocations
+      WHERE workspace_id = ? AND id = ?`,
+  ).bind(input.workspaceId, input.invocationId).first<{ id: string }>();
+  if (!invocation) throw new Error("attachment_receipt_version_changed");
+  for (const dependency of dependencies) {
+    const resource = await env.DB.prepare(
+      `SELECT model_content_sha256 FROM resources
+        WHERE workspace_id = ? AND id = ?`,
+    ).bind(input.workspaceId, dependency.resourceId)
+      .first<{ model_content_sha256: string | null }>();
+    if (resource?.model_content_sha256 !== dependency.derivativeSha256) {
+      await env.DB.prepare(
+        "DELETE FROM attachment_tool_receipts WHERE workspace_id = ? AND tool_invocation_id = ?",
+      ).bind(input.workspaceId, input.invocationId).run();
+      throw new Error("attachment_receipt_version_changed");
+    }
+  }
+  const at = Date.now();
+  await env.DB.batch(dependencies.map((dependency) => env.DB.prepare(
+    `INSERT INTO attachment_tool_receipts
+       (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(resource_id, tool_invocation_id) DO UPDATE SET
+       derivative_sha256 = excluded.derivative_sha256`,
+  ).bind(
+    input.workspaceId,
+    dependency.resourceId,
+    input.invocationId,
+    dependency.derivativeSha256,
+    at,
+  )));
+}
+
+async function validateObjectAttachmentToolReceiptReplay(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    principal: ExecutionPrincipal;
+    invocationId: string;
+    capability: string;
+  },
+): Promise<AttachmentReceiptReplayValidation> {
+  if (!input.capability.startsWith("workstream.resources.")) return "not_attachment";
+  if (input.capability === "workstream.resources.list") return "invalid";
+  const receipts = await env.DB.prepare(
+    `SELECT receipt.resource_id, receipt.derivative_sha256
+       FROM attachment_tool_receipts receipt
+       JOIN tool_invocations invocation ON invocation.id = receipt.tool_invocation_id
+      WHERE receipt.workspace_id = ? AND receipt.tool_invocation_id = ?
+        AND invocation.workstream_id = ? AND invocation.status = 'completed'
+      ORDER BY receipt.resource_id`,
+  ).bind(input.workspaceId, input.invocationId, input.workstreamId).all<{
+    resource_id: string;
+    derivative_sha256: string;
+  }>();
+  const dependencies = receipts.results ?? [];
+  if (dependencies.length === 0) return "invalid";
+  const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    principal: input.principal,
+    resourceIds: dependencies.map((dependency) => dependency.resource_id),
+  });
+  const visibleIds = new Set(visible.map((resource) => resource.id));
+  for (const dependency of dependencies) {
+    if (!visibleIds.has(dependency.resource_id)) return "invalid";
+    const resource = await env.DB.prepare(
+      `SELECT model_content_sha256 FROM resources
+        WHERE workspace_id = ? AND id = ?`,
+    ).bind(input.workspaceId, dependency.resource_id)
+      .first<{ model_content_sha256: string | null }>();
+    if (resource?.model_content_sha256 !== dependency.derivative_sha256) return "invalid";
+  }
+  return "valid";
+}
+
+async function invalidateObjectAttachmentToolReplay(
+  env: Env,
+  workspaceId: string,
+  invocationId: string,
+): Promise<void> {
+  const invocation = await env.DB.prepare(
+    `SELECT output_ref FROM tool_invocations WHERE workspace_id = ? AND id = ?`,
+  ).bind(workspaceId, invocationId).first<{ output_ref: string | null }>();
+  if (invocation?.output_ref) {
+    const at = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES (?, ?, ?, 'receipt', ?, ?)`,
+    ).bind(
+      invocation.output_ref,
+      workspaceId,
+      `attachment-receipt:${invocationId}`,
+      at,
+      at,
+    ).run();
+  }
+  await env.DB.prepare(
+    "DELETE FROM tool_invocations WHERE workspace_id = ? AND id = ?",
+  ).bind(workspaceId, invocationId).run();
 }
 
 function attachmentReceiptDependencies(canonicalToolName: string, output: unknown): ReceiptDependency[] {

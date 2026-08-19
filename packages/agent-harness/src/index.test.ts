@@ -1860,6 +1860,15 @@ describe("agent harness", () => {
     expect(events.filter((event) => event.type === "stream_delta").map((event) =>
       event.type === "stream_delta" ? event.delta : ""
     ).join("")).toBe("done");
+    expect(events.filter((event) => event.type.startsWith("compaction_"))).toEqual([
+      { type: "compaction_started", compactionIndex: 1, trigger: "auto" },
+      {
+        type: "compaction_finished",
+        compactionIndex: 1,
+        trigger: "auto",
+        outcome: "completed",
+      },
+    ]);
   });
 
   it("replaces the previous checkpoint instead of accumulating one per compaction", async () => {
@@ -2015,6 +2024,7 @@ describe("agent harness", () => {
     ];
     const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
     const persist = vi.fn();
+    const events: HarnessEvent[] = [];
 
     await expect(runHarness({
       ...runInput(fetcher),
@@ -2023,11 +2033,64 @@ describe("agent harness", () => {
         contextWindowTokensByModel: { "test/model": 100 },
         persist,
       },
+      onEvent: (event) => { events.push(event); },
     })).resolves.toMatchObject({
       status: "failed",
       failure: { kind: "context", code: "context_limit_exceeded" },
     });
     expect(persist).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type.startsWith("compaction_"))).toEqual([
+      { type: "compaction_started", compactionIndex: 1, trigger: "auto" },
+      {
+        type: "compaction_finished",
+        compactionIndex: 1,
+        trigger: "auto",
+        outcome: "failed",
+      },
+    ]);
+  });
+
+  it("finishes compaction as failed when the durable checkpoint port rejects", async () => {
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "A durable handoff." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 4 },
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const persist = vi.fn(async () => {
+      throw new Error("checkpoint store unavailable");
+    });
+    const events: HarnessEvent[] = [];
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+      onEvent: (event) => { events.push(event); },
+    })).resolves.toMatchObject({ status: "failed" });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type.startsWith("compaction_"))).toEqual([
+      { type: "compaction_started", compactionIndex: 1, trigger: "auto" },
+      {
+        type: "compaction_finished",
+        compactionIndex: 1,
+        trigger: "auto",
+        outcome: "failed",
+      },
+    ]);
   });
 
   it("does not compact at exactly 80%", async () => {
@@ -2475,7 +2538,7 @@ describe("agent harness", () => {
         rejectToolModesBeforeCall(
           ["write"],
           "Writes are not currently allowed",
-          "hypersight_writes_not_allowed",
+          "block_dashboard_writes_not_allowed",
         ),
       ),
       findCompletedToolResult,
@@ -2502,7 +2565,7 @@ describe("agent harness", () => {
       .toContain("Writes are not currently allowed");
     expect(onToolCallRejected).toHaveBeenCalledWith({
       toolCallId: "run-1:turn:1:tool:0",
-      code: "hypersight_writes_not_allowed",
+      code: "block_dashboard_writes_not_allowed",
     });
   });
 

@@ -17,8 +17,17 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 
+import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceConnectorEventQueueMessageSchema,
+  WorkspaceConnectorEventSchema,
+  type WorkspaceConnectorEvent,
+} from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   BASE_CONFIDENCE_FLOOR,
   DISMISSAL_RUN_LIMIT,
@@ -28,14 +37,20 @@ import {
 } from "../services/activity-routing-feedback";
 import {
   createActivitySuggestion,
-  publishWorkstreamRoomEvent,
+  publishSubstreamAgentEvent,
 } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "../services/workstream-runtime-database";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
+import { startWorkstreamWorkflow } from "../services/integrations";
 import {
   activityOriginLocator,
   attachWorkstreamOriginResource,
@@ -47,6 +62,16 @@ import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 import { newId } from "@avalon/db";
+import {
+  acknowledgeWorkstreamOutboxEffect,
+  applyQueuedWorkspaceDirectoryEffect,
+  applyWorkstreamRegionalEffect,
+  isWorkspaceDirectoryEffect,
+  loadWorkstreamRegionalEffect,
+  processWorkstreamNotificationIntent,
+} from "../services/workstream-regional-effect-service";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
 
 interface ActivityRow {
   id: string;
@@ -63,6 +88,7 @@ interface ActivityRow {
   provider_resource_id: string | null;
   payload_ref: string | null;
   actor_json: string;
+  subject_json: string;
   occurred_at: string;
   received_at: string;
   title: string;
@@ -71,7 +97,10 @@ interface ActivityRow {
   visibility_json: string;
   target_user_ids_json: string;
   entity_keys_json: string;
+  dedupe_key: string;
+  raw_content_hash: string | null;
   metadata_json: string;
+  external_people_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
 }
 
@@ -137,9 +166,55 @@ function parseStrings(value: string): string[] {
   }
 }
 
-function workflowAlreadyExists(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return /(already exists|duplicate|conflict)/i.test(error.message);
+function connectorEventMetadata(value: string): Record<string, unknown> {
+  const metadata = parseRecord(value);
+  delete metadata._processing_claim_id;
+  delete metadata._processing_claimed_at;
+  delete metadata._processing_error;
+  delete metadata._workspace_do_event_id;
+  delete metadata._connector_event_workflow_id;
+  delete metadata._connector_event_attempt;
+  return metadata;
+}
+
+function workspaceConnectorEvent(activity: ActivityRow): WorkspaceConnectorEvent {
+  return WorkspaceConnectorEventSchema.parse({
+    connectorType: activity.connector_type,
+    activity: {
+      id: activity.id,
+      workspaceId: activity.workspace_id,
+      region: activity.workspace_region,
+      connectionId: activity.connection_id,
+      connectionScope: activity.connection_scope,
+      connectionOwnerUserId: activity.connection_owner_user_id,
+      provider: activity.provider,
+      providerEventId: activity.provider_event_id,
+      eventType: activity.event_type,
+      resourceType: activity.resource_type,
+      providerResourceId: activity.provider_resource_id,
+      actor: parseRecord(activity.actor_json),
+      subject: parseRecord(activity.subject_json),
+      occurredAt: activity.occurred_at,
+      receivedAt: activity.received_at,
+      title: activity.title,
+      summary: activity.summary,
+      textSnippet: activity.text_snippet,
+      payloadRef: activity.payload_ref,
+      visibility: parseRecord(activity.visibility_json),
+      targetUserIds: parseStrings(activity.target_user_ids_json),
+      entityKeys: parseStrings(activity.entity_keys_json),
+      dedupeKey: activity.dedupe_key,
+      rawContentHash: activity.raw_content_hash,
+      metadata: connectorEventMetadata(activity.metadata_json),
+      externalPeople: (() => {
+        try {
+          return JSON.parse(activity.external_people_json) as unknown;
+        } catch {
+          return [];
+        }
+      })(),
+    },
+  });
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -164,7 +239,7 @@ function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boo
   return restrictedUserIds == null || restrictedUserIds.includes(ownerUserId);
 }
 
-/** Cloudflare Queue entrypoint: only opaque activity identifiers arrive here. */
+/** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   await Promise.all(batch.messages.map((message) => consumeOne(message, env)));
 }
@@ -173,12 +248,18 @@ export const activityQueueConsumer = consumeActivityQueue;
 
 /** Repairs the commit-before-queue-send window for every connector ingress. */
 export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
+  // Post-cutover the Queue payload is the handoff and WorkspaceDO owns retry
+  // state. This scan exists only for an interrupted legacy D1 deployment.
+  if (env.WORKSPACE_DOS) return 0;
   const staleBefore = new Date(Date.now() - 60_000).toISOString();
   const pending = await env.DB.prepare(
-    `SELECT a.id, a.workspace_id, w.region
+    `SELECT a.id, a.workspace_id, w.region, a.processing_status,
+            CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) AS connector_event_attempt
      FROM activities a
      JOIN workspaces w ON w.id = a.workspace_id
-     WHERE a.processing_status = 'pending' AND a.received_at <= ?
+     WHERE a.processing_status IN ('pending', 'failed') AND a.received_at <= ?
+       AND (a.processing_status = 'pending'
+         OR CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) < 5)
        AND w.region = ?
      ORDER BY a.received_at ASC, a.id ASC
      LIMIT ?`,
@@ -186,6 +267,8 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
     id: string;
     workspace_id: string;
     region: "global" | "eu";
+    processing_status: "pending" | "failed";
+    connector_event_attempt: number;
   }>();
   if (pending.results.length === 0) return 0;
   await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
@@ -193,13 +276,63 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
       region: activity.region,
       workspaceId: activity.workspace_id,
       activityId: activity.id,
-      attempt: 0,
+      attempt: activity.processing_status === "failed"
+        ? Math.max(0, activity.connector_event_attempt + 1)
+        : Math.max(0, activity.connector_event_attempt),
     }),
   })));
   return pending.results.length;
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
+  if (regionalEffect.success) {
+    if (regionalEffect.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
+      if (!envelope) {
+        // An already acknowledged DO outbox row no longer needs work, and the
+        // replay receipt lives in WorkspaceDO beside the state it fenced —
+        // there is nothing regional left to mark.
+        message.ack();
+        return;
+      }
+      if (isWorkspaceDirectoryEffect(envelope.effect)) {
+        await applyQueuedWorkspaceDirectoryEffect(env, envelope);
+        await acknowledgeWorkstreamOutboxEffect(env, envelope);
+        message.ack();
+        return;
+      }
+      const applied = await applyWorkstreamRegionalEffect(env, envelope);
+      if (applied.notificationIntentId) {
+        const outcome = await processWorkstreamNotificationIntent(
+          env,
+          regionalEffect.data.workspaceId,
+          applied.notificationIntentId,
+        );
+        if (outcome === "busy") {
+          message.retry({ delaySeconds: 30 });
+          return;
+        }
+      }
+      await acknowledgeWorkstreamOutboxEffect(env, envelope);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "workstream_regional_effect_processing_failed", {
+        workspace_id: regionalEffect.data.workspaceId,
+        workstream_id: regionalEffect.data.workstreamId,
+        message_id: regionalEffect.data.messageId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
   if (slackIngress.success) {
     if (slackIngress.data.region !== env.AVALON_REGION) {
@@ -207,7 +340,10 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       return;
     }
     try {
-      await new SlackAgentService(env).processQueuedIngress(slackIngress.data.jobId);
+      await new SlackAgentService(env).processQueuedIngress(
+        slackIngress.data.workspaceId,
+        slackIngress.data.jobId,
+      );
       message.ack();
     } catch (error) {
       logWarn(env, "slack_ingress_queue_processing_failed", {
@@ -218,6 +354,28 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
       const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
       message.retry({ delaySeconds: Math.min(43_200, Math.max(exponentialDelay, providerDelay)) });
+    }
+    return;
+  }
+
+  const connectorIngress = WorkspaceConnectorEventQueueMessageSchema.safeParse(message.body);
+  if (connectorIngress.success) {
+    const input = connectorIngress.data;
+    if (input.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await admitConnectorEvent(env, input.request, input.attempt);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "connector_event_queue_admission_failed", {
+        workspace_id: input.request.workspaceId,
+        ingress_event_id: input.request.ingressEventId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
     return;
   }
@@ -234,65 +392,53 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
-  const claimId = crypto.randomUUID();
-  let claimed = false;
+  // A maintenance cutover drains this legacy ID-only handoff before opening
+  // WorkspaceDO authority. Once open, the canonical event and its retry state
+  // already live in WorkspaceDO; consulting the frozen D1 source row would
+  // reintroduce a second connector-event authority.
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    message.ack();
+    return;
+  }
+
   try {
     const activity = await loadActivity(env, input);
-    if (!activity || activity.processing_status === "processed") {
+    if (!activity) {
       message.ack();
       return;
     }
-
-    const staleBefore = new Date(Date.now() - 5 * 60_000).toISOString();
-    const claim = await env.DB.prepare(
-      `UPDATE activities
-          SET processing_status = 'processing',
-              metadata_json = json_set(
-                COALESCE(metadata_json, '{}'),
-                '$._processing_claim_id', ?1,
-                '$._processing_claimed_at', ?2
-              )
-        WHERE id = ?3
-          AND workspace_id = ?4
-          AND (
-            processing_status IN ('pending', 'failed')
-            OR (
-              processing_status = 'processing'
-              AND COALESCE(json_extract(metadata_json, '$._processing_claimed_at'), '') < ?5
-            )
-          )`
-    )
-      .bind(claimId, new Date().toISOString(), input.activityId, input.workspaceId, staleBefore)
-      .run();
-    claimed = (claim.meta.changes ?? 0) === 1;
-    if (!claimed) {
-      message.retry({ delaySeconds: 30 });
-      return;
-    }
-
-    const directWorkstreamIds = await routeDirectWatches(env, activity);
-    const automationWorkstreamIds = await runMatchingAutomations(env, activity);
-    for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
-    const routedContextually = SUGGESTED_CONTEXT_ENABLED
-      ? await routeContextually(env, activity, directWorkstreamIds)
-      : false;
-    if (directWorkstreamIds.size === 0 && !routedContextually) {
-      await enqueueActivityOpportunity(env, activity.id);
-    }
-    await projectActivityEvent(env, activity);
-
+    const event = workspaceConnectorEvent(activity);
+    const admission = await admitConnectorEvent(env, {
+      workspaceId: input.workspaceId,
+      ingressEventId: activity.id,
+      payloadHash: await workspaceConnectorEventPayloadHash(event),
+      event,
+    }, input.attempt);
     await env.DB.prepare(
       `UPDATE activities
-          SET processing_status = 'processed',
-              metadata_json = json_remove(
-                json_remove(metadata_json, '$._processing_claim_id'),
-                '$._processing_claimed_at'
+          SET processing_status = ?1,
+              metadata_json = json_set(
+                json_remove(
+                  json_remove(COALESCE(metadata_json, '{}'), '$._processing_claim_id'),
+                  '$._processing_claimed_at'
+                ),
+                '$._workspace_do_event_id', ?2,
+                '$._connector_event_workflow_id', ?3,
+                '$._connector_event_attempt', ?4
               )
-        WHERE id = ?1
-          AND workspace_id = ?2
-          AND json_extract(metadata_json, '$._processing_claim_id') = ?3`
+        WHERE id = ?5 AND workspace_id = ?6`
     )
-      .bind(activity.id, activity.workspace_id, claimId)
+      .bind(
+        admission.accepted.processingStatus === "processed"
+          ? "processed"
+          : admission.workflowAttempt <= 5 ? "processing" : "failed",
+        admission.accepted.eventId,
+        admission.workflowInstanceId,
+        admission.recordedAttempt,
+        activity.id,
+        activity.workspace_id,
+      )
       .run();
     const connector = ["generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x"]
       .includes(activity.connector_type)
@@ -314,29 +460,102 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     }
     message.ack();
   } catch (error) {
-    if (claimed) {
-      await env.DB.prepare(
-        `UPDATE activities
-            SET processing_status = 'failed',
-                metadata_json = json_set(
-                  json_remove(metadata_json, '$._processing_claim_id'),
-                  '$._processing_error', ?1
-                )
-          WHERE id = ?2
-            AND workspace_id = ?3
-            AND json_extract(metadata_json, '$._processing_claim_id') = ?4`
-      )
-        .bind(
-          error instanceof Error ? error.message.slice(0, 500) : "activity_processing_failed",
-          input.activityId,
-          input.workspaceId,
-          claimId
-        )
-        .run();
-    }
+    logWarn(env, "connector_event_queue_admission_failed", {
+      workspace_id: input.workspaceId,
+      ingress_event_id: input.activityId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
     const attempts = Math.max(1, message.attempts);
     message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
   }
+}
+
+async function admitConnectorEvent(
+  env: Env,
+  request: Parameters<Awaited<ReturnType<typeof workspaceDirectory>>["ingestConnectorEvent"]>[0],
+  requestedAttempt: number,
+) {
+  const workspace = await workspaceDirectory(env, request.workspaceId);
+  const accepted = await workspace.ingestConnectorEvent(request);
+  const workflowAttempt = accepted.processingStatus === "processing"
+    ? accepted.processingAttempt
+    : accepted.processingStatus === "failed"
+      ? Math.max(requestedAttempt, accepted.processingAttempt + 1)
+      : Math.max(0, requestedAttempt);
+  const recordedAttempt = Math.min(workflowAttempt, 5);
+  const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
+  if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
+    try {
+      await env.CONNECTOR_EVENT_WORKFLOW.create({
+        id: workflowInstanceId,
+        params: {
+          region: env.AVALON_REGION,
+          workspaceId: request.workspaceId,
+          eventId: accepted.eventId,
+          workflowInstanceId,
+          attempt: workflowAttempt,
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
+        throw error;
+      }
+    }
+  }
+  return { accepted, workflowAttempt, recordedAttempt, workflowInstanceId };
+}
+
+/** The connector-event Workflow's idempotent product processing step. */
+export async function processConnectorEvent(
+  env: Env,
+  event: WorkspaceConnectorEvent
+): Promise<void> {
+  const activity = activityRowFromWorkspaceEvent(event);
+  env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
+  const directWorkstreamIds = await routeDirectWatches(env, activity);
+  const automationWorkstreamIds = await runMatchingAutomations(env, activity);
+  for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
+  const routedContextually = SUGGESTED_CONTEXT_ENABLED
+    ? await routeContextually(env, activity, directWorkstreamIds)
+    : false;
+  if (directWorkstreamIds.size === 0 && !routedContextually) {
+    await enqueueActivityOpportunity(env, activity.id, activity.workspace_id);
+  }
+  await projectActivityEvent(env, activity);
+}
+
+function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {
+  const activity = event.activity;
+  return {
+    id: activity.id,
+    workspace_id: activity.workspaceId,
+    workspace_region: activity.region,
+    connection_id: activity.connectionId,
+    connector_type: event.connectorType,
+    connection_scope: activity.connectionScope,
+    connection_owner_user_id: activity.connectionOwnerUserId,
+    provider: activity.provider,
+    provider_event_id: activity.providerEventId,
+    event_type: activity.eventType,
+    resource_type: activity.resourceType,
+    provider_resource_id: activity.providerResourceId,
+    payload_ref: activity.payloadRef,
+    actor_json: JSON.stringify(activity.actor),
+    subject_json: JSON.stringify(activity.subject),
+    occurred_at: activity.occurredAt,
+    received_at: activity.receivedAt,
+    title: activity.title,
+    summary: activity.summary,
+    text_snippet: activity.textSnippet,
+    visibility_json: JSON.stringify(activity.visibility),
+    target_user_ids_json: JSON.stringify(activity.targetUserIds),
+    entity_keys_json: JSON.stringify(activity.entityKeys),
+    dedupe_key: activity.dedupeKey,
+    raw_content_hash: activity.rawContentHash,
+    metadata_json: JSON.stringify(activity.metadata),
+    external_people_json: JSON.stringify(activity.externalPeople ?? []),
+    processing_status: "processing",
+  };
 }
 
 /**
@@ -462,10 +681,10 @@ function connectorActorLabel(activity: ActivityRow): string {
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
   return env.DB.prepare(
-    `SELECT a.*, w.region AS workspace_region, c.connector_type
+    `SELECT a.*, w.region AS workspace_region, route.connector_type
        FROM activities a
        JOIN workspaces w ON w.id = a.workspace_id
-       JOIN connector_connections c ON c.id = a.connection_id
+       JOIN connector_ingress_routes route ON route.connection_id = a.connection_id
       WHERE a.id = ?1 AND a.workspace_id = ?2 AND w.region = ?3
       LIMIT 1`
   )
@@ -477,8 +696,35 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   const entityKeys = parseStrings(activity.entity_keys_json);
   if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
 
-  const direct = await env.DB.prepare(
-    `SELECT DISTINCT wr.workstream_id
+  const authority = await readWorkstreamAuthorityControl(env);
+  let directWorkstreamIds: string[];
+  if (authority.phase === "durable_object_open") {
+    const resources = await env.DB.prepare(
+      `SELECT id FROM resources
+        WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
+          AND (provider_resource_id = ?4 OR EXISTS (
+            SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
+          ))`,
+    ).bind(
+      activity.workspace_id,
+      activity.connection_id,
+      activity.provider,
+      activity.provider_resource_id,
+      JSON.stringify(entityKeys),
+    ).all<{ id: string }>();
+    const workspace = await workspaceDirectory(env, activity.workspace_id);
+    const resolvedWorkstreamIds = new Set<string>();
+    for (const resource of resources.results ?? []) {
+      const resolved = await workspace.workstreamsForResource({
+        workspaceId: activity.workspace_id,
+        resourceId: resource.id,
+        watchedOnly: true,
+      });
+      for (const workstreamId of resolved.workstreamIds) resolvedWorkstreamIds.add(workstreamId);
+    }
+    directWorkstreamIds = [...resolvedWorkstreamIds];
+  } else {
+    const direct = await env.DB.prepare(`SELECT DISTINCT wr.workstream_id
        FROM resources r
        JOIN workstream_resources wr ON wr.resource_id = r.id
        JOIN workstreams w ON w.id = wr.workstream_id
@@ -493,26 +739,27 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
           )
         )
         AND wr.watch_enabled = 1
-        AND w.archived_at IS NULL`
-  )
+        AND w.archived_at IS NULL`)
     .bind(activity.workspace_id, activity.connection_id, activity.provider, activity.provider_resource_id, JSON.stringify(entityKeys))
     .all<{ workstream_id: string }>();
+    directWorkstreamIds = direct.results.map((row) => row.workstream_id);
+  }
 
   const routed = new Set<string>();
   const restrictedUserIds = restrictedActivityUserIds(activity);
-  for (const row of direct.results) {
+  for (const workstreamId of directWorkstreamIds) {
     if (restrictedUserIds != null) {
       let visible = false;
       for (const userId of restrictedUserIds) {
-        if (await isWorkstreamVisibleToUser(env, row.workstream_id, userId)) {
+        if (await isWorkstreamVisibleToUser(env, activity.workspace_id, workstreamId, userId)) {
           visible = true;
           break;
         }
       }
       if (!visible) continue;
     }
-    if (await injectActivityMessage(env, activity, row.workstream_id)) {
-      routed.add(row.workstream_id);
+    if (await injectActivityMessage(env, activity, workstreamId)) {
+      routed.add(workstreamId);
     }
   }
   return routed;
@@ -523,15 +770,20 @@ async function injectActivityMessage(
   activity: ActivityRow,
   workstreamId: string
 ): Promise<boolean> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    activity.workspace_id,
+    workstreamId,
+  );
   const clientMessageId = `activity:${activity.id}`;
-  const existing = await env.DB.prepare(
+  const existing = await executionEnv.DB.prepare(
     `SELECT 1 FROM messages WHERE workstream_id = ?1 AND client_message_id = ?2 LIMIT 1`
   )
     .bind(workstreamId, clientMessageId)
     .first();
   if (existing) return true;
 
-  const sequence = await env.DB.prepare(
+  const sequence = await executionEnv.DB.prepare(
     `UPDATE workstreams
         SET next_sequence_number = next_sequence_number + 1
       WHERE id = ?1 AND workspace_id = ?2
@@ -541,10 +793,10 @@ async function injectActivityMessage(
     .first<{ sequence_number: number }>();
   if (!sequence) return false;
 
-  const id = crypto.randomUUID();
+  const id = uuidV7();
   const createdAt = new Date().toISOString();
   const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
-  const inserted = await env.DB.prepare(
+  const inserted = await executionEnv.DB.prepare(
     `INSERT OR IGNORE INTO messages (
        id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
        message_type, text_content, structured_content_json, sequence_number, created_at, edited_at
@@ -568,7 +820,7 @@ async function injectActivityMessage(
     .run();
   if ((inserted.meta.changes ?? 0) === 0) return true;
 
-  await env.DB.prepare(
+  await executionEnv.DB.prepare(
     `UPDATE workstreams
         SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?1),
             last_activity_at = ?2,
@@ -598,7 +850,7 @@ async function injectActivityMessage(
     createdAt,
     editedAt: null
   };
-  await publishWorkstreamRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
+  await publishSubstreamAgentEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
     type: "message_created",
     message: canonicalMessage
   });
@@ -755,11 +1007,12 @@ async function startActivityAutomation(
   let harnessRunId: string;
   const now = new Date().toISOString();
   const principal = ExecutionPrincipalSchema.parse(JSON.parse(subscription.execution_principal_json));
+  const authority = await readWorkstreamAuthorityControl(env);
 
   if (!run) {
-    const workstreamId = crypto.randomUUID();
-    const runId = crypto.randomUUID();
-    harnessRunId = crypto.randomUUID();
+    const workstreamId = uuidV7();
+    const runId = uuidV7();
+    harnessRunId = uuidV7();
     const emailRoute = await emailRouting.reserve({
       region: activity.workspace_region,
       workspaceId: activity.workspace_id,
@@ -776,8 +1029,26 @@ async function startActivityAutomation(
       workspaceId: activity.workspace_id,
       workstreamId,
     });
-    await env.DB.batch([
-      env.DB.prepare(
+    const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+      env,
+      activity.workspace_id,
+      workstreamId,
+    );
+    const runStatement = env.DB.prepare(
+      `INSERT INTO automation_runs (
+         id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         trigger_activity_id, planned_for, started_at, completed_at, status,
+         result_summary, workflow_instance_id, created_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`,
+    ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now);
+    let controlRunInserted = false;
+    if (authority.phase === "durable_object_open") {
+      const inserted = await runStatement.run();
+      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
+    }
+    try {
+      await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
@@ -793,14 +1064,8 @@ async function startActivityAutomation(
         now,
         modelOverride
       ),
-      env.DB.prepare(
-        `INSERT INTO automation_runs (
-           id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-           trigger_activity_id, planned_for, started_at, completed_at, status,
-           result_summary, workflow_instance_id, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`
-      ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now),
-      env.DB.prepare(
+      ...(authority.phase === "durable_object_open" ? [] : [runStatement]),
+      executionEnv.DB.prepare(
         `INSERT INTO harness_runs (
            id, workspace_id, workstream_id, origin, execution_principal_json,
            workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,
@@ -815,10 +1080,30 @@ async function startActivityAutomation(
         now,
         model
       ),
-      env.DB.prepare(
+      executionEnv.DB.prepare(
         `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
       ).bind(runId, workstreamId, activity.workspace_id)
-    ]);
+      ]);
+    } catch (error) {
+      if (controlRunInserted) {
+        try {
+          const deleted = await env.DB.prepare(
+            `DELETE FROM automation_runs
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
+          ).bind(runId, activity.workspace_id).run();
+          if ((deleted.meta.changes ?? 0) !== 1) {
+            throw new Error("activity_automation_run_compensation_not_applied", { cause: error });
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "activity_automation_run_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+      }
+      throw error;
+    }
     await recordWorkstreamCreatedTelemetry(env, {
       workspaceId: activity.workspace_id,
       workstreamId,
@@ -830,10 +1115,15 @@ async function startActivityAutomation(
     });
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
   } else {
-    const harness = await env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      activity.workspace_id,
+      run.workstream_id,
+    );
+    const harness = await executionEnv.DB.prepare(
       `SELECT id FROM harness_runs
         WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
         ORDER BY created_at DESC LIMIT 1`
     )
       .bind(run.workstream_id)
@@ -875,7 +1165,6 @@ async function startActivityAutomation(
   }
 
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
-  const workflowId = `activity-${subscription.id}-${activity.id}`;
   const workflowInput: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
     region: activity.workspace_region,
     workspaceId: activity.workspace_id,
@@ -888,20 +1177,26 @@ async function startActivityAutomation(
     reason: `Connected activity matched ${subscription.template_name}`
   });
 
-  try {
-    await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: workflowId, params: workflowInput });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  const workflowId = await startWorkstreamWorkflow(env, workflowInput);
 
-  await env.DB.batch([
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    activity.workspace_id,
+    run.workstream_id,
+  );
+  const reconcileWorkflowId = () => Promise.all([
     env.DB.prepare(
-      `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-    ).bind(workflowId, run.id, activity.workspace_id),
-    env.DB.prepare(
-      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-    ).bind(workflowId, harnessRunId, activity.workspace_id)
+      `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, run.id, activity.workspace_id).run(),
+    executionEnv.DB.prepare(
+      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, harnessRunId, activity.workspace_id).run(),
   ]);
+  try {
+    await reconcileWorkflowId();
+  } catch {
+    await reconcileWorkflowId();
+  }
   return run.workstream_id;
 }
 
@@ -983,8 +1278,22 @@ async function routeContextually(
   }
   const restrictedUserIds = restrictedActivityUserIds(activity);
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
-  const candidates = await env.DB.prepare(
-    `SELECT w.id, w.title, w.objective, w.last_activity_at
+  const authority = await readWorkstreamAuthorityControl(env);
+  const candidates = authority.phase === "durable_object_open"
+    ? await (await workspaceDirectory(env, activity.workspace_id)).routingCandidates({
+      workspaceId: activity.workspace_id,
+      restrictedUserIds,
+      excludedWorkstreamIds: [...excludedWorkstreamIds],
+      feedbackSince: dismissalRunCutoff(),
+      dismissalLimit: DISMISSAL_RUN_LIMIT,
+      limit: 12,
+    }).then((result) => ({ results: result.items.map((item) => ({
+      id: item.workstreamId,
+      title: item.title,
+      objective: item.description,
+      last_activity_at: item.lastActivityAt,
+    })) }))
+    : await env.DB.prepare(`SELECT w.id, w.title, w.objective, w.last_activity_at
        FROM workstreams w
       WHERE w.workspace_id = ?1
         AND w.archived_at IS NULL
@@ -1033,8 +1342,7 @@ async function routeContextually(
           SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.id
         )
       ORDER BY w.last_activity_at DESC
-      LIMIT 12`
-  )
+      LIMIT 12`)
     .bind(
       activity.workspace_id,
       restrictedUserIdsJson,
@@ -1093,22 +1401,38 @@ async function routeContextually(
 
 async function isWorkstreamVisibleToUser(
   env: Env,
+  workspaceId: string,
   workstreamId: string,
   userId: string
 ): Promise<boolean> {
-  const visible = await env.DB.prepare(
-    `SELECT 1
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    return (await workspaceDirectory(env, workspaceId)).canReadWorkstream({
+      workspaceId,
+      workstreamId,
+      userId,
+    });
+  }
+  const visible = await env.DB.prepare(`SELECT 1
        FROM workstreams w
       WHERE w.id = ?1
         AND (w.created_by_user_id = ?2 OR EXISTS (
           SELECT 1 FROM workstream_participants wp
            WHERE wp.workstream_id = w.id AND wp.user_id = ?2 AND wp.removed_at IS NULL
         ))
-      LIMIT 1`
-  )
+      LIMIT 1`)
     .bind(workstreamId, userId)
     .first();
   return Boolean(visible);
+}
+
+function workspaceDirectory(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
 }
 
 export const __testing = {

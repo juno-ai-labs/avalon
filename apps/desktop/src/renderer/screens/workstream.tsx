@@ -31,7 +31,7 @@ import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -51,24 +51,26 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
+import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
   nextTranscriptSequence,
   reconcileCanonicalTranscript,
   useWorkstreamSocket,
+  type SocketState,
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
-import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
+import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -104,7 +106,7 @@ export function workstreamRunTiming(
  * leave the stored preference disagreeing with the screen, never two panels
  * stacked in one slot with both controls reading as open.
  */
-export function hypersightHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
+export function blockDashboardHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
   return preferenceVisible && !railOpen;
 }
 
@@ -300,21 +302,21 @@ const RENAME_HINT = 'Double-click to rename';
 export function WorkstreamHeader({
   workstream,
   socketState,
-  hypersightOpen,
-  hypersightPreferencePending,
+  blockDashboardOpen,
+  blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
   onRename,
-  onToggleHyperSight,
+  onToggleBlockDashboard,
 }: {
   workstream: WorkstreamDetail;
-  socketState: ReturnType<typeof useWorkstreamSocket>;
-  hypersightOpen: boolean;
-  hypersightPreferencePending: boolean;
+  socketState: SocketState;
+  blockDashboardOpen: boolean;
+  blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
-  onToggleHyperSight: () => void;
+  onToggleBlockDashboard: () => void;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -565,11 +567,11 @@ export function WorkstreamHeader({
         {/* The two controls that own the right sidebar sit side by side, in the
             order the panels themselves are named. */}
         <IconButton
-          className={clsx('panel-toggle', 'hypersight-toggle', hypersightOpen && 'is-active')}
-          aria-pressed={hypersightOpen}
-          disabled={hypersightPreferencePending}
-          label={hypersightOpen ? 'Hide HyperSight' : 'Show HyperSight'}
-          onClick={onToggleHyperSight}
+          className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
+          aria-pressed={blockDashboardOpen}
+          disabled={blockDashboardPreferencePending}
+          label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
+          onClick={onToggleBlockDashboard}
         >
           <IconAugmentedReality size={16} stroke={1.7} />
         </IconButton>
@@ -657,6 +659,44 @@ export function initialTranscriptAnchorIndex(
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
 }
 
+export function shouldLoadEarlierFromScroll(
+  scrollTop: number,
+  hasEarlierCursor: boolean,
+  loading: boolean,
+): boolean {
+  return scrollTop < 160 && hasEarlierCursor && !loading;
+}
+
+export function preservedPrependScrollTop(
+  previousScrollTop: number,
+  previousScrollHeight: number,
+  nextScrollHeight: number,
+): number {
+  return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
+}
+
+export function transcriptPageCursor(
+  page: MessagePage,
+  requestedCursor: string,
+  direction: 'before' | 'after',
+): string | null {
+  const nextCursor = direction === 'before' ? page.nextCursor : page.newerCursor;
+  if (nextCursor === requestedCursor) {
+    throw new Error('Avalon received a repeated transcript cursor.');
+  }
+  return nextCursor;
+}
+
+export function mergeTranscriptPage(
+  current: Message[] | undefined,
+  page: MessagePage,
+): Message[] {
+  return visibleTranscriptMessages(page.items).reduce(
+    (merged, message) => insertMessage(merged, message),
+    current ?? [],
+  );
+}
+
 export function highestVisibleAttentionSequence(
   transcript: Message[],
   visibleIndexes: number[],
@@ -718,7 +758,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const closeRail = useUiStore((state) => state.closeRail);
   const openRail = useUiStore((state) => state.openRail);
   const railOpen = useUiStore((state) => state.railOpen);
-  const setHyperSightOpen = useUiStore((state) => state.setHyperSightOpen);
+  const setBlockDashboardOpen = useUiStore((state) => state.setBlockDashboardOpen);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -734,6 +774,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const loadingOlderRef = useRef(false);
   const loadingNewerRef = useRef(false);
+  const pendingOlderAfterReconnectRef = useRef(false);
+  const pendingNewerAfterReconnectRef = useRef(false);
+  const pendingJumpAfterReconnectRef = useRef(false);
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
@@ -765,6 +808,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     activeWorkstreamIdRef.current = id;
     loadingOlderRef.current = false;
     loadingNewerRef.current = false;
+    pendingOlderAfterReconnectRef.current = false;
+    pendingNewerAfterReconnectRef.current = false;
+    pendingJumpAfterReconnectRef.current = false;
     initialPositionedWorkstreamRef.current = null;
     readAckInFlightRef.current = null;
     if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
@@ -806,13 +852,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryKey: ['terminal-workstream', id],
     queryFn: ({ signal }) => api!.getTerminalWorkstreamState(id, signal),
     enabled: Boolean(api && id),
-    staleTime: 5_000,
-    refetchInterval: (query) => {
-      const state = query.state.data;
-      if (!state) return false;
-      if (['starting', 'running', 'restoring'].includes(state.state)) return 5_000;
-      return state.localFilesRetained ? 30_000 : false;
-    },
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const startFreshTerminal = useMutation({
     mutationFn: () => api!.startFreshTerminalWorkspace(id),
@@ -869,38 +909,44 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
     staleTime: 5_000,
   });
-  const hypersightPreference = useQuery({
-    queryKey: ['hypersight-preference', id],
-    queryFn: ({ signal }) => api!.getHyperSightPreference(id, signal),
+  const blockDashboardPreference = useQuery({
+    queryKey: ['block-dashboard-preference', id],
+    queryFn: ({ signal }) => api!.getBlockDashboardPreference(id, signal),
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
-  const hypersightPreferred = hypersightPreference.data?.visible ?? false;
-  const hypersightOpen = hypersightHoldsSidebar(hypersightPreferred, railOpen);
+  const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
+  const blockDashboardOpen = blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
   // the slot animates between their two widths.
-  const railLeaving = useRailCrossFade<RailPanel>(hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : null);
-  const hypersight = useQuery({
-    queryKey: ['hypersight', id],
-    queryFn: ({ signal }) => api!.getHyperSight(id, signal),
-    enabled: Boolean(api && id && hypersightOpen),
+  const railLeaving = useRailCrossFade<RailPanel>(blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : null);
+  const blockDashboard = useQuery({
+    queryKey: ['block-dashboard', id],
+    queryFn: ({ signal }) => api!.getBlockDashboard(id, signal),
+    enabled: Boolean(api && id && blockDashboardOpen),
     staleTime: 5_000,
   });
   const reportedHyperSightOpen = useRef<string | null>(null);
   useEffect(() => {
-    if (!hypersightOpen) {
+    if (!blockDashboardOpen) {
       reportedHyperSightOpen.current = null;
       return;
     }
-    if (!hypersight.data || reportedHyperSightOpen.current === id) return;
+    if (!blockDashboard.data || reportedHyperSightOpen.current === id) return;
     reportedHyperSightOpen.current = id;
     reportTelemetryProductIntent({
       kind: 'hypersight_opened',
       workstreamId: id,
-      blockCount: telemetryCountBucket(hypersight.data.blocks.length),
+      blockCount: telemetryCountBucket(blockDashboard.data.blocks.length),
     });
-  }, [hypersight.data, hypersightOpen, id]);
+  }, [blockDashboard.data, blockDashboardOpen, id]);
+  const blockDashboardConnectionStates = useBlockDashboardSockets(
+    api,
+    id,
+    blockDashboard.data?.blocks.map((block) => block.id) ?? [],
+    Boolean(api && id && blockDashboardOpen && blockDashboard.isSuccess),
+  );
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -920,11 +966,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && resourceDialogOpen),
     staleTime: 15_000,
   });
-  const socketState = useWorkstreamSocket(
+  const socketConnection = useWorkstreamSocket(
     api,
     id,
     workstream.isSuccess && messages.isSuccess,
   );
+  const socketState = socketConnection.state;
+  const loadSocketMessagePage = socketConnection.loadMessagePage;
   const transcript = messages.data ?? [];
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
@@ -949,6 +997,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
     if (!api || !before || loadingOlderRef.current) return;
+    if (socketState !== 'connected') {
+      pendingOlderAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingOlderAfterReconnectRef.current = false;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
@@ -956,60 +1010,81 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
-      const page = await api.getMessagePage(id, { before });
+      const page = await loadSocketMessagePage({ before });
       if (activeWorkstreamIdRef.current !== id) return;
-      if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
-      const visibleItems = visibleTranscriptMessages(page.items);
+      const nextCursor = transcriptPageCursor(page, before, 'before');
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-      queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
+        mergeTranscriptPage(current, page));
+      queryClient.setQueryData(['messages-cursor', id], nextCursor);
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
-        element.scrollTop = previousScrollTop + Math.max(0, element.scrollHeight - previousScrollHeight);
+        element.scrollTop = preservedPrependScrollTop(
+          previousScrollTop,
+          previousScrollHeight,
+          element.scrollHeight,
+        );
       });
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingOlderAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [api, id, queryClient]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
     const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
     if (!api || !after || loadingNewerRef.current) return;
+    if (socketState !== 'connected') {
+      pendingNewerAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingNewerAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
-      const page = await api.getMessagePage(id, { after });
+      const page = await loadSocketMessagePage({ after });
       if (activeWorkstreamIdRef.current !== id) return;
-      if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
-      const visibleItems = visibleTranscriptMessages(page.items);
+      const newerCursor = transcriptPageCursor(page, after, 'after');
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-      queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
+        mergeTranscriptPage(current, page));
+      queryClient.setQueryData(['messages-newer-cursor', id], newerCursor);
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingNewerAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, queryClient]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
     if (!api || loadingNewerRef.current) return;
+    if (socketState !== 'connected') {
+      pendingJumpAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingJumpAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
       let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
       while (after) {
-        const page = await api.getMessagePage(id, { after });
+        const page = await loadSocketMessagePage({ after });
         if (activeWorkstreamIdRef.current !== id) return;
-        if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
-        const visibleItems = visibleTranscriptMessages(page.items);
+        const newerCursor = transcriptPageCursor(page, after, 'after');
         queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-        after = page.newerCursor;
+          mergeTranscriptPage(current, page));
+        after = newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
       setAtBottom(true);
@@ -1018,11 +1093,32 @@ export function WorkstreamScreen(): React.JSX.Element {
         transcriptVirtualizer.scrollToIndex(Math.max(0, current.length - 1), { align: 'end', behavior: 'smooth' });
       });
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingJumpAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, queryClient, transcriptVirtualizer]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState, transcriptVirtualizer]);
+
+  useEffect(() => {
+    if (socketState !== 'connected') return;
+    if (pendingJumpAfterReconnectRef.current) {
+      pendingJumpAfterReconnectRef.current = false;
+      void jumpToLatest();
+      return;
+    }
+    if (pendingNewerAfterReconnectRef.current) {
+      pendingNewerAfterReconnectRef.current = false;
+      void loadNewerMessages();
+    }
+    if (pendingOlderAfterReconnectRef.current) {
+      pendingOlderAfterReconnectRef.current = false;
+      void loadOlderMessages();
+    }
+  }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
 
   const addParticipant = useMutation({
     mutationFn: (member: WorkspaceMember) => api!.addParticipant(id, member.id),
@@ -1055,69 +1151,69 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
-  const updateHyperSight = useMutation({
+  const updateBlockDashboard = useMutation({
     mutationFn: (blocks: Array<{ id: string; prompt: string }>) => {
-      const current = queryClient.getQueryData<HyperSight>(['hypersight', id]) ?? hypersight.data;
+      const current = queryClient.getQueryData<BlockDashboard>(['block-dashboard', id]) ?? blockDashboard.data;
       if (!current) throw new Error('HyperSight is not ready yet.');
-      return api!.updateHyperSight(id, {
+      return api!.updateBlockDashboard(id, {
         expectedVersionNumber: current.versionNumber,
         blocks,
       });
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData(['hypersight', id], updated);
+      queryClient.setQueryData(['block-dashboard', id], updated);
     },
     onError: () => {
-      void queryClient.invalidateQueries({ queryKey: ['hypersight', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['block-dashboard', id], exact: true });
     },
   });
 
-  const updateHyperSightPreference = useMutation({
-    mutationFn: (visible: boolean) => api!.updateHyperSightPreference(id, visible),
+  const updateBlockDashboardPreference = useMutation({
+    mutationFn: (visible: boolean) => api!.updateBlockDashboardPreference(id, visible),
     onMutate: async (visible) => {
-      await queryClient.cancelQueries({ queryKey: ['hypersight-preference', id], exact: true });
-      const previous = queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', id]);
-      queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', id], {
+      await queryClient.cancelQueries({ queryKey: ['block-dashboard-preference', id], exact: true });
+      const previous = queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', id]);
+      queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', id], {
         visible,
         updatedAt: previous?.updatedAt ?? null,
       });
       return { previous };
     },
     onError: (_error, _visible, context) => {
-      queryClient.setQueryData(['hypersight-preference', id], context?.previous);
+      queryClient.setQueryData(['block-dashboard-preference', id], context?.previous);
     },
     onSuccess: (preference) => {
-      queryClient.setQueryData(['hypersight-preference', id], preference);
+      queryClient.setQueryData(['block-dashboard-preference', id], preference);
     },
   });
-  const { mutate: persistHyperSightPreference } = updateHyperSightPreference;
+  const { mutate: persistBlockDashboardPreference } = updateBlockDashboardPreference;
 
   // HyperSight and the inspector rail share the right sidebar and are never
   // open together. HyperSight's visibility is a stored personal preference
   // rather than window state, so yielding the sidebar to the rail is written
   // back the same way the toggle is: the next visit opens where this one left
   // off.
-  const setHyperSightVisible = useCallback((visible: boolean): void => {
+  const setBlockDashboardVisible = useCallback((visible: boolean): void => {
     if (visible) closeRail();
-    persistHyperSightPreference(visible);
-  }, [closeRail, persistHyperSightPreference]);
+    persistBlockDashboardPreference(visible);
+  }, [closeRail, persistBlockDashboardPreference]);
 
   const openRailVariant = useCallback((variant: RailVariant): void => {
     openRail(variant);
-    if (hypersightPreferred) persistHyperSightPreference(false);
-  }, [hypersightPreferred, openRail, persistHyperSightPreference]);
+    if (blockDashboardPreferred) persistBlockDashboardPreference(false);
+  }, [blockDashboardPreferred, openRail, persistBlockDashboardPreference]);
 
   // The shell lays the main pane out against whichever panel holds the right
   // sidebar, and only this screen knows whether HyperSight has it — or which
   // panel is still fading out of it.
   useEffect(() => {
-    setHyperSightOpen(hypersightOpen);
-  }, [hypersightOpen, setHyperSightOpen]);
+    setBlockDashboardOpen(blockDashboardOpen);
+  }, [blockDashboardOpen, setBlockDashboardOpen]);
   useEffect(() => {
     setRailLeaving(railLeaving);
     return () => setRailLeaving(null);
   }, [railLeaving, setRailLeaving]);
-  useEffect(() => () => setHyperSightOpen(false), [setHyperSightOpen]);
+  useEffect(() => () => setBlockDashboardOpen(false), [setBlockDashboardOpen]);
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
@@ -1262,7 +1358,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       return insertMessage(current, optimistic);
     });
     try {
-      const created = await api.createMessage(id, {
+      const created = await socketConnection.createMessage({
         text,
         clientId,
         mentions,
@@ -1415,39 +1511,40 @@ export function WorkstreamScreen(): React.JSX.Element {
           nothing to hand focus back to when it closes. The write is optimistic;
           there is nothing to wait for. */}
       <WorkstreamHeader
-        hypersightOpen={hypersightOpen}
-        hypersightPreferencePending={hypersightPreference.isPending}
+        blockDashboardOpen={blockDashboardOpen}
+        blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
-        onToggleHyperSight={() => setHyperSightVisible(!hypersightOpen)}
+        onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
         socketState={socketState}
         workstream={displayedDetail}
       />
-      {hypersightOpen || railLeaving === 'hypersight' ? (
-        <HyperSightRail
-          blockCount={hypersight.data?.blocks.length ?? 0}
-          leaving={railLeaving === 'hypersight'}
-          onClose={() => setHyperSightVisible(false)}
+      {blockDashboardOpen || railLeaving === 'block-dashboard' ? (
+        <BlockDashboardRail
+          blockCount={blockDashboard.data?.blocks.length ?? 0}
+          leaving={railLeaving === 'block-dashboard'}
+          onClose={() => setBlockDashboardVisible(false)}
         >
-          {hypersight.data ? (
-            <HyperSightPanel
-              error={updateHyperSight.error?.message ?? hypersight.error?.message}
-              hypersight={hypersight.data}
-              onChange={(blocks) => updateHyperSight.mutateAsync(blocks).then(() => undefined)}
-              pending={updateHyperSight.isPending}
+          {blockDashboard.data ? (
+            <BlockDashboardPanel
+              connectionStates={blockDashboardConnectionStates}
+              error={updateBlockDashboard.error?.message ?? blockDashboard.error?.message}
+              blockDashboard={blockDashboard.data}
+              onChange={(blocks) => updateBlockDashboard.mutateAsync(blocks).then(() => undefined)}
+              pending={updateBlockDashboard.isPending}
             />
-          ) : hypersight.error ? (
-            <div className="hypersight-load-state">
-              <InlineError>{hypersight.error.message}</InlineError>
-              <Button onClick={() => void hypersight.refetch()}><RefreshCcw size={14} /> Try again</Button>
+          ) : blockDashboard.error ? (
+            <div className="block-dashboard-load-state">
+              <InlineError>{blockDashboard.error.message}</InlineError>
+              <Button onClick={() => void blockDashboard.refetch()}><RefreshCcw size={14} /> Try again</Button>
             </div>
           ) : (
-            <div className="hypersight-load-state">
+            <div className="block-dashboard-load-state">
               <LoadingState label="Opening HyperSight…" />
             </div>
           )}
-        </HyperSightRail>
+        </BlockDashboardRail>
       ) : null}
       <div
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
@@ -1459,7 +1556,11 @@ export function WorkstreamScreen(): React.JSX.Element {
           const element = event.currentTarget;
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
           setAtBottom(nearBottom && newerMessageCursor.data === null);
-          if (element.scrollTop < 160 && messageCursor.data && !loadingOlderRef.current) {
+          if (shouldLoadEarlierFromScroll(
+            element.scrollTop,
+            Boolean(messageCursor.data),
+            loadingOlderRef.current,
+          )) {
             void loadOlderMessages();
           }
           if (nearBottom && newerMessageCursor.data && !loadingNewerRef.current) {
@@ -1472,9 +1573,15 @@ export function WorkstreamScreen(): React.JSX.Element {
         <div className="transcript-column">
           {messageCursor.data && (
             <div className="transcript-history-control">
-              <Button disabled={loadingOlder} onClick={() => void loadOlderMessages()}>
-                {loadingOlder ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <ArrowUp aria-hidden="true" size={14} />}
-                {loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}
+              <Button disabled={loadingOlder || socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+                {loadingOlder || socketState !== 'connected'
+                  ? <LoaderCircle aria-hidden="true" className="spin" size={14} />
+                  : <ArrowUp aria-hidden="true" size={14} />}
+                {loadingOlder
+                  ? 'Loading earlier messages…'
+                  : socketState !== 'connected'
+                    ? 'Waiting to reconnect…'
+                    : 'Load earlier messages'}
               </Button>
             </div>
           )}
@@ -1524,7 +1631,11 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+          {socketConnection.activeCompaction
+            && detail.harnessStatus === 'running'
+            && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
+            ? <AgentCompactionIndicator />
+            : runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}

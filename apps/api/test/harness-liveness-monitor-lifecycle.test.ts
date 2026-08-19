@@ -34,7 +34,7 @@ describe("what a run may consult, and what it may do", () => {
     // Offered to all of them. Withholding a skill would hide advice and never
     // authority, and would hide a future general skill along with it.
     expect(root).toContain("skills: [...BUILT_IN_SKILLS]");
-    expect(root).not.toContain("hyperSightRun ? {} : { skills:");
+    expect(root).not.toContain("blockDashboardRun ? {} : { skills:");
 
     // What a surface may *do* is decided here, by tool mode, before the call.
     expect(root).toContain('rejectToolModesBeforeCall(["write"], "Writes are not currently allowed"');
@@ -56,12 +56,12 @@ describe("what a run may consult, and what it may do", () => {
     // with — a preamble used to become part of the dashboard. `submitted` is
     // the row-backed value, so a retried attempt that replayed the submission
     // receipt instead of executing it still persists the block it has.
-    expect(root).toContain("readHyperSightBlockMarkdown(env, input, hyperSightRun.id)");
-    expect(root).toContain("hyperSightBlockOutcome(terminalResult, submitted)");
+    expect(root).toContain("readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.id)");
+    expect(root).toContain("blockDashboardBlockOutcome(terminalResult, submitted)");
     expect(root).not.toContain("streamedText || null,");
     // And a turn that ends without the call is asked for it once.
     expect(root).toContain("onTurnWouldEnd:");
-    expect(root).toContain("hyperSightSubmissionAsked = true;");
+    expect(root).toContain("blockDashboardSubmissionAsked = true;");
   });
 });
 

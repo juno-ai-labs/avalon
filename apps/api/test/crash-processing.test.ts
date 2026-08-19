@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { processPendingCrashReports } from '../src/telemetry/crash-processing';
-import { createCloudflareTestBinding, createTestEnv } from './helpers/cloudflare-test';
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from './helpers/cloudflare-test';
 import type { CrashSymbolicatorContainer } from '../src/crash-symbolicator-container';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -60,7 +64,8 @@ describe('regional native crash processing', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: storage.binding,
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
-        getByName: () => ({ symbolicate }),
+        idFromName: () => createTestDurableObjectId('crash-symbolicator'),
+        get: () => ({ symbolicate }),
       }),
     });
     await new CrashIngestService(env).accept({
@@ -92,7 +97,8 @@ describe('regional native crash processing', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'eu', TELEMETRY_PAYLOADS: storage.binding,
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
-        getByName: vi.fn(),
+        idFromName: vi.fn(() => createTestDurableObjectId('crash-symbolicator')),
+        get: vi.fn(),
       }),
     });
     await new CrashIngestService(env).accept({
@@ -134,7 +140,8 @@ describe('regional native crash processing', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: storage.binding,
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
-        getByName: () => ({ symbolicate }),
+        idFromName: () => createTestDurableObjectId('crash-symbolicator'),
+        get: () => ({ symbolicate }),
       }),
     });
     await new CrashIngestService(env).accept({ ...metadata, dump: dump(), subjectUserId: null });

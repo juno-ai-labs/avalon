@@ -109,10 +109,12 @@ describe("the health probe under a misconfigured environment", () => {
     const response = await app.request("/health", undefined, createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
-      WORKSTREAM_ROOMS: { idFromName: () => "id", get: () => room },
+      SUBSTREAM_AGENTS: { idFromName: () => "id", get: () => room },
       ACTIVITY_QUEUE: { send: () => undefined },
       WORKSTREAM_LOOP_WORKFLOW: { create: () => undefined },
       CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
+      CONNECTOR_EVENT_WORKFLOW: { create: () => undefined },
+      WORK_OPPORTUNITY_WORKFLOW: { create: () => undefined },
       WORKSTREAM_EMAIL_ADDRESS_KEY: "a".repeat(48),
       WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
       AVALON_REGION: "global",

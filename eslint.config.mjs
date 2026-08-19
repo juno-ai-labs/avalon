@@ -21,6 +21,9 @@ import {
   noDirectCloudflareTestCastRule,
   noProductionDoubleAssertionRule,
 } from "./scripts/eslint-rules/type-assertion-boundaries.mjs";
+import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-object-sql-storage.mjs";
+import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-object-region-routing.mjs";
+import { durableObjectNativeRpcRule } from "./scripts/eslint-rules/durable-object-native-rpc.mjs";
 
 export default tseslint.config(
   {
@@ -55,6 +58,9 @@ export default tseslint.config(
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
+          "durable-object-sql-storage": durableObjectSqlStorageRule,
+          "durable-object-region-routing": durableObjectRegionRoutingRule,
+          "durable-object-native-rpc": durableObjectNativeRpcRule,
         },
       },
     },
@@ -64,6 +70,55 @@ export default tseslint.config(
       // separate copies of the helper that replaces it.
       "avalon/no-raw-entry-point-check": "error",
       "avalon/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    files: ["apps/api/src/**/*.{ts,tsx}"],
+    ignores: ["apps/api/src/lib/durable-object-namespace.ts"],
+    rules: {
+      "avalon/durable-object-region-routing": "error",
+      "avalon/durable-object-native-rpc": "error",
+    },
+  },
+  {
+    files: [
+      "apps/api/src/durable-objects/**/*.ts",
+      "apps/api/src/crash-symbolicator-container.ts",
+    ],
+    rules: {
+      "avalon/durable-object-sql-storage": "error",
+    },
+  },
+  {
+    files: [
+      "apps/api/src/durable-objects/**/*.ts",
+      "apps/api/src/runtime/harness-run-runtime.ts",
+      "apps/api/src/workflows/workstream-loop.ts",
+      "apps/api/src/services/socket-service.ts",
+      "apps/api/src/services/workstream-regional-effect-service.ts",
+      "apps/api/src/services/workstream-runtime-database.ts",
+      "apps/api/src/queues/activity-consumer.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='crypto'][callee.property.name='randomUUID']",
+          message: "Use uuidV7() for Avalon-owned agent, transport, and durable-record identities.",
+        },
+        {
+          selector: "CallExpression[callee.type='MemberExpression'][callee.object.type='MemberExpression'][callee.object.object.name='globalThis'][callee.object.property.name='crypto'][callee.property.name='randomUUID']",
+          message: "Use uuidV7() for Avalon-owned agent, transport, and durable-record identities.",
+        },
+        {
+          selector: "VariableDeclarator[id.type='ObjectPattern'][init.name='crypto'] Property[key.name='randomUUID']",
+          message: "Do not destructure crypto.randomUUID(); use uuidV7() for Avalon-owned identities.",
+        },
+        {
+          selector: "VariableDeclarator[id.type='ObjectPattern'][init.type='MemberExpression'][init.object.name='globalThis'][init.property.name='crypto'] Property[key.name='randomUUID']",
+          message: "Do not destructure globalThis.crypto.randomUUID(); use uuidV7() for Avalon-owned identities.",
+        },
+      ],
     },
   },
   {

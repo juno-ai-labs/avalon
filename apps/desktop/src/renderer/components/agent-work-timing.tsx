@@ -11,6 +11,30 @@ export interface AgentWorkTimingProps {
   startedAt?: number;
 }
 
+export function AgentCompactionIndicator(): React.JSX.Element {
+  return (
+    <div
+      aria-atomic="true"
+      aria-label="Avalon is compacting the conversation context"
+      aria-live="polite"
+      className="agent-work-timing agent-work-timing-active"
+      role="status"
+    >
+      <ThinkingOrb
+        aria-hidden="true"
+        className="agent-work-timing-orb"
+        size={20}
+        speed={1}
+        state="solving"
+        theme="dark"
+      />
+      <span aria-hidden="true" className="agent-work-timing-label">
+        Compacting conversation context…
+      </span>
+    </div>
+  );
+}
+
 export function AgentWorkTiming({
   active,
   durationMs,

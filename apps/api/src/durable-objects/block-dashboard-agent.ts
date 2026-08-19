@@ -1,0 +1,1298 @@
+import {
+  ActiveStreamCheckpointSchema,
+  BlockDashboardBlockSocketClientEventSchema,
+  BlockDashboardBlockSocketEventSchema,
+  BlockDashboardBlockRunSchema,
+  IdSchema,
+  RegionSchema,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  ServerSocketEventSchema,
+  WorkstreamWorkflowInputSchema,
+  type BlockDashboardBlockRun,
+  type ActiveStreamCheckpoint,
+  type WorkstreamWorkflowInput,
+} from "@avalon/contracts";
+import { z } from "zod";
+import { DurableObject } from "cloudflare:workers";
+
+import type { Env } from "../env";
+import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
+import { logWarn } from "../observability/logger";
+import {
+  claimHarnessAttempt,
+  reapStaleHarnessRuns,
+  terminalizeHarnessAttempt,
+  terminalizeQueuedHarnessRun,
+} from "../runtime/harness-run-runtime";
+import { resolveAgentModelRouting } from "../services/agent-model-flags";
+import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
+import { workstreamExecutionEnvironment } from "../services/workstream-runtime-database";
+import {
+  DurableAgentDrain,
+  DurableAgentKeepAlive,
+  DurableAgentPublicationQueue,
+  durableAgentRetryDelay,
+} from "./durable-agent-runtime";
+import {
+  BlockDashboardBlockDispatchSchema,
+  BlockDashboardControlRequestSchema,
+  BlockDashboardSocketRetractionRequestSchema,
+  blockDashboardBlockResultHash,
+  type BlockDashboardBlockDispatch,
+  type BlockDashboardSocketRetractionRequest,
+} from "./block-dashboard-protocol";
+import { workstreamDOName } from "./names";
+import {
+  applyDurableObjectSqliteMigrations,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
+import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
+
+const KEEP_ALIVE_INTERVAL_MS = 30_000;
+const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
+// Generous by design (the 10 GB object ceiling is the only hard bound): a
+// settled terminal dispatch this old is pure history whose product-facing
+// record lives in the parent's run ledger.
+const DISPATCH_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
+
+const BlockDashboardBlockIdentityInputSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  blockId: IdSchema,
+  region: RegionSchema,
+}).strict();
+type BlockDashboardBlockIdentityInput = z.infer<typeof BlockDashboardBlockIdentityInputSchema>;
+
+const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchema.extend({
+  userId: IdSchema,
+  sessionId: z.string().min(1).max(200),
+  ticketId: z.string().uuid(),
+  ticketExpiresAt: z.coerce.number().int().positive(),
+}).strict();
+type BlockDashboardSocketIdentity = z.infer<typeof BlockDashboardSocketIdentitySchema>;
+const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.extend({
+  connectionId: z.string().uuid(),
+  connectedAt: z.string().datetime({ offset: true }),
+  subscribed: z.boolean(),
+  authorizedAt: z.number().int().nonnegative().default(0),
+}).strict();
+type BlockDashboardSocketAttachment = z.infer<typeof BlockDashboardSocketAttachmentSchema>;
+
+const TerminalOutcomeSchema = z.object({
+  run: BlockDashboardBlockRunSchema,
+}).strict();
+type TerminalOutcome = z.infer<typeof TerminalOutcomeSchema>;
+
+interface DispatchRow extends Record<string, SqlStorageValue> {
+  block_run_id: string;
+  dispatch_json: string;
+  state: "queued" | "running" | "completed" | "failed";
+  attempt: number;
+  terminal_outcome_json: string | null;
+  settled_at: number | null;
+}
+
+function compareDispatchFreshness(
+  left: BlockDashboardBlockDispatch,
+  right: BlockDashboardBlockDispatch,
+): number {
+  if (left.configurationVersionNumber !== right.configurationVersionNumber) {
+    return left.configurationVersionNumber - right.configurationVersionNumber;
+  }
+  if (left.triggerSequence !== right.triggerSequence) {
+    return left.triggerSequence - right.triggerSequence;
+  }
+  const createdAt = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+  if (createdAt !== 0) return createdAt;
+  return left.blockRunId.localeCompare(right.blockRunId);
+}
+
+function supersededOutcome(
+  dispatch: BlockDashboardBlockDispatch,
+  completedAt: number,
+): TerminalOutcome {
+  return TerminalOutcomeSchema.parse({
+    run: {
+      id: dispatch.blockRunId,
+      blockId: dispatch.blockId,
+      configurationVersionId: dispatch.configurationVersionId,
+      triggerSequence: dispatch.triggerSequence,
+      status: "stopped",
+      markdown: null,
+      error: {
+        code: "block_dashboard_run_superseded",
+        message: "A newer refresh superseded this queued run.",
+      },
+      createdAt: dispatch.createdAt,
+      startedAt: null,
+      completedAt: new Date(completedAt).toISOString(),
+    },
+  });
+}
+
+function terminalDispatchState(run: BlockDashboardBlockRun): "completed" | "failed" {
+  return run.status === "failed" ? "failed" : "completed";
+}
+
+interface RuntimeBlockRow {
+  id: string;
+  block_id: string;
+  configuration_version_id: string;
+  trigger_sequence: number;
+  status: BlockDashboardBlockRun["status"];
+  markdown: string | null;
+  error_json: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
+  version: 1,
+  description: "HyperSight block execution, resumable streaming, and causal dispatch authority",
+  statements: [
+    `PRAGMA foreign_keys = ON`,
+    `CREATE TABLE block_dashboard_block_identity (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL,
+      block_id TEXT NOT NULL,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      created_at INTEGER NOT NULL,
+      UNIQUE (workspace_id, workstream_id, block_id)
+    ) STRICT`,
+    `CREATE TABLE agent_run_dispatches (
+      block_run_id TEXT PRIMARY KEY,
+      dispatch_json TEXT NOT NULL CHECK (json_valid(dispatch_json)),
+      configuration_version_number INTEGER NOT NULL CHECK (configuration_version_number > 0),
+      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
+      source_created_at INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
+      attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+      available_at INTEGER NOT NULL,
+      started_at INTEGER,
+      completed_at INTEGER,
+      last_error_code TEXT,
+      terminal_outcome_json TEXT CHECK (terminal_outcome_json IS NULL OR json_valid(terminal_outcome_json)),
+      settled_at INTEGER,
+      last_settlement_error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX agent_run_dispatches_ready_idx
+      ON agent_run_dispatches(state, available_at, created_at, block_run_id)`,
+    `CREATE INDEX agent_run_dispatches_settlement_idx
+      ON agent_run_dispatches(available_at, block_run_id)
+      WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL`,
+    `CREATE TABLE block_dashboard_socket_ticket_receipts (
+      ticket_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX block_dashboard_socket_ticket_receipts_expiry_idx
+      ON block_dashboard_socket_ticket_receipts(expires_at)`,
+    `CREATE TABLE agent_stream_checkpoint (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      block_run_id TEXT NOT NULL REFERENCES agent_run_dispatches(block_run_id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      checkpoint_json TEXT NOT NULL CHECK (json_valid(checkpoint_json)),
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE latest_dispatch_freshness (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      configuration_version_number INTEGER NOT NULL CHECK (configuration_version_number > 0),
+      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
+      source_created_at INTEGER NOT NULL,
+      block_run_id TEXT NOT NULL UNIQUE
+        REFERENCES agent_run_dispatches(block_run_id) ON DELETE RESTRICT
+    ) STRICT`,
+  ],
+}];
+
+function json(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}
+
+function parseError(value: string | null): { code: string; message: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as { code?: unknown; message?: unknown };
+    return typeof parsed.code === "string" && typeof parsed.message === "string"
+      ? { code: parsed.code, message: parsed.message }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function blockRunFromRow(row: RuntimeBlockRow): BlockDashboardBlockRun {
+  return BlockDashboardBlockRunSchema.parse({
+    id: row.id,
+    blockId: row.block_id,
+    configurationVersionId: row.configuration_version_id,
+    triggerSequence: row.trigger_sequence,
+    status: row.status,
+    markdown: row.markdown,
+    error: parseError(row.error_json),
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  });
+}
+
+/** A stable, SQL-backed owner for one HyperSight block's complete Bind loops. */
+export class BlockDashboardAgent extends DurableObject<Env> {
+  private readonly state: DurableObjectState;
+  private readonly initialized: Promise<void>;
+  private readonly keepAliveLease: DurableAgentKeepAlive;
+  private readonly agentDrain = new DurableAgentDrain();
+  private readonly publicationQueue: DurableAgentPublicationQueue;
+
+  constructor(state: DurableObjectState, env: Env) {
+    super(state, env);
+    assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
+    this.state = state;
+    this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
+    this.publicationQueue = new DurableAgentPublicationQueue(
+      (phase, error) => {
+        logWarn(this.env, "block_dashboard_block_agent_broadcast_failed", {
+          phase,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      },
+      (drain) => this.state.waitUntil(drain),
+    );
+    this.initialized = state.blockConcurrencyWhile(async () => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
+        component: "block_dashboard_block_agent",
+        workerVersionId: env.APP_VERSION ?? "unknown",
+      });
+      this.resumeRunDrain();
+      await this.scheduleNextAlarm();
+    });
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    await this.initialized;
+    const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path === "/socket") {
+      return this.acceptSocket(request);
+    }
+    if (request.method === "POST" && path === "/internal/run-dispatch") {
+      const parsed = BlockDashboardBlockDispatchSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return json({ error: "invalid_block_dashboard_block_dispatch" }, 400);
+      try {
+        await this.dispatchRun(parsed.data);
+        return json({ accepted: true }, 202);
+      } catch (error) {
+        return json({
+          error: error instanceof Error ? error.message : "block_dashboard_block_dispatch_failed",
+        }, 409);
+      }
+    }
+    if (request.method === "GET" && path === "/health") {
+      return json({
+        ok: true,
+        role: "block-dashboard-agent",
+        databaseBytes: this.state.storage.sql.databaseSize,
+      });
+    }
+    return json({ error: "not_found" }, 404);
+  }
+
+  async initializeBlock(input: BlockDashboardBlockIdentityInput): Promise<void> {
+    await this.initialized;
+    this.ensureIdentity(BlockDashboardBlockIdentityInputSchema.parse(input));
+  }
+
+  async dispatchRun(input: BlockDashboardBlockDispatch): Promise<void> {
+    await this.initialized;
+    const dispatch = BlockDashboardBlockDispatchSchema.parse(input);
+    this.ensureIdentity(dispatch);
+    this.enqueue(dispatch);
+    this.queueBroadcast(() => this.broadcastLatestRun(dispatch.blockRunId), "dispatch");
+    this.resumeRunDrain();
+    await this.ensureAlarmNoLaterThan(Date.now() + 1);
+  }
+
+  /** Applies an explicit parent access/configuration retraction to live sockets. */
+  async revalidateViewerAccess(input: BlockDashboardSocketRetractionRequest): Promise<void> {
+    await this.initialized;
+    const request = BlockDashboardSocketRetractionRequestSchema.parse(input);
+    this.ensureIdentity(request);
+    await this.revalidateSockets(request.userId);
+  }
+
+  override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    await this.initialized;
+    const attachment = this.readSocketAttachment(socket);
+    if (!attachment) {
+      socket.close(1011, "Missing HyperSight block connection identity");
+      return;
+    }
+    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      socket.close(1008, "HyperSight block events must be JSON");
+      return;
+    }
+    if (!BlockDashboardBlockSocketClientEventSchema.safeParse(decoded).success
+      || !await this.authorizeViewer(attachment)) {
+      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
+      return;
+    }
+    socket.serializeAttachment({ ...attachment, subscribed: true, authorizedAt: Date.now() });
+    const run = this.latestRun();
+    socket.send(JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_snapshot",
+      occurredAt: new Date().toISOString(),
+      blockId: attachment.blockId,
+      run,
+      streamCheckpoint: run ? this.streamCheckpoint(run.id) : null,
+    })));
+  }
+
+  override webSocketClose(): void {
+    // Hibernating sockets restore all state from their serialized attachment.
+  }
+
+  override webSocketError(): void {
+    // The desktop reconnects with a new one-time ticket.
+  }
+
+  override async alarm(): Promise<void> {
+    await this.initialized;
+    this.resumeRunDrain();
+    await this.scheduleNextAlarm();
+  }
+
+  private async acceptSocket(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return json({ error: "websocket_upgrade_required" }, 426);
+    }
+    const identity = BlockDashboardSocketIdentitySchema.safeParse({
+      workspaceId: request.headers.get("x-avalon-workspace-id"),
+      workstreamId: request.headers.get("x-avalon-workstream-id"),
+      blockId: request.headers.get("x-avalon-block-dashboard-block-id"),
+      region: request.headers.get("x-avalon-region"),
+      userId: request.headers.get("x-avalon-user-id"),
+      sessionId: request.headers.get("x-avalon-session-id"),
+      ticketId: request.headers.get("x-avalon-socket-ticket-id"),
+      ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+    });
+    if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
+    try {
+      this.ensureIdentity(identity.data);
+    } catch {
+      return json({ error: "block_dashboard_block_agent_identity_mismatch" }, 409);
+    }
+    if (!this.consumeSocketTicket(identity.data)) return json({ error: "socket_ticket_replayed" }, 401);
+    if (!await this.authorizeViewer(identity.data)) return json({ error: "forbidden" }, 403);
+
+    const [client, server] = Object.values(new WebSocketPair());
+    if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
+    const attachment: BlockDashboardSocketAttachment = {
+      ...identity.data,
+      connectionId: uuidV7(),
+      connectedAt: new Date().toISOString(),
+      subscribed: false,
+      authorizedAt: Date.now(),
+    };
+    this.state.acceptWebSocket(server, [
+      attachment.workspaceId,
+      attachment.workstreamId,
+      attachment.blockId,
+      attachment.userId,
+    ]);
+    server.serializeAttachment(attachment);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private consumeSocketTicket(identity: BlockDashboardSocketIdentity): boolean {
+    // Ticket claims carry epoch seconds; object SQL stores unix-ms
+    // (data-model invariant 7), so convert once at this boundary.
+    const now = Date.now();
+    const expiresAtMs = identity.ticketExpiresAt * 1_000;
+    if (expiresAtMs <= now) return false;
+    return this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `DELETE FROM block_dashboard_socket_ticket_receipts WHERE expires_at < ?`,
+        now - 300_000,
+      );
+      return this.state.storage.sql.exec<{ ticket_id: string }>(
+        `INSERT OR IGNORE INTO block_dashboard_socket_ticket_receipts
+           (ticket_id, user_id, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?) RETURNING ticket_id`,
+        identity.ticketId,
+        identity.userId,
+        expiresAtMs,
+        now,
+      ).toArray().length === 1;
+    });
+  }
+
+  private readSocketAttachment(socket: WebSocket): BlockDashboardSocketAttachment | null {
+    try {
+      const parsed = BlockDashboardSocketAttachmentSchema.safeParse(socket.deserializeAttachment());
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async authorizeViewer(
+    identity: Pick<BlockDashboardSocketIdentity, "sessionId" | "userId" | "workspaceId" | "workstreamId" | "blockId">,
+  ): Promise<boolean> {
+    const session = await this.env.DB.prepare(
+      `SELECT 1 FROM sessions session
+        JOIN workspace_members member
+          ON member.workspace_id = session.workspace_id
+         AND member.user_id = session.user_id AND member.status = 'active'
+       WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
+         AND session.region = ? AND session.revoked_at IS NULL
+         AND session.expires_at > ?`,
+    ).bind(
+      identity.sessionId,
+      identity.userId,
+      identity.workspaceId,
+      this.env.AVALON_REGION,
+      new Date().toISOString(),
+    ).first();
+    const developmentSession = this.env.APP_ENV === "development"
+      && this.env.AVALON_DEV_AUTH === "true"
+      && identity.sessionId === "development"
+      ? await this.env.DB.prepare(
+        `SELECT 1 FROM workspace_members
+          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+      ).bind(identity.workspaceId, identity.userId).first()
+      : null;
+    if (!session && !developmentSession) return false;
+    const parent = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      identity.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, identity.workstreamId),
+    );
+    return parent.authorizeBlockDashboardBlockViewer({
+      workspaceId: identity.workspaceId,
+      workstreamId: identity.workstreamId,
+      blockId: identity.blockId,
+      userId: identity.userId,
+    });
+  }
+
+  private latestRun(): BlockDashboardBlockRun | null {
+    const row = this.state.storage.sql.exec<{
+      dispatch_json: string;
+      state: "queued" | "running" | "completed" | "failed";
+      started_at: number | null;
+      completed_at: number | null;
+      terminal_outcome_json: string | null;
+    }>(
+      `SELECT dispatch_json, state, started_at, completed_at, terminal_outcome_json
+         FROM agent_run_dispatches ORDER BY created_at DESC, block_run_id DESC LIMIT 1`,
+    ).toArray()[0];
+    if (!row) return null;
+    if (row.terminal_outcome_json) {
+      return TerminalOutcomeSchema.parse(JSON.parse(row.terminal_outcome_json)).run;
+    }
+    const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+    const checkpoint = this.streamCheckpoint(dispatch.blockRunId);
+    return BlockDashboardBlockRunSchema.parse({
+      id: dispatch.blockRunId,
+      blockId: dispatch.blockId,
+      configurationVersionId: dispatch.configurationVersionId,
+      triggerSequence: dispatch.triggerSequence,
+      status: row.state === "queued" ? "queued" : "running",
+      markdown: checkpoint?.harnessRunId === dispatch.harnessRunId ? checkpoint.text : null,
+      error: null,
+      createdAt: dispatch.createdAt,
+      startedAt: row.started_at === null ? null : new Date(row.started_at).toISOString(),
+      completedAt: row.completed_at === null ? null : new Date(row.completed_at).toISOString(),
+    });
+  }
+
+  private streamCheckpoint(expectedBlockRunId?: string): ActiveStreamCheckpoint | null {
+    const row = this.state.storage.sql.exec<{ block_run_id: string; checkpoint_json: string }>(
+      `SELECT block_run_id, checkpoint_json FROM agent_stream_checkpoint WHERE id = 1`,
+    ).toArray()[0];
+    if (expectedBlockRunId && row?.block_run_id !== expectedBlockRunId) return null;
+    return row ? ActiveStreamCheckpointSchema.parse(JSON.parse(row.checkpoint_json)) : null;
+  }
+
+  private async recordStreamEvent(
+    dispatch: BlockDashboardBlockDispatch,
+    rawEvent: Record<string, unknown>,
+  ): Promise<void> {
+    const current = this.streamCheckpoint(dispatch.blockRunId);
+    const revision = (current?.roomSequence ?? 0) + 1;
+    const event = ServerSocketEventSchema.safeParse({
+      ...rawEvent,
+      sequence: revision,
+      occurredAt: typeof rawEvent.occurredAt === "string"
+        ? rawEvent.occurredAt
+        : new Date().toISOString(),
+    });
+    if (!event.success) return;
+    const next = applyActiveStreamCheckpointEvent(current ? [current] : [], event.data)[0] ?? null;
+    if (next === current) return;
+    this.state.storage.transactionSync(() => {
+      if (!next) {
+        this.state.storage.sql.exec(`DELETE FROM agent_stream_checkpoint WHERE id = 1`);
+        return;
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO agent_stream_checkpoint
+           (id, block_run_id, revision, checkpoint_json, updated_at)
+         VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET block_run_id = excluded.block_run_id,
+           revision = excluded.revision, checkpoint_json = excluded.checkpoint_json,
+           updated_at = excluded.updated_at
+         WHERE excluded.block_run_id != agent_stream_checkpoint.block_run_id
+            OR excluded.revision >= agent_stream_checkpoint.revision`,
+        dispatch.blockRunId,
+        next.roomSequence,
+        JSON.stringify(next),
+        Date.now(),
+      );
+    });
+    this.queueCheckpointBroadcast(
+      () => this.broadcastStreamCheckpoint(dispatch, next),
+      "checkpoint",
+    );
+  }
+
+  private async broadcastStreamCheckpoint(
+    dispatch: BlockDashboardBlockDispatch,
+    checkpoint: ActiveStreamCheckpoint | null,
+  ): Promise<void> {
+    const payload = JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_stream_checkpoint",
+      occurredAt: new Date().toISOString(),
+      blockId: dispatch.blockId,
+      blockRunId: dispatch.blockRunId,
+      streamCheckpoint: checkpoint,
+    }));
+    for (const socket of await this.authorizedSubscribedSockets()) {
+      try {
+        socket.send(payload);
+      } catch {
+        socket.close(1011, "HyperSight block stream delivery failed");
+      }
+    }
+  }
+
+  private async broadcastLatestRun(expectedBlockRunId?: string): Promise<void> {
+    const run = this.latestRun();
+    if (!run || (expectedBlockRunId && run.id !== expectedBlockRunId)) return;
+    const sockets = this.state.getWebSockets();
+    if (sockets.length === 0) return;
+    const event = JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_run_updated",
+      occurredAt: new Date().toISOString(),
+      blockId: run.blockId,
+      run,
+    }));
+    for (const socket of await this.authorizedSubscribedSockets()) {
+      try {
+        socket.send(event);
+      } catch {
+        socket.close(1011, "HyperSight block delivery failed");
+      }
+    }
+  }
+
+  private async authorizedSubscribedSockets(force = false, onlyUserId?: string): Promise<WebSocket[]> {
+    const now = Date.now();
+    const authorization = new Map<string, boolean>();
+    const permitted: WebSocket[] = [];
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = this.readSocketAttachment(socket);
+      if (!attachment?.subscribed || (onlyUserId && attachment.userId !== onlyUserId)) continue;
+      let allowed = true;
+      if (force || now - attachment.authorizedAt >= SOCKET_AUTHORIZATION_REVALIDATE_MS) {
+        const key = `${attachment.userId}\u0000${attachment.sessionId}`;
+        const cached = authorization.get(key);
+        allowed = cached ?? await this.authorizeViewer(attachment);
+        authorization.set(key, allowed);
+        if (allowed) socket.serializeAttachment({ ...attachment, authorizedAt: now });
+      }
+      if (!allowed) {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
+        continue;
+      }
+      permitted.push(socket);
+    }
+    return permitted;
+  }
+
+  private async revalidateSockets(userId?: string): Promise<void> {
+    await this.authorizedSubscribedSockets(true, userId);
+  }
+
+  private queueBroadcast(broadcast: () => Promise<void>, phase: string): void {
+    this.publicationQueue.enqueueBarrier(phase, broadcast);
+  }
+
+  private queueCheckpointBroadcast(broadcast: () => Promise<void>, phase: string): void {
+    this.publicationQueue.enqueueCheckpoint(phase, broadcast);
+  }
+
+  private ensureIdentity(dispatch: BlockDashboardBlockIdentityInput): void {
+    const existing = this.state.storage.sql.exec<{
+      workspace_id: string;
+      workstream_id: string;
+      block_id: string;
+      region: string;
+    }>(
+      `SELECT workspace_id, workstream_id, block_id, region
+         FROM block_dashboard_block_identity WHERE id = 1`,
+    ).toArray()[0];
+    if (existing) {
+      if (existing.workspace_id !== dispatch.workspaceId
+        || existing.workstream_id !== dispatch.workstreamId
+        || existing.block_id !== dispatch.blockId
+        || existing.region !== dispatch.region) {
+        throw new Error("block_dashboard_block_agent_identity_mismatch");
+      }
+      return;
+    }
+    this.state.storage.sql.exec(
+      `INSERT INTO block_dashboard_block_identity
+         (id, workspace_id, workstream_id, block_id, region, created_at)
+       VALUES (1, ?, ?, ?, ?, ?)`,
+      dispatch.workspaceId,
+      dispatch.workstreamId,
+      dispatch.blockId,
+      dispatch.region,
+      Date.now(),
+    );
+  }
+
+  private enqueue(dispatch: BlockDashboardBlockDispatch): void {
+    const now = Date.now();
+    const dispatchJson = JSON.stringify(dispatch);
+    const existing = this.state.storage.sql.exec<{ dispatch_json: string }>(
+      `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+      dispatch.blockRunId,
+    ).toArray()[0];
+    if (existing) {
+      if (existing.dispatch_json !== dispatchJson) {
+        throw new Error("block_dashboard_block_dispatch_idempotency_conflict");
+      }
+      return;
+    }
+    this.state.storage.transactionSync(() => {
+      const freshestKnown = this.state.storage.sql.exec<{ dispatch_json: string }>(
+        `SELECT dispatch.dispatch_json
+           FROM latest_dispatch_freshness AS freshness
+           JOIN agent_run_dispatches AS dispatch
+             ON dispatch.block_run_id = freshness.block_run_id
+          WHERE freshness.id = 1`,
+      ).toArray()[0];
+      const freshestDispatch = freshestKnown
+        ? BlockDashboardBlockDispatchSchema.parse(JSON.parse(freshestKnown.dispatch_json))
+        : null;
+      if (freshestDispatch && compareDispatchFreshness(dispatch, freshestDispatch) < 0) {
+        const outcome = supersededOutcome(dispatch, now);
+        this.state.storage.sql.exec(
+          `INSERT INTO agent_run_dispatches
+             (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
+              source_created_at, state, attempt, available_at, started_at,
+              completed_at, last_error_code, terminal_outcome_json, settled_at,
+              last_settlement_error_code, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'completed', 0, ?, NULL, ?, 'block_dashboard_run_superseded', ?,
+                   NULL, NULL, ?, ?)`,
+          dispatch.blockRunId,
+          dispatchJson,
+          dispatch.configurationVersionNumber,
+          dispatch.triggerSequence,
+          Date.parse(dispatch.createdAt),
+          now,
+          now,
+          JSON.stringify(outcome),
+          Date.parse(dispatch.createdAt),
+          now,
+        );
+        return;
+      }
+      const obsolete = this.state.storage.sql.exec<{ block_run_id: string; dispatch_json: string }>(
+        `SELECT block_run_id, dispatch_json FROM agent_run_dispatches
+          WHERE state = 'queued' AND terminal_outcome_json IS NULL
+          ORDER BY created_at, block_run_id`,
+      ).toArray();
+      for (const row of obsolete) {
+        const previous = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        const outcome = supersededOutcome(previous, now);
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches
+              SET state = 'completed', terminal_outcome_json = ?, available_at = ?, completed_at = ?,
+                  last_error_code = 'block_dashboard_run_superseded', updated_at = ?
+            WHERE block_run_id = ? AND state = 'queued' AND terminal_outcome_json IS NULL`,
+          JSON.stringify(outcome),
+          now,
+          now,
+          now,
+          row.block_run_id,
+        );
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO agent_run_dispatches
+           (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
+            source_created_at, state, attempt, available_at, started_at,
+            completed_at, last_error_code, terminal_outcome_json, settled_at,
+            last_settlement_error_code, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+        dispatch.blockRunId,
+        dispatchJson,
+        dispatch.configurationVersionNumber,
+        dispatch.triggerSequence,
+        Date.parse(dispatch.createdAt),
+        now,
+        Date.parse(dispatch.createdAt),
+        now,
+      );
+      this.state.storage.sql.exec(
+        `INSERT INTO latest_dispatch_freshness
+           (id, configuration_version_number, trigger_sequence, source_created_at, block_run_id)
+         VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           configuration_version_number = excluded.configuration_version_number,
+           trigger_sequence = excluded.trigger_sequence,
+           source_created_at = excluded.source_created_at,
+           block_run_id = excluded.block_run_id`,
+        dispatch.configurationVersionNumber,
+        dispatch.triggerSequence,
+        Date.parse(dispatch.createdAt),
+        dispatch.blockRunId,
+      );
+      // The dispatch ledger is a durable state machine, not history: once a
+      // row is terminal, settled to the parent, past retention, and not the
+      // freshness-pinned run (its RESTRICT reference would reject the delete
+      // anyway), nothing reads it again — the parent's run ledger keeps the
+      // product-facing record.
+      this.state.storage.sql.exec(
+        `DELETE FROM agent_run_dispatches
+          WHERE block_run_id IN (
+            SELECT reapable.block_run_id FROM agent_run_dispatches reapable
+             WHERE reapable.settled_at IS NOT NULL
+               AND reapable.state IN ('completed', 'failed')
+               AND reapable.updated_at < ?
+               AND reapable.block_run_id NOT IN (
+                 SELECT block_run_id FROM latest_dispatch_freshness
+               )
+             ORDER BY reapable.updated_at LIMIT 100
+          )`,
+        now - DISPATCH_LEDGER_RETENTION_MS,
+      );
+    });
+  }
+
+  private resumeRunDrain(): void {
+    if (this.agentDrain.active) return;
+    const drain = this.agentDrain.resume(
+      () => this.drainRunQueue().catch((error: unknown) => {
+        logWarn(this.env, "block_dashboard_block_agent_drain_failed", {
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }),
+      () => this.scheduleNextAlarm().catch(() => undefined),
+    );
+    this.state.waitUntil(drain);
+  }
+
+  private async drainRunQueue(): Promise<void> {
+    while (true) {
+      const row = this.state.storage.sql.exec<DispatchRow>(
+        `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
+           FROM agent_run_dispatches
+          WHERE terminal_outcome_json IS NULL AND state IN ('queued', 'running')
+            AND available_at <= ?
+            AND (
+              state = 'running'
+              OR NOT EXISTS (
+                SELECT 1 FROM agent_run_dispatches AS active
+                 WHERE active.state = 'running'
+                   AND active.terminal_outcome_json IS NULL
+              )
+            )
+          ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,
+                   configuration_version_number DESC, trigger_sequence DESC,
+                   created_at DESC, block_run_id DESC
+          LIMIT 1`,
+        Date.now(),
+      ).toArray()[0];
+      if (row) {
+        const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
+             started_at = COALESCE(started_at, ?), updated_at = ?
+           WHERE block_run_id = ? AND state IN ('queued', 'running')
+             AND terminal_outcome_json IS NULL`,
+          Date.now(),
+          Date.now(),
+          row.block_run_id,
+        );
+        this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
+        let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
+        try {
+          result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
+        } catch (error) {
+          const code = error instanceof Error && "code" in error && typeof error.code === "string"
+            ? error.code
+            : "block_dashboard_block_execution_failed";
+          this.state.storage.sql.exec(
+            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               AND terminal_outcome_json IS NULL`,
+            Date.now() + durableAgentRetryDelay(row.attempt + 1),
+            code,
+            Date.now(),
+            row.block_run_id,
+          );
+          logWarn(this.env, "block_dashboard_block_agent_run_deferred", {
+            workspace_id: dispatch.workspaceId,
+            workstream_id: dispatch.workstreamId,
+            block_id: dispatch.blockId,
+            block_run_id: dispatch.blockRunId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+          return;
+        }
+        const terminalized = this.state.storage.sql.exec<{ terminal_outcome_json: string | null }>(
+          `SELECT terminal_outcome_json FROM agent_run_dispatches WHERE block_run_id = ?`,
+          row.block_run_id,
+        ).toArray()[0]?.terminal_outcome_json ?? null;
+        if (terminalized) continue;
+        if (result.retryAt !== null) {
+          this.state.storage.sql.exec(
+            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               AND terminal_outcome_json IS NULL`,
+            result.retryAt,
+            result.errorCode,
+            Date.now(),
+            row.block_run_id,
+          );
+          return;
+        }
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
+             last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+             AND terminal_outcome_json IS NULL`,
+          result.failed ? "failed" : "completed",
+          Date.now(),
+          result.errorCode,
+          Date.now(),
+          row.block_run_id,
+        );
+        continue;
+      }
+
+      const settlement = this.state.storage.sql.exec<DispatchRow>(
+        `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
+           FROM agent_run_dispatches
+          WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL AND available_at <= ?
+          ORDER BY available_at, created_at, block_run_id LIMIT 1`,
+        Date.now(),
+      ).toArray()[0];
+      if (!settlement?.terminal_outcome_json) return;
+      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(settlement.dispatch_json));
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET attempt = attempt + 1, updated_at = ?
+          WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL AND settled_at IS NULL`,
+        Date.now(),
+        settlement.block_run_id,
+      );
+      const result = await this.settleWithRetry(
+        dispatch,
+        TerminalOutcomeSchema.parse(JSON.parse(settlement.terminal_outcome_json)),
+      );
+      if (result.retryAt !== null) return;
+    }
+  }
+
+  private async execute(
+    dispatch: BlockDashboardBlockDispatch,
+    row: DispatchRow,
+  ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
+    if (row.terminal_outcome_json) {
+      return this.settleWithRetry(dispatch, TerminalOutcomeSchema.parse(JSON.parse(row.terminal_outcome_json)));
+    }
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      return { failed: false, errorCode: null, retryAt: Date.now() + MAINTENANCE_RECHECK_MS };
+    }
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      dispatch.workspaceId,
+      dispatch.workstreamId,
+    );
+    const input = await this.initializeRuntimeRun(executionEnv, dispatch);
+    await reapStaleHarnessRuns(executionEnv.DB, {
+      workspaceId: dispatch.workspaceId,
+      workstreamId: dispatch.workstreamId,
+      limit: 25,
+      automationDatabase: null,
+    });
+    const attemptId = uuidV7();
+    const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
+    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
+      attemptId,
+      owner,
+      leaseSeconds: 300,
+    });
+    if (claim.state === "busy") {
+      const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
+      return {
+        failed: false,
+        errorCode: null,
+        retryAt: Number.isFinite(leaseAt) ? Math.max(Date.now() + 1_000, leaseAt + 1) : Date.now() + 5_000,
+      };
+    }
+    if (claim.state === "terminal") {
+      const terminal = await this.readRuntimeBlockRun(executionEnv, dispatch);
+      return this.persistAndSettle(dispatch, { run: terminal });
+    }
+    if (claim.state === "cancelled") {
+      await terminalizeQueuedHarnessRun(
+        executionEnv.DB,
+        input,
+        { attemptId, owner },
+        { code: "run_cancelled", message: "The HyperSight block was stopped before it started" },
+        "stopped",
+      );
+      const stopped = await this.updateRuntimeBlockRun(executionEnv, dispatch, "stopped", {
+        code: "run_cancelled",
+        message: "The HyperSight block was stopped before it started",
+      });
+      return this.persistAndSettle(dispatch, { run: stopped });
+    }
+
+    const running = await this.updateRuntimeBlockRun(executionEnv, dispatch, "running");
+    await this.sendResult(dispatch, running, 1).catch(() => undefined);
+    let outcome: WorkstreamHarnessResult;
+    try {
+      outcome = await runWorkstreamHarness(
+        executionEnv,
+        input,
+        (event) => this.recordStreamEvent(dispatch, event),
+        {
+        lease: claim.lease,
+        publishRealtime: false,
+        },
+      );
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "harness_execution_failed";
+      outcome = {
+        status: code === "run_cancelled" ? "stopped" : "failed",
+        error: { code, message: "The HyperSight block could not complete" },
+      };
+    }
+    const status = outcome.status === "completed"
+      ? "completed"
+      : outcome.status === "stopped" ? "stopped" : "failed";
+    const error = outcome.error ?? (outcome.status === "needs_input"
+      ? { code: "block_dashboard_input_unavailable", message: "HyperSight cannot pause for input" }
+      : undefined);
+    await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
+      status,
+      ...(error ? { error } : {}),
+      memberSafePayload: error ? { code: error.code } : {},
+    });
+    const terminal = await this.updateRuntimeBlockRun(executionEnv, dispatch, status, error);
+    return this.persistAndSettle(dispatch, { run: terminal });
+  }
+
+  private async initializeRuntimeRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<WorkstreamWorkflowInput> {
+    const fence = dispatch.contextFence.throughSequence > 0
+      ? await env.DB.prepare(
+        `SELECT id FROM messages WHERE workspace_id = ? AND workstream_id = ?
+          AND sequence_number = ? LIMIT 1`,
+      ).bind(dispatch.workspaceId, dispatch.workstreamId, dispatch.contextFence.throughSequence)
+        .first<{ id: string }>()
+      : null;
+    if (dispatch.contextFence.throughSequence > 0 && !fence) {
+      throw Object.assign(new Error("The frozen HyperSight transcript boundary is unavailable"), {
+        code: "block_dashboard_context_fence_not_found",
+      });
+    }
+    const input = WorkstreamWorkflowInputSchema.parse({
+      region: dispatch.region,
+      workspaceId: dispatch.workspaceId,
+      workstreamId: dispatch.workstreamId,
+      substreamId: "0",
+      harnessRunId: dispatch.harnessRunId,
+      triggerMessageId: null,
+      transcriptFenceMessageId: fence?.id ?? null,
+      compactionFence: dispatch.contextFence.compaction,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "workspace", workspaceId: dispatch.workspaceId },
+      reason: "block_dashboard_block",
+    });
+    const { model } = await resolveAgentModelRouting(env, "block_dashboard", {
+      workspaceId: dispatch.workspaceId,
+      workstreamId: dispatch.workstreamId,
+    });
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO block_dashboard_configuration_versions
+             (id, workspace_id, workstream_id, version_number, blocks_json,
+              created_by_user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          dispatch.configurationVersionId,
+          dispatch.workspaceId,
+          dispatch.workstreamId,
+          dispatch.configurationVersionNumber,
+          JSON.stringify([{ id: dispatch.blockId, prompt: dispatch.prompt }]),
+          dispatch.workspaceId,
+          dispatch.createdAt,
+        ),
+        env.DB.prepare(
+          `INSERT INTO harness_runs
+             (id, workspace_id, workstream_id, origin, execution_principal_json,
+              status, model, created_at)
+           VALUES (?, ?, ?, 'block_dashboard_block', ?, 'scheduled', ?, ?)`,
+        ).bind(
+          dispatch.harnessRunId,
+          dispatch.workspaceId,
+          dispatch.workstreamId,
+          JSON.stringify(input.executionPrincipal),
+          model,
+          dispatch.createdAt,
+        ),
+        env.DB.prepare(
+          `INSERT INTO block_dashboard_block_runs
+             (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
+              trigger_sequence, harness_run_id, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        ).bind(
+          dispatch.blockRunId,
+          dispatch.workspaceId,
+          dispatch.workstreamId,
+          dispatch.configurationVersionId,
+          dispatch.blockId,
+          dispatch.prompt,
+          dispatch.triggerSequence,
+          dispatch.harnessRunId,
+          dispatch.createdAt,
+        ),
+      ]);
+    } catch (error) {
+      if (!(error instanceof Error) || !/UNIQUE|constraint/iu.test(error.message)) throw error;
+      const existing = await env.DB.prepare(
+        `SELECT id FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
+          AND workspace_id = ? AND workstream_id = ? AND block_id = ?`,
+      ).bind(
+        dispatch.blockRunId,
+        dispatch.harnessRunId,
+        dispatch.workspaceId,
+        dispatch.workstreamId,
+        dispatch.blockId,
+      ).first<{ id: string }>();
+      if (!existing) throw new Error("block_dashboard_runtime_initialization_conflict", { cause: error });
+    }
+    return input;
+  }
+
+  private async updateRuntimeBlockRun(
+    env: Env,
+    dispatch: BlockDashboardBlockDispatch,
+    status: BlockDashboardBlockRun["status"],
+    error?: { code: string; message: string },
+  ): Promise<BlockDashboardBlockRun> {
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `UPDATE block_dashboard_block_runs SET status = ?, error_json = ?,
+         started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
+         completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN ? ELSE completed_at END
+       WHERE id = ? AND harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
+    ).bind(
+      status,
+      error ? JSON.stringify(error) : null,
+      status,
+      now,
+      status,
+      now,
+      dispatch.blockRunId,
+      dispatch.harnessRunId,
+      dispatch.workspaceId,
+      dispatch.workstreamId,
+    ).run();
+    return this.readRuntimeBlockRun(env, dispatch);
+  }
+
+  private async readRuntimeBlockRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<BlockDashboardBlockRun> {
+    const row = await env.DB.prepare(
+      `SELECT id, block_id, configuration_version_id, trigger_sequence, status,
+              markdown, error_json, created_at, started_at, completed_at
+         FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
+          AND workspace_id = ? AND workstream_id = ?`,
+    ).bind(
+      dispatch.blockRunId,
+      dispatch.harnessRunId,
+      dispatch.workspaceId,
+      dispatch.workstreamId,
+    ).first<RuntimeBlockRow>();
+    if (!row) throw new Error("block_dashboard_runtime_block_run_missing");
+    return blockRunFromRow(row);
+  }
+
+  private async persistAndSettle(
+    dispatch: BlockDashboardBlockDispatch,
+    outcome: TerminalOutcome,
+  ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
+    const parsed = TerminalOutcomeSchema.parse(outcome);
+    const state = terminalDispatchState(parsed.run);
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET state = ?, terminal_outcome_json = ?,
+           available_at = ?, completed_at = COALESCE(completed_at, ?), settled_at = NULL,
+           last_settlement_error_code = NULL, updated_at = ? WHERE block_run_id = ?`,
+        state,
+        JSON.stringify(parsed),
+        now,
+        now,
+        now,
+        dispatch.blockRunId,
+      );
+      this.state.storage.sql.exec(
+        `DELETE FROM agent_stream_checkpoint WHERE id = 1 AND block_run_id = ?`,
+        dispatch.blockRunId,
+      );
+    });
+    await this.settleWithRetry(dispatch, parsed);
+    this.queueBroadcast(async () => {
+      await this.broadcastStreamCheckpoint(dispatch, null);
+      await this.broadcastLatestRun(dispatch.blockRunId);
+    }, "terminal");
+    return {
+      failed: parsed.run.status === "failed",
+      errorCode: parsed.run.error?.code ?? null,
+      retryAt: null,
+    };
+  }
+
+  private async settleWithRetry(
+    dispatch: BlockDashboardBlockDispatch,
+    outcome: TerminalOutcome,
+  ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
+    try {
+      await this.sendResult(dispatch, outcome.run, 2);
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET state = ?, completed_at = COALESCE(completed_at, ?),
+           settled_at = ?, last_settlement_error_code = NULL, updated_at = ?
+         WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL`,
+        terminalDispatchState(outcome.run),
+        Date.now(),
+        Date.now(),
+        Date.now(),
+        dispatch.blockRunId,
+      );
+      return {
+        failed: outcome.run.status === "failed",
+        errorCode: outcome.run.error?.code ?? null,
+        retryAt: null,
+      };
+    } catch (error) {
+      const attempt = this.state.storage.sql.exec<{ attempt: number }>(
+        `SELECT attempt FROM agent_run_dispatches WHERE block_run_id = ?`,
+        dispatch.blockRunId,
+      ).toArray()[0]?.attempt ?? 1;
+      const code = error instanceof Error ? error.message : "block_dashboard_result_settlement_failed";
+      const retryAt = Date.now() + durableAgentRetryDelay(attempt);
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches SET state = ?, available_at = ?,
+           last_settlement_error_code = ?, updated_at = ?
+          WHERE block_run_id = ?`,
+        terminalDispatchState(outcome.run),
+        retryAt,
+        code,
+        Date.now(),
+        dispatch.blockRunId,
+      );
+      return {
+        failed: outcome.run.status === "failed",
+        errorCode: code,
+        retryAt,
+      };
+    }
+  }
+
+  private async sendResult(
+    dispatch: BlockDashboardBlockDispatch,
+    run: BlockDashboardBlockRun,
+    sourceVersion: number,
+  ): Promise<void> {
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      dispatch.workspaceId,
+      workstreamDOName(dispatch.region, dispatch.workspaceId, dispatch.workstreamId),
+    );
+    const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse({
+      operation: "block_result",
+      workspaceId: dispatch.workspaceId,
+      workstreamId: dispatch.workstreamId,
+      blockId: dispatch.blockId,
+      sourceVersion,
+      payloadHash: blockDashboardBlockResultHash(run),
+      run,
+    }));
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`block_dashboard_result_rejected:${response.status}`);
+    }
+  }
+
+  private nextRunAt(): number | null {
+    if (this.agentDrain.active) return null;
+    // Two indexable lanes instead of one OR the planner cannot seek: the
+    // ready index serves the queued/running arm, the settlement partial
+    // index serves the unsettled-terminal arm.
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(due_at) AS due_at FROM (
+         SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
+          WHERE state IN ('queued', 'running') AND terminal_outcome_json IS NULL
+         UNION ALL
+         SELECT MIN(available_at) FROM agent_run_dispatches
+          WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL
+       )`,
+    ).toArray()[0]?.due_at ?? null;
+  }
+
+  private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
+    const existing = await this.state.storage.getAlarm();
+    if (existing === null || existing > dueAt) await this.state.storage.setAlarm(dueAt);
+  }
+
+  private async scheduleNextAlarm(): Promise<void> {
+    const dueAt = this.keepAliveLease.alarmDueAt(
+      this.nextRunAt(),
+      Date.now(),
+      KEEP_ALIVE_INTERVAL_MS,
+    );
+    if (dueAt === null) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    await this.state.storage.setAlarm(Math.max(Date.now() + 1, dueAt));
+  }
+}

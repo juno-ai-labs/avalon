@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentWorkTiming } from './agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, speed, state }: { paused?: boolean; size: number; speed?: number; state: string }) => (
@@ -17,6 +17,17 @@ vi.mock('thinking-orbs', () => ({
 afterEach(() => vi.useRealTimers());
 
 describe('AgentWorkTiming', () => {
+  it('announces compaction as a distinct active agent phase', () => {
+    const { container } = render(<AgentCompactionIndicator />);
+
+    expect(screen.getByText('Compacting conversation context…')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName(
+      'Avalon is compacting the conversation context',
+    );
+    expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
+  });
+
   it('owns the live wording, shimmer, elapsed time, orb, and settled state', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-05T12:00:00.000Z'));

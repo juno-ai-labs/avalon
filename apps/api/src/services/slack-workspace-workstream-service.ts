@@ -19,6 +19,10 @@ import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "./workstream-runtime-database";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -45,14 +49,10 @@ type SlackExternalMessageInput = {
  * never an authentication substitute.
  */
 export class SlackWorkspaceWorkstreamService {
-  private readonly database;
-
   constructor(
     private readonly env: Env,
     private readonly workspaceId: string,
-  ) {
-    this.database = createDatabase(env.DB);
-  }
+  ) {}
 
   /**
    * `creatorUserId` is the Avalon member the Slack identity resolves to, when
@@ -83,7 +83,13 @@ export class SlackWorkspaceWorkstreamService {
     } as const;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const emailRoute = await emailRouting.reserve(routeInput);
-    const created = await this.database.workstreams.create({
+    const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+      this.env,
+      this.workspaceId,
+      workstreamId,
+    );
+    const database = createDatabase(executionEnv.DB);
+    const created = await database.workstreams.create({
       id: workstreamId,
       workspaceId: this.workspaceId,
       title,
@@ -107,7 +113,7 @@ export class SlackWorkspaceWorkstreamService {
         : { type: "workspace" },
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
-    const message = await this.database.workstreams.getMessageByClientId(
+    const message = await database.workstreams.getMessageByClientId(
       this.workspaceId,
       created.workstream.id,
       input.clientMessageId,
@@ -152,7 +158,7 @@ export class SlackWorkspaceWorkstreamService {
     // naming is awaited here rather than deferred again — the run has started
     // and nothing downstream is waiting on the title.
     if (input.title == null) {
-      await nameWorkstream(this.env, {
+      await nameWorkstream(executionEnv, {
         workspaceId: this.workspaceId,
         workstreamId: created.workstream.id,
         objective: input.objective,
@@ -164,7 +170,8 @@ export class SlackWorkspaceWorkstreamService {
   }
 
   async createMessage(workstreamId: string, input: SlackExternalMessageInput) {
-    const persisted = await this.database.workstreams.createExternalMessage({
+    const executionEnv = await workstreamExecutionEnvironment(this.env, this.workspaceId, workstreamId);
+    const persisted = await createDatabase(executionEnv.DB).workstreams.createExternalMessage({
       workspaceId: this.workspaceId,
       workstreamId,
       actor: ExternalActorSchema.parse(input.actor),
@@ -201,14 +208,16 @@ export class SlackWorkspaceWorkstreamService {
   }
 
   async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
+    const executionEnv = await workstreamExecutionEnvironment(this.env, this.workspaceId, workstreamId);
+    const database = createDatabase(executionEnv.DB);
     const clientMessageId = input.clientMessageId.slice(0, 120);
-    const existing = await this.database.workstreams.getMessageByClientId(
+    const existing = await database.workstreams.getMessageByClientId(
       this.workspaceId,
       workstreamId,
       clientMessageId,
     );
     if (existing) return { elicitation: null, harnessRunId: null };
-    const raw = await this.env.DB.prepare(
+    const raw = await executionEnv.DB.prepare(
       `SELECT id, harness_run_id, prompt, response_type, options_json,
               minimum_selections, maximum_selections, created_at
        FROM elicitations
@@ -237,8 +246,8 @@ export class SlackWorkspaceWorkstreamService {
       createdAt: elicitation.created_at,
       answeredAt: at,
     };
-    const results = await this.env.DB.batch([
-      this.env.DB.prepare(
+    const results = await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
         `UPDATE elicitations
          SET status = 'answered', answer_json = ?, answered_by_user_id = NULL,
              answered_by_external_actor_json = ?, answered_at = ?
@@ -251,7 +260,7 @@ export class SlackWorkspaceWorkstreamService {
         this.workspaceId,
         workstreamId,
       ),
-      this.env.DB.prepare(
+      executionEnv.DB.prepare(
         `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at,
@@ -280,7 +289,7 @@ export class SlackWorkspaceWorkstreamService {
         at,
         JSON.stringify(actor),
       ),
-      this.env.DB.prepare(
+      executionEnv.DB.prepare(
         `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
            latest_attention_sequence_number = next_sequence_number,
            last_activity_at = ?, updated_at = ?
@@ -294,7 +303,7 @@ export class SlackWorkspaceWorkstreamService {
     if (Number(results[1]?.meta.changes ?? 0) !== 1) {
       throw new ApiError(500, "elicitation_response_write_failed", "The response could not be stored");
     }
-    const remaining = await this.env.DB.prepare(
+    const remaining = await executionEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM elicitations WHERE workstream_id = ? AND status = 'open'",
     ).bind(workstreamId).first<{ count: number }>();
     const harnessRunId = Number(remaining?.count ?? 0) === 0

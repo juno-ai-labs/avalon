@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -6,6 +6,7 @@ import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const ensureAutomationAddress = vi.hoisted(() => vi.fn(async () => ({ emailAddress: null })));
 
@@ -40,8 +41,8 @@ function serviceFor(database: DatabaseSync): AutomationService {
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
-      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }),
+      get: () => ({ refresh: async () => undefined }),
+      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ refresh: async () => undefined }) }),
     },
   });
   return new AutomationService(env, auth);
@@ -56,26 +57,29 @@ function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => { throw new Error("scheduler unreachable"); } }),
+      get: () => ({ refresh: async () => { throw new Error("scheduler unreachable"); } }),
     },
   });
   return new AutomationService(env, auth);
 }
 
 function schedulerFor(database: DatabaseSync) {
-  const values = new Map<string, unknown>();
+  const objectDatabase = new DatabaseSync(":memory:");
+  databases.push(objectDatabase);
   const setAlarm = vi.fn(async (at: number) => { void at; });
   const deleteAlarm = vi.fn(async () => undefined);
   const storage = createCloudflareTestBinding<DurableObjectStorage>({
-    get: async <T>(key: string) => values.get(key) as T | undefined,
-    put: async (key: string, value: unknown) => { values.set(key, value); },
-    delete: async (key: string) => values.delete(key),
     getAlarm: async () => null,
     setAlarm,
     deleteAlarm,
+    transactionSync: <T>(body: () => T) => body(),
+    sql: createTestSqlStorage(objectDatabase),
   });
   const scheduler = new WorkspaceScheduler(
-    createCloudflareTestBinding<DurableObjectState>({ storage }),
+    createCloudflareTestBinding<DurableObjectState>({
+      blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+      storage,
+    }),
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" }),
   );
   return { scheduler, setAlarm, deleteAlarm };

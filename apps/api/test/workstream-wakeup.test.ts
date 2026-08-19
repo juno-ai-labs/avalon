@@ -129,15 +129,14 @@ function fixture(): Fixture {
     WORKSPACE_SCHEDULERS: {
       idFromName: (name: string) => createTestDurableObjectId(name),
       get: (id: DurableObjectId) => ({
-        fetch: async (_url: string, init: { body: string }) => {
-          schedulerRefreshes.push(`${id.toString()}:${init.body}`);
-          return new Response("{}", { status: 200 });
+        refresh: async (workspaceId: string) => {
+          schedulerRefreshes.push(`${id.toString()}:${workspaceId}`);
         },
       }),
     },
-    WORKSTREAM_ROOMS: {
+    SUBSTREAM_AGENTS: {
       idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => ({ fetch: async () => new Response("{}", { status: 200 }) }),
+      get: () => ({ refreshTimerAlarm: async () => ({ status: 200, bodyJson: "{}" }) }),
     },
     WORKSTREAM_LOOP_WORKFLOW: {
       create: async (options: { id: string; params: WorkstreamWorkflowInput }) => {
@@ -512,7 +511,7 @@ describe("wake-up tools", () => {
     const { database, env } = fixture();
     (env as unknown as { WORKSPACE_SCHEDULERS: unknown }).WORKSPACE_SCHEDULERS = {
       idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => ({ fetch: async () => new Response("nope", { status: 500 }) }),
+      get: () => ({ refresh: async () => { throw new Error("scheduler unavailable"); } }),
     };
     const { schedule } = wakeupTools(env);
 

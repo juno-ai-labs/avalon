@@ -3,10 +3,8 @@ import {
   PendingWorkspaceInvitationSchema,
   SessionSchema,
   WorkspaceSchema,
-  type PendingWorkspaceInvitation,
   type Region,
   type Session,
-  type Workspace,
   type WorkspaceOnboardingState,
 } from "@avalon/contracts";
 import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
@@ -14,6 +12,13 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  deriveWorkspacePlacementAffinity,
+  durableObjectStubForWorkspace,
+  isWorkspacePlacementAffinityForRegion,
+  type WorkspacePlacementAffinity,
+} from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { AuthService } from "./auth-service";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import {
@@ -32,16 +37,26 @@ export const platformIdentitySchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 });
 
+const WorkspacePlacementAffinitySchema = z.enum(["wnam", "enam", "weur", "eeur"]);
+const regionalWorkspaceSchema = WorkspaceSchema.extend({
+  placementAffinity: WorkspacePlacementAffinitySchema,
+});
+const regionalPendingInvitationSchema = PendingWorkspaceInvitationSchema.extend({
+  placementAffinity: WorkspacePlacementAffinitySchema,
+});
+type RegionalWorkspace = z.infer<typeof regionalWorkspaceSchema>;
+
 const regionalDiscoverySchema = z.object({
   region: z.enum(["global", "eu"]),
-  workspaces: z.array(WorkspaceSchema),
-  invitations: z.array(PendingWorkspaceInvitationSchema),
+  workspaces: z.array(regionalWorkspaceSchema),
+  invitations: z.array(regionalPendingInvitationSchema),
 });
 
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
   operationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
+  placementAffinity: WorkspacePlacementAffinitySchema,
   preference: PreferenceProjectionSchema,
 });
 
@@ -192,6 +207,7 @@ interface InvitationDiscoveryRow {
   role: "admin" | "member";
   invited_by_name: string;
   expires_at: string;
+  placement_affinity: WorkspacePlacementAffinity;
 }
 
 interface OperationRow {
@@ -201,8 +217,8 @@ interface OperationRow {
   invitation_id: string | null;
 }
 
-function mapWorkspace(row: Record<string, unknown>): Workspace {
-  return WorkspaceSchema.parse({
+function mapWorkspace(row: Record<string, unknown>): z.infer<typeof regionalWorkspaceSchema> {
+  return regionalWorkspaceSchema.parse({
     id: row.id,
     name: row.name,
     slug: row.slug,
@@ -210,11 +226,14 @@ function mapWorkspace(row: Record<string, unknown>): Workspace {
     role: row.role,
     timezone: row.timezone,
     createdAt: row.created_at,
+    placementAffinity: row.placement_affinity,
   });
 }
 
-function mapPendingInvitation(row: InvitationDiscoveryRow): PendingWorkspaceInvitation {
-  return PendingWorkspaceInvitationSchema.parse({
+function mapPendingInvitation(
+  row: InvitationDiscoveryRow,
+): z.infer<typeof regionalPendingInvitationSchema> {
+  return regionalPendingInvitationSchema.parse({
     id: row.id,
     workspaceId: row.workspace_id,
     workspaceName: row.workspace_name,
@@ -223,6 +242,7 @@ function mapPendingInvitation(row: InvitationDiscoveryRow): PendingWorkspaceInvi
     role: row.role,
     invitedByName: row.invited_by_name,
     expiresAt: row.expires_at,
+    placementAffinity: row.placement_affinity,
   });
 }
 
@@ -243,7 +263,8 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const user = await this.ensureRegionalUser(identity);
     const [workspaceResult, invitationResult] = await Promise.all([
       this.env.DB.prepare(
-        `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
+        `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at,
+           w.placement_affinity, m.role
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
@@ -251,7 +272,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
       this.env.DB.prepare(
         `SELECT i.id, i.workspace_id, w.name AS workspace_name,
-           w.region AS workspace_region, i.email, i.role,
+           w.region AS workspace_region, w.placement_affinity, i.email, i.role,
            inviter.name AS invited_by_name, i.expires_at
          FROM workspace_invitations i
          JOIN workspaces w ON w.id = i.workspace_id
@@ -271,9 +292,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
     const input = regionalActivateSchema.parse(rawInput);
+    this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
+    await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
     await this.requireMembership(user.id, input.workspaceId);
+    await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
     // Activation is a read/verify plus fresh session issue. It intentionally
     // does not claim the action journal because the binding's operation may
     // have originally been a create or invitation acceptance.
@@ -282,12 +306,15 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
   async create(rawInput: RegionalCreateInput): Promise<Session> {
     const input = regionalCreateSchema.parse(rawInput);
+    this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     const replay = await this.loadOperation(input.operationId);
     if (replay) {
       this.assertOperation(replay, input, "create", null);
       await this.requireMembership(user.id, input.workspaceId);
+      await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
+      await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
       return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
     }
 
@@ -301,14 +328,17 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
       await this.env.DB.batch([
         this.env.DB.prepare(
-          `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO workspaces
+           (id, name, slug, region, timezone, placement_affinity,
+            created_by_user_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           input.workspaceId,
           input.name,
           slug,
           this.env.AVALON_REGION,
           this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+          input.placementAffinity,
           user.id,
           at,
           at,
@@ -325,13 +355,17 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.recordOperation(input, "create", null);
     }
     await this.requireMembership(user.id, input.workspaceId);
+    await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
+    await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
     return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
   }
 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
     const input = regionalAcceptSchema.parse(rawInput);
+    this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
+    await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
     const replay = await this.loadOperation(input.operationId);
     if (replay) {
       this.assertOperation(replay, input, "accept", input.invitationId);
@@ -462,6 +496,55 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
   }
 
+  private async requirePlacementAffinity(
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+  ): Promise<void> {
+    const workspace = await this.env.DB.prepare(
+      "SELECT region, placement_affinity FROM workspaces WHERE id = ? AND region = ?",
+    ).bind(workspaceId, this.env.AVALON_REGION).first<{
+      region: Region;
+      placement_affinity: string;
+    }>();
+    if (
+      !workspace
+      || workspace.placement_affinity !== placementAffinity
+      || !isWorkspacePlacementAffinityForRegion(workspace.region, placementAffinity)
+    ) {
+      throw new ApiError(
+        409,
+        "workspace_placement_affinity_conflict",
+        "The workspace placement route does not match its regional authority",
+      );
+    }
+  }
+
+  private requireCompatiblePlacementAffinity(
+    placementAffinity: WorkspacePlacementAffinity,
+  ): void {
+    if (!isWorkspacePlacementAffinityForRegion(this.env.AVALON_REGION, placementAffinity)) {
+      throw new ApiError(
+        400,
+        "workspace_placement_affinity_invalid",
+        "The workspace placement route is invalid for this regional service",
+      );
+    }
+  }
+
+  private async initializeWorkspaceObject(
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+  ): Promise<void> {
+    const workspaceObject = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+      placementAffinity,
+    );
+    await workspaceObject.initializeWorkspace(workspaceId, placementAffinity);
+  }
+
   private async loadOperation(operationId: string): Promise<OperationRow | null> {
     return this.env.DB.prepare(
       `SELECT platform_user_id, action, workspace_id, invitation_id
@@ -525,6 +608,7 @@ export interface PlatformBindingRow {
   platform_user_id: string;
   region: Region;
   workspace_id: string;
+  placement_affinity: WorkspacePlacementAffinity;
   status: "pending" | "active";
   operation_id: string;
   pending_expires_at: string | null;
@@ -532,7 +616,13 @@ export interface PlatformBindingRow {
 
 export interface PlatformBindingStore {
   get(platformUserId: string): Promise<PlatformBindingRow | null>;
-  reserve(platformUserId: string, region: Region, workspaceId: string, operationId: string): Promise<PlatformBindingRow>;
+  reserve(
+    platformUserId: string,
+    region: Region,
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+    operationId: string,
+  ): Promise<PlatformBindingRow>;
   activate(platformUserId: string, operationId: string): Promise<void>;
   release(platformUserId: string, operationId: string): Promise<void>;
 }
@@ -549,8 +639,12 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     platformUserId: string,
     region: Region,
     workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
     operationId: string,
   ): Promise<PlatformBindingRow> {
+    if (!isWorkspacePlacementAffinityForRegion(region, placementAffinity)) {
+      throw new ApiError(400, "workspace_placement_affinity_invalid", "The workspace placement route is invalid");
+    }
     const at = this.now().toISOString();
     // Diagnostic deadline for operators and observability only. Unknown RPC
     // outcomes are never reclaimed automatically because the old EU action
@@ -558,11 +652,20 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     const expiresAt = new Date(this.now().getTime() + 2 * 60_000).toISOString();
     await this.db.prepare(
       `INSERT INTO platform_workspace_bindings
-       (platform_user_id, region, workspace_id, status, operation_id,
+       (platform_user_id, region, workspace_id, placement_affinity, status, operation_id,
         pending_expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
        ON CONFLICT(platform_user_id) DO NOTHING`,
-    ).bind(platformUserId, region, workspaceId, operationId, expiresAt, at, at).run();
+    ).bind(
+      platformUserId,
+      region,
+      workspaceId,
+      placementAffinity,
+      operationId,
+      expiresAt,
+      at,
+      at,
+    ).run();
     const row = await this.get(platformUserId);
     if (!row) throw new ApiError(503, "workspace_binding_unavailable", "The workspace selection could not be reserved");
     return row;
@@ -637,19 +740,47 @@ export class PlatformOnboardingService {
     const workspace = discovery.flatMap((item) => item.workspaces)
       .find((item) => item.region === region && item.id === workspaceId);
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
-    return this.completeRegionalAction(identity, region, workspaceId, (operationId, preference) =>
-      this.gateways[region].activate({ identity, operationId, workspaceId, preference }));
+    return this.completeRegionalAction(
+      identity,
+      region,
+      workspaceId,
+      workspace.placementAffinity,
+      (operationId, preference) => this.gateways[region].activate({
+        identity,
+        operationId,
+        workspaceId,
+        placementAffinity: workspace.placementAffinity,
+        preference,
+      }),
+    );
   }
 
-  async createWorkspace(name: string, region: Region): Promise<Session> {
+  async createWorkspace(
+    name: string,
+    region: Region,
+    requestLocation?: unknown,
+  ): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
     if (discovery.some((item) => item.workspaces.length > 0)) {
       throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
     }
     const workspaceId = this.createId();
-    return this.completeRegionalAction(identity, region, workspaceId, (operationId, preference) =>
-      this.gateways[region].create({ identity, operationId, workspaceId, name, preference }));
+    const placement = deriveWorkspacePlacementAffinity(region, requestLocation);
+    return this.completeRegionalAction(
+      identity,
+      region,
+      workspaceId,
+      placement.affinity,
+      (operationId, preference) => this.gateways[region].create({
+        identity,
+        operationId,
+        workspaceId,
+        name,
+        placementAffinity: placement.affinity,
+        preference,
+      }),
+    );
   }
 
   async acceptInvitation(invitationId: string, region: Region): Promise<Session> {
@@ -663,14 +794,20 @@ export class PlatformOnboardingService {
     if (!invitation) {
       throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
     }
-    return this.completeRegionalAction(identity, region, invitation.workspaceId, (operationId, preference) =>
-      this.gateways[region].accept({
+    return this.completeRegionalAction(
+      identity,
+      region,
+      invitation.workspaceId,
+      invitation.placementAffinity,
+      (operationId, preference) => this.gateways[region].accept({
         identity,
         operationId,
         workspaceId: invitation.workspaceId,
         invitationId,
+        placementAffinity: invitation.placementAffinity,
         preference,
-      }));
+      }),
+    );
   }
 
   async declineInvitation(invitationId: string, region: Region): Promise<void> {
@@ -740,13 +877,13 @@ export class PlatformOnboardingService {
   private async resolveWorkspaceBinding(
     platformUserId: string,
     discovery: RegionalDiscovery[],
-  ): Promise<Workspace | null> {
+  ): Promise<RegionalWorkspace | null> {
     const workspaces = discovery.flatMap((item) => item.workspaces);
     const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
     if (unique.size > 1) {
       throw new ApiError(409, "workspace_membership_conflict", "This Avalon account is linked to more than one organization");
     }
-    const workspace = unique.values().next().value as Workspace | undefined;
+    const workspace = unique.values().next().value as RegionalWorkspace | undefined;
     const binding = await this.bindings.get(platformUserId);
     if (!workspace) {
       if (binding?.status === "active") {
@@ -762,14 +899,26 @@ export class PlatformOnboardingService {
       if (!sameDestination({ region: binding.region, workspaceId: binding.workspace_id }, workspace.region, workspace.id)) {
         throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
       }
+      if (binding.placement_affinity !== workspace.placementAffinity) {
+        throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+      }
       if (binding.status === "pending") await this.bindings.activate(platformUserId, binding.operation_id);
       return workspace;
     }
 
     const operationId = this.createId();
-    const reserved = await this.bindings.reserve(platformUserId, workspace.region, workspace.id, operationId);
+    const reserved = await this.bindings.reserve(
+      platformUserId,
+      workspace.region,
+      workspace.id,
+      workspace.placementAffinity,
+      operationId,
+    );
     if (!sameDestination({ region: reserved.region, workspaceId: reserved.workspace_id }, workspace.region, workspace.id)) {
       throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+    }
+    if (reserved.placement_affinity !== workspace.placementAffinity) {
+      throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
     }
     await this.bindings.activate(platformUserId, reserved.operation_id);
     return workspace;
@@ -779,6 +928,7 @@ export class PlatformOnboardingService {
     identity: PlatformIdentity,
     region: Region,
     workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
     action: (
       operationId: string,
       preference: z.infer<typeof PreferenceProjectionSchema>,
@@ -793,13 +943,17 @@ export class PlatformOnboardingService {
       identity.platformUserId,
       region,
       workspaceId,
+      placementAffinity,
       operationId,
     );
     if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
       throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
     }
+    if (reservation.placement_affinity !== placementAffinity) {
+      throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+    }
     if (reservation.status === "active") {
-      return this.issueExistingSession(identity, region, workspaceId);
+      return this.issueExistingSession(identity, region, workspaceId, placementAffinity);
     }
     if (reservation.operation_id !== operationId) {
       throw new ApiError(409, "workspace_setup_in_progress", "Organization setup is already in progress");
@@ -820,6 +974,7 @@ export class PlatformOnboardingService {
         identity,
         region,
         workspaceId,
+        placementAffinity,
         operationId,
         preference,
         error,
@@ -839,6 +994,7 @@ export class PlatformOnboardingService {
     identity: PlatformIdentity,
     region: Region,
     workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
   ): Promise<Session> {
     const preference = await loadOrCreateCanonicalPreferenceProjection(
       this.env,
@@ -849,6 +1005,7 @@ export class PlatformOnboardingService {
       identity,
       operationId,
       workspaceId,
+      placementAffinity,
       preference,
     });
     this.assertRegionalSession(session, region, workspaceId);
@@ -860,6 +1017,7 @@ export class PlatformOnboardingService {
     identity: PlatformIdentity,
     region: Region,
     workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
     operationId: string,
     preference: z.infer<typeof PreferenceProjectionSchema>,
     originalError: unknown,
@@ -867,11 +1025,12 @@ export class PlatformOnboardingService {
     try {
       const discovery = await this.gateways[region].discover(identity);
       const membership = discovery.workspaces.find((item) => item.id === workspaceId && item.region === region);
-      if (membership) {
+      if (membership?.placementAffinity === placementAffinity) {
         return this.gateways[region].activate({
           identity,
           operationId,
           workspaceId,
+          placementAffinity,
           preference,
         });
       }

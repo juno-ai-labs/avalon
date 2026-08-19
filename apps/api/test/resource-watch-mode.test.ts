@@ -54,7 +54,9 @@ class WatchDatabase {
               status: "healthy",
             } as T;
           }
-          if (recorded.sql.startsWith("SELECT 1 AS attached")) return { attached: 1 } as T;
+          if (recorded.sql.startsWith("SELECT watch_enabled FROM workstream_resources")) {
+            return { watch_enabled: 0 } as T;
+          }
           throw new Error(`Unexpected first query: ${recorded.sql}`);
         },
       };
@@ -81,7 +83,7 @@ const auth: AuthContext = {
 function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof vi.fn>): Env {
   const schedulerNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => ({ toString: () => "scheduler-id" }),
-    get: () => ({ fetch: schedulerFetch }),
+    get: () => ({ refresh: schedulerFetch }),
   });
   return createTestEnv({
     DB: database.binding,

@@ -55,6 +55,7 @@ const detail = {
   manualUnreadFromSequenceNumber: null,
   manualUnreadGeneration: 0,
   hasUnread: true,
+  youAreMentioned: false,
   firstUnreadSequenceNumber: 4,
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -914,16 +915,16 @@ describe('Avalon API wire adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getHyperSightPreference(workstreamId)).resolves.toEqual({
+    await expect(api.getBlockDashboardPreference(workstreamId)).resolves.toEqual({
       visible: false,
       updatedAt: null,
     });
-    await expect(api.updateHyperSightPreference(workstreamId, true)).resolves.toEqual({
+    await expect(api.updateBlockDashboardPreference(workstreamId, true)).resolves.toEqual({
       visible: true,
       updatedAt: timestamp,
     });
 
-    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/hypersight/preference`;
+    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/preference`;
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(preferenceUrl);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT' });
@@ -1142,7 +1143,7 @@ describe('Avalon API wire adapter', () => {
       kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
       method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Avalon-Operation-Id'),
     }));
-    await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
+    await expect(api.getConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,
     });
@@ -1151,27 +1152,6 @@ describe('Avalon API wire adapter', () => {
     );
   });
 
-  it('cancels durable connector OAuth polling through its abort signal', async () => {
-    const attemptId = 'b'.repeat(43);
-    const fetchMock = vi.fn().mockResolvedValue(json({
-      attemptId,
-      provider: 'linear',
-      status: 'pending',
-      connectionId: null,
-      errorCode: null,
-      expiresAt: timestamp,
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
-    const controller = new AbortController();
-
-    const polling = api.waitForConnectorOAuthAttempt(attemptId, controller.signal);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    controller.abort();
-
-    await expect(polling).rejects.toMatchObject({ name: 'AbortError' });
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
 });
 
 describe('socket ticket transport', () => {
@@ -1190,6 +1170,45 @@ describe('socket ticket transport', () => {
       ticket: 'socket-ticket',
       protocols: socketTicketProtocols('socket-ticket'),
     });
+  });
+
+  it('requests the one workspace-scoped sync and command socket ticket', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return json({
+        url: 'wss://api.avalon.test/socket/workspaces/workspace-1?ticket=workspace-ticket',
+        ticket: 'workspace-ticket',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getWorkspaceSocketTicket()).resolves.toEqual({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/socket');
+  });
+
+  it('requests a WorkstreamDO control socket ticket separately from its substream feed', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return json({
+        url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=control-ticket`,
+        ticket: 'control-ticket',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getWorkstreamControlSocketTicket(workstreamId)).resolves.toEqual({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/workstreams/${workstreamId}/control-socket`);
   });
 });
 

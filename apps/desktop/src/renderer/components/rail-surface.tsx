@@ -14,7 +14,7 @@ export const RAIL_CROSSFADE_MS = 190;
  * out — over the panel that replaced it, or over nothing when the sidebar was
  * dismissed. Opening it has nothing to fade from.
  *
- * A hand-off does not always reach this hook as one change: HyperSight taking
+ * A hand-off does not always reach this hook as one change: BlockDashboard taking
  * the slot is a preference write that settles a microtask after the inspector
  * has already let go, so the slot is briefly empty in between. Carrying the
  * outgoing panel through that gap is what makes both directions cross-fade

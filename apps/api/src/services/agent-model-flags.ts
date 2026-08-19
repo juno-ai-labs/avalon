@@ -1,6 +1,6 @@
 import { AgentModelOverrideSchema, type AgentModelOverride } from "@avalon/contracts";
 import { z } from "zod";
-import { HYPERSIGHT_MODEL, type Env } from "../env";
+import { BLOCK_DASHBOARD_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
   loadFlagTargetingAttributes,
@@ -26,7 +26,7 @@ export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
   "automation_compiler",
-  "hypersight",
+  "block_dashboard",
   "meeting_notes",
   "addressing_classifier",
   "workstream_naming",
@@ -43,7 +43,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
   automation_compiler: "agent-model-automation-compiler",
-  hypersight: "agent-model-hypersight",
+  block_dashboard: "agent-model-block-dashboard",
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
@@ -107,13 +107,13 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "work_opportunity_ranking":
     case "workstream_description":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
-    case "hypersight":
+    case "block_dashboard":
       // No fallbacks by default: a block that routes onward mid-configuration
       // can change voice between refreshes, so routing is something an operator
       // turns on for HyperSight deliberately rather than the state it starts in.
       // This is the checked-in default, not an invariant — a `fallbackModels`
-      // served by `agent-model-hypersight` is honoured like any other role's.
-      return { model: HYPERSIGHT_MODEL, fallbackModels: [] };
+      // served by `agent-model-block-dashboard` is honoured like any other role's.
+      return { model: BLOCK_DASHBOARD_MODEL, fallbackModels: [] };
     default: {
       const exhaustive: never = role;
       throw new Error(`Unhandled agent model role: ${String(exhaustive)}`);

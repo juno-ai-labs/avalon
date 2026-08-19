@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
@@ -7,6 +7,7 @@ import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -55,7 +56,7 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
     WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
       jurisdiction: () => ({
         idFromName: () => createTestDurableObjectId("scheduler"),
         get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
@@ -66,17 +67,20 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
 }
 
 function schedulerFor(database: DatabaseSync): WorkspaceScheduler {
-  const values = new Map<string, unknown>();
+  const objectDatabase = new DatabaseSync(":memory:");
+  databases.push(objectDatabase);
   const storage = createCloudflareTestBinding<DurableObjectStorage>({
-    get: async <T>(key: string) => values.get(key) as T | undefined,
-    put: async (key: string, value: unknown) => { values.set(key, value); },
-    delete: async (key: string) => values.delete(key),
     getAlarm: async () => null,
     setAlarm: async () => undefined,
     deleteAlarm: async () => undefined,
+    transactionSync: <T>(body: () => T) => body(),
+    sql: createTestSqlStorage(objectDatabase),
   });
   return new WorkspaceScheduler(
-    createCloudflareTestBinding<DurableObjectState>({ storage }),
+    createCloudflareTestBinding<DurableObjectState>({
+      blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+      storage,
+    }),
     createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",

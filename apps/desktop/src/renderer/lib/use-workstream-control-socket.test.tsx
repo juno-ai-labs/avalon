@@ -1,0 +1,288 @@
+import type { BlockDashboardPreference, WorkstreamControlMetadata } from '@avalon/contracts';
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook } from '@testing-library/react';
+import type { PropsWithChildren } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { WorkstreamSummary } from './types';
+import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+
+class FakeWebSocket extends EventTarget {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
+
+  readyState = FakeWebSocket.CONNECTING;
+  readonly send = vi.fn();
+
+  constructor(readonly url: string | URL, readonly protocols?: string | string[]) {
+    super();
+    FakeWebSocket.instances.push(this);
+  }
+
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.dispatchEvent(new Event('open'));
+  }
+
+  close(code = 1000): void {
+    if (this.readyState === FakeWebSocket.CLOSED) return;
+    this.readyState = FakeWebSocket.CLOSED;
+    this.dispatchEvent(Object.assign(new Event('close'), { code }));
+  }
+
+  message(metadata: WorkstreamControlMetadata): void {
+    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+      type: 'workstream_metadata',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      metadata,
+    }) }));
+  }
+
+  event(value: Record<string, unknown>): void {
+    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) }));
+  }
+}
+
+const workstreamId = '00000000-0000-7000-8000-000000000011';
+const workspaceId = '00000000-0000-7000-8000-000000000012';
+
+function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
+  return {
+    id: workstreamId,
+    title: 'Before sync',
+    titleStatus: 'settled',
+    origin: 'ad_hoc',
+    harnessStatus: 'completed',
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: '2026-08-17T19:00:00.000Z',
+    scope: 'workspace',
+    nextPendingWakeup: null,
+    pinPosition: null,
+    ...overrides,
+  };
+}
+
+function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata> = {}): WorkstreamControlMetadata {
+  return {
+    stateVersion: {
+      commonEventId: `00000000-0000-7000-8000-${revision.toString(16).padStart(12, '0')}`,
+      viewerEventId: `00000000-0000-7000-8001-${revision.toString(16).padStart(12, '0')}`,
+      authorityGeneration: 1,
+      commonWaterline: revision,
+      viewerWaterline: revision,
+    },
+    revision,
+    id: workstreamId,
+    workspaceId,
+    title: 'Authoritative title',
+    description: 'Authoritative description',
+    preview: 'Preview',
+    emailAddress: 'workstream@automation.with-avalon.com',
+    originType: 'ad_hoc',
+    createdByUserId: '00000000-0000-7000-8000-000000000013',
+    automationSubscriptionId: null,
+    automationRunId: null,
+    plannedFor: null,
+    titleStatus: 'settled',
+    exactState: 'running',
+    harnessStatus: 'running',
+    latestAttentionSequenceNumber: 7,
+    unreadTrackingStartSequenceNumber: 1,
+    lastActivityAt: '2026-08-17T20:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    createdAt: '2026-08-17T18:00:00.000Z',
+    updatedAt: '2026-08-17T20:00:00.000Z',
+    scope: 'workspace',
+    systemKind: null,
+    nextPendingWakeup: null,
+    nextTerminalActionAt: null,
+    viewer: {
+      isParticipant: true,
+      listable: true,
+      unreadCount: 3,
+      youAreMentioned: true,
+      readThroughSequenceNumber: 4,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 2,
+      latestMentionSequenceNumber: 7,
+    },
+    ...overrides,
+  };
+}
+
+function wrapper(queryClient: QueryClient): ({ children }: PropsWithChildren) => React.JSX.Element {
+  return function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+
+async function flushPromises(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  FakeWebSocket.instances = [];
+});
+
+describe('useWorkstreamControlSocket', () => {
+  it('applies complete versioned metadata, clears nullable values, and drops revoked rows', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary({
+      emailAddress: 'stale@example.com',
+      automationRunId: '00000000-0000-7000-8000-000000000099',
+      systemKind: 'digest',
+    })]);
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
+
+    act(() => socket.message(metadata(4)));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
+      title: 'Authoritative title',
+      objective: 'Authoritative description',
+      harnessStatus: 'running',
+      hasUnread: true,
+      youAreMentioned: true,
+      firstUnreadSequenceNumber: 5,
+    });
+
+    act(() => socket.message(metadata(3, { title: 'Stale title' })));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title)
+      .toBe('Authoritative title');
+
+    act(() => socket.message(metadata(5, {
+      emailAddress: null,
+      createdByUserId: null,
+      automationRunId: null,
+      archivedAt: null,
+      systemKind: null,
+    })));
+    const cleared = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0];
+    expect(cleared).not.toHaveProperty('emailAddress', 'stale@example.com');
+    expect(cleared?.emailAddress).toBeUndefined();
+    expect(cleared?.automationRunId).toBeUndefined();
+    expect(cleared?.systemKind).toBeUndefined();
+
+    act(() => socket.close(1008));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
+  });
+
+  it('opens a fresh ticket and requests a complete snapshot after a transient close', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.close(1012));
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    await flushPromises();
+    expect(getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
+  });
+
+  it('applies HyperSight configuration and personal visibility from WorkstreamDO', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const blockId = '00000000-0000-7000-8000-000000000014';
+    const versionId = '00000000-0000-7000-8000-000000000015';
+    act(() => socket.event({
+      type: 'block_dashboard_configuration_updated',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      blockDashboard: {
+        versionId,
+        versionNumber: 1,
+        updatedAt: '2026-08-17T20:00:00.000Z',
+        blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
+      },
+    }));
+    act(() => socket.event({
+      type: 'block_dashboard_preference_updated',
+      occurredAt: '2026-08-17T20:00:02.000Z',
+      preference: { visible: true, updatedAt: '2026-08-17T20:00:02.000Z' },
+    }));
+
+    expect(queryClient.getQueryData(['block-dashboard', workstreamId]))
+      .toMatchObject({ blocks: [{ latestRun: null }] });
+    expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
+      .toEqual({ visible: true, updatedAt: '2026-08-17T20:00:02.000Z' });
+  });
+
+  it('logs the first malformed control frame without logging its payload', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket(
+        { getWorkstreamControlSocketTicket },
+        workstreamId,
+        true,
+      ),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.event({ privatePayload: 'do-not-log' }));
+    act(() => socket.event({ another: 'malformed-frame' }));
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0]?.[0]).toContain('Ignored invalid WorkstreamDO socket event');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('do-not-log');
+  });
+});

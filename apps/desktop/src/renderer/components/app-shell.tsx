@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, type CSSProperties, type PropsWithChildren } from 'react';
+import { useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
@@ -69,36 +69,13 @@ export function openWorkstreamId(pathname: string): string | null {
 }
 
 /**
- * Which work stream the list poll has caught holding a stale harness status, if
- * any. The poll is the backstop for every work stream this client has no room
- * socket to; it must not become a second opinion about the one it does. A
- * pushed status writes the detail and the list together, so when the two
- * disagree the side written longer ago is the stale one — and that is normally
- * the detail, which nothing refreshes on a timer, leaving the header pulsing
- * "Running" under a sidebar dot that has already gone yellow. Re-reading the
- * detail rather than patching the status in place keeps its run metadata, which
- * the elapsed-time display reads, agreeing with the status beside it.
- */
-export function staleHarnessStatusWorkstreamId(
-  activeWorkstreamId: string | null,
-  summaries: WorkstreamSummary[] | undefined,
-  summariesUpdatedAt: number,
-  detail: { data?: WorkstreamDetail; dataUpdatedAt: number } | undefined,
-): string | null {
-  if (activeWorkstreamId === null || !summaries || !detail?.data) return null;
-  const summary = summaries.find((item) => item.id === activeWorkstreamId);
-  if (!summary || summary.harnessStatus === detail.data.harnessStatus) return null;
-  return detail.dataUpdatedAt <= summariesUpdatedAt ? activeWorkstreamId : null;
-}
-
-/**
  * Apply a pin response — the caller's whole pinned list, in order — to the
  * cached work-stream list.
  *
  * Every row is rewritten, not just the ones named: the response *is* the pinned
  * set, so a work stream absent from it is one this person no longer has pinned,
  * whichever window unpinned it. Patching only the named rows would leave a pin
- * removed on another device sitting in this sidebar until the next poll, in a
+ * removed on another device sitting in this sidebar until the next socket page, in a
  * position the server has already given to something else.
  */
 export function applyPinnedWorkstreams(
@@ -145,8 +122,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
-  const hypersightOpen = useUiStore((state) => state.hypersightOpen);
-  const hypersightWidth = useUiStore((state) => state.hypersightWidth);
+  const blockDashboardOpen = useUiStore((state) => state.blockDashboardOpen);
+  const blockDashboardWidth = useUiStore((state) => state.blockDashboardWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   // Replacing rather than pushing, so Back cannot return to an automation that
@@ -161,7 +138,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // HyperSight and the inspector rail are the same slot, so the main pane makes
   // room for whichever one holds it — including a panel that has lost the slot
   // and is still fading out, which is on screen and has to be laid out for.
-  const slotHolder = hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : railLeaving;
+  const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
   const automations = useQuery({
     queryKey: ['automations'],
@@ -193,24 +170,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryKey: ['notes'],
     queryFn: ({ signal }) => api!.getNotes(signal),
     enabled: Boolean(api),
-    staleTime: 10_000,
-    refetchInterval: 15_000,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   const backgroundRealtimeIds = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
-  useEffect(() => {
-    const staleId = staleHarnessStatusWorkstreamId(
-      activeWorkstreamId,
-      workstreams.data,
-      workstreams.dataUpdatedAt,
-      activeWorkstreamId === null
-        ? undefined
-        : queryClient.getQueryState<WorkstreamDetail>(['workstream', activeWorkstreamId]),
-    );
-    if (staleId === null) return;
-    void queryClient.invalidateQueries({ queryKey: ['workstream', staleId], exact: true });
-  }, [activeWorkstreamId, queryClient, workstreams.data, workstreams.dataUpdatedAt]);
 
   // One custom property carries the right sidebar's width, so the panel in the
   // slot, the grab handle beside it, and the room the main pane leaves for it
@@ -218,7 +182,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // is on screen, so a panel closing on its own dissolves at its own width
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
-    '--rail-width': `${slotHolder === 'hypersight' ? hypersightWidth : railWidth}px`,
+    '--rail-width': `${slotHolder === 'block-dashboard' ? blockDashboardWidth : railWidth}px`,
     '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
@@ -252,7 +216,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             queryClient.invalidateQueries({ queryKey: ['resources'] }),
           ]);
           queryClient.removeQueries({ queryKey: ['note', note.id] });
-          // The archived note's own screen would keep polling a note the API no
+          // The archived note's own screen would keep reading a note the API no
           // longer serves, so leave it the way a deleted automation does.
           if (location.pathname === `/notes/${note.id}`) void navigate('/workstreams/new');
         }}

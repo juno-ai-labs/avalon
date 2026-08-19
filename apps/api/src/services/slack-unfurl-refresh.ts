@@ -4,7 +4,9 @@ import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -18,6 +20,8 @@ import {
   workstreamUnfurlCardHash,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
  * Rewrite Slack unfurl cards whose work stream has changed status since the
@@ -76,7 +80,9 @@ interface SlackUnfurlConnection {
 
 const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).loose();
 
-export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
+export async function refreshSlackWorkstreamUnfurls(env: Env, workspaceId?: string): Promise<void> {
+  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("slack_unfurl_workspace_required");
+  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const since = new Date(Date.now() - REFRESH_WINDOW_DAYS * 86_400_000).toISOString();
   const audienceCutoff = new Date(Date.now() - AUDIENCE_REVALIDATION_HOURS * 3_600_000).toISOString();
   // Three independent reasons to look at a card, none of which subsumes the
@@ -94,8 +100,10 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   // The per-connection cap is applied by ROW_NUMBER *before* the global limit.
   // Taking the global 100 first and trimming per connection afterwards lets one
   // busy workspace fill every slot and starve the rest indefinitely.
-  const stale = await env.DB.prepare(
-    `SELECT * FROM (
+  const authority = await readWorkstreamAuthorityControl(env);
+  const rows = authority.phase === "durable_object_open"
+    ? await loadDurableObjectStaleUnfurls(env, since, audienceCutoff)
+    : (await env.DB.prepare(`SELECT * FROM (
        SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
               l.rendered_status AS rendered_status, l.rendered_anonymous, l.rendered_hash,
               w.id, ${WORKSTREAM_UNFURL_COLUMNS},
@@ -116,15 +124,9 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
      )
      WHERE connection_rank <= ?3
      ORDER BY ordered_activity_at DESC
-     LIMIT ?4`,
-  ).bind(
-    since,
-    audienceCutoff,
-    MAX_REFRESHES_PER_CONNECTION,
-    MAX_REFRESHES_PER_SWEEP + 1,
-  ).all<Record<string, unknown>>();
-
-  const rows = stale.results ?? [];
+     LIMIT ?4`)
+      .bind(since, audienceCutoff, MAX_REFRESHES_PER_CONNECTION, MAX_REFRESHES_PER_SWEEP + 1)
+      .all<Record<string, unknown>>()).results;
   if (rows.length > MAX_REFRESHES_PER_SWEEP) {
     // Never let a bounded sweep read as "everything is current".
     logInfo(env, "slack_unfurl_refresh_ceiling_reached", {
@@ -153,6 +155,105 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
       });
     }
   }
+}
+
+async function loadDurableObjectStaleUnfurls(
+  env: Env,
+  since: string,
+  audienceCutoff: string,
+): Promise<Record<string, unknown>[]> {
+  const links = await env.DB.prepare(
+    `SELECT link.connection_id, link.slack_channel_id, link.slack_message_ts,
+            link.url, link.workspace_id, link.workstream_id, link.rendered_status,
+            link.rendered_anonymous, link.rendered_hash, link.refreshed_at,
+            link.audience_checked_at
+       FROM slack_unfurled_links link
+       JOIN connector_connections connection
+         ON connection.id = link.connection_id AND connection.status <> 'disabled'
+      WHERE link.shared_at >= ?
+      ORDER BY link.refreshed_at ASC LIMIT ?`,
+  ).bind(since, MAX_REFRESHES_PER_SWEEP * 2 + 1).all<Record<string, unknown>>();
+  const byWorkspace = new Map<string, Set<string>>();
+  for (const link of links.results ?? []) {
+    const workspaceId = String(link.workspace_id);
+    const workstreamId = String(link.workstream_id);
+    const ids = byWorkspace.get(workspaceId) ?? new Set<string>();
+    ids.add(workstreamId);
+    byWorkspace.set(workspaceId, ids);
+  }
+  const directory = new Map<string, Record<string, unknown>>();
+  for (const [workspaceId, idSet] of byWorkspace) {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    const ids = [...idSet];
+    for (let offset = 0; offset < ids.length; offset += 250) {
+      const page = await workspace.lookupWorkstreamDirectory({
+        workspaceId,
+        workstreamIds: ids.slice(offset, offset + 250),
+      });
+      for (const item of page.items) {
+        directory.set(`${workspaceId}:${item.workstreamId}`, {
+          id: item.workstreamId,
+          title: item.title,
+          harness_status: durableDirectoryHarnessStatus(item.state),
+          last_activity_at: item.lastActivityAt,
+          origin_type: item.originType,
+          automation_name: item.originLabel,
+          archived_at: item.archivedAt,
+          updated_at: item.updatedAt,
+        });
+      }
+    }
+  }
+  const checkedAt = nowIso();
+  const stale: Record<string, unknown>[] = [];
+  const unchangedUpdates: D1PreparedStatement[] = [];
+  for (const link of links.results ?? []) {
+    const item = directory.get(`${String(link.workspace_id)}:${String(link.workstream_id)}`);
+    if (!item || item.archived_at !== null) continue;
+    const changed = item.harness_status !== link.rendered_status
+      || String(item.updated_at) > String(link.refreshed_at)
+      || String(link.audience_checked_at) < audienceCutoff
+      || link.rendered_hash === null;
+    if (changed) {
+      stale.push({ ...link, ...item, ordered_activity_at: item.last_activity_at });
+      continue;
+    }
+    unchangedUpdates.push(env.DB.prepare(
+      `UPDATE slack_unfurled_links SET refreshed_at = ?
+        WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
+    ).bind(
+      checkedAt,
+      link.connection_id,
+      link.slack_channel_id,
+      link.slack_message_ts,
+      link.url,
+    ));
+  }
+  if (unchangedUpdates.length > 0) await env.DB.batch(unchangedUpdates);
+  const perConnection = new Map<string, number>();
+  return stale.sort((left, right) => (
+    String(right.ordered_activity_at).localeCompare(String(left.ordered_activity_at))
+  )).filter((row) => {
+    const connectionId = String(row.connection_id);
+    const count = perConnection.get(connectionId) ?? 0;
+    if (count >= MAX_REFRESHES_PER_CONNECTION) return false;
+    perConnection.set(connectionId, count + 1);
+    return true;
+  }).slice(0, MAX_REFRESHES_PER_SWEEP + 1);
+}
+
+function durableDirectoryHarnessStatus(state: unknown): string {
+  if (state === "scheduled") return "scheduled";
+  if (["running", "interrupting", "preparing_context", "waiting_capacity"].includes(String(state))) return "running";
+  if (state === "needs_input") return "needs_input";
+  if (state === "completed") return "completed";
+  if (["failed", "budget_exhausted"].includes(String(state))) return "failed";
+  return "idle";
 }
 
 async function refreshConnectionUnfurls(

@@ -48,6 +48,11 @@ type ExactKeys<Base, Value extends Base> = Value
 type CloudflareBinding =
   | Ai
   | DurableObjectNamespace
+  | Env["SUBSTREAM_AGENTS"]
+  | Env["BLOCK_DASHBOARD_AGENTS"]
+  | Env["WORKSTREAM_DOS"]
+  | Env["WORKSPACE_DOS"]
+  | Env["WORKSPACE_SCHEDULERS"]
   | Env["CRASH_SYMBOLICATOR"]
   | DurableObjectState
   | DurableObjectStorage
@@ -55,6 +60,7 @@ type CloudflareBinding =
   | ImagesBinding
   | Queue
   | R2Bucket
+  | SqlStorage
   | VectorizeIndex;
 
 export function createTestEnv<T extends EnvDouble>(value: ExactKeys<EnvDouble, T>): Env {
@@ -97,4 +103,15 @@ export function createCloudflareTestBinding<
 
 export function createTestDurableObjectId(value: string): DurableObjectId {
   return value as unknown as DurableObjectId;
+}
+
+export function createTestJurisdictionalDurableObjectId(
+  value: string,
+  jurisdiction: "eu" | "us",
+): DurableObjectId {
+  return {
+    toString: () => value,
+    equals: (other) => other.toString() === value,
+    jurisdiction,
+  } as DurableObjectId;
 }

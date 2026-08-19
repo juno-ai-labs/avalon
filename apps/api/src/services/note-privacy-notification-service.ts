@@ -1,6 +1,10 @@
 import { createDatabase, newId, nowIso } from "@avalon/db";
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { publishWorkstreamEvent } from "./integrations";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface PrivacyTransitionRow extends Record<string, unknown> {
   id: string;
@@ -33,8 +37,47 @@ export async function processPendingNotePrivacyNotifications(
 }
 
 async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {
-  const affected = await env.DB.prepare(
-    `SELECT DISTINCT w.id
+  const authority = await readWorkstreamAuthorityControl(env);
+  let affectedRows: AffectedWorkstreamRow[];
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      transition.workspace_id,
+      workspaceDOName(env.AVALON_REGION, transition.workspace_id),
+    );
+    const access = await workspace.resourceAccess({
+      workspaceId: transition.workspace_id,
+      resourceId: transition.resource_id,
+      userId: transition.actor_user_id,
+    });
+    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
+      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
+    )))];
+    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
+    if (subscriptionIds.length > 0) {
+      const placeholders = subscriptionIds.map(() => "?").join(",");
+      const rows = await env.DB.prepare(
+        `SELECT id, scope, owner_user_id FROM automation_subscriptions
+          WHERE workspace_id = ? AND id IN (${placeholders})`,
+      ).bind(transition.workspace_id, ...subscriptionIds).all<{
+        id: string;
+        scope: string;
+        owner_user_id: string | null;
+      }>();
+      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
+    }
+    affectedRows = access.items.filter((item) => {
+      if (!item.automationSubscriptionId) {
+        return item.createdByUserId === null || item.createdByUserId !== transition.actor_user_id;
+      }
+      const subscription = subscriptions.get(item.automationSubscriptionId);
+      return subscription?.scope === "workspace"
+        || subscription?.owner_user_id === null
+        || subscription?.owner_user_id !== transition.actor_user_id;
+    }).map((item) => ({ id: item.workstreamId }));
+  } else {
+    const affected = await env.DB.prepare(`SELECT DISTINCT w.id
      FROM workstream_resources wr
      JOIN workstreams w ON w.id = wr.workstream_id AND w.workspace_id = ?
      LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
@@ -44,22 +87,29 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
          OR
          (s.id IS NULL AND (w.created_by_user_id IS NULL OR w.created_by_user_id != ?))
        )
-     ORDER BY w.id ASC`,
-  ).bind(
+     ORDER BY w.id ASC`)
+    .bind(
     transition.workspace_id,
     transition.resource_id,
     transition.actor_user_id,
     transition.actor_user_id,
-  ).all<AffectedWorkstreamRow>();
+    ).all<AffectedWorkstreamRow>();
+    affectedRows = affected.results;
+  }
 
-  const database = createDatabase(env.DB);
   const clientMessageId = `note-privacy:${transition.id}`;
   const text = `${transition.note_title} is now private and no longer accessible`;
-  for (const workstream of affected.results) {
+  for (const workstream of affectedRows) {
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      transition.workspace_id,
+      workstream.id,
+    );
+    const database = createDatabase(executionEnv.DB);
     const messageId = newId();
     const at = nowIso();
-    const results = await env.DB.batch([
-      env.DB.prepare(
+    const results = await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
         `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at)
@@ -76,7 +126,7 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
         workstream.id,
         transition.workspace_id,
       ),
-      env.DB.prepare(
+      executionEnv.DB.prepare(
         `UPDATE workstreams
          SET next_sequence_number = next_sequence_number + 1,
              latest_attention_sequence_number = next_sequence_number,

@@ -365,7 +365,7 @@ function environment(database: DatabaseSync): Env {
     GITHUB_WEBHOOK_SECRET: "webhook-secret",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("github-settings-scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
     },
   });
 }

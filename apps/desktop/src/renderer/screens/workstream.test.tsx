@@ -8,16 +8,80 @@ import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
   highestVisibleAttentionSequence,
-  hypersightHoldsSidebar,
+  blockDashboardHoldsSidebar,
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
+  mergeTranscriptPage,
+  preservedPrependScrollTop,
   RunFailureNotice,
+  shouldLoadEarlierFromScroll,
+  transcriptPageCursor,
   WorkstreamErrorState,
   WorkstreamHeader,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+function transcriptMessage(
+  sequenceNumber: number,
+  messageType: Message['messageType'] = 'text',
+): Message {
+  return {
+    id: `message-${sequenceNumber}-${messageType}`,
+    workstreamId: 'workstream-pagination',
+    sequenceNumber,
+    authorType: 'agent',
+    messageType,
+    text: `Message ${sequenceNumber}`,
+    createdAt: new Date(Date.UTC(2026, 7, 18, 12, 0, sequenceNumber)).toISOString(),
+  };
+}
+
+describe('transcript cursor pagination', () => {
+  it('starts an upward page only near the top with a cursor and no request in flight', () => {
+    expect(shouldLoadEarlierFromScroll(159, true, false)).toBe(true);
+    expect(shouldLoadEarlierFromScroll(160, true, false)).toBe(false);
+    expect(shouldLoadEarlierFromScroll(10, false, false)).toBe(false);
+    expect(shouldLoadEarlierFromScroll(10, true, true)).toBe(false);
+  });
+
+  it('preserves the visible anchor when an older page is prepended', () => {
+    expect(preservedPrependScrollTop(120, 2_000, 2_840)).toBe(960);
+    expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
+  });
+
+  it('merges successive pages in transcript order without duplicates or hidden rows', () => {
+    const current = [transcriptMessage(3), transcriptMessage(4), transcriptMessage(5)];
+    const first = mergeTranscriptPage(current, {
+      items: [
+        transcriptMessage(1),
+        transcriptMessage(2),
+        transcriptMessage(3),
+        transcriptMessage(99, 'activity_suggestion'),
+      ],
+      nextCursor: '1',
+      newerCursor: null,
+    });
+    const second = mergeTranscriptPage(first, {
+      items: [transcriptMessage(0)],
+      nextCursor: null,
+      newerCursor: null,
+    });
+
+    expect(second.map((message) => message.sequenceNumber)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('advances the direction-specific cursor and rejects a repeated page', () => {
+    const page = { items: [], nextCursor: '10', newerCursor: '30' };
+    expect(transcriptPageCursor(page, '20', 'before')).toBe('10');
+    expect(transcriptPageCursor(page, '20', 'after')).toBe('30');
+    expect(() => transcriptPageCursor(page, '10', 'before'))
+      .toThrow('Avalon received a repeated transcript cursor.');
+    expect(() => transcriptPageCursor(page, '30', 'after'))
+      .toThrow('Avalon received a repeated transcript cursor.');
+  });
+});
 
 const copyText = vi.hoisted(() => vi.fn());
 const getRuntimeConfig = vi.hoisted(() => vi.fn());
@@ -73,22 +137,22 @@ function stubElementWidths(widths: { clientWidth: number; scrollWidth: number })
 function headerElement(
   workstream = headerWorkstream,
   overrides: {
-    hypersightOpen?: boolean;
+    blockDashboardOpen?: boolean;
     onRename?: (title: string) => Promise<void>;
-    onToggleHyperSight?: () => void;
+    onToggleBlockDashboard?: () => void;
   } = {},
 ): React.JSX.Element {
   return (
     <Tooltip.Provider>
       <WorkstreamHeader
-        hypersightOpen={overrides.hypersightOpen ?? false}
-        hypersightPreferencePending={false}
+        blockDashboardOpen={overrides.blockDashboardOpen ?? false}
+        blockDashboardPreferencePending={false}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
-        onToggleHyperSight={overrides.onToggleHyperSight ?? vi.fn()}
+        onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
         socketState="connected"
         workstream={workstream}
       />
@@ -174,16 +238,16 @@ describe('WorkstreamHeader origin affordances', () => {
   });
 
   it('shows HyperSight as the open panel while it holds the sidebar', () => {
-    const onToggleHyperSight = vi.fn();
-    renderWorkstreamHeader(headerWorkstream, { hypersightOpen: true, onToggleHyperSight });
+    const onToggleBlockDashboard = vi.fn();
+    renderWorkstreamHeader(headerWorkstream, { blockDashboardOpen: true, onToggleBlockDashboard });
 
-    const hypersight = screen.getByRole('button', { name: 'Hide HyperSight' });
-    expect(hypersight).toHaveAttribute('aria-pressed', 'true');
-    expect(hypersight).toHaveClass('is-active');
+    const blockDashboard = screen.getByRole('button', { name: 'Hide HyperSight' });
+    expect(blockDashboard).toHaveAttribute('aria-pressed', 'true');
+    expect(blockDashboard).toHaveClass('is-active');
     expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
 
-    fireEvent.click(hypersight);
-    expect(onToggleHyperSight).toHaveBeenCalledTimes(1);
+    fireEvent.click(blockDashboard);
+    expect(onToggleBlockDashboard).toHaveBeenCalledTimes(1);
   });
 
   it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
@@ -569,12 +633,12 @@ const transcript: Message[] = [
 
 describe('right sidebar occupancy', () => {
   it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
-    expect(hypersightHoldsSidebar(true, false)).toBe(true);
-    expect(hypersightHoldsSidebar(false, false)).toBe(false);
-    expect(hypersightHoldsSidebar(false, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, false)).toBe(true);
+    expect(blockDashboardHoldsSidebar(false, false)).toBe(false);
+    expect(blockDashboardHoldsSidebar(false, true)).toBe(false);
     // The stored preference can still say "visible" after a rolled-back write;
     // the panel the person just opened keeps the slot regardless.
-    expect(hypersightHoldsSidebar(true, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, true)).toBe(false);
   });
 });
 

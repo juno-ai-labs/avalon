@@ -9,25 +9,85 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 import { newId } from "@avalon/db";
+import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
+import {
+  assertDurableObjectJurisdiction,
+  durableObjectStubForWorkspace,
+} from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
+import { processMemoryIndexOutbox } from "../services/memory-service";
+import { processPendingNotePrivacyNotifications } from "../services/note-privacy-notification-service";
+import { reapDeletedNoteObjects } from "../services/note-resource-cleanup";
+import {
+  reapDeletedResourceObjects,
+  reapExpiredDraftResources,
+} from "../services/resource-object-cleanup";
+import { startWorkstreamWorkflow } from "../services/integrations";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
+import { SlackAgentService } from "../services/slack-agent-service";
+import { refreshSlackWorkstreamUnfurls } from "../services/slack-unfurl-refresh";
+import { reapSettledWorkspaceNotificationIntents } from "../services/workstream-regional-effect-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "../services/workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "../services/terminal/lifecycle";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
+import { workspaceDOName } from "./names";
+import {
+  applyDurableObjectSqliteMigrations,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
-const RETRY_STATES_KEY = "schedulerRetryStates";
 const SCHEDULER_RETRY_BASE_MS = 60_000;
 const SCHEDULER_RETRY_MAX_MS = 30 * 60_000;
+const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+
+export async function runIsolatedSchedulerMaintenance(
+  tasks: readonly (() => Promise<unknown> | unknown)[],
+  onRejected: (error: unknown, index: number) => void,
+): Promise<void> {
+  const results = await Promise.allSettled(tasks.map(async (task) => task()));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") onRejected(result.reason, index);
+  });
+}
+
+export const WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
+  version: 1,
+  description: "workspace scheduler identity and per-target retry gates",
+  statements: [
+    `CREATE TABLE workspace_scheduler_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE scheduler_retry_states (
+      target_key TEXT PRIMARY KEY,
+      attempt INTEGER NOT NULL CHECK (attempt > 0),
+      retry_at INTEGER NOT NULL CHECK (retry_at >= 0),
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+  ],
+}];
 
 const SchedulerRetryStateSchema = z.object({
   attempt: z.number().int().positive(),
@@ -38,12 +98,16 @@ const SchedulerRetryStatesSchema = z.record(z.string(), SchedulerRetryStateSchem
 type SchedulerRetryStates = z.infer<typeof SchedulerRetryStatesSchema>;
 
 interface AlarmTargetRow {
-  target_kind: "schedule" | "watch" | "wakeup" | "terminal";
+  target_kind: "maintenance" | "schedule" | "watch" | "wakeup" | "terminal";
   id: string;
   due_at: string;
 }
 
 interface DueTerminalSandboxRow {
+  workstream_id: string;
+}
+
+interface DueWakeupWorkstreamRow {
   workstream_id: string;
 }
 
@@ -164,13 +228,33 @@ function workflowAlreadyExists(error: unknown): boolean {
 }
 
 /** One serialized alarm coordinator per workspace. */
-export class WorkspaceScheduler {
-  constructor(
-    private readonly state: DurableObjectState,
-    private readonly env: Env
-  ) {}
+export class WorkspaceScheduler extends DurableObject<Env> {
+  private readonly state: DurableObjectState;
+  private readonly initialized: Promise<void>;
 
-  async fetch(request: Request): Promise<Response> {
+  constructor(
+    state: DurableObjectState,
+    env: Env
+  ) {
+    super(state, env);
+    assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
+    this.state = state;
+    this.initialized = state.blockConcurrencyWhile(async () => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS,
+        component: "workspace_scheduler",
+        workerVersionId: env.APP_VERSION ?? "unknown",
+      });
+    });
+  }
+
+  private workspaceEnv(workspaceId: string): Env {
+    return withWorkspaceRuntimeDatabase(this.env, workspaceId);
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    await this.initialized;
     const url = new URL(request.url);
     if (request.method === "POST" && (url.pathname === "/refresh" || url.pathname === "/")) {
       let input: unknown;
@@ -196,7 +280,7 @@ export class WorkspaceScheduler {
 
     if (request.method === "GET" && url.pathname === "/status") {
       return responseJson({
-        workspaceId: (await this.state.storage.get<string>("workspaceId")) ?? null,
+        workspaceId: this.workspaceId(),
         alarmAt: (await this.state.storage.getAlarm()) ?? null
       });
     }
@@ -206,14 +290,25 @@ export class WorkspaceScheduler {
 
   /** RPC-friendly refresh used after every canonical schedule mutation. */
   async refresh(workspaceId: string): Promise<{ alarmAt: string | null }> {
+    await this.initialized;
     const parsedWorkspaceId = IdSchema.parse(workspaceId);
-    const existing = await this.state.storage.get<string>("workspaceId");
+    const existing = this.workspaceId();
     if (existing && existing !== parsedWorkspaceId) {
       throw new Error("scheduler_workspace_mismatch");
     }
-    if (!existing) await this.state.storage.put("workspaceId", parsedWorkspaceId);
+    if (!existing) {
+      const now = Date.now();
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+         VALUES (1, ?, ?, ?)`,
+        parsedWorkspaceId,
+        now,
+        now,
+      );
+    }
 
-    const targets = await this.env.DB.prepare(
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const regionalTargets = await this.workspaceEnv(parsedWorkspaceId).DB.prepare(
       `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
          FROM schedules
         WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL
@@ -222,46 +317,85 @@ export class WorkspaceScheduler {
          FROM resource_watches
         WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
        UNION ALL
-       SELECT 'wakeup' AS target_kind, id, due_at
-         FROM workstream_wakeups
-        WHERE workspace_id = ?1 AND status = 'pending'
+       SELECT 'maintenance' AS target_kind, 'resource_objects' AS id, MIN(created_at) AS due_at
+         FROM resource_object_deletion_outbox WHERE workspace_id = ?1 HAVING COUNT(*) > 0
        UNION ALL
-       SELECT 'terminal' AS target_kind, workstream_id AS id,
-              CASE
-                WHEN state IN ('stopping', 'archiving', 'expiring')
-                  THEN lifecycle_claim_expires_at
-                WHEN expire_due_at IS NOT NULL AND (
-                  (state = 'running' AND (warm_stop_due_at IS NULL OR expire_due_at <= warm_stop_due_at))
-                  OR (state = 'stopped' AND (archive_due_at IS NULL OR expire_due_at <= archive_due_at))
-                  OR state = 'archived'
-                ) THEN expire_due_at
-                WHEN state = 'running' THEN warm_stop_due_at
-                WHEN state = 'stopped' THEN archive_due_at
-                ELSE expire_due_at
-              END AS due_at
-         FROM workstream_sandboxes
-        WHERE workspace_id = ?1
-          AND provider_sandbox_id IS NOT NULL
-          AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-          AND (
-            (state IN ('stopping', 'archiving', 'expiring') AND lifecycle_claim_expires_at IS NOT NULL)
-            OR
-            expire_due_at IS NOT NULL
-            OR (state = 'running' AND warm_stop_due_at IS NOT NULL)
-            OR (state = 'stopped' AND archive_due_at IS NOT NULL)
-          )`
-    )
-      .bind(parsedWorkspaceId)
-      .all<AlarmTargetRow>();
+       SELECT 'maintenance' AS target_kind, 'expired_drafts' AS id,
+              datetime(MIN(created_at), '+24 hours') AS due_at
+         FROM resources
+        WHERE workspace_id = ?1 AND provider = 'avalon_upload'
+          AND attachment_status = 'draft' HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'note_objects' AS id, MIN(created_at) AS due_at
+         FROM note_resource_deletion_outbox HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'note_privacy' AS id, MIN(created_at) AS due_at
+         FROM note_privacy_change_outbox
+        WHERE workspace_id = ?1 AND processed_at IS NULL HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'memory_index' AS id,
+              MIN(CASE WHEN status = 'processing' THEN lease_expires_at ELSE available_at END) AS due_at
+         FROM memory_index_outbox
+        WHERE workspace_id = ?1 AND status != 'completed' HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'slack_ingress' AS id,
+              MIN(CASE
+                WHEN status = 'processing' THEN lease_expires_at
+                WHEN status = 'completed' THEN datetime(completed_at, '+30 days')
+                WHEN status = 'failed' AND attempt_count >= 20 THEN datetime(updated_at, '+30 days')
+                ELSE datetime(updated_at, '+2 minutes') END) AS due_at
+         FROM slack_ingress_jobs WHERE workspace_id = ?1 HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'slack_claims' AS id, MIN(lease_expires_at) AS due_at
+         FROM slack_agent_thread_claims HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'slack_prompts' AS id, MIN(expires_at) AS due_at
+         FROM slack_agent_pending_prompts HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'slack_links' AS id, MIN(expires_at) AS due_at
+         FROM slack_link_challenges HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'slack_unfurls' AS id,
+              datetime(MIN(refreshed_at), '+5 minutes') AS due_at
+         FROM slack_unfurled_links
+        WHERE shared_at >= datetime('now', '-30 days') HAVING COUNT(*) > 0
+       UNION ALL
+       SELECT 'maintenance' AS target_kind, 'notification_intents' AS id,
+              datetime(MIN(updated_at), '+30 days') AS due_at
+         FROM workstream_notification_intents
+        WHERE workspace_id = ?1 AND state IN ('delivered', 'skipped') HAVING COUNT(*) > 0`,
+    ).bind(parsedWorkspaceId).all<AlarmTargetRow>();
+    const workstreamTargets: AlarmTargetRow[] = authority.phase === "durable_object_open"
+      ? (await (await this.workspaceDirectory(parsedWorkspaceId)).workstreamScheduleTargets({
+        workspaceId: parsedWorkspaceId,
+      })).items.map((target) => ({
+        target_kind: target.kind,
+        id: target.workstreamId,
+        due_at: target.dueAt,
+      }))
+      : (await this.env.DB.prepare(
+        `SELECT 'wakeup' AS target_kind, workstream_id AS id, MIN(due_at) AS due_at
+           FROM workstream_wakeups
+          WHERE workspace_id = ?1 AND status = 'pending'
+          GROUP BY workstream_id
+         UNION ALL
+         SELECT 'terminal' AS target_kind, workstream_id AS id,
+                COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) AS due_at
+           FROM workstream_sandboxes
+          WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
+            AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+            AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) IS NOT NULL`,
+      ).bind(parsedWorkspaceId).all<AlarmTargetRow>()).results;
+    const targets = [...regionalTargets.results, ...workstreamTargets];
 
-    if (targets.results.length === 0) {
+    if (targets.length === 0) {
       await this.state.storage.deleteAlarm();
-      await this.state.storage.delete(RETRY_STATES_KEY);
+      this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
       return { alarmAt: null };
     }
 
     const retryStates = await this.loadRetryStates();
-    const activeKeys = new Set(targets.results.map((target) => retryStateKey(target.target_kind, target.id)));
+    const activeKeys = new Set(targets.map((target) => retryStateKey(target.target_kind, target.id)));
     let retryStatesChanged = false;
     for (const key of Object.keys(retryStates)) {
       if (activeKeys.has(key)) continue;
@@ -270,7 +404,7 @@ export class WorkspaceScheduler {
     }
 
     let earliestEffectiveAt = Number.POSITIVE_INFINITY;
-    for (const target of targets.results) {
+    for (const target of targets) {
       const dueAt = Date.parse(target.due_at);
       if (!Number.isFinite(dueAt)) throw new Error("invalid_next_run_at");
       const retryAt = retryStates[retryStateKey(target.target_kind, target.id)]?.retryAt ?? 0;
@@ -283,16 +417,27 @@ export class WorkspaceScheduler {
     return { alarmAt: new Date(alarmAt).toISOString() };
   }
 
-  async alarm(): Promise<void> {
-    const workspaceId = await this.state.storage.get<string>("workspaceId");
+  override async alarm(): Promise<void> {
+    await this.initialized;
+    const workspaceId = this.workspaceId();
     if (!workspaceId) return;
+
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
+      return;
+    }
 
     try {
       const now = new Date();
       const retryStates = await this.loadRetryStates();
       let retryStatesChanged = false;
+      const workspaceDirectory = authority.phase === "durable_object_open"
+        ? await this.workspaceDirectory(workspaceId)
+        : null;
+      const workspaceEnv = this.workspaceEnv(workspaceId);
       const [due, dueWatches, dueWakeups, dueTerminalSandboxes] = await Promise.all([
-        this.env.DB.prepare(
+        workspaceEnv.DB.prepare(
           `SELECT *
              FROM schedules
             WHERE workspace_id = ?1
@@ -304,7 +449,7 @@ export class WorkspaceScheduler {
         )
           .bind(workspaceId, now.toISOString())
           .all<ScheduleRow>(),
-        this.env.DB.prepare(
+        workspaceEnv.DB.prepare(
           `SELECT id, workspace_id, connection_id, next_poll_at
              FROM resource_watches
             WHERE workspace_id = ?1
@@ -316,39 +461,64 @@ export class WorkspaceScheduler {
         )
           .bind(workspaceId, now.toISOString())
           .all<ResourceWatchRow>(),
-        this.env.DB.prepare(
-          `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-                  due_at, status, version, created_at
-             FROM workstream_wakeups
-            WHERE workspace_id = ?1
-              AND status = 'pending'
-              AND due_at <= ?2
-            ORDER BY due_at ASC
-            LIMIT 100`
-        )
+        authority.phase === "durable_object_open"
+          ? Promise.resolve({ results: [] as DueWakeupWorkstreamRow[] })
+          : this.env.DB.prepare(`SELECT workstream_id
+               FROM workstream_wakeups
+              WHERE workspace_id = ?1 AND status = 'pending' AND due_at <= ?2
+              GROUP BY workstream_id ORDER BY MIN(due_at), workstream_id LIMIT 100`)
           .bind(workspaceId, now.toISOString())
-          .all<WorkstreamWakeupRow>(),
-        this.env.DB.prepare(
-          `SELECT workstream_id
-             FROM workstream_sandboxes
-            WHERE workspace_id = ?1
-              AND provider_sandbox_id IS NOT NULL
-              AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-              AND (
-                (state IN ('stopping', 'archiving', 'expiring')
-                  AND lifecycle_claim_expires_at IS NOT NULL
-                  AND lifecycle_claim_expires_at <= ?2)
-                OR
-                (state = 'running' AND warm_stop_due_at IS NOT NULL AND warm_stop_due_at <= ?2)
-                OR (state = 'stopped' AND archive_due_at IS NOT NULL AND archive_due_at <= ?2)
-                OR (expire_due_at IS NOT NULL AND expire_due_at <= ?2)
-              )
-            ORDER BY COALESCE(expire_due_at, archive_due_at, warm_stop_due_at) ASC
-            LIMIT 100`,
-        )
+          .all<DueWakeupWorkstreamRow>(),
+        workspaceDirectory
+          ? workspaceDirectory.dueWorkstreamDirectory({
+            workspaceId,
+            kind: "terminal",
+            through: now.toISOString(),
+            limit: 100,
+          }).then((ids) => ({ results: ids.map((workstream_id) => ({ workstream_id })) }))
+          : this.env.DB.prepare(`SELECT workstream_id
+               FROM workstream_sandboxes
+              WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
+                AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+                AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) <= ?2
+              ORDER BY COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at), workstream_id
+              LIMIT 100`)
           .bind(workspaceId, now.toISOString())
           .all<DueTerminalSandboxRow>()
       ]);
+
+      // These rows are owned by WorkspaceDO; the scheduler supplies only the
+      // alarm/egress execution edge. Each worker is idempotent and retains a
+      // failed row, so refresh below re-arms the exact workspace without a
+      // fleet-wide D1 scan.
+      if (this.env.WORKSPACE_DOS) {
+        const maintenanceKinds = [
+          "note_object_reaper",
+          "resource_object_reaper",
+          "draft_resource_reaper",
+          "memory_index_outbox",
+          "note_privacy_notifications",
+          "notification_intent_reaper",
+          "slack_ingress",
+          "slack_unfurl_refresh",
+        ] as const;
+        await runIsolatedSchedulerMaintenance([
+          () => reapDeletedNoteObjects(workspaceEnv, workspaceId),
+          () => reapDeletedResourceObjects(workspaceEnv, workspaceId),
+          () => reapExpiredDraftResources(workspaceEnv, workspaceId),
+          () => processMemoryIndexOutbox(workspaceEnv, 50, workspaceId),
+          () => processPendingNotePrivacyNotifications(workspaceEnv),
+          () => reapSettledWorkspaceNotificationIntents(workspaceEnv, workspaceId),
+          () => new SlackAgentService(workspaceEnv).maintainIngress(100, workspaceId),
+          () => refreshSlackWorkstreamUnfurls(workspaceEnv, workspaceId),
+        ], (error, index) => {
+          logStructuredEvent(this.env, "warn", "workspace_scheduler_maintenance_failed", {
+            workspace_id: workspaceId,
+            maintenance_kind: maintenanceKinds[index] ?? "unknown",
+            code: error instanceof Error ? error.message : "unknown_error",
+          });
+        });
+      }
 
       for (const schedule of due.results) {
         const key = retryStateKey("schedule", schedule.id);
@@ -394,11 +564,25 @@ export class WorkspaceScheduler {
         }
       }
 
-      for (const wakeup of dueWakeups.results) {
-        const key = retryStateKey("wakeup", wakeup.id);
+      for (const dueWorkstream of dueWakeups.results) {
+        const executionEnv = await workstreamExecutionEnvironment(
+          workspaceEnv,
+          workspaceId,
+          dueWorkstream.workstream_id,
+        );
+        const wakeup = await executionEnv.DB.prepare(
+          `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+                  due_at, status, version, created_at
+             FROM workstream_wakeups
+            WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
+              AND due_at <= ? ORDER BY due_at, id LIMIT 1`,
+        ).bind(workspaceId, dueWorkstream.workstream_id, now.toISOString())
+          .first<WorkstreamWakeupRow>();
+        if (!wakeup) continue;
+        const key = retryStateKey("wakeup", dueWorkstream.workstream_id);
         if ((retryStates[key]?.retryAt ?? 0) > now.getTime()) continue;
         try {
-          await fireWorkstreamWakeup(this.env, wakeup);
+          await fireWorkstreamWakeup(executionEnv, wakeup);
           if (retryStates[key]) {
             delete retryStates[key];
             retryStatesChanged = true;
@@ -426,14 +610,19 @@ export class WorkspaceScheduler {
           if (!terminalProvider) {
             throw new Error("terminal_provider_unavailable");
           }
+          const executionEnv = await workstreamExecutionEnvironment(
+            workspaceEnv,
+            workspaceId,
+            sandbox.workstream_id,
+          );
           const result = await reconcileDueTerminalSandbox(
-            this.env.DB,
+            executionEnv.DB,
             terminalProvider,
             workspaceId,
             sandbox.workstream_id,
             now,
             createTerminalFinalDiffPreserver(
-              this.env,
+              executionEnv,
               terminalProvider,
               workspaceId,
               sandbox.workstream_id,
@@ -496,22 +685,63 @@ export class WorkspaceScheduler {
   }
 
   private async loadRetryStates(): Promise<SchedulerRetryStates> {
-    const parsed = SchedulerRetryStatesSchema.safeParse(
-      await this.state.storage.get(RETRY_STATES_KEY)
-    );
+    await this.initialized;
+    const raw = Object.fromEntries(this.state.storage.sql.exec<{
+      target_key: string;
+      attempt: number;
+      retry_at: number;
+    }>(`SELECT target_key, attempt, retry_at FROM scheduler_retry_states ORDER BY target_key`)
+      .toArray()
+      .map((row) => [row.target_key, { attempt: row.attempt, retryAt: row.retry_at }]));
+    const parsed = SchedulerRetryStatesSchema.safeParse(raw);
     return parsed.success ? { ...parsed.data } : {};
   }
 
   private async saveRetryStates(retryStates: SchedulerRetryStates): Promise<void> {
-    if (Object.keys(retryStates).length === 0) {
-      await this.state.storage.delete(RETRY_STATES_KEY);
-      return;
-    }
-    await this.state.storage.put(RETRY_STATES_KEY, retryStates);
+    await this.initialized;
+    const now = Date.now();
+    // Reconcile rather than rewrite: the alarm loop saves the whole map after
+    // each failing target, so a delete-all-and-reinsert rewrote every
+    // unchanged gate once per failure. Upserts guarded on actual change and a
+    // targeted delete of vanished keys make an unchanged gate a no-op.
+    this.state.storage.transactionSync(() => {
+      const keys = Object.keys(retryStates);
+      if (keys.length === 0) {
+        this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
+        return;
+      }
+      const placeholders = keys.map(() => "?").join(", ");
+      this.state.storage.sql.exec(
+        `DELETE FROM scheduler_retry_states WHERE target_key NOT IN (${placeholders})`,
+        ...keys,
+      );
+      for (const [targetKey, retry] of Object.entries(retryStates)) {
+        this.state.storage.sql.exec(
+          `INSERT INTO scheduler_retry_states(target_key, attempt, retry_at, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(target_key) DO UPDATE SET
+             attempt = excluded.attempt, retry_at = excluded.retry_at,
+             updated_at = excluded.updated_at
+           WHERE excluded.attempt != scheduler_retry_states.attempt
+              OR excluded.retry_at != scheduler_retry_states.retry_at`,
+          targetKey,
+          retry.attempt,
+          retry.retryAt,
+          now,
+        );
+      }
+    });
+  }
+
+  private workspaceId(): string | null {
+    return this.state.storage.sql.exec<{ workspace_id: string }>(
+      `SELECT workspace_id FROM workspace_scheduler_state WHERE id = 1`,
+    ).toArray()[0]?.workspace_id ?? null;
   }
 
   private async runSchedule(schedule: ScheduleRow, now: Date): Promise<void> {
     const nextRunAt = calculateNextOccurrence(schedule, now);
+    const workspaceEnv = this.workspaceEnv(schedule.workspace_id);
 
     if (schedule.automation_subscription_id) {
       await this.startAutomation(schedule, now);
@@ -522,7 +752,7 @@ export class WorkspaceScheduler {
       // rows carry the same digest at different times of day, and the delivery's
       // uniqueness on (schedule, planned_for) is what makes a retried alarm
       // resolve to the attempt already in flight.
-      await fireDigestSchedule(this.env, {
+      await fireDigestSchedule(workspaceEnv, {
         scheduleId: schedule.digest_schedule_id,
         workspaceId: schedule.workspace_id,
         plannedFor: schedule.next_run_at,
@@ -531,7 +761,7 @@ export class WorkspaceScheduler {
       throw new Error("unsupported_schedule_target");
     }
 
-    const advanced = await this.env.DB.prepare(
+    const advanced = await workspaceEnv.DB.prepare(
       `UPDATE schedules
           SET last_run_at = ?1,
               next_run_at = ?2,
@@ -561,7 +791,7 @@ export class WorkspaceScheduler {
     }
 
     if (schedule.automation_subscription_id) {
-      await this.env.DB.prepare(
+      await workspaceEnv.DB.prepare(
         `UPDATE automation_subscriptions
             SET last_run_at = ?1, next_run_at = ?2, updated_at = ?1
           WHERE id = ?3 AND workspace_id = ?4`
@@ -575,8 +805,10 @@ export class WorkspaceScheduler {
     const subscriptionId = schedule.automation_subscription_id;
     if (!subscriptionId) throw new Error("missing_automation_subscription");
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const workspaceEnv = this.workspaceEnv(schedule.workspace_id);
 
-    const source = await this.env.DB.prepare(
+    const source = await workspaceEnv.DB.prepare(
       `SELECT s.id AS subscription_id,
               s.execution_principal_json,
               s.model_override,
@@ -597,7 +829,7 @@ export class WorkspaceScheduler {
     if (!source) throw new Error("automation_subscription_unavailable");
     const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
 
-    let run = await this.env.DB.prepare(
+    let run = await workspaceEnv.DB.prepare(
       `SELECT id, workstream_id, status, workflow_instance_id
          FROM automation_runs
         WHERE automation_subscription_id = ?1 AND planned_for = ?2
@@ -607,22 +839,33 @@ export class WorkspaceScheduler {
       .first<AutomationRunRow>();
 
     if (!run) {
-      const planned = await this.env.DB.prepare(
-        `SELECT id, automation_run_id
+      const planned = authority.phase === "durable_object_open"
+        ? await (await this.workspaceDirectory(schedule.workspace_id)).plannedWorkstream({
+          workspaceId: schedule.workspace_id,
+          userId: null,
+          automationSubscriptionId: subscriptionId,
+          plannedFor: schedule.next_run_at,
+        }).then((workstream) => workstream ? ({
+          id: workstream.id,
+          automation_run_id: workstream.automationRunId,
+        }) : null)
+        : await this.env.DB.prepare(`SELECT id, automation_run_id
            FROM workstreams
           WHERE workspace_id = ?1
             AND automation_subscription_id = ?2
             AND planned_for = ?3
             AND archived_at IS NULL
-          LIMIT 1`
-      )
+          LIMIT 1`)
         .bind(schedule.workspace_id, subscriptionId, schedule.next_run_at)
         .first<PlannedWorkstreamRow>();
 
-      const workstreamId = planned?.id ?? crypto.randomUUID();
+      const workstreamId = planned?.id ?? uuidV7(now.getTime());
       const createdWorkstreamId = planned ? null : workstreamId;
-      const runId = crypto.randomUUID();
+      const runId = uuidV7(now.getTime());
       const timestamp = now.toISOString();
+      const executionEnv = planned
+        ? await workstreamExecutionEnvironment(workspaceEnv, schedule.workspace_id, workstreamId)
+        : await bootstrapWorkstreamRuntimeEnvironment(workspaceEnv, schedule.workspace_id, workstreamId);
 
       if (!planned) {
         const emailRoute = await emailRouting.reserve({
@@ -630,7 +873,7 @@ export class WorkspaceScheduler {
           workspaceId: schedule.workspace_id,
           workstreamId,
         });
-        await this.env.DB.prepare(
+        await executionEnv.DB.prepare(
           `INSERT INTO workstreams (
              id, workspace_id, title, objective, email_address, email_route_status, origin_type,
              created_by_user_id, automation_subscription_id, automation_run_id,
@@ -660,7 +903,7 @@ export class WorkspaceScheduler {
           .run();
       }
 
-      const inserted = await this.env.DB.prepare(
+      const inserted = await workspaceEnv.DB.prepare(
         `INSERT OR IGNORE INTO automation_runs (
            id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
            trigger_activity_id, planned_for, started_at, completed_at, status,
@@ -671,7 +914,7 @@ export class WorkspaceScheduler {
         .run();
 
       if (changes(inserted) === 0) {
-        run = await this.env.DB.prepare(
+        run = await workspaceEnv.DB.prepare(
           `SELECT id, workstream_id, status, workflow_instance_id
              FROM automation_runs
             WHERE automation_subscription_id = ?1 AND planned_for = ?2
@@ -679,7 +922,11 @@ export class WorkspaceScheduler {
         )
           .bind(subscriptionId, schedule.next_run_at)
           .first<AutomationRunRow>();
-        if (createdWorkstreamId && run?.workstream_id !== createdWorkstreamId) {
+        if (
+          authority.phase !== "durable_object_open"
+          && createdWorkstreamId
+          && run?.workstream_id !== createdWorkstreamId
+        ) {
           // A concurrent scheduler won the unique run claim. The losing Global
           // address remains a permanent non-routable reservation tombstone.
           await this.env.DB.prepare(
@@ -694,7 +941,7 @@ export class WorkspaceScheduler {
           status: "running",
           workflow_instance_id: null
         };
-        await this.env.DB.prepare(
+        await executionEnv.DB.prepare(
           `UPDATE workstreams
               SET automation_run_id = ?1, harness_status = 'running', updated_at = ?2
             WHERE id = ?3 AND workspace_id = ?4`
@@ -728,7 +975,6 @@ export class WorkspaceScheduler {
       principal,
       now
     );
-    const workflowId = `automation-${run.id}`;
     const input: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
       region: RegionSchema.parse(this.env.AVALON_REGION),
       workspaceId: schedule.workspace_id,
@@ -741,22 +987,21 @@ export class WorkspaceScheduler {
       reason: `Scheduled automation: ${source.template_name}`
     });
 
-    try {
-      await this.env.WORKSTREAM_LOOP_WORKFLOW.create({ id: workflowId, params: input });
-    } catch (error) {
-      if (!workflowAlreadyExists(error)) throw error;
-    }
+    const workflowId = await startWorkstreamWorkflow(workspaceEnv, input);
 
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE automation_runs
-            SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
-          WHERE id = ?3 AND workspace_id = ?4`
-      ).bind(workflowId, now.toISOString(), run.id, schedule.workspace_id),
-      this.env.DB.prepare(
-        `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-      ).bind(workflowId, harnessRunId, schedule.workspace_id)
-    ]);
+    await workspaceEnv.DB.prepare(
+      `UPDATE automation_runs
+          SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
+        WHERE id = ?3 AND workspace_id = ?4`,
+    ).bind(workflowId, now.toISOString(), run.id, schedule.workspace_id).run();
+    const executionEnv = await workstreamExecutionEnvironment(
+      workspaceEnv,
+      schedule.workspace_id,
+      run.workstream_id,
+    );
+    await executionEnv.DB.prepare(
+      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, harnessRunId, schedule.workspace_id).run();
   }
 
   private async ensureHarnessRun(
@@ -765,7 +1010,12 @@ export class WorkspaceScheduler {
     executionPrincipal: z.infer<typeof ExecutionPrincipalSchema>,
     now: Date
   ): Promise<string> {
-    const existing = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.workspaceEnv(workspaceId),
+      workspaceId,
+      workstreamId,
+    );
+    const existing = await executionEnv.DB.prepare(
       `SELECT id
          FROM harness_runs
         WHERE workspace_id = ?1
@@ -780,9 +1030,9 @@ export class WorkspaceScheduler {
       .first<{ id: string }>();
     if (existing) return existing.id;
 
-    const id = crypto.randomUUID();
-    const model = await scheduledWorkstreamModelForExisting(this.env, { workspaceId, workstreamId });
-    await this.env.DB.prepare(
+    const id = uuidV7(now.getTime());
+    const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
+    await executionEnv.DB.prepare(
       `INSERT INTO harness_runs (
        id, workspace_id, workstream_id, origin, execution_principal_json,
          workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,
@@ -822,7 +1072,8 @@ export class WorkspaceScheduler {
   }
 
   private async runResourceWatch(watch: ResourceWatchRow, now: Date): Promise<void> {
-    const connection = await this.env.DB.prepare(
+    const workspaceDatabase = this.workspaceEnv(watch.workspace_id).DB;
+    const connection = await workspaceDatabase.prepare(
       `SELECT config_json
          FROM connector_connections
         WHERE id = ?1 AND workspace_id = ?2 AND status <> 'disabled'
@@ -855,7 +1106,7 @@ export class WorkspaceScheduler {
       // Preserve the conservative default for malformed legacy configuration.
     }
     const nextPollAt = new Date(now.getTime() + intervalSeconds * 1_000).toISOString();
-    await this.env.DB.prepare(
+    await workspaceDatabase.prepare(
       `UPDATE resource_watches
           SET next_poll_at = ?1, updated_at = ?2
         WHERE id = ?3 AND workspace_id = ?4 AND next_poll_at = ?5 AND enabled = 1`
@@ -873,13 +1124,22 @@ export class WorkspaceScheduler {
        ) VALUES (?1, ?2, 'system', NULL, NULL, 'schedule.failed', 'schedule', ?3, ?4, ?5)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         schedule.workspace_id,
         schedule.id,
         JSON.stringify({ code: "schedule_execution_failed", message: message.slice(0, 500) }),
         new Date().toISOString()
       )
       .run();
+  }
+
+  private workspaceDirectory(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+    );
   }
 
   private async recordWakeupFailure(wakeup: WorkstreamWakeupRow, error: unknown): Promise<void> {
@@ -892,7 +1152,7 @@ export class WorkspaceScheduler {
                  'workstream_wakeup', ?4, ?5, ?6)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         wakeup.workspace_id,
         wakeup.workstream_id,
         wakeup.id,
@@ -912,7 +1172,7 @@ export class WorkspaceScheduler {
                  'resource_watch', ?3, ?4, ?5)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         watch.workspace_id,
         watch.id,
         JSON.stringify({ code: "resource_watch_poll_failed", message: message.slice(0, 500) }),
