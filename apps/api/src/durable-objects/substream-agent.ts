@@ -213,6 +213,10 @@ const AUTHORIZATION_REVALIDATE_MS = 30_000;
 const BLOCK_DASHBOARD_DEBOUNCE_MS = 1_200;
 const BLOCK_DASHBOARD_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+// Generous by design — the 10 GB object ceiling is the only hard bound. Spent
+// dispatch and wake-up rows this old are consumed intents whose idempotency
+// windows closed with their runs; the runs table keeps the durable record.
+const OPERATIONAL_FENCE_RETENTION_MS = 180 * 24 * 60 * 60_000;
 /** Matches the Agents SDK default, while keeping Avalon independent of it. */
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
@@ -946,6 +950,28 @@ export class SubstreamAgent extends DurableObject<Env> {
       now,
       now,
       now,
+    );
+    // Generous operational-fence retention (the 10 GB object ceiling is the
+    // only hard bound): a terminal dispatch is a consumed execution intent —
+    // the run row itself is the durable record — and a fired or cancelled
+    // wake-up is a spent one-shot whose idempotency window has long closed.
+    this.state.storage.sql.exec(
+      `DELETE FROM agent_run_dispatches
+        WHERE run_id IN (
+          SELECT run_id FROM agent_run_dispatches
+           WHERE state IN ('completed', 'failed') AND updated_at < ?
+           ORDER BY updated_at LIMIT 100
+        )`,
+      now - OPERATIONAL_FENCE_RETENTION_MS,
+    );
+    this.state.storage.sql.exec(
+      `DELETE FROM workstream_wakeups
+        WHERE wakeup_id IN (
+          SELECT wakeup_id FROM workstream_wakeups
+           WHERE status IN ('fired', 'cancelled') AND updated_at < ?
+           ORDER BY updated_at LIMIT 100
+        )`,
+      now - OPERATIONAL_FENCE_RETENTION_MS,
     );
     await this.ensureAlarmNoLaterThan(now + 1);
     this.resumeRunDrain();

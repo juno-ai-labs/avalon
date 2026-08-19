@@ -51,7 +51,15 @@ const WORKSTREAM_SCHEMA_V1 = [
     created_at INTEGER NOT NULL,
     acked_at INTEGER,
     CHECK ((payload_json IS NULL) != (payload_ref IS NULL)),
-    CHECK (payload_json IS NULL OR json_valid(payload_json))
+    CHECK (payload_json IS NULL OR json_valid(payload_json)),
+    -- Matches the receiving parent's payload bound (just under the platform's
+    -- 2 MB SQL row ceiling — a per-row BYTE limit, so the guard measures
+    -- bytes; length() on TEXT counts characters and undercounts multibyte
+    -- JSON). An effect too large for the parent must fail HERE, in the
+    -- producing transaction, where the producer can shrink it — not at the
+    -- parent, where the committed outbox row would retry the same oversized
+    -- envelope forever.
+    CHECK (payload_json IS NULL OR length(CAST(payload_json AS BLOB)) <= 1900000)
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS durable_outbox_delivery_idx
      ON durable_outbox(state, not_before, created_at)`,
@@ -182,22 +190,6 @@ const WORKSTREAM_SCHEMA_V1 = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS participants_status_idx
      ON participants(status, participation_reason, user_id)`,
-  `CREATE TABLE IF NOT EXISTS grant_sessions (
-    grant_id TEXT PRIMARY KEY,
-    grant_hash TEXT NOT NULL UNIQUE,
-    user_id TEXT NOT NULL,
-    membership_epoch INTEGER NOT NULL,
-    authority_epoch INTEGER NOT NULL,
-    scope_epoch INTEGER NOT NULL,
-    source_authorization_epoch INTEGER NOT NULL,
-    session_id TEXT NOT NULL,
-    issued_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    revoked_at INTEGER
-  ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS grant_sessions_user_expiry_idx
-     ON grant_sessions(user_id, expires_at)`,
-  `CREATE INDEX IF NOT EXISTS grant_sessions_expiry_idx ON grant_sessions(expires_at)`,
   `CREATE TABLE IF NOT EXISTS content_refs (
     content_ref_id TEXT PRIMARY KEY,
     storage_kind TEXT NOT NULL CHECK (storage_kind = 'r2'),
@@ -311,6 +303,10 @@ const WORKSTREAM_SCHEMA_V1 = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS runs_status_idx ON runs(status, updated_at)`,
   `CREATE INDEX IF NOT EXISTS runs_substream_idx ON runs(substream_id, updated_at)`,
+  // Detail reads walk runs newest-first (latest run, background-task page);
+  // without these the walk is a full scan + sort that grows with run history.
+  `CREATE INDEX IF NOT EXISTS runs_recency_idx ON runs(created_at DESC, run_id DESC)`,
+  `CREATE INDEX IF NOT EXISTS runs_started_idx ON runs(started_at DESC)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS runs_mutating_substream_uq
      ON runs(substream_id)
      WHERE status IN ('running', 'waiting', 'steering')`,
@@ -522,6 +518,12 @@ const WORKSTREAM_SCHEMA_V1 = [
   `CREATE INDEX IF NOT EXISTS parts_pending_input_idx
      ON parts(substream_id, sequence_number)
      WHERE role = 'user' AND turn_id IS NULL`,
+  // The HyperSight context fence asks for the earliest pending tool call on
+  // every refresh-eligible event; pending rows are few, so the partial index
+  // answers MIN() without ranging over the whole transcript.
+  `CREATE INDEX IF NOT EXISTS parts_pending_tool_fence_idx
+     ON parts(substream_id, sequence_number)
+     WHERE kind = 'tool_call' AND tool_status = 'pending'`,
   `CREATE INDEX IF NOT EXISTS parts_compaction_idx
      ON parts(substream_id, projection_key, compacts_through_sequence)
      WHERE kind = 'compaction_complete'`,
@@ -571,17 +573,6 @@ const WORKSTREAM_SCHEMA_V1 = [
     last_seen_at INTEGER NOT NULL,
     version INTEGER NOT NULL CHECK (version >= 0),
     updated_at INTEGER NOT NULL
-  ) STRICT`,
-  `CREATE TABLE IF NOT EXISTS run_events (
-    run_id TEXT NOT NULL REFERENCES runs(run_id),
-    attempt_epoch INTEGER NOT NULL,
-    event_seq INTEGER NOT NULL,
-    event_kind TEXT NOT NULL,
-    through_frame_seq INTEGER NOT NULL,
-    payload_hash TEXT NOT NULL,
-    semantic_part_id TEXT REFERENCES parts(id),
-    received_at INTEGER NOT NULL,
-    PRIMARY KEY (run_id, attempt_epoch, event_seq)
   ) STRICT`,
   `CREATE TABLE IF NOT EXISTS tool_effects (
     effect_intent_id TEXT PRIMARY KEY,
@@ -907,18 +898,6 @@ const WORKSTREAM_SCHEMA_V1 = [
     revision INTEGER NOT NULL CHECK (revision >= 0),
     updated_at INTEGER NOT NULL
   ) STRICT`,
-  `CREATE TABLE IF NOT EXISTS legacy_artifacts (
-    artifact_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES runs(run_id) ON DELETE SET NULL,
-    artifact_type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    content_ref TEXT,
-    preview_text TEXT,
-    status TEXT NOT NULL,
-    metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  ) STRICT`,
   `CREATE TABLE IF NOT EXISTS elicitation_requests (
     elicitation_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -953,7 +932,7 @@ const WORKSTREAM_SCHEMA_V1 = [
     prompt TEXT NOT NULL,
     trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
     run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    status TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'stopped')),
     markdown TEXT,
     error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
     created_at INTEGER NOT NULL,
@@ -967,22 +946,6 @@ const WORKSTREAM_SCHEMA_V1 = [
     visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
     updated_at INTEGER NOT NULL
   ) STRICT`,
-  `CREATE TABLE IF NOT EXISTS activity_delivery_receipts (
-    delivery_id TEXT PRIMARY KEY,
-    activity_id TEXT NOT NULL,
-    source_revision TEXT NOT NULL,
-    source_authorization_epoch INTEGER NOT NULL,
-    authorization_selector_hash TEXT NOT NULL,
-    request_hash TEXT NOT NULL,
-    incorporated_part_id TEXT REFERENCES parts(id),
-    result_code TEXT NOT NULL,
-    received_at INTEGER NOT NULL
-  ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS activity_delivery_source_idx
-     ON activity_delivery_receipts(activity_id, source_revision)`,
-  `CREATE INDEX IF NOT EXISTS activity_delivery_part_idx
-     ON activity_delivery_receipts(incorporated_part_id)
-     WHERE incorporated_part_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS suggested_actions (
     action_id TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version > 0),
@@ -1054,23 +1017,6 @@ const WORKSTREAM_SCHEMA_V1 = [
     updated_at INTEGER NOT NULL,
     CHECK (projection_key = 'common' OR projection_key GLOB 'user:*')
   ) STRICT`,
-  `CREATE TABLE IF NOT EXISTS workstream_events (
-    event_seq INTEGER PRIMARY KEY,
-    event_id TEXT NOT NULL UNIQUE,
-    recipient_user_id TEXT,
-    kind TEXT NOT NULL,
-    run_id TEXT REFERENCES runs(run_id),
-    attempt_epoch INTEGER,
-    payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
-  ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS workstream_events_recipient_idx
-     ON workstream_events(recipient_user_id, event_seq)`,
-  `CREATE INDEX IF NOT EXISTS workstream_events_expiry_idx
-     ON workstream_events(expires_at, event_seq)`,
-  `CREATE INDEX IF NOT EXISTS workstream_events_run_idx
-     ON workstream_events(run_id, event_seq) WHERE run_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS realtime_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
