@@ -126,32 +126,27 @@ describe('no colour is written into app.css', () => {
   });
 
   /**
-   * The navigation's width and the room it occupies are different numbers.
+   * The navigation's tint is applied exactly once.
    *
-   * `--sidebar-width` is the floating panel; `--sidebar-slot` is that plus the
-   * gutter on either side of it. A rule that sits beside the navigation and
-   * measures the width overlaps the panel by twice the inset — 16px, which
-   * reads as a rendering glitch rather than as a layout bug, and only in themes
-   * whose inset is non-zero. Two places may name the width: the derivation
-   * itself, and the panel's own `width`.
+   * `--sidebar` is translucent, so a second element painting it over a surface
+   * that already carries it composites twice and comes out visibly darker. The
+   * account row at the foot of the navigation did exactly that, and it is the
+   * shape anything added inside the sidebar will reach for. Only the panel
+   * itself may name the token.
    */
-  it('measures the navigation slot rather than the panel width', () => {
+  it('paints the translucent navigation tint once', () => {
     const offenders = app
       .replace(/\/\*[\s\S]*?\*\//gu, ' ')
-      .split('\n')
-      .filter((line) => line.includes('var(--sidebar-width)'))
-      .filter((line) => !line.includes('--sidebar-slot:') && !/^\s*width: var\(--sidebar-width\);/u.test(line))
-      .map((line) => line.trim().slice(0, 80));
+      .split('}')
+      .filter((block) => /background(-color)?\s*:\s*var\(--sidebar\)/u.test(block))
+      .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '')
+      // The Settings preview is the one legitimate second painter: it
+      // composites the tint over the offered theme's own `--canvas`, which is
+      // what the real navigation does over the shell, rather than over a
+      // surface already carrying it.
+      .filter((selector) => selector !== '.sidebar' && selector !== '.settings-theme-swatch-sidebar');
 
     expect(offenders).toEqual([]);
-  });
-
-  // The derivation has to live where the resize handle writes the width, or it
-  // freezes at the default and nothing looks wrong until someone drags.
-  it('derives the slot on the element the resize handle writes to', () => {
-    const shell = app.slice(app.indexOf('.workspace-shell {'), app.indexOf('}', app.indexOf('.workspace-shell {')));
-
-    expect(shell).toContain('--sidebar-slot:');
   });
 
   // The guard has to be able to see one, or it is asserting that its own

@@ -91,8 +91,7 @@ it. `--brand-on` is the dark text that goes on a chartreuse fill. `green` carrie
 `--green-fill` and `--green-fill-edge` for a filled control — a switch that is
 on, a selected preset — which is neither the vivid hue nor the wash.
 
-The rest is geometry (`--radius-*`), density (`--sidebar-width`,
-`--sidebar-inset`, `--sidebar-radius`, `--sidebar-shadow`, `--row-height`,
+The rest is geometry (`--radius-*`), density (`--sidebar-width`, `--row-height`,
 `--control-height`, `--pane-pad`, `--stack-gap`, `--feed-width`,
 `--feed-width-wide`, `--feed-pad-x`, `--feed-pad-y`), type (`--font-*`,
 `--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
@@ -104,31 +103,29 @@ light on a dark theme and dark on a light one, so it cannot be a ramp step in
 either.
 
 `--canvas-wash` is a `background-image` rather than a colour, painted on `body`,
-`.workspace-shell`, and `.main-pane`. Most themes set it to `none`; Airy uses it
-for the light in the corner, which no single element could own.
+`.workspace-shell`, and `.main-pane`, always with `background-attachment: fixed`
+so every copy is anchored to the viewport and stays in register with the others.
+Most themes set it to `none`; Airy uses it for the light in the corner, which no
+single element could own.
 
-### The navigation floats
+### The navigation is translucent
 
-The sidebar is a panel over the background rather than a column bolted to the
-window edge: `--sidebar-inset` is the gutter of `--canvas` left around it on
-three sides, and it mirrors the right rail's own 8px so the two read as the same
-kind of object. `--sidebar-radius` and `--sidebar-shadow` finish it.
+`--sidebar` is a translucent tint rather than an opaque colour, so the
+background and whatever light a theme casts across it read through the
+navigation. `.workspace-shell` paints `--canvas` for that reason — it is what
+shows through, and painting `--surface` there would put the content pane's tone
+behind the navigation instead of the page's.
 
-That makes the room the navigation occupies *wider* than the panel, so there is
-one derived token for it:
+Two states translucency cannot serve have tokens of their own:
 
-```css
---sidebar-slot: calc(var(--sidebar-width) + var(--sidebar-inset) * 2);
-```
+| Token | Why it is not the tint |
+| --- | --- |
+| `--sidebar-solid` | The narrow-width drawer sits *over* the content. A see-through drawer shows the work stream through the navigation. |
+| `--sidebar-edge` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Airy does. |
 
-Everything that sits beside the navigation — the main pane's margin, the right
-rail's width cap, the automation composer's centring — measures the slot.
-`--sidebar-width` is now only ever the panel's own width.
-
-`--sidebar-slot` is declared on `.workspace-shell`, not on `:root`, because the
-resize handle writes `--sidebar-width` onto that element as an inline style. A
-copy on the root would keep answering 300px however wide the person had dragged
-it, and nothing would look wrong until someone resized.
+Nothing drawn inside the sidebar may paint `--sidebar` again: the tint is
+already on the surface beneath it, and applying it twice is visibly darker. The
+account row at the foot of the navigation paints `transparent` for this reason.
 
 ### The themes
 
@@ -177,10 +174,6 @@ next report.
   back onto the neutral ramp re-creates the coupling the split exists to remove,
   and does it silently — it looks right in whichever theme it was written
   against. A test rejects any `border` or `outline` declaration naming `--n-*`.
-- **Anything beside the navigation measures `--sidebar-slot`, never
-  `--sidebar-width`.** The second is the panel; the first is the panel plus its
-  gutter. Using the width leaves an element overlapping the sidebar by twice the
-  inset, which at 8px reads as a rendering glitch rather than as a layout bug.
 - **A focus border stays visible in every theme.** `--line-6` is the one step
   Airy does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
@@ -231,12 +224,6 @@ reads a stylesheet.
   `--shadow-sm` lift, and the state is also conveyed by its position and by the
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
-- **`--sidebar-inset` is bounded by the macOS traffic lights.** They are drawn
-  by the system at (18, 17), so an inset much past 12px walks the panel's rounded
-  corner into them. Airy uses 12px because its corner radius is small; the other
-  themes use 8px. There is no way to detect this from a Linux sandbox — the
-  lights do not exist there — so it is a constraint to reason about rather than
-  to screenshot.
 - **Themes are not animated.** Switching repaints immediately, and the reported
   window background applies to the *next* window rather than the current one.
 
@@ -266,6 +253,41 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — The navigation is translucent, and does not float
+
+**What changed:** Reverses [the floating navigation](#2026-08-19--the-navigation-floats-over-the-background)
+above. The sidebar is flush to the window edge again, with a single divider at
+its trailing edge, and `--sidebar-inset`, `--sidebar-radius`, `--sidebar-shadow`
+and the derived `--sidebar-slot` are gone. In its place `--sidebar` is a
+translucent tint rather than an opaque colour, so the background — and the light
+a theme casts across it — reads through the navigation. `.workspace-shell` keeps
+painting `--canvas` rather than `--surface`, because that is now what shows
+through.
+
+**Why:** The first answer solved the wrong problem. "Float over the background"
+was read as *become a panel that hovers above it*, and what was meant was *let
+the background show through*. Insetting the panel made the ground visible around
+it; making it translucent makes the ground visible **behind** it, which is the
+effect the reference has: one continuous lit surface, with the navigation
+reading as a slightly warmer layer over it rather than as a separate object.
+
+**Considered and rejected:** Keeping the inset and adding translucency on top.
+Both at once reads as two competing ideas — a panel that hovers *and* dissolves —
+and the gutter breaks the continuity that translucency exists to create.
+
+**Consequences:** Anything drawn on the sidebar must not paint `--sidebar` again;
+the account row now paints `transparent`, because a second application of the
+tint over a surface already carrying it is visibly darker. Two tokens exist for
+the states translucency cannot serve: `--sidebar-solid` for the narrow-width
+drawer, which sits over the content and would otherwise show the work stream
+through the navigation, and `--sidebar-edge` for the divider, which is the one
+border Airy keeps after flattening the rest. `--canvas-wash` is painted with
+`background-attachment: fixed` wherever it appears, so the shell's copy and the
+main pane's stay in register; a per-element gradient put the same glow at two
+different places and showed a seam down the sidebar's edge.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — The navigation floats over the background
 
