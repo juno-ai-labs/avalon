@@ -428,7 +428,6 @@ describe("Durable Objects in the Workers runtime", () => {
         constructor: WorkspaceDO,
         tables: [
           "_sql_schema_migrations",
-          "socket_ticket_receipts",
           "workspace_directory_state",
           "workspace_connector_event_ingress_receipts",
           "workspace_connector_events",
@@ -2254,10 +2253,10 @@ describe("Durable Objects in the Workers runtime", () => {
         "SELECT svix_id FROM workstream_email_receipts WHERE resend_email_id = ?",
         "imported-email",
       ).one().svix_id).toBe("imported-svix");
-      expect(state.storage.sql.exec<{ expires_at: number }>(
-        "SELECT expires_at FROM realtime_transcription_sessions WHERE id = ?",
+      expect(state.storage.sql.exec<{ expires_at_s: number }>(
+        "SELECT expires_at_s FROM realtime_transcription_sessions WHERE id = ?",
         "imported-session",
-      ).one().expires_at).toBe(220);
+      ).one().expires_at_s).toBe(220);
     });
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.importWorkspaceProductRows({

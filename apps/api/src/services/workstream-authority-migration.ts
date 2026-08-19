@@ -485,9 +485,6 @@ export function workstreamAuthoritySourceQuery(stage: WorkstreamAuthorityImportS
     case "resource_inventory_revision":
       return `SELECT rowid AS source_rowid, * FROM workstream_resource_inventory_revisions
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
-    case "legacy_artifacts":
-      return `SELECT rowid AS source_rowid, * FROM artifacts
-               WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
     case "compaction_checkpoints":
       return `SELECT rowid AS source_rowid, * FROM workstream_context_compactions
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
@@ -711,10 +708,6 @@ export function normalizeWorkstreamAuthoritySourceRow(
         canonicalUrl: nullableText(row, "canonical_url"), metadata: JSON.parse(json(row, "metadata_json", "{}")),
       }), attached_at: epoch(row, "attached_at"), updated_at: epoch(row, "resource_updated_at", epoch(row, "attached_at")) };
     case "resource_inventory_revision": return { id: 1, revision: integer(row, "revision"), updated_at: updatedAt };
-    case "legacy_artifacts": return { artifact_id: text(row, "id"), run_id: nullableText(row, "harness_run_id"),
-      artifact_type: text(row, "artifact_type"), title: text(row, "title"), content_ref: nullableText(row, "content_ref"),
-      preview_text: nullableText(row, "preview_text"), status: text(row, "status"), metadata_json: json(row, "metadata_json", "{}"),
-      created_at: createdAt, updated_at: updatedAt };
     case "compaction_checkpoints": return { projection_key: `legacy:${text(row, "execution_principal_key")}:${text(row, "resource_visibility_fingerprint")}:v${integer(row, "checkpoint_template_version")}`,
       execution_principal_key: text(row, "execution_principal_key"), resource_visibility_fingerprint: text(row, "resource_visibility_fingerprint"),
       checkpoint_template_version: integer(row, "checkpoint_template_version", 1), run_id: text(row, "harness_run_id"),

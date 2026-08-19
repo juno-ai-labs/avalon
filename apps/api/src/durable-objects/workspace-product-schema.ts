@@ -2,10 +2,12 @@
  * Workspace-local activity, discovery, and suggested-work product state.
  *
  * Workspace identity lives once in `workspace_identity`; these tables never
- * repeat it. References to users, work streams, messages, connector
- * connections, and Workflows cross authority boundaries and therefore remain
- * stable text identifiers rather than pretending SQLite can enforce a foreign
- * key into another Durable Object or D1 database.
+ * repeat it. References to users, work streams, messages, and Workflows cross
+ * authority boundaries and therefore remain stable text identifiers rather
+ * than pretending SQLite can enforce a foreign key into another Durable
+ * Object or D1 database. Connector-connection references are object-local yet
+ * also deliberately FK-free: an event or evidence row is history, and history
+ * must survive the deletion of the connection that produced it.
  */
 export const WORKSPACE_PRODUCT_SCHEMA_STATEMENTS = [
   `CREATE TABLE workspace_activity_events (
@@ -37,8 +39,6 @@ export const WORKSPACE_PRODUCT_SCHEMA_STATEMENTS = [
       OR (audience_kind = 'workstream' AND audience_user_id IS NULL AND audience_workstream_id IS NOT NULL)
     )
   ) STRICT`,
-  `CREATE INDEX workspace_activity_events_cursor_idx
-    ON workspace_activity_events(event_sequence)`,
   `CREATE INDEX workspace_activity_events_audience_user_idx
     ON workspace_activity_events(audience_user_id, event_sequence)
     WHERE audience_user_id IS NOT NULL`,
@@ -64,7 +64,7 @@ export const WORKSPACE_PRODUCT_SCHEMA_STATEMENTS = [
     first_event_at INTEGER NOT NULL CHECK (first_event_at >= 0),
     last_event_at INTEGER NOT NULL CHECK (last_event_at >= first_event_at),
     process_after INTEGER NOT NULL CHECK (process_after >= first_event_at),
-    status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'completed')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'completed')),
     attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 5),
     lease_id TEXT,
     lease_expires_at INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
@@ -76,8 +76,8 @@ export const WORKSPACE_PRODUCT_SCHEMA_STATEMENTS = [
       OR (audience_scope = 'workspace' AND audience_user_id IS NULL)
     )
   ) STRICT`,
-  `CREATE UNIQUE INDEX opportunity_batch_windows_queued_partition_idx
-    ON opportunity_batch_windows(partition_key) WHERE status = 'queued'`,
+  `CREATE UNIQUE INDEX opportunity_batch_windows_pending_partition_idx
+    ON opportunity_batch_windows(partition_key) WHERE status = 'pending'`,
   `CREATE INDEX opportunity_batch_windows_due_idx
     ON opportunity_batch_windows(status, process_after, window_id)`,
   `CREATE INDEX opportunity_batch_windows_lease_idx

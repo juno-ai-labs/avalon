@@ -142,6 +142,13 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
 
 const RETRY_BASE_MS = 5_000;
 const RETRY_MAX_MS = 5 * 60_000;
+// Generous fences, not history: the 10 GB object ceiling is the only hard
+// bound, so retention errs long. A replay older than the receipt window
+// converges on the per-key waterlines; a HyperSight run older than the ledger
+// window is superseded display history whose latest row per block is always
+// kept regardless of age.
+const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
+const BLOCK_RUN_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -194,7 +201,9 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       substream_id TEXT PRIMARY KEY,
       source_version INTEGER NOT NULL CHECK (source_version > 0),
       payload_hash TEXT NOT NULL,
-      effect_json TEXT NOT NULL CHECK (json_valid(effect_json) AND length(effect_json) <= 262144),
+      effect_json TEXT NOT NULL CHECK (
+        json_valid(effect_json) AND length(CAST(effect_json AS BLOB)) <= 1900000
+      ),
       updated_at INTEGER NOT NULL
     ) STRICT`,
     `CREATE TABLE substream_user_directory (
@@ -202,7 +211,9 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       user_id TEXT NOT NULL,
       source_version INTEGER NOT NULL CHECK (source_version > 0),
       payload_hash TEXT NOT NULL,
-      effect_json TEXT NOT NULL CHECK (json_valid(effect_json) AND length(effect_json) <= 262144),
+      effect_json TEXT NOT NULL CHECK (
+        json_valid(effect_json) AND length(CAST(effect_json AS BLOB)) <= 1900000
+      ),
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (substream_id, user_id)
     ) STRICT`,
@@ -245,7 +256,18 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       partition_key TEXT NOT NULL,
       source_version INTEGER NOT NULL CHECK (source_version > 0),
       source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
-      payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND length(payload_json) <= 262144),
+      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
+        'directory_common', 'directory_user', 'suggestion_feedback',
+        'activity_event', 'mention_notification'
+      )),
+      -- The payload budget matches the producing child outbox bound (just
+      -- under the platform's 2 MB per-row BYTE ceiling, measured in bytes —
+      -- length() on TEXT counts characters) so an envelope the child could
+      -- commit is never one this parent must reject: a mid-chain rejection of
+      -- an already durable effect is a permanent poison retry.
+      payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
+      ),
       payload_hash TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
       attempts INTEGER NOT NULL CHECK (attempts >= 0),
@@ -317,8 +339,6 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
-    `CREATE INDEX block_dashboard_source_refresh_outbox_due_idx
-      ON block_dashboard_source_refresh_outbox(not_before, id)`,
   ],
 }];
 
@@ -710,12 +730,15 @@ export class WorkstreamDO extends DurableObject<Env> {
   }
 
   private consumeSocketTicket(identity: WorkstreamSocketIdentity): boolean {
-    const now = Math.floor(Date.now() / 1_000);
-    if (identity.ticketExpiresAt <= now) return false;
+    // Ticket claims carry epoch seconds; object SQL stores unix-ms
+    // (data-model invariant 7), so convert once at this boundary.
+    const now = Date.now();
+    const expiresAtMs = identity.ticketExpiresAt * 1_000;
+    if (expiresAtMs <= now) return false;
     return this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `DELETE FROM workstream_socket_ticket_receipts WHERE expires_at < ?`,
-        now - 300,
+        now - 300_000,
       );
       return this.state.storage.sql.exec<{ ticket_id: string }>(
         `INSERT OR IGNORE INTO workstream_socket_ticket_receipts
@@ -723,7 +746,7 @@ export class WorkstreamDO extends DurableObject<Env> {
          VALUES (?, ?, ?, ?) RETURNING ticket_id`,
         identity.ticketId,
         identity.userId,
-        identity.ticketExpiresAt,
+        expiresAtMs,
         now,
       ).toArray().length === 1;
     });
@@ -881,6 +904,25 @@ export class WorkstreamDO extends DurableObject<Env> {
       });
     }
     if (launched.length > 0) {
+      // The run ledger is display history: readers use only the latest run
+      // per block, so terminal rows past retention age out here — each block's
+      // newest run survives regardless of age, and result receipts and stale
+      // dispatch rows cascade with their run.
+      this.state.storage.sql.exec(
+        `DELETE FROM block_dashboard_block_runs
+          WHERE block_run_id IN (
+            SELECT older.block_run_id FROM block_dashboard_block_runs older
+             WHERE older.created_at < ?
+               AND older.status IN ('completed', 'failed', 'stopped')
+               AND EXISTS (
+                 SELECT 1 FROM block_dashboard_block_runs newer
+                  WHERE newer.block_id = older.block_id
+                    AND newer.trigger_sequence > older.trigger_sequence
+               )
+             ORDER BY older.created_at LIMIT 100
+          )`,
+        Date.now() - BLOCK_RUN_LEDGER_RETENTION_MS,
+      );
       this.state.waitUntil((async () => {
         await this.deliverBlockDashboardDispatches();
         await this.armAlarm();
@@ -1430,6 +1472,18 @@ export class WorkstreamDO extends DurableObject<Env> {
         envelope.payloadHash,
         now,
       );
+      // The receipt is a replay fence, not history. Past retention a
+      // redelivery converges on the per-key waterlines instead, so old
+      // receipts age out here the way every sibling receipt table's do.
+      this.state.storage.sql.exec(
+        `DELETE FROM child_effect_receipts
+          WHERE (substream_id, message_id) IN (
+            SELECT substream_id, message_id FROM child_effect_receipts
+             WHERE received_at < ?
+             ORDER BY received_at LIMIT 100
+          )`,
+        now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
+      );
     });
   }
 
@@ -1889,14 +1943,15 @@ export class WorkstreamDO extends DurableObject<Env> {
   private insertOutbox(envelope: WorkstreamRegionalEffectEnvelope, now: number): void {
     const inserted = this.state.storage.sql.exec<{ message_id: string }>(
       `INSERT OR IGNORE INTO durable_outbox
-         (message_id, partition_key, source_version, source_epoch, payload_json, payload_hash,
-          state, attempts, not_before, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+         (message_id, partition_key, source_version, source_epoch, effect_kind,
+          payload_json, payload_hash, state, attempts, not_before, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
        RETURNING message_id`,
       envelope.messageId,
       envelope.partitionKey,
       envelope.sourceVersion,
       envelope.generation,
+      envelope.effect.kind,
       JSON.stringify(WorkstreamRegionalEffectEnvelopeSchema.parse(envelope)),
       envelope.payloadHash,
       now,
@@ -1915,7 +1970,7 @@ export class WorkstreamDO extends DurableObject<Env> {
     return this.state.storage.sql.exec<StoredEnvelopeRow>(
       `SELECT payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight') AND not_before <= ?
-        ORDER BY CASE json_extract(payload_json, '$.effect.kind')
+        ORDER BY CASE effect_kind
                    WHEN 'directory_common' THEN 0
                    WHEN 'directory_user' THEN 1
                    ELSE 2
@@ -1930,10 +1985,8 @@ export class WorkstreamDO extends DurableObject<Env> {
     return this.state.storage.sql.exec<StoredEnvelopeRow>(
       `SELECT payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight')
-          AND json_extract(payload_json, '$.effect.kind') IN (
-            'directory_common', 'directory_user', 'suggestion_feedback'
-          )
-        ORDER BY CASE json_extract(payload_json, '$.effect.kind')
+          AND effect_kind IN ('directory_common', 'directory_user', 'suggestion_feedback')
+        ORDER BY CASE effect_kind
                    WHEN 'directory_common' THEN 0
                    WHEN 'directory_user' THEN 1
                    ELSE 2

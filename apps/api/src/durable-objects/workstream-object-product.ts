@@ -1743,13 +1743,19 @@ export class WorkstreamObjectProductService {
             : null,
         ].filter((value): value is number => value !== null && Number.isFinite(value))
       : [];
+    // Bounded to the envelope contract's maximum so an effect this object can
+    // commit is always one the parent will accept — an unbounded selection
+    // could exceed the contract and permanently poison the outbox retry. Past
+    // ten thousand links the directory index carries the newest attachments;
+    // this object remains the authoritative full set.
     const resourceLinks = this.storage.sql.exec<{
       resource_id: string;
       watch_enabled: number;
       relationship_type: string;
     }>(
       `SELECT resource_id, watch_enabled, relationship_type
-         FROM workstream_resource_links ORDER BY resource_id`,
+         FROM workstream_resource_links
+        ORDER BY attached_at DESC, resource_id LIMIT 10000`,
     ).toArray().map((row) => ({
       resourceId: row.resource_id,
       watchEnabled: row.watch_enabled === 1,

@@ -86,8 +86,6 @@ export const WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS: readonly DurableObjectSqlite
       retry_at INTEGER NOT NULL CHECK (retry_at >= 0),
       updated_at INTEGER NOT NULL
     ) STRICT`,
-    `CREATE INDEX scheduler_retry_due_idx
-      ON scheduler_retry_states(retry_at, target_key)`,
   ],
 }];
 
@@ -702,12 +700,30 @@ export class WorkspaceScheduler extends DurableObject<Env> {
   private async saveRetryStates(retryStates: SchedulerRetryStates): Promise<void> {
     await this.initialized;
     const now = Date.now();
+    // Reconcile rather than rewrite: the alarm loop saves the whole map after
+    // each failing target, so a delete-all-and-reinsert rewrote every
+    // unchanged gate once per failure. Upserts guarded on actual change and a
+    // targeted delete of vanished keys make an unchanged gate a no-op.
     this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
+      const keys = Object.keys(retryStates);
+      if (keys.length === 0) {
+        this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
+        return;
+      }
+      const placeholders = keys.map(() => "?").join(", ");
+      this.state.storage.sql.exec(
+        `DELETE FROM scheduler_retry_states WHERE target_key NOT IN (${placeholders})`,
+        ...keys,
+      );
       for (const [targetKey, retry] of Object.entries(retryStates)) {
         this.state.storage.sql.exec(
           `INSERT INTO scheduler_retry_states(target_key, attempt, retry_at, updated_at)
-           VALUES (?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(target_key) DO UPDATE SET
+             attempt = excluded.attempt, retry_at = excluded.retry_at,
+             updated_at = excluded.updated_at
+           WHERE excluded.attempt != scheduler_retry_states.attempt
+              OR excluded.retry_at != scheduler_retry_states.retry_at`,
           targetKey,
           retry.attempt,
           retry.retryAt,

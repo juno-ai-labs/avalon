@@ -323,7 +323,7 @@ no projection fallback when that object is unavailable.
 - The partial unique index on `(automation_subscription_id, planned_for)` converges
   early-open and alarm-driven scheduled-run creation.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
-  `(run_id, provider_tool_call_id)` and stores input hashes plus side-effect state.
+  `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
 - `compaction_jobs` and `compaction_checkpoints` store the raw LLM continuation
   summary per execution principal and immutable run/sequence event, with its
   sequence boundary, resource-inventory revision, and deterministic template
@@ -404,8 +404,8 @@ no projection fallback when that object is unavailable.
   for a first-party producer — because the question is asked far more often than it
   is answered, and re-deriving it on read would need a manifest that may have
   changed or that this region does not register. It carries no index: the reads
-  that use it are already anchored on `workspace_activity_events_cursor_idx`, and a two-value
-  column ahead of that range would only widen the index for every other reader.
+  that use it are already anchored on the `event_sequence` primary key, and a two-value
+  column ahead of that range would only widen an index for every other reader.
   [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns the rule,
   and the WorkspaceDO column deliberately has no default: every producer must
   make the decision explicitly. Frozen D1 migration input retains its historical
@@ -669,6 +669,38 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-19 — Object tables audited: retention, byte bounds, and promoted discriminators
+
+**What changed:** A per-object table audit and platform-limits research pass
+reshaped the Durable Object schemas (the authoritative catalog and full
+rationale live in
+[`workstream-durable-object.md`](workstream-durable-object.md)'s same-day
+changelog): generous reaps for every growth-only ledger and receipt table,
+payload bounds measured in bytes just under the platform's 2 MB per-row
+ceiling and aligned producer-to-consumer so a committed effect is always
+deliverable, the parent outbox's `effect_kind` and the block dispatch
+freshness tuple promoted from JSON to CHECK-enumerated columns, one `pending`
+admission token across the opportunity batch tables, unix-ms socket-ticket
+receipts everywhere, `*_s`-suffixed names for the epoch-seconds transcription
+columns, and removal of the historical/writerless tables and dead indexes
+from the single initial migrations. This document's `tool_effects` uniqueness
+now names the real column (`tool_call_id`).
+
+**Why:** The audit found the transactional machinery sound and the defects
+concentrated where schemas were silent: unbounded growth against the 10 GB
+object ceiling, character-counted CHECKs against a byte-counted platform
+limit, and load-bearing discriminators invisible to schema inspection.
+
+**Considered and rejected:** Treating 10 GB as license to skip retention
+(a full object stops accepting writes — deletes still work, but that is an
+outage, not a policy), and sizing bounds to the 32 MiB RPC transport rather
+than the 2 MB storage row.
+
+**Consequences:** Every state machine's terminal rows now have a retention
+story; imports map the renamed vocabulary so legacy D1 rows land unchanged in
+meaning; and new near-cap TEXT bounds must guard
+`length(CAST(… AS BLOB))`, never `length()` alone.
 
 ### 2026-08-19 — Dead tables drop and the last unfenced object table gains its tripwire
 

@@ -1001,27 +1001,29 @@ export const WORKSPACE_DOMAIN_SCHEMA_STATEMENTS = [
   // Dictation socket admission: one-time ticket consumption plus the short
   // concurrency leases the per-user/per-workspace session caps are counted
   // over. Serialized here so two simultaneous upgrades cannot both pass the
-  // cap check. Epochs are Unix seconds, imported unchanged from D1.
+  // cap check. Epochs are Unix SECONDS — the signed ticket's external JWT
+  // contract — and the one place this object departs from its unix-ms rule,
+  // so the column names carry the unit; the import maps the D1 names over.
   `CREATE TABLE realtime_transcription_ticket_receipts (
     ticket_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
-    consumed_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL CHECK (expires_at > consumed_at)
+    consumed_at_s INTEGER NOT NULL,
+    expires_at_s INTEGER NOT NULL CHECK (expires_at_s > consumed_at_s)
   ) STRICT`,
   `CREATE INDEX realtime_transcription_ticket_receipts_expiry_idx
-    ON realtime_transcription_ticket_receipts(expires_at)`,
+    ON realtime_transcription_ticket_receipts(expires_at_s)`,
   `CREATE TABLE realtime_transcription_sessions (
     id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL UNIQUE,
     workspace_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
-    started_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL CHECK (expires_at > started_at)
+    started_at_s INTEGER NOT NULL,
+    expires_at_s INTEGER NOT NULL CHECK (expires_at_s > started_at_s)
   ) STRICT`,
   `CREATE INDEX realtime_transcription_sessions_user_idx
-    ON realtime_transcription_sessions(workspace_id, user_id, expires_at)`,
+    ON realtime_transcription_sessions(workspace_id, user_id, expires_at_s)`,
   `CREATE INDEX realtime_transcription_sessions_workspace_idx
-    ON realtime_transcription_sessions(workspace_id, expires_at)`,
+    ON realtime_transcription_sessions(workspace_id, expires_at_s)`,
   ...workspaceIdentityFences(),
 ] as const;

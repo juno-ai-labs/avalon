@@ -4,7 +4,7 @@ import type {
 } from "./workspace-product-import";
 import { isWorkspaceRelationalImportStage } from "./workspace-product-import";
 
-type Kind = "value" | "epoch" | "integer" | "json_object" | "json_array" | "suggested_status";
+type Kind = "value" | "epoch" | "integer" | "json_object" | "json_array" | "suggested_status" | "window_status";
 type Column = readonly [target: string, source?: string, kind?: Kind, fallback?: string | number | null];
 
 interface ImportShape {
@@ -70,7 +70,8 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
     key: ["window_id"],
     columns: [
       value("window_id", "id"), value("partition_key"), value("audience_scope"), value("audience_user_id"),
-      at("first_event_at"), at("last_event_at"), at("process_after"), value("status"),
+      at("first_event_at"), at("last_event_at"), at("process_after"),
+      ["status", "status", "window_status", "pending"],
       integer("attempt", "attempt", 0), value("lease_id"), at("lease_expires_at"), at("created_at"),
       at("updated_at"), at("completed_at"),
     ],
@@ -150,6 +151,24 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       value("round_id", "id"), value("user_id"), jsonArray("candidate_ids_json", "candidate_ids_json"),
       jsonArray("selected_ids_json", "selected_ids_json"), value("reasoning", "reasoning", ""),
       value("model"), integer("round_number"), at("created_at"),
+    ],
+  },
+  // The D1 columns carry no unit; the object columns do. Values are epoch
+  // seconds on both sides — only the names change at this boundary.
+  realtime_transcription_ticket_receipts: {
+    table: "realtime_transcription_ticket_receipts",
+    key: ["ticket_id"],
+    columns: [
+      value("ticket_id"), value("workspace_id"), value("user_id"),
+      integer("consumed_at_s", "consumed_at"), integer("expires_at_s", "expires_at"),
+    ],
+  },
+  realtime_transcription_sessions: {
+    table: "realtime_transcription_sessions",
+    key: ["id"],
+    columns: [
+      value("id"), value("ticket_id"), value("workspace_id"), value("user_id"),
+      integer("started_at_s", "started_at"), integer("expires_at_s", "expires_at"),
     ],
   },
   work_opportunity_snapshots: {
@@ -283,6 +302,9 @@ function converted(row: WorkspaceProductImportRow, column: Column): SqlStorageVa
     return serialized;
   }
   if (kind === "suggested_status") return raw === "ranking" ? "stale" : String(raw);
+  // The legacy D1 window rows say 'queued' where the object vocabulary says
+  // 'pending' — one token per role across the fleet.
+  if (kind === "window_status") return raw === "queued" ? "pending" : String(raw);
   return raw;
 }
 
