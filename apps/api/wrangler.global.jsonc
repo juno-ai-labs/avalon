@@ -154,17 +154,18 @@
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
+  // Append-only once deployed: v1/v2 are live history and must stay
+  // byte-stable. v3 renames the room class so every existing per-workstream
+  // object keeps its SQLite database (the SubstreamAgent migration runner
+  // inherits the WorkstreamRoom ledger verbatim), and introduces only the
+  // classes production has never seen.
   "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
     {
-      "tag": "v1",
-      "new_sqlite_classes": [
-        "SubstreamAgent",
-        "BlockDashboardAgent",
-        "WorkstreamDO",
-        "WorkspaceDO",
-        "WorkspaceScheduler",
-        "CrashSymbolicatorContainer"
-      ]
+      "tag": "v3",
+      "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }],
+      "new_sqlite_classes": ["BlockDashboardAgent", "WorkstreamDO", "WorkspaceDO"]
     }
   ],
   "queues": {
