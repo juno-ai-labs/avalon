@@ -50,9 +50,7 @@ export function executeWorkspaceRuntimeSql(
       statement.sql,
       ...statement.params,
     );
-    const rows = cursor.toArray().map((row) => Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [key, value]),
-    ) as Record<string, string | number | null>);
+    const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
     return {
       columns: rows.length === 0 ? [] : Object.keys(rows[0]!),
       rows,

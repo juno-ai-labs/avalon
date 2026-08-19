@@ -5,6 +5,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
@@ -65,8 +66,11 @@ const LOCAL_TABLES = [
   "block_dashboard_block_runs",
 ] as const;
 
+const LOCAL_TABLE_PATTERNS = LOCAL_TABLES.map((table) =>
+  new RegExp(`\\b${table}\\b`, "iu"));
+
 function localStatement(sql: string): boolean {
-  return LOCAL_TABLES.some((table) => new RegExp(`\\b${table}\\b`, "iu").test(sql));
+  return LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
 }
 
 function d1Result<T>(result: WorkstreamRuntimeSqlResult): D1Result<T> {
@@ -206,7 +210,7 @@ class WorkstreamRuntimeDatabase implements D1Database {
   }
 
   async exec(query: string): Promise<D1ExecResult> {
-    const statements = query.split(";").map((entry) => entry.trim()).filter(Boolean).map((sql) => ({
+    const statements = splitSqlStatements(query).map((sql) => ({
       sql,
       params: [] as RuntimeValue[],
       local: localStatement(sql),

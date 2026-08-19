@@ -5,6 +5,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
 
 type RuntimeValue = string | number | null;
@@ -88,10 +89,15 @@ export const WORKSPACE_LOCAL_TABLES = [
   "workspace_workstream_pins",
 ] as const;
 
+const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
+  table,
+  pattern: new RegExp(`\\b${table}\\b`, "iu"),
+}));
+
 function localStatement(sql: string): boolean {
-  const localTables = WORKSPACE_LOCAL_TABLES.filter(
-    (table) => new RegExp(`\\b${table}\\b`, "iu").test(sql),
-  );
+  const localTables = WORKSPACE_LOCAL_TABLE_PATTERNS
+    .filter(({ pattern }) => pattern.test(sql))
+    .map(({ table }) => table);
   if (localTables.length === 0) return false;
 
   // A regional mutation must never be routed into WorkspaceDO merely because
@@ -225,7 +231,7 @@ class WorkspaceRuntimeDatabase implements D1Database {
   }
 
   async exec(query: string): Promise<D1ExecResult> {
-    const statements = query.split(";").map((entry) => entry.trim()).filter(Boolean).map((sql) => ({
+    const statements = splitSqlStatements(query).map((sql) => ({
       sql,
       params: [] as RuntimeValue[],
       local: localStatement(sql),

@@ -7,6 +7,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
+import { logWarn } from '../../common/logger';
 import type { AvalonApi } from './api';
 
 type BlockDashboardBlockSocketApi = Pick<AvalonApi, 'getBlockDashboardBlockSocketTicket'>;
@@ -57,6 +58,7 @@ export function useBlockDashboardSockets(
       return;
     }
     let stopped = false;
+    let protocolWarningReported = false;
     const connections = new Map<string, BlockConnection>();
     const streamRevisions = new Map<string, { blockRunId: string; revision: number }>();
     const updateConnectionState = (blockId: string, state: BlockDashboardBlockConnectionState): void => {
@@ -188,7 +190,17 @@ export function useBlockDashboardSockets(
           }
           try {
             const event = BlockDashboardBlockSocketEventSchema.safeParse(JSON.parse(String(message.data)));
-            if (!event.success || event.data.blockId !== blockId) return;
+            if (!event.success || event.data.blockId !== blockId) {
+              if (!protocolWarningReported) {
+                protocolWarningReported = true;
+                logWarn(
+                  'avalon',
+                  'Ignored invalid BlockDashboardAgent socket event',
+                  event.success ? 'block_id_mismatch' : event.error.issues,
+                );
+              }
+              return;
+            }
             updateConnectionState(blockId, 'connected');
             if (event.data.type === 'block_dashboard_block_stream_checkpoint') {
               applyStreamCheckpoint(blockId, event.data.blockRunId, event.data.streamCheckpoint);
@@ -198,8 +210,16 @@ export function useBlockDashboardSockets(
                 applyStreamCheckpoint(blockId, event.data.run.id, event.data.streamCheckpoint);
               }
             }
-          } catch {
+          } catch (error) {
             // Reconnect provides a complete block-agent snapshot.
+            if (!protocolWarningReported) {
+              protocolWarningReported = true;
+              logWarn(
+                'avalon',
+                'Ignored unreadable BlockDashboardAgent socket event',
+                error instanceof Error ? error.message : 'unknown',
+              );
+            }
           }
         });
         socket.addEventListener('close', (event) => {

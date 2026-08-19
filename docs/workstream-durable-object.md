@@ -957,6 +957,27 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-18 — Runtime SQL routing preserves SQLite statement boundaries
+
+**What changed:** The WorkspaceDO and SubstreamAgent compatibility adapters now
+split multi-statement SQL only at semicolons outside SQLite literals, quoted
+identifiers, and comments. Their table matchers are compiled once, SQL cursor
+rows are returned without identity-copy allocations, and a malformed persisted
+BlockDashboard dispatch is terminalized, logged, and removed from its outbox.
+
+**Why:** A semicolon in content previously changed routing boundaries, while a
+schema-drifted dispatch could retry forever and head-of-line block every later
+refresh for the same HyperSight block.
+
+**Considered and rejected:** Continuing to use string splitting, retrying
+permanently invalid envelopes, and interpolating import identifiers supplied by
+the request. Import identifiers remain safe because the parsed stage selects a
+closed in-code table/column definition; row keys must exactly match it.
+
+**Consequences:** Unterminated literals and block comments fail before routing.
+Transient child-RPC failures still back off, but invalid durable envelopes
+produce a visible failed run and cannot poison the per-block delivery lane.
+
 ### 2026-08-18 — Retry boundaries fail closed without blocking unrelated work
 
 **What changed:** Creation replay repairs a missing parent snapshot, visibility
