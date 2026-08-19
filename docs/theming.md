@@ -116,6 +116,19 @@ navigation. `.workspace-shell` paints `--canvas` for that reason — it is what
 shows through, and painting `--surface` there would put the content pane's tone
 behind the navigation instead of the page's.
 
+A theme may take that to its conclusion. Airy sets `--sidebar: transparent` and
+makes `--canvas` and `--surface` the same colour, so it has **one ground**: the
+page and the light across it run the full width of the window, under the
+navigation and the message feed alike, broken only by `--sidebar-edge`. The
+other themes keep a distinct content pane, which is why the two are separate
+tokens at all.
+
+Continuity across that whole width is what `background-attachment: fixed` buys.
+`.workspace-shell` and `.main-pane` each paint `--canvas-wash`, and a gradient
+positioned per-element would put the same glow at two different places and show
+a seam down the navigation's edge; anchored to the viewport, the two copies are
+in register and read as one light.
+
 Two states translucency cannot serve have tokens of their own:
 
 | Token | Why it is not the tint |
@@ -130,10 +143,10 @@ account row at the foot of the navigation paints `transparent` for this reason.
 ### The themes
 
 `light` and `dark` are the two `system` resolves to. `airy` is a deliberate
-choice only — near-black lit from one corner, amber where the others are
-chartreuse, borders that barely exist, uppercase letterspaced micro-labels, and
-roughly half again the spacing, so negative space does the work the lines used
-to.
+choice only — one near-black ground lit from a corner and running the full width
+of the window, amber where the others are chartreuse, borders that barely exist,
+uppercase letterspaced micro-labels, and roughly half again the spacing, so
+negative space does the work the lines used to.
 
 ### Choosing one
 
@@ -253,6 +266,38 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — Airy has one ground, the full width of the window
+
+**What changed:** Airy's `--sidebar` is `transparent` rather than a tint, and its
+`--canvas` and `--surface` are the same colour. The page and the light across it
+now run the full width of the window, under the navigation and the message feed
+alike, with only `--sidebar-edge` between them. The other themes are unchanged:
+they keep a tinted navigation over a distinct content pane.
+
+**Why:** The tint and the second ground were each a seam. A translucent
+navigation still reads as a *layer over* the page rather than as part of it, and
+`--surface` sitting two units off `--canvas` put a faint edge down the middle of
+a design whose whole idea is one continuous lit surface. Removing both is what
+makes the light look like it belongs to the window rather than to two panes that
+happen to agree.
+
+**Considered and rejected:** Making `.main-pane` transparent and giving it a
+`--pane-fill` token, so the shell's ground would show through it. That is the
+general version and it needs a second token — the composer dock fades into the
+pane to mask the feed scrolling under it, and a transparent pane leaves that
+gradient with nothing to fade *to*, so it would have needed both a fill and a
+"what the pane resolves to" colour. Setting `--surface` equal to `--canvas` gets
+the same picture with no new vocabulary and no way for the two to drift.
+
+**Consequences:** A theme now says "I have one ground" by making those two
+tokens equal, and nothing in the stylesheet needs to know. Anything that fades
+into the content pane — the composer dock is the one that exists — keeps fading
+to `--surface`, which stays correct whether or not a theme has collapsed the
+two. `background-attachment: fixed` on every `--canvas-wash` painter is now
+load-bearing for the full-width read, not just for the navigation's edge.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — The navigation is translucent, and does not float
 
