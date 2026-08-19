@@ -106,6 +106,18 @@ export default tseslint.config(
           selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='crypto'][callee.property.name='randomUUID']",
           message: "Use uuidV7() for Avalon-owned agent, transport, and durable-record identities.",
         },
+        {
+          selector: "CallExpression[callee.type='MemberExpression'][callee.object.type='MemberExpression'][callee.object.object.name='globalThis'][callee.object.property.name='crypto'][callee.property.name='randomUUID']",
+          message: "Use uuidV7() for Avalon-owned agent, transport, and durable-record identities.",
+        },
+        {
+          selector: "VariableDeclarator[id.type='ObjectPattern'][init.name='crypto'] Property[key.name='randomUUID']",
+          message: "Do not destructure crypto.randomUUID(); use uuidV7() for Avalon-owned identities.",
+        },
+        {
+          selector: "VariableDeclarator[id.type='ObjectPattern'][init.type='MemberExpression'][init.object.name='globalThis'][init.property.name='crypto'] Property[key.name='randomUUID']",
+          message: "Do not destructure globalThis.crypto.randomUUID(); use uuidV7() for Avalon-owned identities.",
+        },
       ],
     },
   },

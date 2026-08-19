@@ -232,6 +232,23 @@ describe('BlockDashboardPanel', () => {
     ]);
   });
 
+  it('restores the configured order when a drag is cancelled', () => {
+    const { onChange } = renderPanel();
+    const grips = screen.getAllByRole('button', { name: 'Reorder HyperSight block' });
+    const secondArticle = screen.getByText('Refreshing…').closest('article');
+    const dataTransfer = { effectAllowed: 'none', setData: vi.fn(), setDragImage: vi.fn() };
+
+    fireEvent.dragStart(grips[0]!, { dataTransfer });
+    fireEvent.dragEnter(secondArticle!, { dataTransfer });
+    fireEvent.dragEnd(grips[0]!, { dataTransfer });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('article').map((article) => article.textContent)).toEqual([
+      expect.stringContaining('Ship the release'),
+      expect.stringContaining('Refreshing'),
+    ]);
+  });
+
   it('preserves the live drag order when a block refresh arrives', async () => {
     const { onChange, rerender } = renderPanel();
     const grips = screen.getAllByRole('button', { name: 'Reorder HyperSight block' });
@@ -282,5 +299,28 @@ describe('BlockDashboardPanel', () => {
       { id: '22222222-2222-4222-8222-222222222222', prompt: 'List the last tasks' },
     ]));
     expect(screen.getByText('Moved block to position 1 of 2.')).toBeInTheDocument();
+  });
+
+  it('keeps an optimistic keyboard order while the parent still publishes the old configuration', async () => {
+    let resolveChange!: () => void;
+    const onChange = vi.fn(() => new Promise<void>((resolve) => {
+      resolveChange = resolve;
+    }));
+    const { rerender } = renderPanel(onChange);
+    fireEvent.keyDown(screen.getAllByRole('button', { name: 'Reorder HyperSight block' })[1]!, {
+      key: 'ArrowUp',
+    });
+
+    rerender(
+      <Tooltip.Provider>
+        <BlockDashboardPanel blockDashboard={blockDashboard} onChange={onChange} pending />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getAllByRole('article').map((article) => article.textContent)).toEqual([
+      expect.stringContaining('Refreshing'),
+      expect.stringContaining('Ship the release'),
+    ]);
+    resolveChange();
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
   });
 });

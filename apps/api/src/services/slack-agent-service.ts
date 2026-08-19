@@ -1185,8 +1185,11 @@ export class SlackAgentService {
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
     const token = await this.botToken(connection);
-    const openElicitation = outcomeStatus === "needs_input"
-      ? await this.env.DB.prepare(
+    const executionEnv = outcomeStatus === "needs_input"
+      ? await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId)
+      : null;
+    const openElicitation = executionEnv
+      ? await executionEnv.DB.prepare(
           `SELECT prompt, target_user_id FROM elicitations
            WHERE workspace_id = ? AND workstream_id = ? AND status = 'open'
            ORDER BY created_at ASC LIMIT 1`,
@@ -1793,7 +1796,7 @@ export class SlackAgentService {
       if (justCreated && !sessionCreatedThisCall) return;
       const openElicitation = justCreated
         ? null
-        : await this.openElicitationTarget(session.workstream_id);
+        : await this.openElicitationTarget(connection.workspace_id, session.workstream_id);
       if (!justCreated) {
         // A question put to one member is still that member's to answer. This
         // is the only thing left that refuses a reply, and it is not the pin
@@ -1833,6 +1836,7 @@ export class SlackAgentService {
           const service = new WorkstreamService(this.env, identity.auth);
           if (!await this.answerOpenElicitationAsUser(
             service,
+            connection.workspace_id,
             session.workstream_id,
             requestedPrompt,
             clientMessageId.slice(0, 120),
@@ -2382,13 +2386,15 @@ export class SlackAgentService {
 
   private async answerOpenElicitationAsUser(
     service: WorkstreamService,
+    workspaceId: string,
     workstreamId: string,
     response: string,
     clientMessageId: string,
     slackOrigin: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<boolean> {
-    const elicitation = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
+    const elicitation = await executionEnv.DB.prepare(
       `SELECT id, response_type, options_json FROM elicitations
        WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
     ).bind(workstreamId).first<{
@@ -2409,9 +2415,11 @@ export class SlackAgentService {
   }
 
   private async openElicitationTarget(
+    workspaceId: string,
     workstreamId: string,
   ): Promise<{ id: string; targetUserId: string | null } | null> {
-    const row = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
+    const row = await executionEnv.DB.prepare(
       `SELECT id, target_user_id FROM elicitations
        WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
     ).bind(workstreamId).first<{ id: string; target_user_id: string | null }>();
@@ -2978,7 +2986,12 @@ export class SlackAgentService {
   }
 
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
-    await this.connectionForTeam(teamId);
+    try {
+      await this.connectionForTeam(teamId);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "slack_installation_not_found") return null;
+      throw error;
+    }
     const row = await this.env.DB.prepare(
       `SELECT l.user_id, l.workspace_id, l.connection_id,
               cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,

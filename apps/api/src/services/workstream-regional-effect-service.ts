@@ -34,6 +34,7 @@ function workspaceTopicsForEffect(
 }
 
 interface EffectReceiptRow {
+  message_id: string;
   payload_hash: string;
 }
 
@@ -120,17 +121,41 @@ export async function applyWorkstreamRegionalEffect(
   }
 
   const route = await env.DB.prepare(
-    `SELECT state FROM workstream_authority_routes
-      WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-  ).bind(message.workspaceId, message.workstreamId, message.generation).first<{ state: string }>();
-  if (route?.state !== "active") throw new Error("workstream_effect_route_not_active");
+    `SELECT generation, state FROM workstream_authority_routes
+      WHERE workspace_id = ? AND workstream_id = ?`,
+  ).bind(message.workspaceId, message.workstreamId).first<{ generation: number; state: string }>();
+  if (route?.state === "active" && route.generation > message.generation) {
+    // A previous authority generation can still have Queue messages in flight.
+    // Its state was superseded at cutover, so acknowledging it is the only
+    // terminal and safe outcome; applying it would regress the current owner.
+    return { replayed: true, notificationIntentId: null };
+  }
+  if (route?.state !== "active" || route.generation !== message.generation) {
+    throw new Error("workstream_effect_route_not_active");
+  }
 
   const receipt = await env.DB.prepare(
-    `SELECT payload_hash FROM workstream_regional_effect_receipts WHERE message_id = ?`,
-  ).bind(message.messageId).first<EffectReceiptRow>();
+    `SELECT message_id, payload_hash FROM workstream_regional_effect_receipts
+      WHERE message_id = ?
+         OR (workstream_id = ? AND generation = ? AND partition_key = ? AND source_version = ?)
+      ORDER BY CASE WHEN message_id = ? THEN 0 ELSE 1 END
+      LIMIT 1`,
+  ).bind(
+    message.messageId,
+    message.workstreamId,
+    message.generation,
+    message.partitionKey,
+    message.sourceVersion,
+    message.messageId,
+  ).first<EffectReceiptRow>();
   if (receipt) {
     if (receipt.payload_hash !== message.payloadHash) {
       throw new Error("workstream_effect_receipt_hash_conflict");
+    }
+    if (receipt.message_id !== message.messageId) {
+      await env.DB.prepare(
+        `UPDATE workstream_regional_effect_receipts SET message_id = ? WHERE message_id = ?`,
+      ).bind(message.messageId, receipt.message_id).run();
     }
     await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
     return {

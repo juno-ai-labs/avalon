@@ -26,6 +26,15 @@ describe("work-stream runtime database routing", () => {
     expect(__workstreamRuntimeDatabaseTesting.localStatement(
       "SELECT name FROM users WHERE id = ?",
     )).toBe(false);
+    expect(__workstreamRuntimeDatabaseTesting.localStatement(
+      "SELECT 'messages are product data' AS description",
+    )).toBe(false);
+  });
+
+  it("rejects a parent-authority mutation that only mentions a local table in a subquery", () => {
+    expect(() => __workstreamRuntimeDatabaseTesting.localStatement(
+      "UPDATE resources SET title = (SELECT text_content FROM messages LIMIT 1) WHERE id = ?",
+    )).toThrow("workstream_runtime_cross_authority_statement");
   });
 
   it("rejects exec batches that span work-stream and parent authorities", async () => {

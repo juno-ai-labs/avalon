@@ -376,9 +376,10 @@ export class WorkspaceScheduler extends DurableObject<Env> {
         due_at: target.dueAt,
       }))
       : (await this.env.DB.prepare(
-        `SELECT 'wakeup' AS target_kind, id, due_at
+        `SELECT 'wakeup' AS target_kind, workstream_id AS id, MIN(due_at) AS due_at
            FROM workstream_wakeups
           WHERE workspace_id = ?1 AND status = 'pending'
+          GROUP BY workstream_id
          UNION ALL
          SELECT 'terminal' AS target_kind, workstream_id AS id,
                 COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) AS due_at

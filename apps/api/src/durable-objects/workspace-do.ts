@@ -184,8 +184,24 @@ import {
 } from "./workspace-runtime-sql";
 import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
 
-const WORKSPACE_ALARM_SOURCE_TABLE = /\b(?:schedules|resource_watches|resource_object_deletion_outbox|note_resource_deletion_outbox|note_privacy_change_outbox|memory_index_outbox|slack_ingress_jobs|slack_agent_thread_claims|slack_agent_pending_prompts|slack_link_challenges|slack_unfurled_links)\b/iu;
-const SQL_MUTATION = /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/iu;
+const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
+  "schedules",
+  "resource_watches",
+  "resource_object_deletion_outbox",
+  "note_resource_deletion_outbox",
+  "note_privacy_change_outbox",
+  "memory_index_outbox",
+  "slack_ingress_jobs",
+  "slack_agent_thread_claims",
+  "slack_agent_pending_prompts",
+  "slack_link_challenges",
+  "slack_unfurled_links",
+]);
+
+function workspaceMutationTarget(sql: string): string | null {
+  return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
+    .exec(sql)?.[1]?.toLowerCase() ?? null;
+}
 
 const SocketIdentitySchema = z.object({
   workspaceId: IdSchema,
@@ -771,8 +787,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = executeWorkspaceRuntimeSql(this.state.storage, request);
-      if (request.statements.some((statement) =>
-        SQL_MUTATION.test(statement.sql) && WORKSPACE_ALARM_SOURCE_TABLE.test(statement.sql))) {
+      if (request.statements.some((statement) => {
+        const target = workspaceMutationTarget(statement.sql);
+        return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
+      })) {
         this.state.waitUntil(refreshWorkspaceSchedulerAlarm(this.env, request.workspaceId));
       }
       return responseToRpcResult(json({ results }));
@@ -859,6 +877,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     const now = Date.now();
     this.reapExpiredActivityEvents(now);
     const product = this.productStorage();
+    product.reapCompletedOpportunityWindows(now - 30 * 24 * 60 * 60_000);
     let launched = 0;
 
     for (const row of product.dueOpportunityWindows(now, PRODUCT_ALARM_BATCH)) {

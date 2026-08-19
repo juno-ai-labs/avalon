@@ -1236,11 +1236,11 @@ export class WorkspaceProductStorage {
   nextProductAlarmAt(now: number, futureOnly = false): number | null {
     const row = this.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(due_at) AS due_at FROM (
-        SELECT CASE
-          WHEN status = 'queued' THEN process_after
-          WHEN status = 'processing' THEN lease_expires_at
-          ELSE NULL END AS due_at
-          FROM opportunity_batch_windows
+        SELECT process_after AS due_at
+          FROM opportunity_batch_windows WHERE status = 'queued'
+        UNION ALL
+        SELECT lease_expires_at AS due_at
+          FROM opportunity_batch_windows WHERE status = 'processing'
         UNION ALL
         SELECT CASE
           WHEN due_at IS NULL THEN NULL
@@ -1253,5 +1253,21 @@ export class WorkspaceProductStorage {
       now,
     ).one();
     return row.due_at === null ? null : Number(row.due_at);
+  }
+
+  reapCompletedOpportunityWindows(cutoff: number, limit = 500): number {
+    const doomed = this.storage.sql.exec<{ window_id: string }>(
+      `SELECT window_id FROM opportunity_batch_windows
+        WHERE status = 'completed' AND completed_at < ?
+        ORDER BY completed_at, window_id LIMIT ?`,
+      cutoff,
+      limit,
+    ).toArray();
+    if (doomed.length === 0) return 0;
+    const placeholders = doomed.map(() => "?").join(",");
+    return Number(this.storage.sql.exec(
+      `DELETE FROM opportunity_batch_windows WHERE window_id IN (${placeholders})`,
+      ...doomed.map((row) => row.window_id),
+    ).rowsWritten);
   }
 }

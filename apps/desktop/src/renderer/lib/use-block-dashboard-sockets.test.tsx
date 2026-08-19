@@ -211,6 +211,66 @@ describe('useBlockDashboardSockets', () => {
     rendered.unmount();
   });
 
+  it('does not reconnect after an in-flight ticket request fails during unmount', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    let rejectTicket!: (error: Error) => void;
+    const getBlockDashboardBlockSocketTicket = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectTicket = reject;
+    }));
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(
+        api,
+        workstreamId,
+        [blockId],
+        true,
+      ),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await act(async () => Promise.resolve());
+    rendered.unmount();
+    act(() => rejectTicket(new Error('late failure')));
+    await act(async () => Promise.resolve());
+    expect(vi.getTimerCount()).toBe(0);
+    expect(getBlockDashboardBlockSocketTicket).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it('leaves a healthy socket connected when the browser emits online again', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      ticket: 'block-ticket',
+      protocols: socketTicketProtocols('block-ticket'),
+    }));
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(
+        api,
+        workstreamId,
+        [blockId],
+        true,
+      ),
+      { wrapper: wrapper(queryClient) },
+    );
+    await act(async () => Promise.resolve());
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.event({
+      type: 'block_dashboard_block_snapshot',
+      occurredAt: '2026-08-18T20:00:02.000Z',
+      blockId,
+      run: run(),
+      streamCheckpoint: null,
+    }));
+    await act(async () => window.dispatchEvent(new Event('online')));
+    expect(rendered.result.current[blockId]).toBe('connected');
+    expect(getBlockDashboardBlockSocketTicket).toHaveBeenCalledTimes(1);
+    rendered.unmount();
+  });
+
   it('pauses while offline, resumes online, and closes sockets for removed blocks', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     let online = false;

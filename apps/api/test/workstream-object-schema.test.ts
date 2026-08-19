@@ -100,6 +100,25 @@ function objectStorage(
 }
 
 describe("the Workstream Durable Object relational schema", () => {
+  it("removes view UPSERT clauses without changing real-table UPSERTs or RETURNING", () => {
+    const compatibilityView = rewriteWorkstreamRuntimeSql(
+      `INSERT INTO messages (id, workspace_id, workstream_id, text_content)
+       VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text_content = excluded.text_content
+       RETURNING id`,
+    );
+    expect(compatibilityView).toContain("_runtime_messages");
+    expect(compatibilityView).not.toContain("ON CONFLICT");
+    expect(compatibilityView).toContain("RETURNING id");
+
+    const realTable = rewriteWorkstreamRuntimeSql(
+      `INSERT INTO attachment_tool_receipts (tool_call_id, resource_id)
+       VALUES (?, ?) ON CONFLICT(tool_call_id) DO UPDATE SET resource_id = excluded.resource_id
+       RETURNING resource_id`,
+    );
+    expect(realTable).toContain("ON CONFLICT(tool_call_id) DO UPDATE");
+    expect(realTable).toContain("RETURNING resource_id");
+  });
+
   it("creates the complete workstream-down table contract idempotently", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);

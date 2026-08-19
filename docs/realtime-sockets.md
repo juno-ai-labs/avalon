@@ -371,6 +371,28 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-18 — Block sockets and optimistic ordering survive stale browser events
+
+**What changed:** BlockDashboard socket ticket failures use the same stopped,
+revoked, offline-aware reconnect gate as socket closes, and a redundant browser
+`online` event leaves an already open or connecting socket alone. HyperSight
+block drag cancellation restores the authoritative order, while keyboard and
+drop reorders retain an optimistic configuration until the parent acknowledges
+that exact order; live run updates merge into it meanwhile.
+
+**Why:** A late ticket rejection could arm a reconnect after unmount, and an
+`online` event could visually demote a healthy connection. Parent query pushes
+can also carry the old block order while a save is in flight, which previously
+made successful keyboard reorders appear to snap back.
+
+**Considered and rejected:** Disabling live query updates during a save. Block
+run checkpoints remain useful while configuration is pending, so only the
+stale configuration fields are held optimistically.
+
+**Consequences:** Connection state no longer glitches on redundant network
+events, and block ordering changes remain stable without suppressing streamed
+HyperSight results.
+
 ### 2026-08-18 — Schema-drifted agent frames leave bounded diagnostics
 
 **What changed:** WorkstreamDO control and BlockDashboardAgent sockets still

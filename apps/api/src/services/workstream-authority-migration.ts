@@ -1239,7 +1239,8 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
       .bind(route.workspace_id),
     // Deleting note/resource rows fires the old R2 cleanup triggers. Those
     // receipts refer to objects now owned by WorkspaceDO and must never run.
-    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox`),
+    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
     env.DB.prepare(
       `DELETE FROM work_opportunity_snapshots WHERE opportunity_id IN (${opportunityIds})`,
     ).bind(route.workspace_id),
