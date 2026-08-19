@@ -746,7 +746,6 @@ already have committed across the object boundary.
 | --- | --- |
 | `_sql_schema_migrations` | One row per immutable schema version; shared runner metadata. |
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
-| `socket_ticket_receipts` | Historical v1 per-target ticket receipts retained by append-only migration; no new socket writes this table. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and Workflow claim/terminal state. It is never shared with another workspace. |
@@ -763,7 +762,7 @@ already have committed across the object boundary.
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
 | `workstream_notification_intents`, `external_delivery_attempts` | Causally fenced mention intents plus the normalized ledger available to multi-destination delivery paths. Existing automation/digest transports keep their smaller idempotency receipts on their local target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
-| `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds, imported unchanged. |
+| `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
 | `workspace_workstream_directory` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, provenance, planning, attention, recency, archive, wakeup, and Terminal scheduling fields. |
 | `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
@@ -773,7 +772,7 @@ already have committed across the object boundary.
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
-| `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
+| `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
 | `work_opportunities` | Workspace/personal suggestion authority: prompts, hashes, source fingerprint, version, TTL, and idempotent start state. |
 | `opportunity_provenance_nodes`, `opportunity_provenance_edges`, `work_opportunity_provenance_roots` | Visibility-scoped evidence graph and ordered roots for each opportunity. |
 | `work_opportunity_user_links`, `work_opportunity_user_states` | Resolved/inferred people plus per-member impressions, dismissal, and started state. |
@@ -811,7 +810,7 @@ stream for a large workspace in one object invocation.
 | `projection_keys` | Next version and last hash for parent aggregate partitions such as `common` and `user:<id>`. |
 | `workstream_state_clock` | Singleton append sequence and nondecreasing millisecond floor used to create local UUIDv7 trace identities. It is not a distributed causal clock. |
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
-| `durable_outbox` | Hash-checked aggregate or immutable effect waiting for Cloudflare Queue delivery/ack. Every common/viewer state change keeps its own row; the payload itself never enters Queue. |
+| `durable_outbox` | Hash-checked aggregate or immutable effect waiting for Cloudflare Queue delivery/ack, discriminated by a CHECK-enumerated `effect_kind` column (the drain filters and priority-orders on it; the class is never re-derived from JSON). Every common/viewer state change keeps its own row; the payload itself never enters Queue. Deliberately no dead-letter lane, unlike the child outbox: directory state is latest-wins per key and effects apply idempotently, so a permanently failing receiver is a quarantine-class event rather than a per-message disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
 | `block_dashboard_configuration_versions` | Append-only shared block definitions and optimistic configuration version. This is the product authority for which stable block agents exist. |
 | `block_dashboard_block_runs` | Parent-visible queued/running/terminal block state keyed by block run, configuration, block, and transcript trigger. |
@@ -847,14 +846,14 @@ join crosses an object boundary.
 | --- | --- |
 | `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Schema/data/import versions and resumable maintenance receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
-| `participants`, `grant_sessions`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
+| `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
-| `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts`, `run_events` | Full-loop admission/recovery, targeted steering, frozen authority/context, provider attempts, and durable events. |
+| `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
-| `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state`, `workstream_events` | Reconnect-safe partial output and active compaction phase, room sequence, and bounded/personal event replay. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
+| `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
 | `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision`, `activity_delivery_receipts`, `suggested_actions`, `legacy_artifacts` | Links to workspace resources, authorization revision, connector admission receipts, operational suggestion overlays, and intentionally preserved import artifacts. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
+| `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources, the authorization revision every relationship change advances (compat-routed changes included), and operational suggestion overlays. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
@@ -869,7 +868,7 @@ authority.
 | --- | --- |
 | `_sql_schema_migrations` | Immutable block-agent schema history. |
 | `block_dashboard_block_identity` | Singleton immutable region/workspace/work-stream/block identity. A mismatched dispatch fails closed. |
-| `agent_run_dispatches` | One durable dispatch per block run with payload hash, queued/running/terminal state, attempt count, retry deadline, and terminal result waiting to settle into WorkstreamDO. |
+| `agent_run_dispatches` | One durable dispatch per block run with the causal freshness tuple (`configuration_version_number`, `trigger_sequence`, `source_created_at`) as declared columns the run-queue ordering reads, queued/running/terminal state, attempt count, retry deadline, and terminal result waiting to settle into WorkstreamDO. Settled terminal rows age out after 180 days; the freshness-pinned run is never reaped. |
 | `latest_dispatch_freshness` | Singleton causal high-water mark for configuration version, source trigger, source time, and run ID. It makes late-retry rejection constant-time even when the immutable dispatch history is large. |
 | `agent_stream_checkpoint` | Singleton full-output checkpoint for the active dispatch, foreign-keyed to `agent_run_dispatches`; revision, epoch, sequence, text, and update time allow exact reconnect replacement without replaying token deltas. Terminal completion deletes it after the final result is durable. |
 | `block_dashboard_socket_ticket_receipts` | One-time block-socket ticket consumption with expiry cleanup, separate from every other socket audience. |
@@ -958,6 +957,58 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-19 — The fleet's tables get retention, byte-accurate bounds, and honest columns
+
+**What changed:** A four-reviewer table audit plus a platform-limits research
+pass produced one sweep. Every growth-only table gained a generous reap —
+180 days for the block dispatch ledger (freshness-pinned run always kept),
+`child_effect_receipts`, HyperSight run/result rows (each block's newest run
+always kept), ranking rounds, spent wake-ups and substream dispatches, and
+never-started expired opportunities with a recursive live-set sweep for
+unreachable provenance nodes; 13 months for processed connector event bodies.
+The resource-link poison-wedge closed at three layers: the producer caps links
+at the envelope contract's 10,000, the child outbox and parent tables bound
+payloads at 1.9 MB measured in BYTES (`length(CAST(… AS BLOB))` — the platform
+2 MB limit is per-row bytes while `length()` on TEXT counts characters), and
+the parent bound now equals the child's so a committed effect is always
+deliverable. Confirmed platform numbers: DO-to-DO RPC allows 32 MiB, so the
+transport never binds; Queue messages remain opaque wake-ups under 128 KB.
+Domain-model findings landed with it: the parent outbox's effect class is a
+CHECK-enumerated `effect_kind` column instead of `json_extract` in the drain,
+the block dispatch freshness tuple became declared columns the queue ordering
+reads, window/event admission shares one `pending` token (import maps legacy
+`queued`), the compat block-run copy regained its status CHECK, the stream
+checkpoint upsert enforces revision monotonicity, all three native
+socket-ticket receipt tables store unix-ms, and the epoch-seconds
+transcription columns carry their unit as `*_s` names. Dead weight left the
+single initial migrations: WorkspaceDO's historical `socket_ticket_receipts`,
+five writerless SubstreamAgent tables (`workstream_events`, `run_events`,
+`activity_delivery_receipts`, `grant_sessions`, `legacy_artifacts` and its
+import stage), five reader-less indexes, and the scheduler's dead retry index;
+the scheduler's save became a change-guarded reconcile.
+
+**Why:** The audit's verdict was consistent — transactional and idempotency
+machinery sound, defects concentrated in retention, payload bounds, and
+schema-invisible discriminators. The 10 GB object ceiling is the only hard
+bound, so windows err long; but "no reap" is not generous, it is a slow
+wedge. A load-bearing routing field hidden in JSON is invisible to STRICT,
+CHECK, and schema inspection, and each billed index and full-scan grows with
+the very tables that lacked retention.
+
+**Considered and rejected:** A dead-letter lane on the parent outbox
+(directory state is latest-wins per key and applies idempotently — permanent
+receiver failure is quarantine-class, now documented on the table); dropping
+the transcription epoch-seconds contract instead of naming it; fleet-wide
+`pending` renames beyond the one adjacent-table collision; and sizing payload
+CHECKs to the 32 MiB RPC cap rather than the 2 MB row cap.
+
+**Consequences:** Reaps run inside existing transactions and alarms — no new
+timers. A redelivery older than a receipt window converges on waterlines,
+dedupe keys, and intent identities. Effects too large to deliver now fail in
+the producing transaction where the producer can shrink them. The import maps
+renamed/renumbered vocabulary (`queued`→`pending`, `*_s` columns) so legacy
+D1 rows land unchanged in meaning.
 
 ### 2026-08-18 — Regional effect receipts, email receipts, and dictation admission move into WorkspaceDO
 

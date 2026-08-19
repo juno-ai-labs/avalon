@@ -13,7 +13,10 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   preview: z.string().max(1_000),
   scope: z.enum(["personal", "workspace"]),
   state: z.string().min(1).max(80),
-  systemKind: z.string().min(1).max(80).nullable(),
+  // As narrow as the receiving column CHECKs: a value the parent's schema
+  // would reject must fail envelope validation at the producer, not commit
+  // into an outbox whose delivery can then never succeed.
+  systemKind: z.enum(["digest"]).nullable(),
   lastActivityAt: TimestampSchema,
   completedAt: NullableTimestampSchema,
   archivedAt: NullableTimestampSchema,

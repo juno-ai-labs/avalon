@@ -725,11 +725,21 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
               updated_at = CAST((julianday(COALESCE(NEW.attached_at, OLD.attached_at)) - 2440587.5) * 86400000 AS INTEGER)
         WHERE resource_id = OLD.resource_id;
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+       -- Every path that can change the authorized inventory advances the
+       -- revision; the compaction checkpoint's visibility fingerprint is
+       -- 'inventory:<revision>', so a compat-routed relationship change that
+       -- skipped this bump would let a stale checkpoint keep matching.
+       INSERT INTO resource_inventory_revision(id, revision, updated_at)
+       VALUES (1, 1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+       ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at;
      END`,
   `CREATE TRIGGER IF NOT EXISTS _runtime_workstream_resources_delete
      INSTEAD OF DELETE ON _runtime_workstream_resources BEGIN
        DELETE FROM workstream_resource_links WHERE resource_id = OLD.resource_id;
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+       INSERT INTO resource_inventory_revision(id, revision, updated_at)
+       VALUES (1, 1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+       ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at;
      END`,
   `CREATE VIEW IF NOT EXISTS _runtime_resources AS
      SELECT json_extract(resource_json, '$.id') AS id,

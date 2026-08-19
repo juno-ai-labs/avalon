@@ -56,6 +56,10 @@ import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
+// Generous by design (the 10 GB object ceiling is the only hard bound): a
+// settled terminal dispatch this old is pure history whose product-facing
+// record lives in the parent's run ledger.
+const DISPATCH_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 const BlockDashboardBlockIdentityInputSchema = z.object({
   workspaceId: IdSchema,
@@ -166,6 +170,9 @@ export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqli
     `CREATE TABLE agent_run_dispatches (
       block_run_id TEXT PRIMARY KEY,
       dispatch_json TEXT NOT NULL CHECK (json_valid(dispatch_json)),
+      configuration_version_number INTEGER NOT NULL CHECK (configuration_version_number > 0),
+      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
+      source_created_at INTEGER NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
       attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
       available_at INTEGER NOT NULL,
@@ -180,6 +187,9 @@ export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqli
     ) STRICT`,
     `CREATE INDEX agent_run_dispatches_ready_idx
       ON agent_run_dispatches(state, available_at, created_at, block_run_id)`,
+    `CREATE INDEX agent_run_dispatches_settlement_idx
+      ON agent_run_dispatches(available_at, block_run_id)
+      WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL`,
     `CREATE TABLE block_dashboard_socket_ticket_receipts (
       ticket_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -411,12 +421,15 @@ export class BlockDashboardAgent extends DurableObject<Env> {
   }
 
   private consumeSocketTicket(identity: BlockDashboardSocketIdentity): boolean {
-    const now = Math.floor(Date.now() / 1_000);
-    if (identity.ticketExpiresAt <= now) return false;
+    // Ticket claims carry epoch seconds; object SQL stores unix-ms
+    // (data-model invariant 7), so convert once at this boundary.
+    const now = Date.now();
+    const expiresAtMs = identity.ticketExpiresAt * 1_000;
+    if (expiresAtMs <= now) return false;
     return this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `DELETE FROM block_dashboard_socket_ticket_receipts WHERE expires_at < ?`,
-        now - 300,
+        now - 300_000,
       );
       return this.state.storage.sql.exec<{ ticket_id: string }>(
         `INSERT OR IGNORE INTO block_dashboard_socket_ticket_receipts
@@ -424,7 +437,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
          VALUES (?, ?, ?, ?) RETURNING ticket_id`,
         identity.ticketId,
         identity.userId,
-        identity.ticketExpiresAt,
+        expiresAtMs,
         now,
       ).toArray().length === 1;
     });
@@ -546,7 +559,9 @@ export class BlockDashboardAgent extends DurableObject<Env> {
          VALUES (1, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET block_run_id = excluded.block_run_id,
            revision = excluded.revision, checkpoint_json = excluded.checkpoint_json,
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at
+         WHERE excluded.block_run_id != agent_stream_checkpoint.block_run_id
+            OR excluded.revision >= agent_stream_checkpoint.revision`,
         dispatch.blockRunId,
         next.roomSequence,
         JSON.stringify(next),
@@ -694,13 +709,17 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         const outcome = supersededOutcome(dispatch, now);
         this.state.storage.sql.exec(
           `INSERT INTO agent_run_dispatches
-             (block_run_id, dispatch_json, state, attempt, available_at, started_at,
+             (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
+              source_created_at, state, attempt, available_at, started_at,
               completed_at, last_error_code, terminal_outcome_json, settled_at,
               last_settlement_error_code, created_at, updated_at)
-           VALUES (?, ?, 'completed', 0, ?, NULL, ?, 'block_dashboard_run_superseded', ?,
+           VALUES (?, ?, ?, ?, ?, 'completed', 0, ?, NULL, ?, 'block_dashboard_run_superseded', ?,
                    NULL, NULL, ?, ?)`,
           dispatch.blockRunId,
           dispatchJson,
+          dispatch.configurationVersionNumber,
+          dispatch.triggerSequence,
+          Date.parse(dispatch.createdAt),
           now,
           now,
           JSON.stringify(outcome),
@@ -731,12 +750,16 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       }
       this.state.storage.sql.exec(
         `INSERT INTO agent_run_dispatches
-           (block_run_id, dispatch_json, state, attempt, available_at, started_at,
+           (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
+            source_created_at, state, attempt, available_at, started_at,
             completed_at, last_error_code, terminal_outcome_json, settled_at,
             last_settlement_error_code, created_at, updated_at)
-         VALUES (?, ?, 'queued', 0, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
         dispatch.blockRunId,
         dispatchJson,
+        dispatch.configurationVersionNumber,
+        dispatch.triggerSequence,
+        Date.parse(dispatch.createdAt),
         now,
         Date.parse(dispatch.createdAt),
         now,
@@ -754,6 +777,25 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         dispatch.triggerSequence,
         Date.parse(dispatch.createdAt),
         dispatch.blockRunId,
+      );
+      // The dispatch ledger is a durable state machine, not history: once a
+      // row is terminal, settled to the parent, past retention, and not the
+      // freshness-pinned run (its RESTRICT reference would reject the delete
+      // anyway), nothing reads it again — the parent's run ledger keeps the
+      // product-facing record.
+      this.state.storage.sql.exec(
+        `DELETE FROM agent_run_dispatches
+          WHERE block_run_id IN (
+            SELECT reapable.block_run_id FROM agent_run_dispatches reapable
+             WHERE reapable.settled_at IS NOT NULL
+               AND reapable.state IN ('completed', 'failed')
+               AND reapable.updated_at < ?
+               AND reapable.block_run_id NOT IN (
+                 SELECT block_run_id FROM latest_dispatch_freshness
+               )
+             ORDER BY reapable.updated_at LIMIT 100
+          )`,
+        now - DISPATCH_LEDGER_RETENTION_MS,
       );
     });
   }
@@ -787,8 +829,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
               )
             )
           ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,
-                   json_extract(dispatch_json, '$.configurationVersionNumber') DESC,
-                   json_extract(dispatch_json, '$.triggerSequence') DESC,
+                   configuration_version_number DESC, trigger_sequence DESC,
                    created_at DESC, block_run_id DESC
           LIMIT 1`,
         Date.now(),
@@ -1223,10 +1264,17 @@ export class BlockDashboardAgent extends DurableObject<Env> {
 
   private nextRunAt(): number | null {
     if (this.agentDrain.active) return null;
+    // Two indexable lanes instead of one OR the planner cannot seek: the
+    // ready index serves the queued/running arm, the settlement partial
+    // index serves the unsettled-terminal arm.
     return this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
-        WHERE (terminal_outcome_json IS NULL AND state IN ('queued', 'running'))
-           OR (terminal_outcome_json IS NOT NULL AND settled_at IS NULL)`,
+      `SELECT MIN(due_at) AS due_at FROM (
+         SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
+          WHERE state IN ('queued', 'running') AND terminal_outcome_json IS NULL
+         UNION ALL
+         SELECT MIN(available_at) FROM agent_run_dispatches
+          WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL
+       )`,
     ).toArray()[0]?.due_at ?? null;
   }
 

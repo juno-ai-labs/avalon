@@ -113,10 +113,6 @@ const IMPORT_STAGES = [
   ["resource_inventory_revision", "resource_inventory_revision", [
     "id", "revision", "updated_at",
   ]],
-  ["legacy_artifacts", "legacy_artifacts", [
-    "artifact_id", "run_id", "artifact_type", "title", "content_ref", "preview_text", "status",
-    "metadata_json", "created_at", "updated_at",
-  ]],
   ["compaction_checkpoints", "compaction_checkpoints", [
     "projection_key", "execution_principal_key", "resource_visibility_fingerprint",
     "checkpoint_template_version", "run_id", "compacted_through_sequence", "messages_json",
@@ -366,15 +362,11 @@ export class WorkstreamAuthorityImporter {
       }
       if (existing) throw new Error("workstream_import_campaign_state_invalid");
       this.storage.sql.exec(`DELETE FROM durable_outbox`);
-      this.storage.sql.exec(`DELETE FROM workstream_events`);
       this.storage.sql.exec(`DELETE FROM projection_keys`);
-      this.storage.sql.exec(`DELETE FROM activity_delivery_receipts`);
       this.storage.sql.exec(`DELETE FROM compaction_jobs`);
       this.storage.sql.exec(`DELETE FROM active_output_turns`);
       this.storage.sql.exec(`DELETE FROM terminal_commands`);
-      this.storage.sql.exec(`DELETE FROM run_events`);
       this.storage.sql.exec(`DELETE FROM due_work`);
-      this.storage.sql.exec(`DELETE FROM grant_sessions`);
       for (const table of RESET_TABLES) this.storage.sql.exec(`DELETE FROM ${table}`);
       this.storage.sql.exec(`DELETE FROM content_refs`);
       this.storage.sql.exec(`DELETE FROM substreams WHERE id != '0'`);

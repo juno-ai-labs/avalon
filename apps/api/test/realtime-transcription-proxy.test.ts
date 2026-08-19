@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
@@ -31,10 +30,27 @@ class SqliteD1Database {
   readonly database = new DatabaseSync(":memory:");
 
   constructor() {
-    this.database.exec(readFileSync(
-      new URL("../../../packages/db/migrations/0040_realtime_transcription_admission.sql", import.meta.url),
-      "utf8",
-    ));
+    // The authoritative WorkspaceDO shape (unit-suffixed epoch-seconds
+    // columns), minus the identity fences the double cannot satisfy.
+    this.database.exec(`
+      CREATE TABLE realtime_transcription_ticket_receipts (
+        ticket_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        consumed_at_s INTEGER NOT NULL,
+        expires_at_s INTEGER NOT NULL CHECK (expires_at_s > consumed_at_s)
+      ) STRICT;
+      CREATE TABLE realtime_transcription_sessions (
+        id TEXT PRIMARY KEY,
+        ticket_id TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        started_at_s INTEGER NOT NULL,
+        expires_at_s INTEGER NOT NULL CHECK (expires_at_s > started_at_s)
+      ) STRICT;
+      CREATE INDEX realtime_transcription_sessions_user_idx
+        ON realtime_transcription_sessions(workspace_id, user_id, expires_at_s);
+    `);
   }
 
   prepare(sql: string): D1PreparedStatement {

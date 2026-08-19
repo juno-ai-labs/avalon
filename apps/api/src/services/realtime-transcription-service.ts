@@ -149,13 +149,13 @@ async function reserveTranscriptionSession(
   const db = withWorkspaceRuntimeDatabase(env, claims.workspaceId).DB;
   const now = Math.floor(Date.now() / 1_000);
   await db.batch([
-    db.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at <= ?").bind(now),
-    db.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at <= ?").bind(now),
+    db.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at_s <= ?").bind(now),
+    db.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at_s <= ?").bind(now),
   ]);
 
   const receipt = await db.prepare(
     `INSERT OR IGNORE INTO realtime_transcription_ticket_receipts
-       (ticket_id, workspace_id, user_id, consumed_at, expires_at)
+       (ticket_id, workspace_id, user_id, consumed_at_s, expires_at_s)
      VALUES (?, ?, ?, ?, ?)`,
   ).bind(claims.ticketId, claims.workspaceId, claims.userId, now, claims.expiresAt).run();
   if (Number(receipt.meta?.changes ?? 0) !== 1) {
@@ -166,15 +166,15 @@ async function reserveTranscriptionSession(
   const expiresAt = now + SESSION_LEASE_SECONDS;
   const reserved = await db.prepare(
     `INSERT INTO realtime_transcription_sessions
-       (id, ticket_id, workspace_id, user_id, started_at, expires_at)
+       (id, ticket_id, workspace_id, user_id, started_at_s, expires_at_s)
      SELECT ?, ?, ?, ?, ?, ?
      WHERE (
        SELECT COUNT(*) FROM realtime_transcription_sessions
-       WHERE workspace_id = ? AND user_id = ? AND expires_at > ?
+       WHERE workspace_id = ? AND user_id = ? AND expires_at_s > ?
      ) < ?
        AND (
          SELECT COUNT(*) FROM realtime_transcription_sessions
-         WHERE workspace_id = ? AND expires_at > ?
+         WHERE workspace_id = ? AND expires_at_s > ?
        ) < ?`,
   ).bind(
     sessionId,
@@ -213,7 +213,7 @@ async function renewTranscriptionSession(
 ): Promise<void> {
   const expiresAt = Math.floor(Date.now() / 1_000) + SESSION_LEASE_SECONDS;
   await withWorkspaceRuntimeDatabase(env, workspaceId).DB.prepare(
-    "UPDATE realtime_transcription_sessions SET expires_at = ? WHERE id = ?",
+    "UPDATE realtime_transcription_sessions SET expires_at_s = ? WHERE id = ?",
   ).bind(expiresAt, sessionId).run();
 }
 

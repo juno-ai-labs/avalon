@@ -302,6 +302,10 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
 
 const MAX_WORKSPACE_PINS_PER_USER = 1_000;
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+// Thirteen months, deliberately the most generous window in the fleet: event
+// bodies are provenance input, and the 10 GB object ceiling is the only hard
+// bound this fence exists to protect.
+const CONNECTOR_EVENT_BODY_RETENTION_MS = 396 * 24 * 60 * 60_000;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const PRODUCT_ALARM_BATCH = 6;
 
@@ -317,16 +321,6 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
-    `CREATE TABLE socket_ticket_receipts (
-      ticket_id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      workstream_id TEXT NOT NULL,
-      substream_id TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      consumed_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE INDEX socket_ticket_receipts_expiry_idx
-      ON socket_ticket_receipts(expires_at, ticket_id)`,
     `CREATE TABLE workspace_sync_events (
       waterline INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id TEXT NOT NULL UNIQUE,
@@ -381,8 +375,6 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
     `CREATE INDEX workspace_connector_events_processing_idx
       ON workspace_connector_events(processing_status, received_at, event_sequence)`,
-    `CREATE INDEX workspace_connector_events_connection_idx
-      ON workspace_connector_events(connection_id, occurred_at DESC, event_sequence DESC)`,
     `CREATE TABLE workspace_connector_event_ingress_receipts (
       ingress_event_id TEXT PRIMARY KEY,
       payload_hash TEXT NOT NULL CHECK (
@@ -446,6 +438,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       ON workspace_workstream_directory(automation_subscription_id, planned_for, archived_at)`,
     `CREATE INDEX workspace_workstream_directory_due_idx
       ON workspace_workstream_directory(next_wakeup_due_at, next_terminal_action_at, workstream_id)`,
+    `CREATE INDEX workspace_workstream_directory_terminal_idx
+      ON workspace_workstream_directory(next_terminal_action_at, workstream_id)
+      WHERE next_terminal_action_at IS NOT NULL`,
     `CREATE TABLE workspace_workstream_viewers (
       workstream_id TEXT NOT NULL REFERENCES workspace_workstream_directory(workstream_id) ON DELETE CASCADE,
       user_id TEXT NOT NULL,
@@ -464,8 +459,6 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       projected_at INTEGER NOT NULL CHECK (projected_at >= 0),
       PRIMARY KEY (workstream_id, user_id)
     ) STRICT`,
-    `CREATE INDEX workspace_workstream_viewers_interest_idx
-      ON workspace_workstream_viewers(user_id, listable, you_are_mentioned, unread_count, workstream_id)`,
     `CREATE TABLE workspace_workstream_pins (
       user_id TEXT NOT NULL,
       workstream_id TEXT NOT NULL REFERENCES workspace_workstream_directory(workstream_id) ON DELETE CASCADE,
@@ -504,7 +497,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       PRIMARY KEY (workstream_id, action_id)
     ) STRICT`,
     `CREATE INDEX workspace_workstream_suggestion_feedback_activity_idx
-      ON workspace_workstream_suggestion_feedback(source, status, resolved_at, activity_id)`,
+      ON workspace_workstream_suggestion_feedback(source, resolved_at, status, activity_id)`,
     `CREATE TABLE workspace_workstream_effect_receipts (
       message_id TEXT PRIMARY KEY,
       workstream_id TEXT NOT NULL,
@@ -886,6 +879,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.reapExpiredActivityEvents(now);
     const product = this.productStorage();
     product.reapCompletedOpportunityWindows(now - 30 * 24 * 60 * 60_000);
+    product.reapSettledSuggestedWork(now);
     let launched = 0;
 
     for (const row of product.dueOpportunityWindows(now, PRODUCT_ALARM_BATCH)) {
@@ -1154,6 +1148,21 @@ export class WorkspaceDO extends DurableObject<Env> {
                ORDER BY received_at, ingress_event_id LIMIT 100
             )`,
           now - CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS,
+        );
+        // Processed event bodies are the highest-volume rows in the object,
+        // and the only unbounded ones absent this reap. Thirteen months —
+        // matching the longest regional retention anywhere in Avalon — dwarfs
+        // every consumer's reach-back (opportunity evidence expires in weeks
+        // and start snapshots copy what they need), so this is a size fence,
+        // not a semantics change. Pending/failed rows never age out.
+        this.state.storage.sql.exec(
+          `DELETE FROM workspace_connector_events
+            WHERE event_id IN (
+              SELECT event_id FROM workspace_connector_events
+               WHERE processing_status = 'processed' AND received_at < ?
+               ORDER BY received_at, event_sequence LIMIT 50
+            )`,
+          now - CONNECTOR_EVENT_BODY_RETENTION_MS,
         );
         return {
           eventId,
@@ -2908,12 +2917,15 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   private consumeSocketTicket(identity: SocketIdentity): boolean {
-    const now = Math.floor(Date.now() / 1_000);
-    if (identity.ticketExpiresAt <= now) return false;
+    // Ticket claims carry epoch seconds; object SQL stores unix-ms
+    // (data-model invariant 7), so convert once at this boundary.
+    const now = Date.now();
+    const expiresAtMs = identity.ticketExpiresAt * 1_000;
+    if (expiresAtMs <= now) return false;
     return this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `DELETE FROM workspace_socket_ticket_receipts WHERE expires_at < ?`,
-        now - 300,
+        now - 300_000,
       );
       const inserted = this.state.storage.sql.exec<{ ticket_id: string }>(
         `INSERT OR IGNORE INTO workspace_socket_ticket_receipts
@@ -2922,7 +2934,7 @@ export class WorkspaceDO extends DurableObject<Env> {
          RETURNING ticket_id`,
         identity.ticketId,
         identity.userId,
-        identity.ticketExpiresAt,
+        expiresAtMs,
         now,
       );
       return inserted.toArray().length === 1;

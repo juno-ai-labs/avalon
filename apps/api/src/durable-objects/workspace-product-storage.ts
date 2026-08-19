@@ -25,6 +25,9 @@ const OPPORTUNITY_DEBOUNCE_MS = 10 * 60_000;
 const OPPORTUNITY_MAX_DELAY_MS = 60 * 60_000;
 const MAX_PROVENANCE_DEPTH = 4;
 const MAX_PROVENANCE_NODES = 32;
+// Generous fences against the 10 GB object ceiling, not product semantics.
+const RANKING_ROUND_RETENTION_MS = 180 * 24 * 60 * 60_000;
+const EXPIRED_OPPORTUNITY_GRACE_MS = 180 * 24 * 60 * 60_000;
 
 function epoch(value: string): number {
   const parsed = Date.parse(value);
@@ -96,7 +99,7 @@ export class WorkspaceProductStorage {
       const sql = this.storage.sql;
       let window = sql.exec<WindowRow>(
         `SELECT * FROM opportunity_batch_windows
-          WHERE partition_key = ? AND status = 'queued' LIMIT 1`,
+          WHERE partition_key = ? AND status = 'pending' LIMIT 1`,
         input.partitionKey,
       ).toArray()[0];
       if (!window) {
@@ -106,7 +109,7 @@ export class WorkspaceProductStorage {
             window_id, partition_key, audience_scope, audience_user_id,
             first_event_at, last_event_at, process_after, status, attempt,
             lease_id, lease_expires_at, created_at, updated_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, NULL, NULL, ?, ?, NULL)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?, NULL)`,
           windowId,
           input.partitionKey,
           input.audience.scope,
@@ -126,7 +129,7 @@ export class WorkspaceProductStorage {
       sql.exec(
         `UPDATE opportunity_batch_windows
             SET last_event_at = MAX(last_event_at, ?), process_after = ?, updated_at = ?
-          WHERE window_id = ? AND status = 'queued'`,
+          WHERE window_id = ? AND status = 'pending'`,
         now,
         due,
         now,
@@ -161,7 +164,7 @@ export class WorkspaceProductStorage {
   dueOpportunityWindows(now: number, limit: number): WindowRow[] {
     return this.storage.sql.exec<WindowRow>(
       `SELECT * FROM opportunity_batch_windows
-        WHERE (status = 'queued' AND process_after <= ?)
+        WHERE (status = 'pending' AND process_after <= ?)
            OR (status = 'processing' AND lease_expires_at < ?)
         ORDER BY process_after, window_id LIMIT ?`,
       now,
@@ -178,7 +181,7 @@ export class WorkspaceProductStorage {
       ).toArray()[0];
       if (!row) return null;
       if (row.attempt >= 5) {
-        const eligible = (row.status === "queued" && row.process_after <= now)
+        const eligible = (row.status === "pending" && row.process_after <= now)
           || (row.status === "processing" && (row.lease_expires_at ?? 0) < now);
         if (eligible) {
           this.storage.sql.exec(
@@ -207,7 +210,7 @@ export class WorkspaceProductStorage {
         `UPDATE opportunity_batch_windows
             SET status = 'processing', attempt = ?, lease_id = ?, lease_expires_at = ?, updated_at = ?
           WHERE window_id = ? AND (
-            (status = 'queued' AND process_after <= ?)
+            (status = 'pending' AND process_after <= ?)
             OR (status = 'processing' AND lease_expires_at < ?)
           ) RETURNING window_id`,
         attempt,
@@ -316,7 +319,7 @@ export class WorkspaceProductStorage {
       if (failed.length > 0) {
         let next = sql.exec<WindowRow>(
           `SELECT * FROM opportunity_batch_windows
-            WHERE partition_key = ? AND status = 'queued' LIMIT 1`,
+            WHERE partition_key = ? AND status = 'pending' LIMIT 1`,
           window.partition_key,
         ).toArray()[0];
         if (!next) {
@@ -328,7 +331,7 @@ export class WorkspaceProductStorage {
               window_id, partition_key, audience_scope, audience_user_id,
               first_event_at, last_event_at, process_after, status, attempt,
               lease_id, lease_expires_at, created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, NULL, NULL, ?, ?, NULL)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?, NULL)`,
             nextId,
             window.partition_key,
             window.audience_scope,
@@ -907,6 +910,63 @@ export class WorkspaceProductStorage {
     );
   }
 
+  /**
+   * Age settled suggested-work state out on the product alarm. Retention is
+   * deliberately generous — the 10 GB object ceiling is the only hard bound:
+   * ranking rounds older than the audit window, opportunities that expired
+   * half a year ago without ever being started (a started opportunity is kept
+   * forever as the anchor its snapshot and work stream reference), and
+   * evidence nodes no surviving root, user link, or edge-path can reach.
+   */
+  reapSettledSuggestedWork(now = Date.now()): void {
+    this.storage.sql.exec(
+      `DELETE FROM suggested_work_ranking_rounds
+        WHERE round_id IN (
+          SELECT round_id FROM suggested_work_ranking_rounds
+           WHERE created_at < ? ORDER BY created_at LIMIT 200
+        )`,
+      now - RANKING_ROUND_RETENTION_MS,
+    );
+    this.storage.sql.exec(
+      `DELETE FROM work_opportunities
+        WHERE opportunity_id IN (
+          SELECT opportunity_id FROM work_opportunities
+           WHERE started_at IS NULL AND created_workstream_id IS NULL
+             AND expires_at < ?
+           ORDER BY expires_at LIMIT 100
+        )`,
+      now - EXPIRED_OPPORTUNITY_GRACE_MS,
+    );
+    // Interior evidence nodes are reachable only through edges, so liveness
+    // is a graph walk from the roots and user links, not a direct-reference
+    // check; edges cascade with their nodes, letting later sweeps finish any
+    // subgraph this bounded batch starts.
+    this.storage.sql.exec(
+      `DELETE FROM opportunity_provenance_nodes
+        WHERE node_id IN (
+          SELECT candidate.node_id FROM opportunity_provenance_nodes candidate
+           WHERE candidate.created_at < ?
+             AND candidate.node_id NOT IN (
+               WITH RECURSIVE live(node_id) AS (
+                 SELECT node_id FROM work_opportunity_provenance_roots
+                 UNION
+                 SELECT provenance_node_id FROM work_opportunity_user_links
+                  WHERE provenance_node_id IS NOT NULL
+                 UNION
+                 SELECT edge.child_node_id FROM opportunity_provenance_edges edge
+                   JOIN live ON live.node_id = edge.parent_node_id
+                 UNION
+                 SELECT edge.parent_node_id FROM opportunity_provenance_edges edge
+                   JOIN live ON live.node_id = edge.child_node_id
+               )
+               SELECT node_id FROM live
+             )
+           ORDER BY candidate.created_at LIMIT 200
+        )`,
+      now - EXPIRED_OPPORTUNITY_GRACE_MS,
+    );
+  }
+
   storeRanking(input: WorkspaceOpportunityStoreRankingRequest, now = Date.now()): void {
     this.storage.sql.exec(
       `INSERT INTO suggested_work_sets (
@@ -1237,7 +1297,7 @@ export class WorkspaceProductStorage {
     const row = this.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(due_at) AS due_at FROM (
         SELECT process_after AS due_at
-          FROM opportunity_batch_windows WHERE status = 'queued'
+          FROM opportunity_batch_windows WHERE status = 'pending'
         UNION ALL
         SELECT lease_expires_at AS due_at
           FROM opportunity_batch_windows WHERE status = 'processing'

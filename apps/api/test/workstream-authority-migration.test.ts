@@ -138,7 +138,7 @@ describe("the D1 to WorkstreamDO authority source", () => {
     }
   });
 
-  it("preserves completion, nullable artifacts, and suggested-action display content", () => {
+  it("preserves completion and suggested-action display content", () => {
     expect(normalizeWorkstreamAuthoritySourceRow("workstream", {
       source_rowid: 1,
       id: WORKSTREAM_ID,
@@ -147,12 +147,6 @@ describe("the D1 to WorkstreamDO authority source", () => {
       next_sequence_number: 1,
       updated_at: COMPLETED_AT,
     }, "global").completed_at).toBe(Date.parse(COMPLETED_AT));
-    expect(normalizeWorkstreamAuthoritySourceRow("legacy_artifacts", {
-      source_rowid: 1,
-      id: "artifact",
-      content_ref: null,
-      preview_text: null,
-    }, "global")).toEqual(expect.objectContaining({ content_ref: null, preview_text: null }));
     expect(normalizeWorkstreamAuthoritySourceRow("suggested_actions", {
       source_rowid: 1,
       id: "suggestion",
