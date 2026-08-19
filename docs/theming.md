@@ -98,7 +98,8 @@ list, `--group-gap` between one group of rows and the next, `--block-gap`
 between events in the feed, `--stack-gap` between message blocks, `--prose-gap`
 between paragraphs, and `--leading-prose` for the leading of prose itself — the
 five a theme changes to make the interface breathe downward), the fill behind a
-person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`), type (`--font-*`,
+person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`) and where that
+turn sits (`--turn-align`, `--turn-margin`, `--turn-width`), type (`--font-*`,
 `--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
 properties that decide whether a section heading is sentence case or letterspaced
 small capitals), depth (`--shadow-*`, `--scrim*`, `--ring*`), and a handful of
@@ -152,8 +153,9 @@ choice only — one near-black ground lit from a corner and running the full wid
 of the window, amber where the others are chartreuse, borders that barely exist,
 uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
 double the vertical spacing, so negative space does the work the lines used to.
-A person's turn has no bubble there at all: `--bubble-fill` is transparent and
-`--bubble-pad` is zero, so the message sits on the page as right-aligned text.
+A person's turn has no bubble there at all: `--bubble-fill` is transparent,
+`--bubble-pad` is zero, and `--turn-align` is `flex-start`, so every message
+sits in one left-aligned column as plain text.
 
 ### Choosing one
 
@@ -273,6 +275,30 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — Where a person's own turn sits is a theme's decision
+
+**What changed:** Three tokens — `--turn-align`, `--turn-margin`, and
+`--turn-width` — decide whether your own messages hug the far edge of the feed
+or sit in the same left-aligned column as the agent's. Airy takes the second:
+every turn starts at the same left edge and runs the full column width.
+
+**Why:** Asked for. The three move together because a turn that is left-aligned
+but still capped at 72% reads as text that wraps early for no reason — the cap
+only makes sense as the counterpart of hugging the opposite edge.
+
+**Consequences, and one to watch:** `WorkstreamMessage` deliberately renders no
+identity line above your own turn — "you know who you are" — and that held
+because the right-aligned bubble was itself the attribution. Under a theme that
+left-aligns and removes the bubble, nothing distinguishes your turn from
+Avalon's except that Avalon's carries an author line and yours does not. The
+alternation and the agent's label still make it inferable, and changing what the
+interface *says* was out of scope for a change about where things sit, so the
+suppression was left alone. A theme in this shape probably wants a `You · <time>`
+line; that is a component change gated on a fourth token, not a restyle, and it
+should be decided rather than inferred.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — Vertical rhythm became a theme's decision, and Airy took it
 

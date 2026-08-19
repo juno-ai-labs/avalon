@@ -2357,7 +2357,7 @@ pre {
 .attachment-progress-value { stroke: var(--brand); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
 .attachment-progress small { color: var(--n-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .sent-attachment { height: 86px; width: 86px; }
-.human-message .message-attachments { justify-content: flex-end; }
+.human-message .message-attachments { justify-content: var(--turn-align); }
 .attachment-lightbox-overlay { background: var(--scrim-solid); inset: 0; position: fixed; z-index: 1000; }
 .attachment-lightbox { background: var(--scrim-solid); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
 .attachment-lightbox-header { align-items: center; border-bottom: 1px solid var(--line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 0 16px 0 22px; }
@@ -3326,13 +3326,13 @@ pre {
    side: do not add an exception that moves a turn based on its author, or the
    same transcript renders differently for each person reading it. */
 :is(.workstream-screen, .automation-chat-surface) .human-message {
-  margin-left: auto;
-  max-width: min(72%, 620px);
+  margin-left: var(--turn-margin);
+  max-width: var(--turn-width);
   width: fit-content;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-content {
-  align-items: flex-end;
+  align-items: var(--turn-align);
   display: flex;
   flex-direction: column;
   max-width: 100%;
@@ -3386,7 +3386,7 @@ pre {
    flush left inside an otherwise right-aligned turn. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
-  justify-content: flex-end;
+  justify-content: var(--turn-align);
   margin-bottom: 4px;
 }
 
