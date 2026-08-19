@@ -14,6 +14,10 @@ import { logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 /** RRULE weekday codes, indexed the way `Date#getDay` numbers them. */
 const RRULE_WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
@@ -131,19 +135,27 @@ export async function rebuildDigestSchedulesForTimezone(
   env: Env,
   input: { userId: string; timezone: string },
 ): Promise<void> {
-  const digests = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.enabled, d.day_mask
-       FROM digest_schedules d
-       JOIN workspace_members m
-         ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
-      WHERE d.user_id = ?`,
-  ).bind(input.userId).all<{ id: string; workspace_id: string; enabled: number; day_mask: number }>();
+  const memberships = await env.DB.prepare(
+    `SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'`,
+  ).bind(input.userId).all<{ workspace_id: string }>();
+  const digests: Array<{ id: string; workspace_id: string; enabled: number; day_mask: number }> = [];
+  for (const membership of memberships.results ?? []) {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(env, membership.workspace_id);
+    const digest = await workspaceEnv.DB.prepare(
+      `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
+        WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(membership.workspace_id, input.userId).first<{
+      id: string; workspace_id: string; enabled: number; day_mask: number;
+    }>();
+    if (digest) digests.push(digest);
+  }
 
-  for (const digest of digests.results ?? []) {
-    const times = await env.DB.prepare(
+  for (const digest of digests) {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(env, digest.workspace_id);
+    const times = await workspaceEnv.DB.prepare(
       "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
     ).bind(digest.id).all<{ minute_of_day: number }>();
-    await env.DB.batch(digestScheduleRowStatements(env, {
+    await workspaceEnv.DB.batch(digestScheduleRowStatements(workspaceEnv, {
       workspaceId: digest.workspace_id,
       digestScheduleId: digest.id,
       enabled: digest.enabled === 1,
@@ -153,7 +165,7 @@ export async function rebuildDigestSchedulesForTimezone(
       at: nowIso(),
     }));
   }
-  await Promise.all([...new Set((digests.results ?? []).map((digest) => digest.workspace_id))]
+  await Promise.all([...new Set(digests.map((digest) => digest.workspace_id))]
     .map((workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId)));
 }
 
@@ -162,20 +174,11 @@ const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const DEFAULT_MINUTE_OF_DAY = 9 * 60;
 /** Bounded so one cron tick cannot spend its whole budget on a large workspace. */
 const RECONCILE_LIMIT = 200;
-/** A multiple of the three statements a default costs, so no member is split. */
-const RECONCILE_BATCH_STATEMENTS = 75;
 
 interface MemberWithoutDigestRow {
   workspace_id: string;
   user_id: string;
-  email: string;
-  timezone: string;
-}
-
-interface UnderivedDigestRow {
-  id: string;
-  workspace_id: string;
-  day_mask: number;
+  email: string | null;
   timezone: string;
 }
 
@@ -202,45 +205,58 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   derived: number;
 }> {
   const at = nowIso();
-  const missing = await env.DB.prepare(
+  const regionalDatabase = workspaceRegionalDatabase(env);
+  const cursor = await regionalDatabase.prepare(
+    `SELECT after_workspace_id, after_user_id FROM digest_reconciliation_control WHERE id = 1`,
+  ).first<{ after_workspace_id: string; after_user_id: string }>();
+  const members = await regionalDatabase.prepare(
     `SELECT m.workspace_id, m.user_id, u.email, u.timezone
-       FROM workspace_members m
-       JOIN users u ON u.id = m.user_id
+      FROM workspace_members m
+      JOIN users u ON u.id = m.user_id
       WHERE m.status = 'active'
-        AND u.email IS NOT NULL AND trim(u.email) <> ''
-        AND NOT EXISTS (
-          SELECT 1 FROM digest_schedules d
-           WHERE d.workspace_id = m.workspace_id AND d.user_id = m.user_id
-        )
+        AND (m.workspace_id > ? OR (m.workspace_id = ? AND m.user_id > ?))
+      ORDER BY m.workspace_id, m.user_id
       LIMIT ?`,
-  ).bind(RECONCILE_LIMIT).all<MemberWithoutDigestRow>();
+  ).bind(
+    cursor?.after_workspace_id ?? "",
+    cursor?.after_workspace_id ?? "",
+    cursor?.after_user_id ?? "",
+    RECONCILE_LIMIT,
+  ).all<MemberWithoutDigestRow>();
 
-  // One batch per member would be up to `RECONCILE_LIMIT` round trips on a tick
-  // that has real work to do. A batch runs its statements in order inside one
-  // transaction, so several members can share one: each member's insert still
-  // lands before the two statements that select the row back. The chunk keeps a
-  // single batch a reasonable size rather than growing with the workspace.
-  const statements = (missing.results ?? []).flatMap((member) => {
-    const scheduleId = newId();
-    return [
-      env.DB.prepare(
+  let created = 0;
+  let derived = 0;
+  const workspaces = new Set<string>();
+  for (const member of members.results ?? []) {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(env, member.workspace_id);
+    let digest = await workspaceEnv.DB.prepare(
+      `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
+        WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(member.workspace_id, member.user_id).first<{
+      id: string; workspace_id: string; enabled: number; day_mask: number;
+    }>();
+    if (!digest) {
+      if (!member.email?.trim()) continue;
+      const scheduleId = newId();
+      const inserted = await workspaceEnv.DB.batch([
+        workspaceEnv.DB.prepare(
         `INSERT INTO digest_schedules
            (id, workspace_id, user_id, day_mask, enabled,
             execution_principal_json, version, created_at, updated_at)
          VALUES (?, ?, ?, ?, 1, ?, 1, ?, ?)
          ON CONFLICT DO NOTHING`,
-      ).bind(
+        ).bind(
         scheduleId, member.workspace_id, member.user_id, dayMaskFromDays(DEFAULT_DAYS),
         JSON.stringify({ type: "user", userId: member.user_id }), at, at,
       ),
-      env.DB.prepare(
+        workspaceEnv.DB.prepare(
         `INSERT INTO digest_schedule_times (digest_schedule_id, minute_of_day)
          SELECT id, ? FROM digest_schedules WHERE workspace_id = ? AND user_id = ?
          ON CONFLICT DO NOTHING`,
       ).bind(DEFAULT_MINUTE_OF_DAY, member.workspace_id, member.user_id),
       // Frozen against the account address the same way a saved target is, so a
       // default and a chosen destination behave identically from here on.
-      env.DB.prepare(
+        workspaceEnv.DB.prepare(
         `INSERT INTO digest_delivery_targets
            (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
             provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
@@ -248,52 +264,50 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
            FROM digest_schedules d
           WHERE d.workspace_id = ? AND d.user_id = ?
          ON CONFLICT DO NOTHING`,
-      ).bind(newId(), member.email.trim(), at, at, member.workspace_id, member.user_id),
-    ];
-  });
-  for (let index = 0; index < statements.length; index += RECONCILE_BATCH_STATEMENTS) {
-    await env.DB.batch(statements.slice(index, index + RECONCILE_BATCH_STATEMENTS));
-  }
-
-  // Two ways derived rows can be wrong, repaired the same way. Missing entirely
-  // is a fresh default, or a save that failed between writing the configuration
-  // and deriving from it. Present but stamped with the wrong timezone is a
-  // timezone change whose inline rebuild did not run or did not finish — which
-  // is what keeps that path best-effort rather than load-bearing.
-  const underived = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.day_mask, u.timezone
-       FROM digest_schedules d
-       JOIN users u ON u.id = d.user_id
-       JOIN workspace_members m
-         ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
-      WHERE d.enabled = 1 AND d.day_mask > 0
-        AND EXISTS (SELECT 1 FROM digest_schedule_times t WHERE t.digest_schedule_id = d.id)
-        AND (
-          NOT EXISTS (SELECT 1 FROM schedules s WHERE s.digest_schedule_id = d.id)
-          OR EXISTS (
-            SELECT 1 FROM schedules s
-             WHERE s.digest_schedule_id = d.id AND s.timezone <> u.timezone
-          )
-        )
-      LIMIT ?`,
-  ).bind(RECONCILE_LIMIT).all<UnderivedDigestRow>();
-
-  const workspaces = new Set<string>();
-  for (const digest of underived.results ?? []) {
-    const times = await env.DB.prepare(
+        ).bind(newId(), member.email.trim(), at, at, member.workspace_id, member.user_id),
+      ]);
+      if (Number(inserted[0]?.meta.changes ?? 0) > 0) created += 1;
+      digest = await workspaceEnv.DB.prepare(
+        `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
+          WHERE workspace_id = ? AND user_id = ?`,
+      ).bind(member.workspace_id, member.user_id).first<{
+        id: string; workspace_id: string; enabled: number; day_mask: number;
+      }>();
+    }
+    if (!digest || digest.enabled !== 1 || digest.day_mask <= 0) continue;
+    const times = await workspaceEnv.DB.prepare(
       "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
     ).bind(digest.id).all<{ minute_of_day: number }>();
-    await env.DB.batch(digestScheduleRowStatements(env, {
+    if (times.results.length === 0) continue;
+    const scheduleState = await workspaceEnv.DB.prepare(
+      `SELECT COUNT(*) AS count,
+              SUM(CASE WHEN timezone = ? THEN 0 ELSE 1 END) AS timezone_mismatches
+         FROM schedules WHERE digest_schedule_id = ?`,
+    ).bind(member.timezone, digest.id).first<{ count: number; timezone_mismatches: number | null }>();
+    if (Number(scheduleState?.count ?? 0) > 0
+      && Number(scheduleState?.timezone_mismatches ?? 0) === 0) continue;
+    await workspaceEnv.DB.batch(digestScheduleRowStatements(workspaceEnv, {
       workspaceId: digest.workspace_id,
       digestScheduleId: digest.id,
       enabled: true,
       days: daysFromDayMask(digest.day_mask),
       times: (times.results ?? []).map((row) => Number(row.minute_of_day)),
-      timezone: digest.timezone,
+      timezone: member.timezone,
       at: nowIso(),
     }));
     workspaces.add(digest.workspace_id);
+    derived += 1;
   }
+
+  const last = members.results.at(-1);
+  await regionalDatabase.prepare(
+    `UPDATE digest_reconciliation_control
+        SET after_workspace_id = ?, after_user_id = ?, updated_at = ? WHERE id = 1`,
+  ).bind(
+    members.results.length < RECONCILE_LIMIT ? "" : last?.workspace_id ?? "",
+    members.results.length < RECONCILE_LIMIT ? "" : last?.user_id ?? "",
+    at,
+  ).run();
 
   // One refresh per workspace, after its rows exist: the Durable Object reads
   // D1, so refreshing per digest would just recompute the same alarm N times.
@@ -305,14 +319,20 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
       });
     })));
 
-  return { created: missing.results?.length ?? 0, derived: underived.results?.length ?? 0 };
+  return { created, derived };
 }
 
 export class DigestService {
+  private readonly env: Env;
+  private readonly auth: AuthContext;
+
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
-  ) {}
+    env: Env,
+    auth: AuthContext,
+  ) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
+  }
 
   /**
    * The caller's digest. A person who has never configured one gets an

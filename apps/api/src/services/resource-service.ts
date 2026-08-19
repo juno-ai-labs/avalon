@@ -9,7 +9,8 @@ import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import {
   materializeAttachmentDerivative,
@@ -24,6 +25,9 @@ function resourceTelemetryConnector(value: unknown):
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -113,35 +117,50 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     AND ${NOTE_RESOURCE_VISIBILITY_SQL}
   GROUP BY r.id`;
 
+const DO_RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM resource_watches rw
+       WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
+    ) THEN 1 ELSE 0 END AS watch_enabled
+  FROM resources r
+  LEFT JOIN connector_connections c ON c.id = r.connection_id
+  WHERE r.id = ? AND r.workspace_id = ?
+    AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
+    AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
+    AND ${NOTE_RESOURCE_VISIBILITY_SQL}`;
+
 export class ResourceService {
   private connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
+  private readonly env: Env;
+  private readonly auth: AuthContext;
 
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
+    env: Env,
+    auth: AuthContext,
     connectorRegistry?: ReturnType<typeof connectorRegistryForEnv>,
   ) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
     this.connectorRegistry = connectorRegistry;
   }
 
   async list(input: ListResourcesInput) {
     const limit = Math.min(Math.max(input.limit, 1), 100);
     const cursor = input.cursor ? decodeResourceCursor(input.cursor) : null;
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const query = input.query?.trim().toLowerCase();
     const filters = [
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
-      INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
+      ...(authority.phase === "durable_object_open" ? [] : [INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL]),
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
       NOTE_RESOURCE_VISIBILITY_SQL,
     ];
-    const bindings: unknown[] = [
-      this.auth.workspaceId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-    ];
+    const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
+    if (authority.phase !== "durable_object_open") {
+      bindings.push(this.auth.userId, this.auth.userId);
+    }
+    bindings.push(this.auth.userId);
 
     if (query) {
       const pattern = `%${escapeLikePattern(query)}%`;
@@ -172,10 +191,21 @@ export class ResourceService {
        ORDER BY r.updated_at DESC, r.id DESC
        LIMIT ?`,
     ).bind(...bindings, limit + 1).all<Record<string, unknown>>();
-    const rows = result.results.slice(0, limit);
+    const consumed = result.results.slice(0, limit);
+    const rows: Record<string, unknown>[] = [];
+    if (authority.phase === "durable_object_open") {
+      // A page can contain one hundred resources. Keep cross-DO authorization
+      // reads serial so one REST request cannot exceed the Worker's concurrent
+      // outbound-connection allowance.
+      for (const row of consumed) {
+        if (await this.canReadInboundEmailResource(row)) rows.push(row);
+      }
+    } else {
+      rows.push(...consumed);
+    }
     const hasMore = result.results.length > limit;
     const items = rows.map(toResource);
-    const last = rows.at(-1);
+    const last = consumed.at(-1);
     return {
       items,
       nextCursor: hasMore && last
@@ -239,12 +269,17 @@ export class ResourceService {
   }
 
   async deleteDraft(id: string): Promise<void> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const resource = await this.env.DB.prepare(
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-         AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
-         AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
+         ${authority.phase === "durable_object_open"
+          ? "AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)"
+          : "AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)"}
+         ${authority.phase === "durable_object_open"
+          ? ""
+          : "AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)"}
        RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
@@ -437,29 +472,51 @@ export class ResourceService {
     const adapter = this.registry().get(String(connection.connector_type));
     const at = nowIso();
     const mode = resourceWatchMode(adapter.manifest, at);
-    const attached = await this.env.DB.prepare(
-      `SELECT 1 AS attached FROM workstream_resources wr JOIN workstreams w ON w.id = wr.workstream_id
-       WHERE wr.resource_id = ? AND wr.workstream_id = ? AND w.workspace_id = ?`,
-    ).bind(id, workstreamId, this.auth.workspaceId).first();
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    );
+    const attached = await executionEnv.DB.prepare(
+      `SELECT watch_enabled FROM workstream_resources
+        WHERE resource_id = ? AND workstream_id = ?`,
+    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
     if (!attached) throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        ENABLE_RESOURCE_WATCH_SQL,
-      ).bind(
-        newId(),
-        this.auth.workspaceId,
-        workstreamId,
-        id,
-        resource.connection_id,
-        mode.watchType,
-        mode.nextPollAt,
-        at,
-        at,
-      ),
-      this.env.DB.prepare(
-        "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(workstreamId, id),
-    ]);
+    const watchStatement = this.env.DB.prepare(ENABLE_RESOURCE_WATCH_SQL).bind(
+      newId(),
+      this.auth.workspaceId,
+      workstreamId,
+      id,
+      resource.connection_id,
+      mode.watchType,
+      mode.nextPollAt,
+      at,
+      at,
+    );
+    const attachmentStatement = executionEnv.DB.prepare(
+      "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(workstreamId, id);
+    if (executionEnv === this.env) {
+      await this.env.DB.batch([watchStatement, attachmentStatement]);
+    } else {
+      await attachmentStatement.run();
+      try {
+        await watchStatement.run();
+      } catch (error) {
+        try {
+          await executionEnv.DB.prepare(
+            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+          ).bind(attached.watch_enabled, workstreamId, id).run();
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "resource_watch_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+        throw error;
+      }
+    }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -486,14 +543,43 @@ export class ResourceService {
     const connection = resource.connection_id == null
       ? null
       : await this.loadConnection(String(resource.connection_id));
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(nowIso(), workstreamId, id),
-      this.env.DB.prepare(
-        "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(workstreamId, id),
-    ]);
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    );
+    const attached = await executionEnv.DB.prepare(
+      `SELECT watch_enabled FROM workstream_resources
+        WHERE resource_id = ? AND workstream_id = ?`,
+    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
+    if (!attached) throw new ApiError(404, "resource_attachment_not_found", "The resource is no longer attached");
+    const watchStatement = this.env.DB.prepare(
+      "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(nowIso(), workstreamId, id);
+    const attachmentStatement = executionEnv.DB.prepare(
+      "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(workstreamId, id);
+    if (executionEnv === this.env) {
+      await this.env.DB.batch([watchStatement, attachmentStatement]);
+    } else {
+      await attachmentStatement.run();
+      try {
+        await watchStatement.run();
+      } catch (error) {
+        try {
+          await executionEnv.DB.prepare(
+            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+          ).bind(attached.watch_enabled, workstreamId, id).run();
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "resource_unwatch_compensation_failed",
+            { cause: compensationError },
+          );
+        }
+        throw error;
+      }
+    }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -515,19 +601,70 @@ export class ResourceService {
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const row = await this.env.DB.prepare(
-      RESOURCE_WITH_WATCH_STATE_SQL,
-    ).bind(
-      id,
-      this.auth.workspaceId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-    ).first<Record<string, unknown>>();
+      authority.phase === "durable_object_open"
+        ? DO_RESOURCE_WITH_WATCH_STATE_SQL
+        : RESOURCE_WITH_WATCH_STATE_SQL,
+    ).bind(...(authority.phase === "durable_object_open"
+      ? [id, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId]
+      : [
+          id,
+          this.auth.workspaceId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+        ])).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
+    if (authority.phase === "durable_object_open" && !await this.canReadInboundEmailResource(row)) {
+      throw new ApiError(404, "resource_not_found", "Resource not found");
+    }
     return row;
+  }
+
+  private async canReadInboundEmailResource(resource: Record<string, unknown>): Promise<boolean> {
+    if (resource.provider !== "resend" || resource.resource_type !== "email") return true;
+    const workspace = await this.workspaceDirectory();
+    const access = await workspace.resourceAccess({
+      workspaceId: this.auth.workspaceId,
+      resourceId: String(resource.id),
+      userId: this.auth.userId,
+    });
+    if (access.items.length === 0) return false;
+    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
+      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
+    )))];
+    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
+    if (subscriptionIds.length > 0) {
+      const placeholders = subscriptionIds.map(() => "?").join(",");
+      const rows = await this.env.DB.prepare(
+        `SELECT id, scope, owner_user_id FROM automation_subscriptions
+          WHERE workspace_id = ? AND id IN (${placeholders})`,
+      ).bind(this.auth.workspaceId, ...subscriptionIds).all<{
+        id: string;
+        scope: string;
+        owner_user_id: string | null;
+      }>();
+      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
+    }
+    return access.items.some((item) => {
+      if (!item.automationSubscriptionId) return true;
+      const subscription = subscriptions.get(item.automationSubscriptionId);
+      return subscription?.scope === "workspace"
+        || subscription?.owner_user_id === this.auth.userId
+        || item.isParticipant;
+    });
+  }
+
+  private workspaceDirectory() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
   }
 
   private async loadConnection(id: string): Promise<Record<string, unknown>> {
@@ -586,12 +723,13 @@ export class ResourceService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, this.env.AVALON_REGION, this.env.APP_ENV);
-    const id = schedulers.idFromName(`${this.env.AVALON_REGION}:${this.auth.workspaceId}`);
-    await schedulers.get(id).fetch("https://scheduler.internal/refresh", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }),
-    });
+    const scheduler = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_SCHEDULERS,
+      this.auth.workspaceId,
+      `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
+    );
+    await scheduler.refresh(this.auth.workspaceId);
   }
 }
 

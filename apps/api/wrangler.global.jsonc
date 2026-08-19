@@ -146,14 +146,26 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
+      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
+      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
+      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
-    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] }
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SubstreamAgent",
+        "BlockDashboardAgent",
+        "WorkstreamDO",
+        "WorkspaceDO",
+        "WorkspaceScheduler",
+        "CrashSymbolicatorContainer"
+      ]
+    }
   ],
   "queues": {
     "producers": [
@@ -180,7 +192,9 @@
   },
   "workflows": [
     { "name": "avalon-global-workstream-loop", "binding": "WORKSTREAM_LOOP_WORKFLOW", "class_name": "WorkstreamLoopWorkflow" },
-    { "name": "avalon-global-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" }
+    { "name": "avalon-global-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
+    { "name": "avalon-global-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
+    { "name": "avalon-global-work-opportunity", "binding": "WORK_OPPORTUNITY_WORKFLOW", "class_name": "WorkOpportunityWorkflow" }
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
   // has to be asked for separately.

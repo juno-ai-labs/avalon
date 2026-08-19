@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAppSession } from './app-session';
 import { useDebugEnabled } from './use-debug-enabled';
+import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
@@ -12,10 +12,12 @@ import type { WorkstreamSummary } from './types';
  * renames and read-state callbacks all patch this entry directly with
  * `setQueryData`, so a key that varied with the caller's options would leave
  * those writes updating something nobody observes — the sidebar would sit on
- * stale unread counts and titles until the next poll. Options change what the
+ * stale unread counts and titles until the next socket event. Options change what the
  * fetcher asks for, never where the answer is stored.
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+
+const WORKSTREAM_PAGE_SIZE = 250;
 
 /**
  * The query result every existing caller already reads, widened with paging.
@@ -47,23 +49,23 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * as a flat `WorkstreamSummary[]` with `setQueryData` — a rename, an unread
  * count, a pin reorder, a scope change. Adopting the paged shape would strand
  * every one of them silently: the write would land on a value nobody reads, and
- * the sidebar would sit stale until the next poll. The flat array is the
+ * the sidebar would sit stale until the next WorkspaceDO event. The flat array is the
  * contract those writers were built against, so paging is kept inside the
  * fetcher and the stored value never changes shape.
  *
  * Two rules follow from that, and they are what make a hand-rolled version
  * correct rather than merely simpler:
  *
- * - **A refetch reloads every page already on screen.** The poll runs every
- *   fifteen seconds, and a fetcher that returned only the first page would
- *   silently truncate the list under somebody who had scrolled. `pagesLoaded`
- *   is how many to walk.
+ * - **A refetch reloads every page already on screen.** A durable WorkspaceDO
+ *   invalidation triggers it, and a fetcher that returned only the first page
+ *   would silently truncate the list under somebody who had scrolled.
+ *   `pagesLoaded` is how many to walk.
  * - **`fetchMore` appends rather than refetching.** It asks for one page and
  *   merges it in, so reaching the bottom costs one request rather than
  *   re-reading everything above it.
  */
 export function useWorkstreamsQuery(): WorkstreamsQuery {
-  const { api } = useAppSession();
+  const { listWorkstreams } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
   const pagesLoaded = useRef(1);
@@ -73,18 +75,22 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
 
   const query = useQuery({
     queryKey: WORKSTREAMS_QUERY_KEY,
-    queryFn: async ({ signal }) => {
+    queryFn: async () => {
       const items: WorkstreamSummary[] = [];
       let cursor: string | undefined;
       let walked = 0;
       for (let page = 0; page < pagesLoaded.current; page += 1) {
-        const result = await api!.getWorkstreams(signal, debugEnabled, cursor);
+        const result = await listWorkstreams({
+          limit: WORKSTREAM_PAGE_SIZE,
+          ...(cursor ? { before: cursor } : {}),
+          includeSystem: debugEnabled,
+        });
         items.push(...result.items);
         walked += 1;
         cursor = result.nextCursor ?? undefined;
         // The list shortened while it was open — archived elsewhere, or simply
         // fewer rows than when it was scrolled. Stop, and stop asking for pages
-        // that are no longer there on every poll from here on.
+        // that are no longer there on every socket-triggered refresh from here on.
         if (!cursor) break;
       }
       pagesLoaded.current = walked;
@@ -92,18 +98,20 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       setHasMore(cursor != null);
       return mergeWorkstreams([], items);
     },
-    enabled: Boolean(api),
-    staleTime: 10_000,
-    refetchInterval: 15_000,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
   const fetchMore = useCallback(() => {
     const cursor = nextCursor.current;
-    if (!api || cursor === null || isFetchingMore) return;
+    if (cursor === null || isFetchingMore) return;
     setIsFetchingMore(true);
-    void api.getWorkstreams(undefined, debugEnabled, cursor)
+    void listWorkstreams({
+      limit: WORKSTREAM_PAGE_SIZE,
+      before: cursor,
+      includeSystem: debugEnabled,
+    })
       .then((page) => {
-        // Counted before the merge so a poll that lands between the two still
+        // Counted before the merge so a socket-triggered refresh that lands between the two still
         // reloads this page rather than dropping it.
         pagesLoaded.current += 1;
         nextCursor.current = page.nextCursor;
@@ -116,7 +124,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       // clearing it would end the list early and quietly.
       .catch(() => undefined)
       .finally(() => setIsFetchingMore(false));
-  }, [api, debugEnabled, isFetchingMore, queryClient]);
+  }, [debugEnabled, isFetchingMore, listWorkstreams, queryClient]);
 
   // Since the key does not vary, toggling the preference has to ask for the
   // refetch itself. This has to be declared below `useQuery`: the query hands
@@ -144,8 +152,8 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
  * A row can arrive twice legitimately: it moved between two page requests, so
  * it sat on both sides of the cursor. Keeping the copy already in the cache
  * rather than the newer one is deliberate — the cached row may carry a patch a
- * realtime handler applied while the page was in flight, and the poll is what
- * reconciles the two a few seconds later anyway.
+ * realtime handler applied while the page was in flight, and the next durable
+ * workspace-directory invalidation reconciles the two.
  */
 function mergeWorkstreams(
   existing: WorkstreamSummary[],

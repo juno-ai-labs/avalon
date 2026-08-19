@@ -126,13 +126,17 @@ export function createTerminalRepositorySelector(
       const participant = await env.DB.prepare(
         `SELECT participant.user_id
            FROM workstream_participants participant
-           JOIN workspace_members member
-             ON member.workspace_id = ? AND member.user_id = participant.user_id
           WHERE participant.workstream_id = ? AND participant.user_id = ?
-            AND participant.removed_at IS NULL AND member.status = 'active'`,
-      ).bind(context.workspaceId, context.workstreamId, context.executionPrincipal.userId)
+            AND participant.removed_at IS NULL`,
+      ).bind(context.workstreamId, context.executionPrincipal.userId)
         .first<{ user_id: string }>();
-      if (!participant) {
+      const member = participant
+        ? await env.DB.prepare(
+          `SELECT user_id FROM workspace_members
+            WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+        ).bind(context.workspaceId, context.executionPrincipal.userId).first<{ user_id: string }>()
+        : null;
+      if (!participant || !member) {
         throw new TerminalToolError(
           "repository_user_authority_required",
           "The requesting user is no longer an active participant in this work stream. Repository checkout was not changed.",

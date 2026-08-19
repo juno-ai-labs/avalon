@@ -19,6 +19,7 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const MAX_NOTES_CONTEXT_CHARACTERS = 50_000;
 const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 400_000;
@@ -81,13 +82,17 @@ const NOTE_SELECT = `SELECT * FROM notes
 
 export class NoteService {
   private readonly meetingNotesGenerator: MeetingNotesGenerator;
+  private readonly env: Env;
+  private readonly auth: AuthContext;
 
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
+    env: Env,
+    auth: AuthContext,
     meetingNotesGenerator?: MeetingNotesGenerator,
   ) {
-    this.meetingNotesGenerator = meetingNotesGenerator ?? new MeetingNotesService(env, auth);
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
+    this.meetingNotesGenerator = meetingNotesGenerator ?? new MeetingNotesService(this.env, auth);
   }
 
   async list(limit: number): Promise<{ items: NoteSummary[] }> {

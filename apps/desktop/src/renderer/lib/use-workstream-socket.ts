@@ -1,14 +1,18 @@
 import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  SubstreamDirectSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  type AgentCompactionState,
   type ActiveStreamCheckpoint,
+  type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
 } from '@avalon/contracts';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ApiError,
   mapElicitation,
   mapMessage,
   messagesWithTransientBlocks,
@@ -19,8 +23,10 @@ import {
   mapWorkstreamDetail,
   normalizeHarnessStatus,
   type AvalonApi,
+  type MentionIdentity,
 } from './api';
 import { elicitationMessageId } from './elicitation';
+import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import {
   createElicitationMessage,
   createTextMessage,
@@ -28,10 +34,13 @@ import {
   isSameLogicalMessage,
   removeTranscriptMessage,
   upsertTranscriptMessage,
+  visibleTranscriptMessages,
 } from './transcript';
-import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
-import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
+import { useWorkspaceSocket } from './workspace-socket';
+import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
@@ -40,12 +49,34 @@ export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' |
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   AvalonApi,
-  'getMessages' | 'getSocketTicket' | 'getWorkstream' | 'getWorkstreams'
+  'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
 >;
+
+export interface CreateWorkstreamMessageInput {
+  text: string;
+  clientId: string;
+  mentions?: MentionIdentity[];
+  confirmedParticipantUserIds?: string[];
+  attachmentIds?: string[];
+}
+
+export interface WorkstreamSocketConnection {
+  state: SocketState;
+  activeCompaction: AgentCompactionState | null;
+  createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
+  loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
+}
+
+export type LoadWorkstreamMessagePageInput =
+  | { before: string; limit?: number }
+  | { after: string; limit?: number };
+
+type CreateMessageSocketCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
+const MESSAGE_PAGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
 
 export function socketHeartbeatDelay(random = Math.random): number {
@@ -446,7 +477,7 @@ export function reconcileCanonicalTranscript(
  * query and its sidebar row reads the list query. Invalidating the list instead
  * would put a REST round trip between the two, and the header would pulse blue
  * over a sidebar dot that had not caught up yet — for as long as the refetch
- * took, and indefinitely if it raced with a poll that had already been issued.
+ * took, and indefinitely if it raced with an older page already in flight.
  */
 export function applyHarnessStatus(
   queryClient: QueryClient,
@@ -491,16 +522,52 @@ export function useWorkstreamSocket(
   api: WorkstreamSocketApi | null,
   workstreamId: string,
   enabled: boolean,
-): SocketState {
+): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
+  const { createMessage: createWorkspaceMessage } = useWorkspaceSocket();
+  useWorkstreamControlSocket(api, workstreamId, enabled);
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
+  const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
+  const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<Message>>(
+    () => Promise.reject(new ApiError(
+      'The work stream is not ready to receive messages.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const createMessage = useCallback(
+    (input: CreateWorkstreamMessageInput): Promise<Message> => createMessageRef.current(input),
+    [],
+  );
+  const loadMessagePageRef = useRef<(input: LoadWorkstreamMessagePageInput) => Promise<MessagePage>>(
+    () => Promise.reject(new ApiError(
+      'The work stream is not ready to load messages.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const loadMessagePage = useCallback(
+    (input: LoadWorkstreamMessagePageInput): Promise<MessagePage> => loadMessagePageRef.current(input),
+    [],
+  );
 
   useEffect(() => {
     attempts.current = 0;
+    setActiveCompaction(null);
     if (!api || !enabled) {
       setState('idle');
+      createMessageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is not ready to receive messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      loadMessagePageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is not ready to load messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
       return;
     }
     let closedByEffect = false;
@@ -519,31 +586,102 @@ export function useWorkstreamSocket(
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     let canonicalReconcileGeneration = 0;
+    const pendingMessagePages = new Map<string, {
+      timeout: number;
+      resolve: (page: MessagePage) => void;
+      reject: (error: Error) => void;
+    }>();
     const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
 
-    const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['hypersight', workstreamId], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['hypersight-preference', workstreamId], exact: true }),
-    ]);
-
-    const syncCanonicalTranscriptAndList = (): void => {
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['messages', workstreamId], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-        syncHyperSightQueries(),
-      ]);
+    createMessageRef.current = async (input): Promise<Message> => {
+      const mentions = await api.messageMentionPayload(
+        workstreamId,
+        input.text,
+        input.mentions,
+      );
+      if (closedByEffect || accessRevoked) {
+        throw new ApiError(
+          'The work stream is no longer available.',
+          409,
+          'workstream_socket_unavailable',
+        );
+      }
+      const operationId = uuidV7();
+      reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
+      const command: CreateMessageSocketCommand = {
+        type: 'create_message',
+        workstreamId,
+        substreamId: '0',
+        operationId,
+        payload: {
+          text: input.text,
+          clientMessageId: input.clientId,
+          mentions,
+          confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
+          attachmentIds: input.attachmentIds ?? [],
+        },
+      };
+      return createWorkspaceMessage(command);
     };
+
+    const rejectPendingMessagePages = (error: Error): void => {
+      for (const pending of pendingMessagePages.values()) {
+        window.clearTimeout(pending.timeout);
+        pending.reject(error);
+      }
+      pendingMessagePages.clear();
+    };
+
+    loadMessagePageRef.current = (input): Promise<MessagePage> => {
+      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new ApiError(
+          'The work stream connection is not ready to load messages.',
+          409,
+          'workstream_socket_unavailable',
+        ));
+      }
+      const requestId = uuidV7();
+      const cursor = 'before' in input
+        ? { direction: 'before' as const, value: input.before }
+        : { direction: 'after' as const, value: input.after };
+      return new Promise<MessagePage>((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          pendingMessagePages.delete(requestId);
+          reject(new ApiError(
+            'The message page request timed out.',
+            503,
+            'message_page_timeout',
+          ));
+        }, MESSAGE_PAGE_TIMEOUT_MS);
+        pendingMessagePages.set(requestId, { timeout, resolve, reject });
+        try {
+          socket!.send(JSON.stringify({
+            type: 'load_message_page',
+            requestId,
+            limit: input.limit ?? 200,
+            cursor,
+          }));
+        } catch (error) {
+          window.clearTimeout(timeout);
+          pendingMessagePages.delete(requestId);
+          reject(error instanceof Error ? error : new Error('The message page request could not be sent.'));
+        }
+      });
+    };
+
+    const syncBlockDashboardQueries = (): Promise<unknown> => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true }),
+      queryClient.invalidateQueries({ queryKey: ['block-dashboard-preference', workstreamId], exact: true }),
+    ]);
 
     const reconcileCanonicalState = async (): Promise<void> => {
       const generation = ++canonicalReconcileGeneration;
       const sequenceAtStart = resumeState.lastSequence;
       try {
-        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
+        const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
           api.getWorkstream(workstreamId),
           api.getMessages(workstreamId),
-          api.getWorkstreams(),
         ]);
         const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
@@ -557,16 +695,22 @@ export function useWorkstreamSocket(
           return;
         }
         const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+        setActiveCompaction((current) => mayStillEmitRealtime
+          && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+          ? current
+          : null);
         queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
-        mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
         void Promise.all([
+          // The WorkspaceDO-backed list query owns cross-workstream serving.
+          // Reconciliation invalidates it instead of making a parallel REST
+          // list request and merging a second snapshot into the socket cache.
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-          syncHyperSightQueries(),
+          syncBlockDashboardQueries(),
         ]);
         if (!mayStillEmitRealtime) streamCursors.clear();
       } catch {
@@ -576,9 +720,9 @@ export function useWorkstreamSocket(
     };
 
     const applyPersonalEvent = (event: PersonalSocketEvent): void => {
-      if (event.type === 'hypersight_preference_updated') {
-        queryClient.setQueryData<HyperSightPreference>(
-          ['hypersight-preference', workstreamId],
+      if (event.type === 'block_dashboard_preference_updated') {
+        queryClient.setQueryData<BlockDashboardPreference>(
+          ['block-dashboard-preference', workstreamId],
           event.preference,
         );
       }
@@ -586,6 +730,7 @@ export function useWorkstreamSocket(
 
     const applyEvent = (event: ServerSocketEvent): void => {
       if (event.type === 'resync_required') {
+        setActiveCompaction(event.activeCompaction);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -616,12 +761,17 @@ export function useWorkstreamSocket(
       }
 
       if (event.type === 'snapshot') {
+        setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          applyActiveStreamCheckpoints(current, event.activeStreams, workstreamId, streamCursors));
-        // Completed transcript history remains canonical over REST. Active text
-        // is retained by that merge until its final canonical row arrives.
-        syncCanonicalTranscriptAndList();
+        const downloaded = event.messageFeed.items.map(mapMessage);
+        queryClient.setQueryData<Message[]>(['messages', workstreamId],
+          applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
+        queryClient.setQueryData(['messages-cursor', workstreamId], event.messageFeed.nextCursor);
+        queryClient.setQueryData(['messages-newer-cursor', workstreamId], event.messageFeed.newerCursor);
+        // The direct socket snapshot is canonical for the newest page. REST is
+        // now used only to page older history or recover after resync_required.
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+        void syncBlockDashboardQueries();
       } else if (event.type === 'presence_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
@@ -685,6 +835,7 @@ export function useWorkstreamSocket(
           applyStreamingSocketEvent(current, event, workstreamId, streamCursors));
       } else if (event.type === 'harness_status_changed') {
         applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
+        if (event.status !== 'running') setActiveCompaction(null);
         if (
           event.status === 'running'
           || event.status === 'needs_input'
@@ -694,6 +845,15 @@ export function useWorkstreamSocket(
         ) {
           void reconcileCanonicalState();
         }
+      } else if (event.type === 'compaction_started') {
+        setActiveCompaction(event.compaction);
+      } else if (event.type === 'compaction_finished') {
+        setActiveCompaction((current) => current
+          && current.harnessRunId === event.harnessRunId
+          && current.attemptId === event.attemptId
+          && current.compactionIndex === event.compactionIndex
+          ? null
+          : current);
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
           const messageId = `tool-${event.invocation.id}`;
@@ -757,10 +917,10 @@ export function useWorkstreamSocket(
               : [...current.resources, resource],
           };
         });
-      } else if (event.type === 'hypersight_configuration_updated') {
-        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
-      } else if (event.type === 'hypersight_block_run_updated') {
-        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+      } else if (event.type === 'block_dashboard_configuration_updated') {
+        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
+      } else if (event.type === 'block_dashboard_block_run_updated') {
+        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], (current) => {
           if (!current || current.versionId !== event.run.configurationVersionId) return current;
           return {
             ...current,
@@ -828,13 +988,19 @@ export function useWorkstreamSocket(
      * forever while the transcript already fetched stayed on screen. Dropping
      * the cached work stream instead lets the screen's existing "could not be
      * opened" state take over, and takes the sidebar row with it rather than
-     * waiting for the list poll to notice.
+     * waiting for a later workspace state event to notice.
      */
     const handleAccessRevoked = (): void => {
       accessRevoked = true;
       resumeState.lastSequence = 0;
       streamCursors.clear();
+      setActiveCompaction(null);
       clearReconnectTimer();
+      rejectPendingMessagePages(new ApiError(
+        'The work stream is no longer available.',
+        404,
+        'workstream_access_revoked',
+      ));
       setState('unavailable');
       queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
       setCachedWorkstreams(queryClient, (current) =>
@@ -874,15 +1040,18 @@ export function useWorkstreamSocket(
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
+          const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
-            api.getWorkstreams(),
           ]);
           const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+          setActiveCompaction((current) => mayStillEmitRealtime
+            && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+            ? current
+            : null);
           const validatedActiveStreams = mayStillEmitRealtime
             ? canonicalResyncActiveStreams.filter((checkpoint) =>
                 checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
@@ -897,11 +1066,10 @@ export function useWorkstreamSocket(
               streamCursors,
             );
           });
-          mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-            syncHyperSightQueries(),
+            syncBlockDashboardQueries(),
           ]);
           resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
           if (canonicalResyncTarget === targetSequence) {
@@ -949,21 +1117,51 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
+            const directEvent = SubstreamDirectSocketEventSchema.safeParse(parsed);
+            if (directEvent.success) {
+              const pending = pendingMessagePages.get(directEvent.data.requestId);
+              if (!pending) return;
+              pendingMessagePages.delete(directEvent.data.requestId);
+              window.clearTimeout(pending.timeout);
+              if (directEvent.data.type === 'message_page_error') {
+                pending.reject(new ApiError(
+                  directEvent.data.message,
+                  503,
+                  directEvent.data.code,
+                ));
+              } else {
+                pending.resolve({
+                  items: visibleTranscriptMessages(directEvent.data.page.items.map(mapMessage)),
+                  nextCursor: directEvent.data.page.nextCursor,
+                  newerCursor: directEvent.data.page.newerCursor,
+                });
+              }
+              return;
+            }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
               applyEvent(event.data);
               return;
             }
             const personalEvent = PersonalSocketEventSchema.safeParse(parsed);
-            if (personalEvent.success) applyPersonalEvent(personalEvent.data);
+            if (personalEvent.success) {
+              applyPersonalEvent(personalEvent.data);
+              return;
+            }
           } catch {
-            // Invalid frames are ignored; canonical REST state remains authoritative.
+            // Invalid frames are ignored; the next object snapshot or requested
+            // page remains authoritative and can replace this transport gap.
           }
         });
         nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
           clearHeartbeat();
           clearStabilityTimer();
+          rejectPendingMessagePages(new ApiError(
+            'The work stream connection closed while loading messages.',
+            503,
+            'workstream_socket_closed',
+          ));
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             handleAccessRevoked();
@@ -1008,6 +1206,21 @@ export function useWorkstreamSocket(
     void connect();
     return () => {
       closedByEffect = true;
+      createMessageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is no longer available.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      loadMessagePageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is no longer available.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      rejectPendingMessagePages(new ApiError(
+        'The work stream changed while loading messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       clearReconnectTimer();
@@ -1015,7 +1228,7 @@ export function useWorkstreamSocket(
       clearStabilityTimer();
       socket?.close();
     };
-  }, [api, enabled, queryClient, resumeState, workstreamId]);
+  }, [api, createWorkspaceMessage, enabled, queryClient, resumeState, workstreamId]);
 
-  return state;
+  return { state, activeCompaction, createMessage, loadMessagePage };
 }

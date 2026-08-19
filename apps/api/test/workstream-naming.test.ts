@@ -472,10 +472,10 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
     jurisdiction: () => rooms,
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
-      fetch: async (_url: string, init: RequestInit) => {
-        const event = JSON.parse(String(init.body)) as Record<string, unknown>;
+      publishEvent: async (input: { event: Record<string, unknown> }) => {
+        const event = input.event;
         published.push(event);
-        return new Response(null, { status: 202 });
+        return { status: 202, bodyJson: "null" };
       },
     }),
   };
@@ -488,7 +488,7 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "",
     PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
-    WORKSTREAM_ROOMS: rooms,
+    SUBSTREAM_AGENTS: rooms,
   });
 }
 

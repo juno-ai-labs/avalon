@@ -294,6 +294,8 @@ export const WorkstreamSchema = z.object({
   manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
   manualUnreadGeneration: z.number().int().nonnegative(),
   hasUnread: z.boolean(),
+  /** True while a person mention sits above this viewer's seen waterline. */
+  youAreMentioned: z.boolean().default(false),
   firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
@@ -756,44 +758,44 @@ export const ActivitySuggestionSchema = z.object({
   resolvedAt: TimestampSchema.nullable()
 });
 
-export const HyperSightBlockRunStatusSchema = z.enum([
+export const BlockDashboardBlockRunStatusSchema = z.enum([
   "queued",
   "running",
   "completed",
   "failed",
   "stopped"
 ]);
-export const HyperSightBlockRunSchema = z.object({
+export const BlockDashboardBlockRunSchema = z.object({
   id: IdSchema,
   blockId: IdSchema,
   configurationVersionId: IdSchema,
   triggerSequence: z.number().int().nonnegative(),
-  status: HyperSightBlockRunStatusSchema,
+  status: BlockDashboardBlockRunStatusSchema,
   markdown: z.string().nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   createdAt: TimestampSchema,
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable()
 });
-export const HyperSightBlockSchema = z.object({
+export const BlockDashboardBlockSchema = z.object({
   id: IdSchema,
   prompt: z.string().max(12_000),
-  latestRun: HyperSightBlockRunSchema.nullable()
+  latestRun: BlockDashboardBlockRunSchema.nullable()
 });
-export const HyperSightSchema = z.object({
+export const BlockDashboardSchema = z.object({
   versionId: IdSchema.nullable(),
   versionNumber: z.number().int().nonnegative(),
-  blocks: z.array(HyperSightBlockSchema).max(24),
+  blocks: z.array(BlockDashboardBlockSchema).max(24),
   updatedAt: TimestampSchema.nullable()
 });
-export const HyperSightPreferenceSchema = z.object({
+export const BlockDashboardPreferenceSchema = z.object({
   visible: z.boolean(),
   updatedAt: TimestampSchema.nullable()
 });
-export const UpdateHyperSightPreferenceRequestSchema = z.object({
+export const UpdateBlockDashboardPreferenceRequestSchema = z.object({
   visible: z.boolean()
 }).strict();
-export const UpdateHyperSightRequestSchema = z.object({
+export const UpdateBlockDashboardRequestSchema = z.object({
   expectedVersionNumber: z.number().int().nonnegative(),
   blocks: z.array(z.object({
     id: IdSchema,
@@ -1309,6 +1311,8 @@ export const CreateMessageRequestSchema = z.object({
   mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(IdSchema).default([]),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
+  runMode: z.enum(["steer", "queue"]).optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
@@ -1389,9 +1393,33 @@ export const CreateWebhookConnectionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
+export const MessageFeedPageSchema = z.object({
+  items: z.array(MessageSchema).max(250),
+  nextCursor: z.string().nullable(),
+  newerCursor: z.string().nullable(),
+}).strict();
+
+const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value) =>
+  Number.isSafeInteger(Number(value)), "Cursor must be a safe integer");
+const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
+  Number(value) > 0, "Cursor must be positive");
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
-  z.object({ type: z.literal("create_message"), payload: CreateMessageRequestSchema }),
+  z.object({
+    type: z.literal("load_message_page"),
+    requestId: IdSchema,
+    limit: z.number().int().min(1).max(250).default(200),
+    cursor: z.discriminatedUnion("direction", [
+      z.object({ direction: z.literal("before"), value: PositiveMessageFeedCursorSchema }).strict(),
+      z.object({ direction: z.literal("after"), value: MessageFeedCursorSchema }).strict(),
+    ]),
+  }).strict(),
+  z.object({
+    type: z.literal("create_message"),
+    operationId: IdSchema,
+    payload: CreateMessageRequestSchema,
+  }),
   z.object({ type: z.literal("stop_harness") }),
   z.object({ type: z.literal("answer_elicitation"), elicitationId: IdSchema, payload: AnswerElicitationRequestSchema }),
   z.object({ type: z.literal("add_participant"), userId: IdSchema }),
@@ -1400,6 +1428,242 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("detach_resource"), resourceId: IdSchema }),
   z.object({ type: z.literal("accept_activity_suggestion"), suggestionId: IdSchema }),
   z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
+]);
+
+/** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
+export const WORKSPACE_SYNC_TOPICS = [
+  "workspace_profile",
+  "member_directory",
+  "invitation_directory",
+  "connector_connections",
+  "connector_oauth_attempts",
+  "terminal_policy",
+  "digest_schedule",
+  "automations",
+  "notes",
+  "resources",
+  "activity",
+  "work_opportunities",
+  "workstream_directory",
+  "viewer_preferences",
+  "feature_flags",
+] as const;
+export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
+
+/** Opaque stable ordering cursor for WorkspaceDO's `(recency, id)` directory. */
+export const WorkspaceWorkstreamCursorSchema = z.string()
+  .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
+  .max(53);
+
+export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("subscribe"),
+    afterWaterline: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    type: z.literal("create_message"),
+    workstreamId: IdSchema,
+    substreamId: z.union([z.literal("0"), IdSchema]),
+    operationId: IdSchema,
+    payload: CreateMessageRequestSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("list_workstreams"),
+    requestId: IdSchema,
+    limit: z.number().int().min(1).max(250),
+    before: WorkspaceWorkstreamCursorSchema.optional(),
+    includeSystem: z.boolean(),
+  }).strict(),
+]);
+
+const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
+
+export const WorkspaceSocketSyncEventSchema = z.object({
+  type: z.literal("workspace_sync"),
+  eventId: WorkstreamStateEventIdSchema,
+  waterline: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema,
+  topics: z.array(WorkspaceSyncTopicSchema).min(1),
+  reason: z.enum(["initial", "change", "history_unavailable"]),
+}).strict();
+
+/**
+ * Coordinates one complete work-stream UI snapshot across its two authorities.
+ *
+ * `commonWaterline` orders the WorkstreamDO-owned shared row and
+ * `viewerWaterline` orders the authenticated user's row. They are deliberately
+ * independent: Cloudflare Queues is unordered, so advancing one must never
+ * cause a delayed update for the other to be discarded. Each field carries
+ * the UUIDv7 identity of its own state row unchanged over both socket paths;
+ * those IDs are time-sortable traces, not a distributed total-order clock.
+ */
+export const WorkstreamStateVersionSchema = z.object({
+  commonEventId: WorkstreamStateEventIdSchema,
+  viewerEventId: WorkstreamStateEventIdSchema.nullable(),
+  authorityGeneration: z.number().int().positive(),
+  commonWaterline: z.number().int().positive(),
+  viewerWaterline: z.number().int().nonnegative(),
+}).strict().superRefine((version, context) => {
+  if ((version.viewerWaterline === 0) !== (version.viewerEventId === null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["viewerEventId"],
+      message: "must be null exactly when viewerWaterline is zero",
+    });
+  }
+});
+
+export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchema.extend({
+  workstreamId: IdSchema,
+}).strict();
+
+/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
+export const WorkspaceWorkstreamPageEventSchema = z.object({
+  type: z.literal("workspace_workstream_page"),
+  requestId: IdSchema,
+  directoryWaterline: z.number().int().nonnegative(),
+  items: z.array(WorkstreamSchema).max(1_250),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
+  nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
+}).strict().superRefine((page, context) => {
+  const itemIds = new Set(page.items.map((item) => item.id));
+  const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
+  if (itemIds.size !== page.items.length
+    || versionIds.size !== page.stateVersions.length
+    || itemIds.size !== versionIds.size
+    || [...itemIds].some((id) => !versionIds.has(id))) {
+    context.addIssue({
+      code: "custom",
+      path: ["stateVersions"],
+      message: "must contain exactly one state version for every work stream item",
+    });
+  }
+});
+
+/** A current state row pushed by WorkspaceDO after Queue ingestion. */
+export const WorkspaceWorkstreamStateEventSchema = z.object({
+  type: z.literal("workspace_workstream_state"),
+  occurredAt: TimestampSchema,
+  workstreamId: IdSchema,
+  stateVersion: WorkstreamStateVersionSchema,
+  /** Null is a versioned visibility/archive tombstone for this viewer. */
+  workstream: WorkstreamSchema.nullable(),
+}).strict().superRefine((event, context) => {
+  if (event.workstream && event.workstream.id !== event.workstreamId) {
+    context.addIssue({
+      code: "custom",
+      path: ["workstream", "id"],
+      message: "must match workstreamId",
+    });
+  }
+});
+
+/**
+ * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
+ * Transcript, tools, presence, and streaming output intentionally remain on
+ * the selected SubstreamAgent feed.
+ */
+export const WorkstreamControlMetadataSchema = z.object({
+  stateVersion: WorkstreamStateVersionSchema,
+  revision: z.number().int().nonnegative(),
+  id: IdSchema,
+  workspaceId: IdSchema,
+  title: z.string().min(1).max(500),
+  description: z.string().max(4_000),
+  preview: z.string().max(1_000),
+  emailAddress: z.string().email().max(254).nullable(),
+  originType: WorkstreamOriginSchema,
+  createdByUserId: IdSchema.nullable(),
+  automationSubscriptionId: IdSchema.nullable(),
+  automationRunId: IdSchema.nullable(),
+  plannedFor: TimestampSchema.nullable(),
+  titleStatus: z.enum(["naming", "automatic", "settled"]),
+  exactState: z.string().min(1).max(80),
+  harnessStatus: HarnessStatusSchema,
+  latestAttentionSequenceNumber: z.number().int().nonnegative(),
+  unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
+  lastActivityAt: TimestampSchema,
+  completedAt: TimestampSchema.nullable(),
+  archivedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  scope: ScopeSchema,
+  systemKind: z.enum(["digest"]).nullable(),
+  nextPendingWakeup: z.object({
+    dueAt: TimestampSchema,
+    promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
+  }).nullable(),
+  nextTerminalActionAt: TimestampSchema.nullable(),
+  viewer: z.object({
+    isParticipant: z.boolean(),
+    listable: z.boolean(),
+    unreadCount: z.number().int().nonnegative(),
+    youAreMentioned: z.boolean(),
+    readThroughSequenceNumber: z.number().int().nonnegative(),
+    manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
+    manualUnreadGeneration: z.number().int().nonnegative(),
+    latestMentionSequenceNumber: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+export const WorkstreamControlSocketClientEventSchema = z.object({
+  type: z.literal("subscribe"),
+}).strict();
+
+export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("workstream_metadata"),
+    occurredAt: TimestampSchema,
+    metadata: WorkstreamControlMetadataSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("block_dashboard_configuration_updated"),
+    occurredAt: TimestampSchema,
+    blockDashboard: BlockDashboardSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("block_dashboard_preference_updated"),
+    occurredAt: TimestampSchema,
+    preference: BlockDashboardPreferenceSchema,
+  }).strict(),
+]);
+
+export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
+export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
+export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
+export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
+export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
+export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
+export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocketEventSchema>;
+
+/**
+ * A direct response to one client command. It is deliberately outside the room
+ * event sequence: the canonical `message_created` event is replayable and
+ * broadcast, while this receipt is private to the socket that submitted it.
+ * Reconnecting clients resend the same `clientMessageId` and receive the same
+ * canonical message through the idempotent write path.
+ */
+export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("create_message"),
+    clientMessageId: z.string().min(1).max(120),
+    message: MessageSchema,
+    agentInvoked: z.boolean(),
+    harnessRunId: IdSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("client_command_failed"),
+    command: z.literal("create_message"),
+    clientMessageId: z.string().min(1).max(120),
+    error: z.object({
+      status: z.number().int().min(0).max(599),
+      code: z.string().min(1).max(160),
+      message: z.string().min(1).max(1_000),
+      details: z.record(z.string(), z.unknown()).optional(),
+    }).strict(),
+  }).strict(),
 ]);
 
 const ServerEventBaseSchema = z.object({
@@ -1435,6 +1699,70 @@ export const ActiveStreamCheckpointSchema = z.object({
   path: ["turnStartOffset"],
 });
 export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+
+/** The one context-compaction operation currently owned by an agent DO. */
+export const AgentCompactionStateSchema = z.object({
+  harnessRunId: IdSchema,
+  attemptId: IdSchema,
+  compactionIndex: z.number().int().positive(),
+  trigger: z.enum(["manual", "auto"]),
+  startedAt: TimestampSchema,
+}).strict();
+export type AgentCompactionState = z.infer<typeof AgentCompactionStateSchema>;
+
+/** Correlated, viewer-specific reads that never consume the shared room cursor. */
+export const SubstreamDirectSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("message_page"),
+    requestId: IdSchema,
+    occurredAt: TimestampSchema,
+    page: MessageFeedPageSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("message_page_error"),
+    requestId: IdSchema,
+    occurredAt: TimestampSchema,
+    code: z.string().min(1).max(160),
+    message: z.string().min(1).max(1_000),
+  }).strict(),
+]);
+export type SubstreamDirectSocketEvent = z.infer<typeof SubstreamDirectSocketEventSchema>;
+/**
+ * Each HyperSight block is an independent agent authority, so its live run
+ * state is delivered by that block's own hibernating socket rather than being
+ * copied through the WorkstreamDO control socket. It reuses the same durable
+ * stream checkpoint shape as SubstreamAgent so reconnect replacement semantics
+ * stay identical across all agent sockets.
+ */
+export const BlockDashboardBlockSocketClientEventSchema = z.object({
+  type: z.literal("subscribe"),
+}).strict();
+
+export const BlockDashboardBlockSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("block_dashboard_block_snapshot"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    run: BlockDashboardBlockRunSchema.nullable(),
+    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("block_dashboard_block_run_updated"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    run: BlockDashboardBlockRunSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("block_dashboard_block_stream_checkpoint"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    blockRunId: IdSchema,
+    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+  }).strict(),
+]);
+
+export type BlockDashboardBlockSocketClientEvent = z.infer<typeof BlockDashboardBlockSocketClientEventSchema>;
+export type BlockDashboardBlockSocketEvent = z.infer<typeof BlockDashboardBlockSocketEventSchema>;
 /**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
@@ -1454,7 +1782,10 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     workstream: WorkstreamDetailSchema,
+    /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
+    messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
+    activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
@@ -1491,6 +1822,17 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), message: MessageSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("compaction_started"),
+    compaction: AgentCompactionStateSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("compaction_finished"),
+    harnessRunId: IdSchema,
+    attemptId: IdSchema,
+    compactionIndex: z.number().int().positive(),
+    outcome: z.enum(["completed", "failed"]),
+  }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_started"), invocation: ToolInvocationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_completed"), invocation: ToolInvocationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_failed"), invocation: ToolInvocationSchema }),
@@ -1502,14 +1844,16 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("hypersight_configuration_updated"), hypersight: HyperSightSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("hypersight_block_run_updated"), run: HyperSightBlockRunSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
     latestSequence: z.number().int().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
+    /** Preserves the explicit compaction indicator across replay-window loss. */
+    activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
 ]);
@@ -1517,9 +1861,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
 /** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */
 export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal("hypersight_preference_updated"),
+    type: z.literal("block_dashboard_preference_updated"),
     occurredAt: TimestampSchema,
-    preference: HyperSightPreferenceSchema
+    preference: BlockDashboardPreferenceSchema
   })
 ]);
 
@@ -1621,7 +1965,7 @@ export const ActivityQueueMessageSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   activityId: IdSchema,
-  attempt: z.number().int().nonnegative().default(0)
+  attempt: z.number().int().min(0).max(5).default(0)
 });
 
 export const SlackIngressQueueMessageSchema = z.object({
@@ -1683,10 +2027,18 @@ export const SlackSearchAuthorizationSchema = z.object({
   actionToken: z.string().min(1).max(4096)
 }).strict();
 
+export const WorkstreamCompactionFenceSchema = z.object({
+  checkpointRunId: IdSchema,
+  compactedThroughSequence: z.number().int().nonnegative(),
+  checkpointHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
+}).strict();
+
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   workstreamId: IdSchema,
+  /** External child identity. Existing producers and the main feed use `0`. */
+  substreamId: z.union([z.literal("0"), IdSchema]).optional(),
   harnessRunId: IdSchema,
   triggerMessageId: IdSchema.nullable(),
   /**
@@ -1702,6 +2054,16 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * parsing unchanged.
    */
   transcriptFenceMessageId: IdSchema.nullable().optional(),
+  /**
+   * Immutable lower boundary for the projected model array.
+   *
+   * `undefined` keeps the normal behavior of resolving the latest authorized
+   * checkpoint when the run begins. `null` pins the array to the beginning of
+   * the substream. An object pins one exact completed checkpoint by run,
+   * waterline, and content hash so sibling derived agents cannot observe
+   * different compactions while starting at different times.
+   */
+  compactionFence: WorkstreamCompactionFenceSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   /**
@@ -2143,12 +2505,12 @@ export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
-export type HyperSight = z.infer<typeof HyperSightSchema>;
-export type HyperSightBlock = z.infer<typeof HyperSightBlockSchema>;
-export type HyperSightBlockRun = z.infer<typeof HyperSightBlockRunSchema>;
-export type HyperSightPreference = z.infer<typeof HyperSightPreferenceSchema>;
-export type UpdateHyperSightPreferenceRequest = z.infer<typeof UpdateHyperSightPreferenceRequestSchema>;
-export type UpdateHyperSightRequest = z.infer<typeof UpdateHyperSightRequestSchema>;
+export type BlockDashboard = z.infer<typeof BlockDashboardSchema>;
+export type BlockDashboardBlock = z.infer<typeof BlockDashboardBlockSchema>;
+export type BlockDashboardBlockRun = z.infer<typeof BlockDashboardBlockRunSchema>;
+export type BlockDashboardPreference = z.infer<typeof BlockDashboardPreferenceSchema>;
+export type UpdateBlockDashboardPreferenceRequest = z.infer<typeof UpdateBlockDashboardPreferenceRequestSchema>;
+export type UpdateBlockDashboardRequest = z.infer<typeof UpdateBlockDashboardRequestSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
@@ -2171,6 +2533,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketCommandResultSchema>;
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
@@ -2186,6 +2549,7 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+export type WorkstreamCompactionFence = z.infer<typeof WorkstreamCompactionFenceSchema>;
 
 export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);

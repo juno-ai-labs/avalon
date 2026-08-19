@@ -491,123 +491,151 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       }
       const contextTokensBeforeCompaction = state.lastPromptTokens + state.lastOutputTokens;
       const contextWindowTokens = selectedContextWindowTokens();
-      await requiredPort(
-        "Compaction authorization preparation failed",
-        () => input.compaction?.prepare?.(),
-      );
       compactionIndex += 1;
-      const compactionPrimaryModel = model ?? input.config.primaryModel;
-      const fallbackModels = [
-        input.config.primaryModel,
-        ...(input.config.fallbackModels ?? []),
-      ].filter((candidate, index, candidates) =>
-        candidate !== compactionPrimaryModel && candidates.indexOf(candidate) === index
-      );
-      const summaryTurn = async (instruction: string, attempt: number): Promise<RoutedTurn> =>
-        routeOpenRouterTurn({
-          input,
-          messages: [
-            ...messages,
-            { role: "user", content: instruction },
-          ],
-          tools: undefined,
-          systemPrompt: {
-            content: typeof systemMessage.content === "string" ? systemMessage.content : "",
-          },
-          signal,
-          turnId: attempt === 1
-            ? `${input.harnessRunId}:compaction:${compactionIndex}`
-            : `${input.harnessRunId}:compaction:${compactionIndex}:${attempt}`,
-          emit: async () => {},
-          primaryModel: compactionPrimaryModel,
-          fallbackModels,
-          // The run's configured effort, not a reduced one. This call produces the
-          // only record the rest of the run will have, so it is the last place to
-          // economize: a summary that drops an instruction or garbles an
-          // identifier costs more than the reasoning tokens it saved, and the
-          // damage is invisible until a later turn acts on what is missing.
-          suppressStreamOutput: true,
-        });
-      let routed = await summaryTurn(COMPACTION_SUMMARY_PROMPT, 1);
-      let inputTokens = numberFromUsage(routed.result.usage, "prompt_tokens");
-      let outputTokens = numberFromUsage(routed.result.usage, "completion_tokens");
-      let cachedInputTokens = cachedTokens(routed.result.usage);
-      let compactionCostCents = costCents(routed.result.usage);
-      // A summary cut off by the provider's output cap is the one truncation
-      // nothing else catches: Bind reads a cut completion as a defect only inside
-      // tool-call arguments, and this call makes no tool calls. Adopting it would
-      // replace the transcript with a partial record and lose everything after the
-      // cut — permanently, and with no signal that anything is missing, because a
-      // short summary looks exactly like a complete one. Ask once for a terser
-      // summary, and fail the run rather than checkpoint half a conversation.
-      if (routed.result.finishReason === "length") {
-        routed = await summaryTurn(
-          `${COMPACTION_SUMMARY_PROMPT}${COMPACTION_SUMMARY_RETRY_SUFFIX}`,
-          2,
+      const currentCompactionIndex = compactionIndex;
+      await emit({
+        type: "compaction_started",
+        compactionIndex: currentCompactionIndex,
+        trigger,
+      });
+      const failCompaction = async (): Promise<void> => emit({
+        type: "compaction_finished",
+        compactionIndex: currentCompactionIndex,
+        trigger,
+        outcome: "failed",
+      });
+      try {
+        await requiredPort(
+          "Compaction authorization preparation failed",
+          () => input.compaction?.prepare?.(),
         );
-        inputTokens += numberFromUsage(routed.result.usage, "prompt_tokens");
-        outputTokens += numberFromUsage(routed.result.usage, "completion_tokens");
-        const retriedCachedTokens = cachedTokens(routed.result.usage);
-        cachedInputTokens = cachedInputTokens === null && retriedCachedTokens === null
-          ? null
-          : (cachedInputTokens ?? 0) + (retriedCachedTokens ?? 0);
-        compactionCostCents += costCents(routed.result.usage);
+        const compactionPrimaryModel = model ?? input.config.primaryModel;
+        const fallbackModels = [
+          input.config.primaryModel,
+          ...(input.config.fallbackModels ?? []),
+        ].filter((candidate, index, candidates) =>
+          candidate !== compactionPrimaryModel && candidates.indexOf(candidate) === index
+        );
+        const summaryTurn = async (instruction: string, attempt: number): Promise<RoutedTurn> =>
+          routeOpenRouterTurn({
+            input,
+            messages: [
+              ...messages,
+              { role: "user", content: instruction },
+            ],
+            tools: undefined,
+            systemPrompt: {
+              content: typeof systemMessage.content === "string" ? systemMessage.content : "",
+            },
+            signal,
+            turnId: attempt === 1
+              ? `${input.harnessRunId}:compaction:${currentCompactionIndex}`
+              : `${input.harnessRunId}:compaction:${currentCompactionIndex}:${attempt}`,
+            emit: async () => {},
+            primaryModel: compactionPrimaryModel,
+            fallbackModels,
+            // The run's configured effort, not a reduced one. This call produces the
+            // only record the rest of the run will have, so it is the last place to
+            // economize: a summary that drops an instruction or garbles an
+            // identifier costs more than the reasoning tokens it saved, and the
+            // damage is invisible until a later turn acts on what is missing.
+            suppressStreamOutput: true,
+          });
+        let routed = await summaryTurn(COMPACTION_SUMMARY_PROMPT, 1);
+        let inputTokens = numberFromUsage(routed.result.usage, "prompt_tokens");
+        let outputTokens = numberFromUsage(routed.result.usage, "completion_tokens");
+        let cachedInputTokens = cachedTokens(routed.result.usage);
+        let compactionCostCents = costCents(routed.result.usage);
+        // A summary cut off by the provider's output cap is the one truncation
+        // nothing else catches: Bind reads a cut completion as a defect only inside
+        // tool-call arguments, and this call makes no tool calls. Adopting it would
+        // replace the transcript with a partial record and lose everything after the
+        // cut — permanently, and with no signal that anything is missing, because a
+        // short summary looks exactly like a complete one. Ask once for a terser
+        // summary, and fail the run rather than checkpoint half a conversation.
         if (routed.result.finishReason === "length") {
-          throw new HarnessLimitError(
-            "context_limit_exceeded",
-            "The compaction summary did not fit within the model's output limit",
+          routed = await summaryTurn(
+            `${COMPACTION_SUMMARY_PROMPT}${COMPACTION_SUMMARY_RETRY_SUFFIX}`,
+            2,
           );
+          inputTokens += numberFromUsage(routed.result.usage, "prompt_tokens");
+          outputTokens += numberFromUsage(routed.result.usage, "completion_tokens");
+          const retriedCachedTokens = cachedTokens(routed.result.usage);
+          cachedInputTokens = cachedInputTokens === null && retriedCachedTokens === null
+            ? null
+            : (cachedInputTokens ?? 0) + (retriedCachedTokens ?? 0);
+          compactionCostCents += costCents(routed.result.usage);
+          if (routed.result.finishReason === "length") {
+            throw new HarnessLimitError(
+              "context_limit_exceeded",
+              "The compaction summary did not fit within the model's output limit",
+            );
+          }
         }
+        const summary = routed.result.content.trim();
+        if (!summary) throw new OpenRouterCompletionDefectError("empty_completion");
+        if (
+          input.config.maxCostCents !== undefined
+          && state.costCents + compactionCostCents > input.config.maxCostCents
+        ) {
+          throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
+        }
+        const persistedMessages: OpenAI.ChatCompletionMessageParam[] = [
+          systemMessage,
+          compactionCheckpointMessage(summary),
+        ];
+        const renderAppendix = input.compaction?.renderAppendix;
+        const appendix = renderAppendix
+          ? await requiredPort(
+              "Compaction resource inventory rendering failed",
+              () => renderAppendix(),
+            )
+          : null;
+        const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
+          systemMessage,
+          compactionCheckpointMessage(summary, appendix),
+        ];
+        return {
+          messages: compactedMessages,
+          inputTokens,
+          outputTokens,
+          cachedInputTokens,
+          costCents: compactionCostCents,
+          persist: async () => {
+            try {
+              await requiredPort("Compaction checkpoint persistence failed", () => input.compaction?.persist?.({
+                trigger,
+                summary,
+                // Without the system message: the host replays this as the
+                // transcript prefix of a later run, which renders its own current
+                // system prompt. Everything left is plain text, so nothing here
+                // needs the attachment scrubbing an earlier preserved-message
+                // checkpoint did — a data: URL or file part can no longer reach a
+                // stored checkpoint at all.
+                messages: fromOpenAiMessages(persistedMessages.slice(1)),
+                model: routed.result.model,
+                contextTokensBeforeCompaction,
+                contextWindowTokens,
+                inputTokens,
+                outputTokens,
+                costCents: compactionCostCents,
+              }));
+              await emit({
+                type: "compaction_finished",
+                compactionIndex: currentCompactionIndex,
+                trigger,
+                outcome: "completed",
+              });
+            } catch (error) {
+              await failCompaction();
+              throw error;
+            }
+          },
+        };
+      } catch (error) {
+        await failCompaction();
+        throw error;
       }
-      const summary = routed.result.content.trim();
-      if (!summary) throw new OpenRouterCompletionDefectError("empty_completion");
-      if (
-        input.config.maxCostCents !== undefined
-        && state.costCents + compactionCostCents > input.config.maxCostCents
-      ) {
-        throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
-      }
-      const persistedMessages: OpenAI.ChatCompletionMessageParam[] = [
-        systemMessage,
-        compactionCheckpointMessage(summary),
-      ];
-      const renderAppendix = input.compaction?.renderAppendix;
-      const appendix = renderAppendix
-        ? await requiredPort(
-            "Compaction resource inventory rendering failed",
-            () => renderAppendix(),
-          )
-        : null;
-      const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
-        systemMessage,
-        compactionCheckpointMessage(summary, appendix),
-      ];
-      return {
-        messages: compactedMessages,
-        inputTokens,
-        outputTokens,
-        cachedInputTokens,
-        costCents: compactionCostCents,
-        persist: async () => {
-          await requiredPort("Compaction checkpoint persistence failed", () => input.compaction?.persist?.({
-            trigger,
-            summary,
-            // Without the system message: the host replays this as the
-            // transcript prefix of a later run, which renders its own current
-            // system prompt. Everything left is plain text, so nothing here
-            // needs the attachment scrubbing an earlier preserved-message
-            // checkpoint did — a data: URL or file part can no longer reach a
-            // stored checkpoint at all.
-            messages: fromOpenAiMessages(persistedMessages.slice(1)),
-            model: routed.result.model,
-            contextTokensBeforeCompaction,
-            contextWindowTokens,
-            inputTokens,
-            outputTokens,
-            costCents: compactionCostCents,
-          }));
-        },
-      };
     };
     const compactTerminalTurn = async (): Promise<void> => {
       if (!input.compaction) return;

@@ -2,6 +2,10 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
 import { shouldSuppressAutomationResult } from "./slack-agent-service";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 const MAX_RESULT_LENGTH = 40_000;
 
@@ -23,6 +27,7 @@ export type AutomationEmailDelivery = "sent" | "skipped";
 
 interface EmailDeliveryTargetRow {
   id: string;
+  user_id: string;
   email_address: string;
   last_delivered_workstream_id: string | null;
 }
@@ -39,16 +44,20 @@ export async function deliverAutomationResultEmail(
   request: typeof fetch = fetch,
 ): Promise<AutomationEmailDelivery> {
   if (shouldSuppressAutomationResult(input.text)) return "skipped";
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const target = await env.DB.prepare(
-    `SELECT dt.id, dt.email_address, dt.last_delivered_workstream_id
+    `SELECT dt.id, dt.user_id, dt.email_address, dt.last_delivered_workstream_id
      FROM automation_delivery_targets dt
-     JOIN workspace_members wm ON wm.workspace_id = dt.workspace_id AND wm.user_id = dt.user_id
-       AND wm.status = 'active'
      WHERE dt.workspace_id = ? AND dt.automation_subscription_id = ?
        AND dt.target_type = 'email' AND dt.status = 'active'
        AND dt.email_address IS NOT NULL`,
   ).bind(input.workspaceId, input.automationSubscriptionId).first<EmailDeliveryTargetRow>();
   if (!target) return "skipped";
+  const membership = await workspaceRegionalDatabase(env).prepare(
+    `SELECT 1 FROM workspace_members
+      WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+  ).bind(input.workspaceId, target.user_id).first();
+  if (!membership) return "skipped";
   if (target.last_delivered_workstream_id === input.workstreamId) return "skipped";
 
   const name = singleLine(input.title) || "Avalon automation";

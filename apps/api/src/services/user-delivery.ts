@@ -2,6 +2,7 @@ import type { AutomationDeliveryTargetType, Connection, ConnectorUserDelivery } 
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
  * Where a connector's `requiresPersonalIdentityLink` declaration is actually
@@ -79,6 +80,7 @@ export async function resolveFrozenDeliveryIdentity(
   env: Env,
   input: DeliveryIdentityInput & { targetType: AutomationDeliveryTargetType },
 ): Promise<FrozenDeliveryIdentity | null> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const connection = await env.DB.prepare(
     "SELECT id, connector_type, status FROM connector_connections WHERE id = ? AND workspace_id = ?",
   ).bind(input.connectionId, input.workspaceId).first<{
@@ -113,6 +115,7 @@ export async function resolveUserDelivery(
   input: { workspaceId: string; userId: string },
   connections: Array<{ id: string; connector_type: unknown; status: unknown }>,
 ): Promise<UserDeliveryByConnectionId> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const declared = connections.flatMap((connection) => {
     // Only a person's decision removes a surface. A `needs_reconnect` belief
     // used to silently drop the destination, so an automation delivered

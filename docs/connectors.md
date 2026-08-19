@@ -2,6 +2,17 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Avalon owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
+OAuth deliberately crosses one authority boundary. Regional D1 owns the
+single-use encrypted `oauth_states` row because the callback must be validated
+and routed before a WorkspaceDO can be addressed. The selected WorkspaceDO owns
+`connector_oauth_attempts`: the user-visible pending/succeeded/denied/failed
+receipt, telemetry correlation, and resulting connection pointer. Start writes
+the object receipt before advertising the D1 state; a failed D1 write removes
+the pending receipt best-effort, with expiry as the final orphan fence. Callback
+success commits the connection row and attempt's `connection_id` in one
+WorkspaceDO transaction; only the opaque D1 ingress-route synchronization is a
+recoverable post-commit edge.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -12,12 +23,14 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 | `packages/connectors/src/hosted-mcp.ts` | The reusable hosted-MCP OAuth, live discovery, and exact call-forwarding abstraction described in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). |
 | `packages/connectors/src/<provider>.ts` | One adapter per provider. |
 | `apps/api/src/services/connector-connection-access.ts` | `withAuthorizedConnection` — the one door that mints the brand. |
-| `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its D1 lease. |
+| `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its WorkspaceDO-local lease. |
 | `apps/api/src/services/connector-actor-identity.ts` | `resolveConnectorActorIdentity` over `external_user_identities`. |
 | `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
 | `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
-| `apps/api/src/queues/activity-consumer.ts` | Routing, and `activityIsDigestible`. |
+| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO and the reusable routing processor, including `activityIsDigestible`. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
+| `apps/api/src/workflows/connector-event.ts` | One durable processing Workflow per canonical WorkspaceDO event. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, Workflow claims, and settlement. |
 
 ## How it works
 
@@ -51,7 +64,7 @@ Rotation is available to every connection a person has not disabled. The coordin
 
 Freshness at the door is necessary but not sufficient, because a credential can be revoked or expire while a call is already in flight. `withProviderReauthorization` in `provider-utils.ts` is the shared recovery: a provider that refuses the credential gets one refresh and one repeat of the call, and a second refusal is raised as the real one. Adapters must route their authenticated provider calls through it rather than carrying a private copy, and must not report a first rejection as a revoked grant.
 
-Two things about that recovery are easy to get wrong, so neither is left to the caller. **What counts as a refusal is provider-specific and is never inferred from the `unauthorized` code alone** — adapters raise that for policy and configuration failures that never reached the provider, and spending a single-use refresh token on one buys a retry that fails identically. Each adapter states its own vocabulary through `isProviderCredentialRejection`, which additionally admits only errors carrying provider response details: Granola matches a 401 from its MCP transport and not a 403, Slack matches `token_expired` and not the settled answers around it, Google matches the two reasons a new access token resolves. **And the rotation itself is serialized by the host**, not performed beside the coordinator: the door hands the adapter a `rotateCredentials` that claims the same D1 lease, so two calls refused at the same moment cannot each redeem a rotating refresh token and leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. A caller that finds the stored credentials already changed adopts them instead of redeeming over them.
+Two things about that recovery are easy to get wrong, so neither is left to the caller. **What counts as a refusal is provider-specific and is never inferred from the `unauthorized` code alone** — adapters raise that for policy and configuration failures that never reached the provider, and spending a single-use refresh token on one buys a retry that fails identically. Each adapter states its own vocabulary through `isProviderCredentialRejection`, which additionally admits only errors carrying provider response details: Granola matches a 401 from its MCP transport and not a 403, Slack matches `token_expired` and not the settled answers around it, Google matches the two reasons a new access token resolves. **And the rotation itself is serialized by the host**, not performed beside the coordinator: the door hands the adapter a `rotateCredentials` that claims the same WorkspaceDO-local lease, so two calls refused at the same moment cannot each redeem a rotating refresh token and leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. A caller that finds the stored credentials already changed adopts them instead of redeeming over them.
 
 Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring — Granola's webhook endpoint, which stops delivering when disabled — declares `repair`, which only an explicit connection test invokes. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Avalon's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
 
@@ -327,7 +340,13 @@ provider credentials or sending content across regions.
 
 Notion's search matches **titles only** — a provider limitation, not a gap Avalon can close from this side. That makes an empty result the most misleading thing this connector can return, so the plugin message states the limit and names the two ways past it: query the data source that would hold the record, or retrieve a page found by title and read its content. Compare Drive and Linear, where searching contents was possible and is now the default.
 
-Notion's one-time webhook verification token is accepted through a guarded setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing. Unlike every other connector here, Notion's OAuth callback and webhook are not regional: one public connection issues one redirect URI and one webhook URL for both regions, so both arrive at a Global ingress that routes them to the owning region — see [`notion-ingress.md`](notion-ingress.md).
+Notion's one-time webhook verification token is accepted through a guarded
+setup URL, encrypted in the owning WorkspaceDO connection row, and then used to
+verify every later webhook signature before normalization and queueing. Unlike
+every other connector here, Notion's OAuth callback and webhook are not
+regional: one public connection issues one redirect URI and one webhook URL for
+both regions, so both arrive at a Global ingress that routes them to the owning
+region — see [`notion-ingress.md`](notion-ingress.md).
 
 ### Granola
 
@@ -335,7 +354,13 @@ Granola has two intentionally separate connection modes. A personal connection u
 
 A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Avalon hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
 
-The workspace key and the webhook signing secret are encrypted in the workspace's regional D1 database with AES-GCM and connection-ID additional authenticated data. The plaintext key is accepted only by the admin-only setup request, is never stored in connection configuration, provider identifiers, or audit data, and is never returned to the desktop. One active Granola workspace connection is allowed per Avalon workspace; one active personal Granola connection is allowed per member and workspace.
+The workspace key and webhook signing secret are encrypted in the owning
+WorkspaceDO connector row with AES-GCM and connection-ID additional
+authenticated data. The plaintext key is accepted only by the admin-only setup
+request, is never stored in routing metadata, provider identifiers, or audit
+data, and is never returned to the desktop. One active Granola workspace
+connection is allowed per Avalon workspace; one active personal Granola
+connection is allowed per member and workspace.
 
 ### X
 
@@ -443,14 +468,38 @@ The manifest is read when the activity log is written, in `activityIsDigestible`
 
 Manifests and facets are cross-validated at registry construction: a connector that declares provider activity cannot claim webhook or polling support without the corresponding implementation. Slack keeps its dedicated signature-verified Agent ingress, but that ingress may normalize a bounded event into the shared activity pipeline when an exact active automation source is listening; it does not create a general Slack feed. X remains an on-demand read connector because a connection does not yet select a monitored user, list, or stream rule from which a safe feed could be constructed.
 
-1. Verify or poll the provider.
-2. Normalize compact metadata and store any large raw body in R2.
-3. Insert with provider/dedupe uniqueness.
-4. Enqueue only region, workspace ID, and activity ID.
-5. Evaluate explicit resource watches and deterministic automation triggers.
-6. Run semantic trigger matching only after deterministic prefilters.
-7. Create automation work idempotently; unclaimed activity proceeds to suggested-work batching while contextual routing is paused.
-8. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 7 offers next.
+1. The provider-facing Worker verifies a webhook or a poll Workflow reads the provider. Large raw bodies remain in regional R2.
+2. Resolve every authorized connector installation. A single raw provider delivery may fan out to multiple workspaces only when that account is independently installed in each one; normalization produces a separate event for every connection/workspace target.
+3. Normalize the bounded event for one workspace target and retain any large raw body in regional R2.
+4. Enqueue the region, bounded normalized event, ingress UUID, and canonical
+   content hash on that region's Cloudflare Queue. Large/raw provider bytes stay
+   in R2 behind `payloadRef`; the Queue message is independently parseable and
+   does not need a D1 activity-body lookup.
+5. The Queue consumer resolves the workspace's jurisdiction and placement affinity and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
+6. After the object commits, the consumer creates deterministic `connector-event:<canonical-event-id>:<attempt>` in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message. A duplicate Workflow-ID conflict means the earlier send won and is success.
+7. The Workflow claims the event from WorkspaceDO and evaluates explicit resource watches and deterministic automation triggers. Semantic trigger matching runs only after deterministic prefilters.
+8. Create automation work idempotently; unclaimed activity is enqueued into WorkspaceDO's opportunity batch tables while contextual routing is paused. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
+9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
+10. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 8 offers next.
+
+The canonical event remains the automation trigger's evidence after admission.
+Prompt construction and between-turn authorization revalidation load it from
+WorkspaceDO; suggestion-quality feedback joins the WorkspaceDO feedback index
+to the same local event table by provider and event type. Neither path may
+consult a scrubbed D1 `activities` row.
+
+One normalized event is never sent to two WorkspaceDOs and is never shared
+between workspaces. Fan-out happens before normalization at the raw provider
+delivery boundary. Each target gets its own event identity, authorization,
+visibility, dedupe receipt, Workflow, and workspace-local durable row. A
+provider account installed twice in one workspace may likewise produce two
+connection-scoped events; collapsing those requires an explicit workspace-level
+product rule rather than an accidental cross-connection dedupe.
+
+“Global ingress” means Cloudflare's edge Worker fleet, not one US data plane.
+The global router may inspect routing metadata, but EU workspace content is
+forwarded to the EU regional Worker, EU Queue, EU-locked WorkspaceDO, and EU
+Workflow. Normalized content never crosses through the global D1 routing plane.
 
 Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
 speculative half is paused.** Its retained classifier, feedback gates, and the
@@ -461,7 +510,11 @@ there, not in this document.
 
 The dormant routing feedback endpoint remains idempotent in the direction it was given so a rolling-deploy client can settle a card it already held. Work-stream reads return no pending suggestions and current clients ignore suggestion events, so no new resolution control is exposed while the surface is paused. Repeating the same accept or dismissal reports the state the suggestion already reached; only a contradictory resolution is refused with `409 suggestion_already_resolved`.
 
-Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
+Native GitHub, Linear, and Notion deliveries use the same compact Queue envelope
+and routing pipeline. Their exact signed raw payload is retained regionally in
+R2. D1 may store an idempotent global provider-delivery receipt needed before a
+workspace is known; WorkspaceDO is the credential, workspace-handoff, and
+normalized-event authority.
 
 #### Suggested work admission
 
@@ -471,7 +524,7 @@ The stricter `AdmissionResultSchema` remains authoritative after generation. It 
 
 Admission failures are retried through new batch windows only while an event's attempt count is below three. Once that limit is reached the event remains failed; deploying a schema or model fix does not replay it automatically. Operators must verify the corrected admission path first, then use an explicit, bounded replay rather than resetting every activity indiscriminately.
 
-A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`WorkstreamRoom` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
+A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Avalon's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
@@ -532,7 +585,7 @@ or a log-based handoff a persistent credential in observability.*
 
 **Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Avalon and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
 
-**Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
+**Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from WorkspaceDO connector state plus current D1 membership; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
 Each installed credential has two deliberately separate plugin identities. The opaque canonical ID, `connection:<uuid>`, is the only identity used for authorization, durable activation, receipts, and credential access. A database-backed workspace-local ID is the model-facing name: the first active credential of a provider receives `plugin_<provider>`, and simultaneous additional credentials receive the lowest numeric suffix (`plugin_google_2`, `plugin_google_3`, and so on). Disabled connections do not reserve names, so removing and later re-adding a provider reclaims the clean base instead of accumulating random characters. A partial unique database index enforces uniqueness across the active connection list.
 
@@ -609,6 +662,10 @@ about which providers can deliver is written into the API or the client.
   failed; deploying a schema or model fix does not replay it. Operators verify the
   corrected path first, then use an explicit, bounded replay rather than resetting
   every activity indiscriminately.
+- **Connector-event processing gets six deterministic Workflow attempts (0–5).**
+  An exhausted attempt settles the WorkspaceDO event `failed` before enqueueing
+  the next numbered Queue wake-up. Duplicate wake-ups converge on the same
+  Workflow ID; after attempt 5 the cron does not create an unbounded redrive loop.
 - **Everything unknown is withheld from a digest** — a connector this region does
   not register, an event type a manifest has dropped, an activity older than the
   declaration. None of those are somebody confirming a person wants this in their
@@ -626,7 +683,7 @@ about which providers can deliver is written into the API or the client.
 - **A connector truncates its own `title`/`summary` before writing `activities`.**
   Connector caps are wider than the API contract's (GitHub's webhook titles cap at
   500 against the contract's 300), and while `WorkstreamService` and
-  `WorkstreamRoom` truncate defensively at every read and write site, a new
+  `SubstreamAgent` truncate defensively at every read and write site, a new
   connector should keep its own truncation at or under 300/2,000 characters so a
   work stream never depends solely on a downstream guard to stay openable.
 - **Generic-webhook responses are specified**: `401` invalid signature, `400`
@@ -649,6 +706,8 @@ about which providers can deliver is written into the API or the client.
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
 | `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
+| `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Workflow claim fencing, and terminal settlement. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 
@@ -662,6 +721,79 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-18 — Connector ingress routing is migration-tested and repairable
+
+**What changed:** The D1 ingress directory's backfill and insert/update triggers
+are covered for provider-user fallbacks and disabled status. The WorkspaceDO
+writer derives the same minimal route shape in one helper. Slack workspace
+claim audits commit explicitly to regional D1 after the local session claim and
+repair the same audit on claim replay.
+
+**Why:** Provider ingress must discover a workspace before addressing its DO,
+but connector product state is no longer in D1. An implicit subquery across the
+two authorities could route the audit mutation into the object and lose the
+regional record.
+
+**Considered and rejected:** Keeping connector product rows in D1, copying full
+configuration into the route, and batching local claim state with the regional
+audit.
+
+**Consequences:** D1 retains opaque routing fields only. A committed claim may
+temporarily precede its audit during an outage, but replay repairs the
+deterministic audit ID without changing product authority.
+
+### 2026-08-18 — Connector product state moves into WorkspaceDO
+
+**What changed:** WorkspaceDO now owns connection credentials/configuration,
+refresh leases/cursors/health, external identities, connection-scoped webhook
+replay receipts, OAuth attempt status, workspace-local Slack policy/sessions/jobs, and the canonical
+normalized event. Provider ingress uses opaque global routing metadata, a
+regional Queue carrying the bounded normalized event, typed WorkspaceDO RPC,
+then a deterministic Workflow. Legacy D1 activity bodies are imported and
+scrubbed during cutover instead of retained as a live handoff.
+
+**Why:** Connection and normalized-event rows each belong to exactly one
+workspace. Keeping either in D1 made the routing plane a product authority and
+made credential refresh/event processing span databases unnecessarily.
+
+**Considered and rejected:** Unbounded/raw provider payloads in Queue, D1 product
+projections, and an event row shared by installations in multiple workspaces.
+Those alternatives weaken retry/residency boundaries or cross workspace
+authorization.
+
+**Consequences:** D1 retains only provider/setup receipts and routes needed
+before the workspace is known. A raw provider delivery may fan out to multiple
+installed workspaces, but each resulting normalized event is independently
+authorized and stored in one WorkspaceDO.
+
+### 2026-08-18 — Connector events become workspace-local durable authority
+
+**What changed:** Provider-facing Workers fan a raw delivery into separately
+authorized workspace targets, a regional Queue admits each normalized event to
+exactly one WorkspaceDO, and a deterministic Cloudflare Workflow owns routing,
+automation, digest projection, and suggested-work processing. WorkspaceDO now
+stores the complete normalized event and its replay/claim/settlement ledger.
+Post-cutover ingestion never stages the normalized body in D1.
+
+**Why:** Connector activity belongs to one workspace and is neither shared nor
+queried across workspace boundaries. Keeping its durable body in regional D1
+made the routing/control database a second product-data authority and left the
+Queue callback responsible for long-running inference and fan-out work.
+
+**Considered and rejected:** An ID-only Queue message backed by a D1 body row,
+direct ingress-to-DO delivery without Queue buffering, and a shared event row
+for one provider delivery. The first keeps D1 on the product path, the second
+loses regional buffering/redrive, and the third crosses workspace visibility.
+The accepted Queue contract contains only the bounded normalized event; raw
+provider content remains in R2.
+
+**Consequences:** The Queue message is self-contained for WorkspaceDO admission,
+and the event must commit there before its Workflow exists. Event replay uses
+provider/dedupe identity, not Queue order. Suggested-work windows, opportunities,
+provenance, rankings, and user resolutions are also WorkspaceDO-local. New
+downstream readers must load that event or materialize their own bounded local
+product snapshot rather than introducing a D1 handoff.
 
 ### 2026-08-15 — Conversation audiences resolve in bulk and announce admissions
 
@@ -680,7 +812,6 @@ work nor preserves the participant service's existing live-update contract.
 **Consequences:** Known mappings cost no provider profile calls; email enrichment remains best
 effort within the shared deadline. Consumers must continue to handle replayed `participant_added`
 events idempotently.
-
 ### 2026-08-13 — Repository policy stays authoritative through drift and recovery
 
 **What changed:** A present malformed GitHub repository policy now denies all

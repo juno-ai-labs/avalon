@@ -89,7 +89,7 @@ function envFor(database: DatabaseSync): Env {
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+      get: () => ({ refresh: async () => undefined }),
     },
     WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
   });

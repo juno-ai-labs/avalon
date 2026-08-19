@@ -11,7 +11,6 @@ const api = vi.hoisted(() => ({
   createWorkstream: vi.fn(),
   deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
-  getWorkstreams: vi.fn(),
   getWorkOpportunities: vi.fn(),
   recordWorkOpportunityImpressions: vi.fn(),
   dismissWorkOpportunity: vi.fn(),
@@ -20,6 +19,16 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
+
+const workspaceSocket = vi.hoisted(() => ({
+  createMessage: vi.fn(),
+  listWorkstreams: vi.fn(),
+  state: 'connected' as const,
+}));
+
+vi.mock('../lib/workspace-socket', () => ({
+  useWorkspaceSocket: () => workspaceSocket,
+}));
 
 // The composer offers its model selector only while Application → Developer →
 // Debug enabled is on, so this bridge is what turns the control on and off.
@@ -115,7 +124,7 @@ describe('New work-stream home', () => {
       disconnect(): void {}
     });
     api.getWorkspaceMembers.mockResolvedValue([currentUser, teammate]);
-    api.getWorkstreams.mockResolvedValue({
+    workspaceSocket.listWorkstreams.mockResolvedValue({
       items: [
         workstream('waiting', 'Board decision', 'needs_input'),
         workstream('running', 'Pricing restructure', 'running'),

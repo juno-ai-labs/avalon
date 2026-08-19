@@ -18,7 +18,11 @@ import type {
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
+import { substreamAgentName } from "../durable-objects/substream-agent";
+import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
@@ -42,10 +46,14 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
-import { markWorkflowInstanceCreated, workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
-import { issueSocketTicket } from "./socket-service";
+import {
+  issueBlockDashboardBlockSocketTicket,
+  issueSocketTicket,
+  issueWorkstreamControlSocketTicket,
+} from "./socket-service";
+import { loadBlockDashboard } from "./block-dashboard-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
@@ -90,6 +98,11 @@ function telemetryConnectorType(value: unknown):
     || value === 'notion' || value === 'slack' || value === 'x' || value === 'generic_webhook') return value;
   return 'avalon';
 }
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { WorkstreamObjectClient } from "./workstream-object-client";
+import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -181,7 +194,7 @@ const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     ON m.workstream_id = hr.workstream_id
    AND m.client_message_id = ('harness:' || hr.id)
   WHERE hr.workspace_id = ? AND hr.workstream_id = ?
-    AND hr.origin != 'hypersight_block'
+    AND hr.origin != 'block_dashboard_block'
   ORDER BY COALESCE(hr.started_at, hr.created_at) DESC
   LIMIT 250`;
 
@@ -189,7 +202,7 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   FROM tool_invocations ti
   JOIN harness_runs hr ON hr.id = ti.harness_run_id
   WHERE ti.workspace_id = ? AND ti.workstream_id = ?
-    AND hr.origin != 'hypersight_block'
+    AND hr.origin != 'block_dashboard_block'
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
 
@@ -249,24 +262,30 @@ export async function launchWorkstreamHarness(
     /** Admit only while this is still the latest participant-facing run. */
     expectedLatestHarnessRunId?: string;
   },
+  publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
   const id = newId();
   const at = nowIso();
-  const model = await scheduledWorkstreamModelForExisting(env, {
+  const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
   const statements = [
-    ...(input.supersedeActiveRun ? [env.DB.prepare(
+    ...(input.supersedeActiveRun ? [executionEnv.DB.prepare(
       `UPDATE harness_runs
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
         WHERE workspace_id = ? AND workstream_id = ?
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
           AND parent_tool_call_id IS NULL
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, input.workspaceId, input.workstreamId)] : []),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
         status, started_at, model, created_at, trigger_message_id)
@@ -275,7 +294,7 @@ export async function launchWorkstreamHarness(
           SELECT latest.id FROM harness_runs latest
            WHERE latest.workspace_id = ? AND latest.workstream_id = ?
              AND latest.parent_tool_call_id IS NULL
-             AND latest.origin != 'hypersight_block'
+             AND latest.origin != 'block_dashboard_block'
            ORDER BY latest.created_at DESC, latest.id DESC
            LIMIT 1
         )`,
@@ -298,14 +317,14 @@ export async function launchWorkstreamHarness(
       input.workspaceId,
       input.workstreamId,
     ),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ?
          AND EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)`,
     ).bind(at, at, input.workstreamId, input.workspaceId, id),
   ];
   const insertIndex = input.supersedeActiveRun ? 1 : 0;
-  const admission = await env.DB.batch(statements);
+  const admission = await executionEnv.DB.batch(statements);
   if (Number(admission[insertIndex]?.meta.changes ?? 0) !== 1) {
     throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
   }
@@ -344,7 +363,26 @@ export async function launchWorkstreamHarness(
    * here instead fails loudly, in front of the person who asked for it.
    */
   try {
-    await startWorkstreamWorkflow(env, workflowInput);
+    const authority = await readWorkstreamAuthorityControl(env);
+    if (authority.phase === "durable_object_open") {
+      const agent = await durableObjectStubForWorkspace(
+        env,
+        env.SUBSTREAM_AGENTS,
+        input.workspaceId,
+        substreamAgentName(
+          env.AVALON_REGION,
+          input.workspaceId,
+          input.workstreamId,
+        ),
+      );
+      const response = await agent.dispatchRun({ ...workflowInput, substreamId: "0" });
+      if (response.status < 200 || response.status >= 300) {
+        const body = rpcResultBody(response) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === "string" ? body.error : "substream_agent_unavailable");
+      }
+    } else {
+      await startWorkstreamWorkflow(env, workflowInput);
+    }
   } catch (error) {
     const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
     logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
@@ -376,7 +414,7 @@ export async function launchWorkstreamHarness(
     // The work stream and its run exist whatever the caller does with the 503,
     // so anyone already watching is told the run failed rather than left on a
     // `running` row that nothing will move.
-    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+    await publishEvent(env, input.workspaceId, input.workstreamId, {
       type: "harness_status_changed",
       status: "failed",
     });
@@ -387,9 +425,9 @@ export async function launchWorkstreamHarness(
     // The member-safe error carries forward whether an instance is live, so a
     // caller undoing its own preparation is answering the right question.
     const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
-    throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
+    throw memberSafe;
   }
-  await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+  await publishEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
     status: "running",
   });
@@ -679,8 +717,16 @@ export class WorkstreamService {
     private readonly env: Env,
     private readonly auth: AuthContext,
     private readonly defer?: (promise: Promise<unknown>) => void,
+    private readonly publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
   ) {
     this.database = createDatabase(env.DB);
+  }
+
+  private async authoritativeClient(id: string): Promise<WorkstreamObjectClient | null> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    return authority.phase === "durable_object_open"
+      ? new WorkstreamObjectClient(this.env, this.auth, id)
+      : null;
   }
 
   async list(limit: number, before?: string, includeSystem = false) {
@@ -762,6 +808,21 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const created = await new WorkstreamObjectCreationService(this.env, this.auth).create(input, {
+        executionPrincipal: { type: "user", userId: this.auth.userId },
+        ...(slackOrigin ? { slackOrigin } : {}),
+        ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
+        ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
+      });
+      if (input.originResource) {
+        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, input.originResource);
+        if (resourceId) await new WorkstreamObjectClient(this.env, this.auth, created.workstream.id)
+          .attachResource(resourceId);
+      }
+      return created;
+    }
     const attachmentIds = [...new Set(input.attachmentIds)];
     // Two independent reads, and both return without touching D1 when there is
     // nothing to check — which is the common case, so this costs nothing there
@@ -832,7 +893,7 @@ export class WorkstreamService {
     // Ahead of the harness launch below rather than beside it: both land in the
     // same Durable Object log, and a client resyncing from a sequence must not
     // see the run start before the message that triggered it.
-    if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
+    if (message) await this.publishEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
     // Ahead of the launch so the run's first context read already contains the
     // place it was started from, rather than acquiring it a turn later.
     if (input.originResource) {
@@ -874,6 +935,33 @@ export class WorkstreamService {
     executionPromptHash: string;
     idempotencyKey: string;
   }) {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const originResourceIds = await this.resolveDurableOpportunityOriginResources(input.opportunityId);
+      return new WorkstreamObjectCreationService(this.env, this.auth).create({
+        objective: input.displayPrompt,
+        openingMessage: input.executionPrompt,
+        clientMessageId: `opportunity:${input.opportunityId}:v${input.version}`,
+        participantUserIds: [],
+        attachmentIds: [],
+        descriptionSource: "derived",
+      }, {
+        openingStructuredContent: {
+          kind: "suggested_work_expansion",
+          label: "Expanded by Avalon from suggested work",
+          opportunityId: input.opportunityId,
+          opportunityVersion: input.version,
+        },
+        opportunitySnapshot: {
+          opportunityId: input.opportunityId,
+          version: input.version,
+          displayPromptHash: input.displayPromptHash,
+          executionPromptHash: input.executionPromptHash,
+        },
+        originResourceIds,
+        reason: "work_opportunity",
+      });
+    }
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = {
@@ -933,7 +1021,7 @@ export class WorkstreamService {
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     if (message) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, {
+      await this.publishEvent(this.env, this.auth.workspaceId, created.workstream.id, {
         type: "message_created",
         message,
       });
@@ -998,6 +1086,8 @@ export class WorkstreamService {
   }
 
   async get(id: string): Promise<WorkstreamDetail> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.get();
     const workstream = await this.requireWorkstream(id);
     const [participants, resources, connections, openElicitations, suggestions, latestHarness] = await Promise.all([
       this.loadParticipants(id),
@@ -1010,7 +1100,7 @@ export class WorkstreamService {
          FROM harness_runs
          WHERE workspace_id = ? AND workstream_id = ?
            AND parent_tool_call_id IS NULL
-           AND origin != 'hypersight_block'
+           AND origin != 'block_dashboard_block'
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
     ]);
@@ -1039,11 +1129,15 @@ export class WorkstreamService {
   }
 
   async context(id: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.context();
     await this.requireWorkstream(id);
     return { backgroundTasks: await this.loadBackgroundTasks(id) };
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.update(input);
     const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
     const previousScope = before.scope === "personal" ? "personal" : "workspace";
@@ -1137,7 +1231,7 @@ export class WorkstreamService {
     // in the header they are reading and in their sidebar. The same event the
     // naming agent publishes carries a human rename to them too.
     if (input.title != null) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+      await this.publishEvent(this.env, this.auth.workspaceId, id, {
         type: "workstream_renamed",
         title: updated.title,
         titleStatus: "settled",
@@ -1149,7 +1243,7 @@ export class WorkstreamService {
     if (joined) {
       const participant = (await this.loadParticipants(id)).find((item) => item.user.id === this.auth.userId);
       if (participant) {
-        await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+        await this.publishEvent(this.env, this.auth.workspaceId, id, {
           type: "participant_added",
           participant,
         });
@@ -1160,7 +1254,7 @@ export class WorkstreamService {
     // the sockets of those this change just excluded — a member who had it open
     // when it went private would otherwise keep receiving its transcript.
     if (scopeChanged) {
-      const delivered = await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+      const delivered = await this.publishEvent(this.env, this.auth.workspaceId, id, {
         type: "workstream_scope_changed",
         scope: updated.scope,
       });
@@ -1214,6 +1308,8 @@ export class WorkstreamService {
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.messages(limit, before, after, around);
     await this.requireWorkstream(id);
     if (around !== undefined) {
       const olderLimit = Math.max(1, Math.min(50, Math.floor(limit / 4)));
@@ -1254,6 +1350,8 @@ export class WorkstreamService {
   }
 
   async acknowledgeRead(id: string, input: AcknowledgeReadInput) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.acknowledgeRead(input);
     const workstream = await this.requireWorkstream(id);
     if (input.readThroughSequenceNumber > workstream.latestAttentionSequenceNumber) {
       throw new ApiError(422, "invalid_read_sequence", "The read cursor is ahead of the latest message requiring attention");
@@ -1328,6 +1426,8 @@ export class WorkstreamService {
   }
 
   async markUnread(id: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.markUnread();
     const workstream = await this.requireWorkstream(id);
     if (workstream.latestAttentionSequenceNumber === 0) return workstream;
     const at = nowIso();
@@ -1510,6 +1610,12 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.createMessage({
+      ...input,
+      ...(slackOrigin ? { slackOrigin } : {}),
+      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
+    });
     const workstream = await this.requireWorkstream(id);
     const replayed = await this.loadMessageByClientId(id, input.clientMessageId);
     if (replayed) {
@@ -1583,7 +1689,7 @@ export class WorkstreamService {
       );
     }
     const messageWithMentions = { ...message, mentions: preparedInput.mentions };
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
     const mentionedOtherUsers = personIds.filter((userId) => userId !== this.auth.userId);
     await this.recordMessageActivityEvent(messageWithMentions, workstream, mentionedOtherUsers);
     if (mentionedOtherUsers.length > 0) {
@@ -1733,6 +1839,8 @@ export class WorkstreamService {
   }
 
   async addParticipant(id: string, userId: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.addParticipant(userId);
     await this.requireWorkstream(id);
     await this.assertMembersExist([userId]);
     await this.database.workstreams.addParticipant(this.auth.workspaceId, id, userId, this.auth.userId, "explicit");
@@ -1743,7 +1851,7 @@ export class WorkstreamService {
     if (!participant) {
       throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
     }
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1762,6 +1870,8 @@ export class WorkstreamService {
   }
 
   async removeParticipant(id: string, userId: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.removeParticipant(userId);
     await this.requireWorkstream(id);
     if (userId !== this.auth.userId && this.auth.role !== "owner" && this.auth.role !== "admin") {
       throw new ApiError(403, "participant_removal_denied", "You can only remove yourself from this work stream");
@@ -1770,7 +1880,7 @@ export class WorkstreamService {
       `UPDATE workstream_participants SET removed_at = ?
        WHERE workstream_id = ? AND user_id = ?`,
     ).bind(nowIso(), id, userId).run();
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_removed", userId });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "participant_removed", userId });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1788,6 +1898,8 @@ export class WorkstreamService {
   }
 
   async attachResource(id: string, resourceId: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.attachResource(resourceId);
     await this.requireWorkstream(id);
     // Inbound-email resources inherit work-stream visibility rather than a
     // connector scope. Authorize the source before allowing an attachment to
@@ -1819,7 +1931,7 @@ export class WorkstreamService {
       throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
     }
     if (resource.note_scope !== "personal") {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+      await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
     }
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -1842,6 +1954,8 @@ export class WorkstreamService {
   }
 
   async detachResource(id: string, resourceId: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.detachResource(resourceId);
     await this.requireWorkstream(id);
     const resource = await this.env.DB.prepare(
       `SELECT r.resource_type, c.connector_type, wr.relationship_type
@@ -1885,6 +1999,8 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.answerElicitation(elicitationId, input);
     await this.requireWorkstream(id);
     const duplicate = await this.loadMessageByClientId(id, clientMessageId);
     if (duplicate) return { elicitation: undefined, harnessRunId: null };
@@ -1997,7 +2113,7 @@ export class WorkstreamService {
       );
     }
     const updated = (await this.loadElicitations(id, true)).find((item) => item.id === elicitationId);
-    if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
+    if (updated) await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -2048,7 +2164,7 @@ export class WorkstreamService {
     // transcript upsert prefers the incoming copy and orders it by the newer
     // room sequence that copy arrives with.
     if (suggestion && updated) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
+      await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
     }
     return { suggestion: updated, resourceId };
   }
@@ -2095,6 +2211,8 @@ export class WorkstreamService {
   }
 
   async stop(id: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.stop();
     await this.requireWorkstream(id);
     const active = await this.env.DB.prepare(
       `SELECT id FROM harness_runs
@@ -2113,7 +2231,7 @@ export class WorkstreamService {
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user')
         WHERE workstream_id = ? AND workspace_id = ?
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, id, this.auth.workspaceId).run();
     if (active) this.deferTask(emitProductUsageTelemetry(this.env, {
@@ -2127,6 +2245,8 @@ export class WorkstreamService {
   }
 
   async retry(id: string): Promise<{ harnessRunId: string }> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.retry();
     const workstream = await this.requireWorkstream(id);
     if (workstream.harnessStatus === "running" || workstream.harnessStatus === "scheduled" || workstream.harnessStatus === "needs_input") {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
@@ -2135,7 +2255,7 @@ export class WorkstreamService {
       `SELECT id, status, trigger_message_id FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
-         AND origin != 'hypersight_block'
+         AND origin != 'block_dashboard_block'
        ORDER BY created_at DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ id: string; status: string; trigger_message_id: string | null }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
@@ -2173,7 +2293,7 @@ export class WorkstreamService {
         ...(newest && newest.id !== latest.trigger_message_id
           ? { transcriptFenceMessageId: newest.id }
           : {}),
-      });
+    }, this.publishEvent);
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -2185,13 +2305,39 @@ export class WorkstreamService {
     return { harnessRunId };
   }
 
-  async socketTicket(id: string) {
+  async socketTicket(id: string, substreamId = "0") {
     await this.requireWorkstream(id);
-    const ticket = await issueSocketTicket(this.env, this.auth, id);
+    const ticket = await issueSocketTicket(this.env, this.auth, id, substreamId);
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
+    url.search = new URLSearchParams({ ticket }).toString();
+    return { url: url.toString(), ticket };
+  }
+
+  async workstreamControlSocketTicket(id: string) {
+    await this.requireWorkstream(id);
+    const ticket = await issueWorkstreamControlSocketTicket(this.env, this.auth, id);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}`;
     url.search = new URLSearchParams({ ticket }).toString();
+    return { url: url.toString(), ticket };
+  }
+
+  async blockDashboardBlockSocketTicket(id: string, blockId: string) {
+    await this.requireWorkstream(id);
+    const blockDashboard = await loadBlockDashboard(this.env, this.auth.workspaceId, id);
+    if (!blockDashboard.blocks.some((block) => block.id === blockId)) {
+      throw new ApiError(404, "block_dashboard_block_not_found", "HyperSight block not found");
+    }
+    const ticket = await issueBlockDashboardBlockSocketTicket(this.env, this.auth, id, blockId);
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `/socket/workstreams/${id}/block-dashboard/blocks/${blockId}`;
+    // This endpoint has no legacy desktop consumer. Unlike the older socket
+    // issuers, it never puts the bearer in a URL that Cloudflare may log.
+    url.search = "";
     return { url: url.toString(), ticket };
   }
 
@@ -2285,7 +2431,7 @@ export class WorkstreamService {
                  WHERE latest.workspace_id = w.workspace_id
                    AND latest.workstream_id = w.id
                    AND latest.parent_tool_call_id IS NULL
-                   AND latest.origin != 'hypersight_block'
+                   AND latest.origin != 'block_dashboard_block'
                  ORDER BY latest.created_at DESC, latest.id DESC
                  LIMIT 1
               )
@@ -2382,7 +2528,7 @@ export class WorkstreamService {
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
       ...(expectedLatestHarnessRunId ? { expectedLatestHarnessRunId } : {}),
-    });
+    }, this.publishEvent);
   }
 
   private async isActiveParticipant(workstreamId: string, userId: string): Promise<boolean> {
@@ -2858,6 +3004,66 @@ export class WorkstreamService {
         opportunity_id: opportunityId,
         reason: error instanceof Error ? error.message : "unknown",
       });
+    }
+  }
+
+  /**
+   * Resolve WorkspaceDO-owned provenance before initialize starts the first run.
+   *
+   * SubstreamAgent enqueues the Workflow inside the initialize RPC, so attaching
+   * these after creation would race the run's first context read. WorkspaceDO
+   * returns only roots visible to this member; this second check deliberately
+   * keeps restricted connector objects out of a workspace-visible resource list.
+   */
+  private async resolveDurableOpportunityOriginResources(opportunityId: string): Promise<string[]> {
+    try {
+      const workspace = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.WORKSPACE_DOS,
+        this.auth.workspaceId,
+        workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+      );
+      const events = WorkspaceOpportunityOriginEventsResultSchema.parse(
+        await workspace.opportunityOriginEvents({
+          workspaceId: this.auth.workspaceId,
+          userId: this.auth.userId,
+          opportunityId,
+          now: nowIso(),
+          limit: MAX_OPPORTUNITY_ORIGIN_RESOURCES,
+        }),
+      );
+      const resourceIds: string[] = [];
+      for (const event of events) {
+        const activity = event.activity;
+        if (!activityIsWorkspaceVisible({
+          connection_scope: activity.connectionScope,
+          connection_owner_user_id: activity.connectionOwnerUserId,
+          target_user_ids_json: JSON.stringify(activity.targetUserIds),
+          visibility_json: JSON.stringify(activity.visibility),
+        })) continue;
+        const descriptor = await describeWorkstreamOrigin(this.env, {
+          connectorType: event.connectorType,
+          connectionId: activity.connectionId,
+          provider: activity.provider,
+          locator: activityOriginLocator({
+            resource_type: activity.resourceType,
+            provider_resource_id: activity.providerResourceId,
+            title: activity.title,
+            metadata_json: JSON.stringify(activity.metadata),
+          }),
+        });
+        if (!descriptor) continue;
+        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, descriptor);
+        if (resourceId && !resourceIds.includes(resourceId)) resourceIds.push(resourceId);
+      }
+      return resourceIds;
+    } catch (error) {
+      logWarn(this.env, "workstream_opportunity_origin_resolve_failed", {
+        workspace_id: this.auth.workspaceId,
+        opportunity_id: opportunityId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      return [];
     }
   }
 

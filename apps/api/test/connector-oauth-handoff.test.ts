@@ -146,6 +146,29 @@ describe("connector OAuth handoff", () => {
       .toBe("provider_denied_access");
   });
 
+  it("derives the same minimal ingress route shape used by the migration triggers", () => {
+    expect(__connectionServiceTesting.connectorIngressRouteValues({
+      id: "connection",
+      workspace_id: WORKSPACE_ID,
+      connector_type: "github",
+      scope: "workspace",
+      provider_account_id: "installation",
+      status: "needs_reconnect",
+      config_json: JSON.stringify({ githubUserId: "github-user" }),
+      updated_at: "2026-08-18T00:00:00.000Z",
+    }, "global")).toEqual({
+      connectionId: "connection",
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      connectorType: "github",
+      scope: "workspace",
+      providerAccountId: "installation",
+      providerUserId: "github-user",
+      status: "active",
+      updatedAt: "2026-08-18T00:00:00.000Z",
+    });
+  });
+
   it("returns an active attempt only to its initiating workspace principal", async () => {
     const { auth, database, env } = fixture();
     const attemptId = "a".repeat(43);

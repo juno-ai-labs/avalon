@@ -25,7 +25,7 @@ Eight call sites, all passing a markdown string as `children`:
 | Surface | Call site |
 | --- | --- |
 | A work-stream turn, and the structured block above it | `workstream-blocks.tsx` |
-| A HyperSight dashboard block | `hypersight-panel.tsx` |
+| A HyperSight dashboard block | `block-dashboard-panel.tsx` |
 | An automation's overview while it is being set up | `new-automation.tsx` |
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |

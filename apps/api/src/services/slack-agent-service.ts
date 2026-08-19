@@ -44,7 +44,9 @@ import {
 } from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
 import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
@@ -70,6 +72,12 @@ import {
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
 import { withAuthorizedConnection } from "./connector-connection-access";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -80,6 +88,15 @@ interface SlackConnectionRow extends Record<string, unknown> {
   credential_key_version?: number;
   granted_scopes_json: string;
   status: string;
+}
+
+function directoryHarnessStatus(state: string): string {
+  if (state === "scheduled") return "scheduled";
+  if (["running", "interrupting", "preparing_context", "waiting_capacity"].includes(state)) return "running";
+  if (state === "needs_input") return "needs_input";
+  if (state === "completed") return "completed";
+  if (["failed", "budget_exhausted"].includes(state)) return "failed";
+  return "idle";
 }
 
 interface SlackLinkedAccount {
@@ -238,7 +255,11 @@ const SlackAutomationTargetSchema = z.object({
 }).passthrough();
 
 export class SlackAgentService {
-  constructor(private readonly env: Env) {}
+  private env: Env;
+
+  constructor(env: Env) {
+    this.env = env;
+  }
 
   /** Durably schedule a full public-channel join after install or reconnect. */
   async schedulePublicChannelSync(connectionId: string, retryAfterMs = 0): Promise<void> {
@@ -264,7 +285,11 @@ export class SlackAgentService {
     });
   }
 
-  async maintainIngress(limit = 100): Promise<void> {
+  async maintainIngress(limit = 100, workspaceId?: string): Promise<void> {
+    if (!workspaceId && this.env.WORKSPACE_DOS) {
+      throw new Error("slack_ingress_maintenance_workspace_required");
+    }
+    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     await this.prewarmWorkspaceCredentials();
     const at = nowIso();
     await this.redriveReauthorizedIngress(limit);
@@ -624,17 +649,33 @@ export class SlackAgentService {
     return { response_type: "ephemeral", text: "Avalon queued your request. I’ll continue in your Agent conversation." };
   }
 
-  async processQueuedIngress(jobId: string): Promise<void> {
+  async processQueuedIngress(workspaceId: string, jobId: string): Promise<void>;
+  async processQueuedIngress(jobId: string): Promise<void>;
+  async processQueuedIngress(workspaceIdOrJobId: string, maybeJobId?: string): Promise<void> {
+    const workspaceId = maybeJobId === undefined ? null : workspaceIdOrJobId;
+    const jobId = maybeJobId ?? workspaceIdOrJobId;
+    if (workspaceId === null && this.env.WORKSPACE_DOS) {
+      throw new Error("slack_ingress_workspace_required");
+    }
+    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const leaseId = crypto.randomUUID();
     const at = nowIso();
     const claimed = await this.env.DB.prepare(
       `UPDATE slack_ingress_jobs SET
          status = 'processing', attempt_count = attempt_count + 1,
          lease_id = ?, lease_expires_at = ?, error_code = NULL, updated_at = ?
-       WHERE id = ? AND workspace_id IN (SELECT id FROM workspaces WHERE region = ?)
+       WHERE id = ? AND (? = '' OR workspace_id = ?)
          AND (status IN ('queued', 'failed') OR (status = 'processing' AND lease_expires_at < ?))
        RETURNING id, workspace_id, connection_id, team_id, body_hash, kind, payload_json, lease_id`,
-    ).bind(leaseId, new Date(Date.now() + 5 * 60_000).toISOString(), at, jobId, this.env.AVALON_REGION, at).first<Record<string, unknown>>();
+    ).bind(
+      leaseId,
+      new Date(Date.now() + 5 * 60_000).toISOString(),
+      at,
+      jobId,
+      workspaceId ?? "",
+      workspaceId ?? "",
+      at,
+    ).first<Record<string, unknown>>();
     if (!claimed) return;
     const job = SlackQueuedJobRowSchema.parse(claimed);
     try {
@@ -888,11 +929,12 @@ export class SlackAgentService {
     userId: string,
     verifiedEmail: string,
   ): Promise<number> {
-    const membership = await this.env.DB.prepare(
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT 1 AS active FROM workspace_members
        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(workspaceId, userId).first<{ active: number }>();
     if (!membership) return 0;
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const rawConnections = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
@@ -963,6 +1005,40 @@ export class SlackAgentService {
     const assignmentMetadata = method === "explicit_link"
       ? "assigned_at = ?, assignment_method = 'explicit_link'"
       : "assigned_at = COALESCE(assigned_at, ?), assignment_method = COALESCE(assignment_method, 'verified_email')";
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const sessions = await this.env.DB.prepare(
+        `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
+           FROM slack_agent_sessions
+          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+            AND execution_scope = 'workspace'
+            ${assignmentGuard.replaceAll("s.", "")}`,
+      ).bind(connectionId, teamId, slackUserId, ...guardBindings).all<{
+        id: string;
+        workspace_id: string;
+        workstream_id: string;
+        assigned_user_id: string | null;
+        assignment_method: string | null;
+      }>();
+      const assigned = await this.env.DB.prepare(
+        `UPDATE slack_agent_sessions
+            SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
+          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+            AND execution_scope = 'workspace'
+            ${assignmentGuard.replaceAll("s.", "")}`,
+      ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings).run();
+      for (const session of sessions.results ?? []) {
+        await reconcileSlackWorkstreamIdentity(this.env, {
+          workspaceId: session.workspace_id,
+          workstreamId: session.workstream_id,
+          userId,
+          previousAssignedUserId: session.assigned_user_id,
+          mayCorrectVerifiedCreator: method === "explicit_link"
+            && session.assignment_method === "verified_email",
+        });
+      }
+      return Number(assigned.meta.changes ?? 0);
+    }
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workstream_participants
@@ -1101,6 +1177,7 @@ export class SlackAgentService {
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
     triggeringSlackUserId: string | null = null,
   ): Promise<void> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const session = await this.env.DB.prepare(
       `SELECT * FROM slack_agent_sessions WHERE workspace_id = ? AND workstream_id = ?`,
     ).bind(workspaceId, workstreamId).first<SlackSessionRow>();
@@ -1108,8 +1185,11 @@ export class SlackAgentService {
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
     const token = await this.botToken(connection);
-    const openElicitation = outcomeStatus === "needs_input"
-      ? await this.env.DB.prepare(
+    const executionEnv = outcomeStatus === "needs_input"
+      ? await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId)
+      : null;
+    const openElicitation = executionEnv
+      ? await executionEnv.DB.prepare(
           `SELECT prompt, target_user_id FROM elicitations
            WHERE workspace_id = ? AND workstream_id = ? AND status = 'open'
            ORDER BY created_at ASC LIMIT 1`,
@@ -1237,11 +1317,11 @@ export class SlackAgentService {
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
   }): Promise<void> {
     if (shouldSuppressAutomationResult(input.text)) return;
+    this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const rawTarget = await this.env.DB.prepare(
       `SELECT dt.*, cc.encrypted_credentials, cc.credential_iv, cc.status AS connection_status
        FROM automation_delivery_targets dt
        JOIN connector_connections cc ON cc.id = dt.connection_id
-       JOIN workspace_members wm ON wm.workspace_id = dt.workspace_id AND wm.user_id = dt.user_id AND wm.status = 'active'
        JOIN slack_user_links link ON link.connection_id = dt.connection_id AND link.user_id = dt.user_id
          AND link.slack_user_id = dt.slack_user_id AND link.status = 'active'
        LEFT JOIN slack_delivery_preferences pref
@@ -1254,6 +1334,11 @@ export class SlackAgentService {
          END = 1`,
     ).bind(input.workspaceId, input.automationSubscriptionId, input.outcomeStatus).first<Record<string, unknown>>();
     if (!rawTarget) return;
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(input.workspaceId, rawTarget.user_id).first();
+    if (!membership) return;
     const target = SlackAutomationTargetSchema.parse(rawTarget);
     if (target.last_delivered_workstream_id === input.workstreamId) return;
     // Not gated on the stored status. Marking the target `needs_input` without
@@ -1310,6 +1395,7 @@ export class SlackAgentService {
     title: string;
     markdown: string;
   }): Promise<void> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const rawConnection = await this.env.DB.prepare(
       `SELECT cc.*, cc.status AS connection_status
          FROM connector_connections cc
@@ -1710,7 +1796,7 @@ export class SlackAgentService {
       if (justCreated && !sessionCreatedThisCall) return;
       const openElicitation = justCreated
         ? null
-        : await this.openElicitationTarget(session.workstream_id);
+        : await this.openElicitationTarget(connection.workspace_id, session.workstream_id);
       if (!justCreated) {
         // A question put to one member is still that member's to answer. This
         // is the only thing left that refuses a reply, and it is not the pin
@@ -1750,6 +1836,7 @@ export class SlackAgentService {
           const service = new WorkstreamService(this.env, identity.auth);
           if (!await this.answerOpenElicitationAsUser(
             service,
+            connection.workspace_id,
             session.workstream_id,
             requestedPrompt,
             clientMessageId.slice(0, 120),
@@ -2155,7 +2242,7 @@ export class SlackAgentService {
         channelType: channelResolution.channelType,
         ...(channelResolution.channelName ? { channelName: channelResolution.channelName } : {}),
       },
-    });
+    }, "slack");
     return channelResolution;
   }
 
@@ -2169,12 +2256,17 @@ export class SlackAgentService {
     const linked = await this.env.DB.prepare(
       `SELECT DISTINCT l.user_id
        FROM slack_user_links l
-       JOIN workspace_members wm
-         ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-       WHERE l.connection_id = ? AND l.status = 'active' AND wm.status = 'active'
+       WHERE l.connection_id = ? AND l.status = 'active'
          AND l.slack_user_id IN (${placeholders})`,
     ).bind(connection.id, ...uniqueIds).all<{ user_id: string }>();
-    return linked.results.map((row) => row.user_id);
+    if (linked.results.length === 0) return [];
+    const active = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT user_id FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active'
+          AND user_id IN (${linked.results.map(() => "?").join(",")})`,
+    ).bind(connection.workspace_id, ...linked.results.map((row) => row.user_id))
+      .all<{ user_id: string }>();
+    return active.results.map((row) => row.user_id);
   }
 
   private async hasSubscribedSlackActivity(
@@ -2294,13 +2386,15 @@ export class SlackAgentService {
 
   private async answerOpenElicitationAsUser(
     service: WorkstreamService,
+    workspaceId: string,
     workstreamId: string,
     response: string,
     clientMessageId: string,
     slackOrigin: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<boolean> {
-    const elicitation = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
+    const elicitation = await executionEnv.DB.prepare(
       `SELECT id, response_type, options_json FROM elicitations
        WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
     ).bind(workstreamId).first<{
@@ -2321,9 +2415,11 @@ export class SlackAgentService {
   }
 
   private async openElicitationTarget(
+    workspaceId: string,
     workstreamId: string,
   ): Promise<{ id: string; targetUserId: string | null } | null> {
-    const row = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
+    const row = await executionEnv.DB.prepare(
       `SELECT id, target_user_id FROM elicitations
        WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
     ).bind(workstreamId).first<{ id: string; target_user_id: string | null }>();
@@ -2620,13 +2716,16 @@ export class SlackAgentService {
   private async publishHome(teamId: string, slackUserId: string, viewHash?: string): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
-    const link = await this.env.DB.prepare(
-      `SELECT l.user_id, u.name, u.timezone, wm.role
-       FROM slack_user_links l
-       JOIN users u ON u.id = l.user_id
-       JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-       WHERE l.connection_id = ? AND l.slack_user_id = ? AND l.status = 'active' AND wm.status = 'active'`,
-    ).bind(connection.id, slackUserId).first<{ user_id: string; name: string; timezone: string; role: string }>();
+    const localLink = await this.env.DB.prepare(
+      `SELECT user_id FROM slack_user_links
+        WHERE connection_id = ? AND slack_user_id = ? AND status = 'active'`,
+    ).bind(connection.id, slackUserId).first<{ user_id: string }>();
+    const link = localLink ? await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT user.id AS user_id, user.name, user.timezone, member.role
+         FROM users user JOIN workspace_members member ON member.user_id = user.id
+        WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
+    ).bind(connection.workspace_id, localLink.user_id)
+      .first<{ user_id: string; name: string; timezone: string; role: string }>() : null;
     let blocks: Record<string, unknown>[];
     if (!link) {
       // No challenge is minted here. App Home is a published document with no
@@ -2634,8 +2733,29 @@ export class SlackAgentService {
       // still see it; `avalon_connect` mints one against the click instead.
       blocks = unlinkedHome();
     } else {
-      const [tasks, automations, personalSlack] = await Promise.all([
-        this.env.DB.prepare(
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      const tasksPromise = authority.phase === "durable_object_open"
+        ? this.workspaceDirectory(connection.workspace_id).then((workspace) => (
+          workspace.recentWorkstreamDirectory({
+            workspaceId: connection.workspace_id,
+            userId: link.user_id,
+            includeSystem: false,
+            participantsOnly: true,
+            limit: 50,
+          })
+        )).then((page) => ({
+          results: page.items.map((item) => ({
+            id: item.workstreamId,
+            title: item.title,
+            harness_status: directoryHarnessStatus(item.state),
+            last_activity_at: item.lastActivityAt,
+          })).sort((left, right) => {
+            const priority = (status: unknown) => status === "needs_input" ? 0 : status === "running" ? 1 : 2;
+            return priority(left.harness_status) - priority(right.harness_status)
+              || String(right.last_activity_at).localeCompare(String(left.last_activity_at));
+          }).slice(0, 6),
+        }))
+        : this.env.DB.prepare(
           // `system_kind` is machinery — a digest run's transcript, say. The
           // owner participates in it, so the join alone would list it here, and
           // Slack has no equivalent of the desktop's Debug enabled to hide it.
@@ -2645,7 +2765,9 @@ export class SlackAgentService {
              AND w.archived_at IS NULL AND w.system_kind IS NULL
            ORDER BY CASE w.harness_status WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
              w.last_activity_at DESC LIMIT 6`,
-        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
+        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>();
+      const [tasks, automations, personalSlack] = await Promise.all([
+        tasksPromise,
         this.env.DB.prepare(
           PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
@@ -2796,7 +2918,21 @@ export class SlackAgentService {
     // not a matter of taste: a link to another Avalon workspace's work stream
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
-    const rows = await this.env.DB.prepare(
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const rows = authority.phase === "durable_object_open"
+      ? await this.workspaceDirectory(workspaceId).then((workspace) => (
+        workspace.lookupWorkstreamDirectory({ workspaceId, workstreamIds })
+      )).then((result) => ({ results: result.items
+        .filter((item) => item.archivedAt === null)
+        .map((item) => ({
+          id: item.workstreamId,
+          title: item.title,
+          harness_status: directoryHarnessStatus(item.state),
+          last_activity_at: item.lastActivityAt,
+          origin_type: item.originType,
+          automation_name: item.originLabel,
+        })) }))
+      : await this.env.DB.prepare(
       // Archiving retires a work stream from view, including App Home's own
       // task list, so an archived one falls through to the anonymous card
       // rather than keeping its title alive in Slack.
@@ -2805,7 +2941,7 @@ export class SlackAgentService {
          ${WORKSTREAM_UNFURL_JOINS}
         WHERE w.workspace_id = ? AND w.archived_at IS NULL
           AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
-    ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
+      ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
     return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }
 
@@ -2835,23 +2971,42 @@ export class SlackAgentService {
     return row !== null;
   }
 
+  private workspaceDirectory(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+    );
+  }
+
   private async linkedIdentity(teamId: string, slackUserId: string): Promise<SlackIdentity | null> {
     const linked = await this.linkedAccount(teamId, slackUserId);
     return linked ? { ...linked, token: await this.botToken(linked.connection) } : null;
   }
 
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
+    try {
+      await this.connectionForTeam(teamId);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "slack_installation_not_found") return null;
+      throw error;
+    }
     const row = await this.env.DB.prepare(
-      `SELECT l.user_id, l.workspace_id, l.connection_id, wm.role, wm.status AS member_status,
+      `SELECT l.user_id, l.workspace_id, l.connection_id,
               cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,
               cc.granted_scopes_json, cc.status
        FROM slack_user_links l
        JOIN connector_connections cc ON cc.id = l.connection_id
-       JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
        WHERE l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status <> 'disabled'`,
     ).bind(teamId, slackUserId).first<Record<string, unknown>>();
-    if (!row || row.member_status !== "active") return null;
+    if (!row) return null;
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT role FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(row.workspace_id, row.user_id).first<{ role: AuthContext["role"] }>();
+    if (!membership) return null;
     const connection: SlackConnectionRow = {
       id: String(row.connection_id),
       workspace_id: String(row.workspace_id),
@@ -2861,26 +3016,59 @@ export class SlackAgentService {
       granted_scopes_json: String(row.granted_scopes_json),
       status: String(row.status),
     };
-    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: String(row.role) as AuthContext["role"] }, connection, slackUserId, teamId };
+    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
   }
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
+    const route = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT workspace_id, connection_id FROM slack_installation_routes
+        WHERE team_id = ? AND region = ? AND status = 'active'`,
+    ).bind(teamId, this.env.AVALON_REGION).first<{ workspace_id: string; connection_id: string }>();
+    if (!route && !this.env.WORKSPACE_DOS) {
+      const legacy = await this.env.DB.prepare(
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                credential_key_version, granted_scopes_json, status
+           FROM connector_connections
+          WHERE connector_type = 'slack' AND scope = 'workspace'
+            AND provider_account_id = ? AND status <> 'disabled'`,
+      ).bind(teamId).first<SlackConnectionRow>();
+      if (legacy) return legacy;
+    }
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
        FROM connector_connections
-       WHERE connector_type = 'slack' AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
-    ).bind(teamId).first<SlackConnectionRow>();
+       WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'
+         AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
+    ).bind(route.connection_id, route.workspace_id, teamId).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
     return row;
   }
 
   private async connectionById(id: string): Promise<SlackConnectionRow> {
+    const route = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT workspace_id FROM slack_installation_routes
+        WHERE connection_id = ? AND region = ? AND status = 'active'`,
+    ).bind(id, this.env.AVALON_REGION).first<{ workspace_id: string }>();
+    if (!route && !this.env.WORKSPACE_DOS) {
+      const legacy = await this.env.DB.prepare(
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                credential_key_version, granted_scopes_json, status
+           FROM connector_connections
+          WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+      ).bind(id).first<SlackConnectionRow>();
+      if (legacy) return legacy;
+    }
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
-       FROM connector_connections WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
-    ).bind(id).first<SlackConnectionRow>();
+       FROM connector_connections WHERE id = ? AND workspace_id = ?
+         AND connector_type = 'slack' AND scope = 'workspace'`,
+    ).bind(id, route.workspace_id).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
     return row;
   }
@@ -3016,6 +3204,63 @@ export class SlackAgentService {
     return postSlackTextChunks(token, channel, prompt);
   }
 
+}
+
+async function reconcileSlackWorkstreamIdentity(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    userId: string;
+    previousAssignedUserId: string | null;
+    mayCorrectVerifiedCreator: boolean;
+  },
+): Promise<void> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
+  const root = await executionEnv.DB.prepare(
+    `SELECT created_by_user_id FROM workstreams
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(input.workstreamId, input.workspaceId).first<{ created_by_user_id: string | null }>();
+  if (!root) throw new Error("slack_workstream_identity_target_missing");
+  const makeCreator = root.created_by_user_id === null || (
+    input.mayCorrectVerifiedCreator
+    && input.previousAssignedUserId !== null
+    && root.created_by_user_id === input.previousAssignedUserId
+  );
+  const at = nowIso();
+  const statements = [
+    executionEnv.DB.prepare(
+      `INSERT INTO workstream_participants
+         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       VALUES (?, ?, ?, 'explicit', ?, NULL)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         removed_at = NULL,
+         joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
+    ).bind(input.workstreamId, input.userId, input.userId, at),
+  ];
+  if (makeCreator) {
+    statements.push(
+      executionEnv.DB.prepare(
+        `UPDATE workstreams SET created_by_user_id = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ?`,
+      ).bind(input.userId, at, input.workstreamId, input.workspaceId),
+      executionEnv.DB.prepare(
+        `UPDATE workstream_participants SET participation_reason = 'creator'
+          WHERE workstream_id = ? AND user_id = ?`,
+      ).bind(input.workstreamId, input.userId),
+    );
+    if (root.created_by_user_id && root.created_by_user_id !== input.userId) {
+      statements.push(executionEnv.DB.prepare(
+        `UPDATE workstream_participants SET participation_reason = 'explicit'
+          WHERE workstream_id = ? AND user_id = ? AND participation_reason = 'creator'`,
+      ).bind(input.workstreamId, root.created_by_user_id));
+    }
+  }
+  await executionEnv.DB.batch(statements);
 }
 
 const SlackResponseMessageSchema = z.object({

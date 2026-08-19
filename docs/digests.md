@@ -12,7 +12,7 @@ mention, or changing what a connector can deliver to a person.
 
 | Concern | File |
 | --- | --- |
-| The log: writes, visibility-scoped reads, cursors | `apps/api/src/services/activity-event-service.ts` |
+| The log: writes, visibility-scoped reads, cursors | `apps/api/src/services/activity-event-service.ts`, backed by WorkspaceDO SQLite |
 | Digest configuration, RRULE derivation, schedule rows | `apps/api/src/services/digest-service.ts` |
 | Firing one occurrence, the window, the hidden work stream, the brief | `apps/api/src/services/digest-run-service.ts` |
 | Getting the brief in front of the model | `loadRunPromptContext` in `apps/api/src/services/integrations.ts`, rendered by `renderScheduledDigestBriefMessage` |
@@ -21,18 +21,21 @@ mention, or changing what a connector can deliver to a person.
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
-| The work-stream list every surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` |
+| The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 
 ## How it works
 
 ### Why a second activity table exists
 
-`activities` is provider ingest. It is keyed by `(connection_id,
-provider_event_id)`, written before anyone has decided what an event means, and
-rewritten while it is processed. It answers *what did GitHub tell us*.
+`WorkspaceDO.workspace_connector_events` is provider ingest authority. It is
+keyed by connection-scoped provider identity and dedupe constraints, written
+before anyone has decided what an event means, and settled by its processing
+Workflow. It answers *what did GitHub tell this workspace*. Legacy regional D1
+`activities` rows are maintenance import input and are scrubbed before cutover;
+live ingest writes no D1 event body.
 
-`activity_events` answers a different question: *what happened in Avalon that
+`WorkspaceDO.workspace_activity_events` answers a different question: *what happened in Avalon that
 this person should hear about*. An Avalon mention has no connection. A
 work-stream message has no provider event id. Neither has a dedupe key a
 provider controls. Widening `activities` to hold both would leave first-party
@@ -40,12 +43,12 @@ rows carrying a column of synthetic nulls for every provider concept they do not
 have, and would make every consumer filter ingest state out of a feed.
 
 So the two stay separate, and connector activity is **projected** into
-`activity_events` once it has been processed. Every surface that wants "what
+that workspace-local log once it has been processed. Every surface that wants "what
 happened, for this person, since this instant" reads one table.
 
 ### The log
 
-`activity_events` is append-only. Four things make it generic rather than a
+`workspace_activity_events` is append-only. Four things make it generic rather than a
 digest-shaped table with a general name.
 
 **`event_type` and `subject_type` are open strings.** A producer adds a value; no
@@ -61,24 +64,26 @@ knew what happened wrote `title` and `body` at the time.
 | `workstream` | the work stream's current active participants | work-stream messages |
 
 It is resolved against the reader at read time, in
-`listActivityEventsForUser` and nowhere else. Storing recipients instead would
+`listActivityEventsForUser` and nowhere else. After membership is revalidated
+against D1, WorkspaceDO performs the audience join against its own authoritative
+directory/viewer rows in the same local database. Storing recipients instead would
 freeze the audience at write time: someone added to a work stream today would
 never see what happened in it yesterday. System work streams are excluded there
 too, so digest machinery can never appear inside a digest — visible in the
 sidebar or not.
 
-**`activity_event_targets` is involvement, not audience.** Audience says who
+**`workspace_activity_event_targets` is involvement, not audience.** Audience says who
 *may* see an event; a target row says the event is *about* someone — `mentioned`,
 `involved`, and whatever a later producer needs. That is what lets a digest lead
 with "you were tagged" rather than burying it in a list of everything that moved.
 A target outside the audience is stored anyway; the read query still filters by
 audience, so recording involvement never grants visibility.
 
-**`log_sequence` is the cursor axis.** A consumer resumes where it stopped, so it
+**`event_sequence` is the cursor axis.** A consumer resumes where it stopped, so it
 needs a total order that an insert can only ever extend. Timestamps cannot give
 one — two events written in the same millisecond tie, and any tiebreak (a UUID, a
 hash) can place the second one *below* a cursor taken after the first, dropping
-it from every future read. `log_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT`:
+it from every future read. `event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT`:
 `AUTOINCREMENT` is what makes it strict, because plain rowids are reused after a
 delete and a reused one would appear beneath a cursor that has already passed.
 
@@ -88,15 +93,15 @@ hours old.
 
 #### Retention
 
-`reapExpiredActivityEvents`, on the same cron tick as every other reaper, drops
-events older than ninety days oldest-first and lets the cascade take their
-targets. The log is append-only and would otherwise grow with the workspace
-forever.
+The WorkspaceDO alarm drops events older than ninety days oldest-first in
+bounded batches and lets the cascade take their targets. The oldest retained
+row schedules the next expiry; an idle workspace does not wake on a polling
+cadence. The log is append-only and would otherwise grow forever.
 
 Ninety days is far longer than anything reads: a first run looks back 72 hours
 and every run after that starts from its own cursor, so the window only has to
 survive a schedule being paused and resumed. Reaping never disturbs a cursor —
-an expired `log_sequence` sits below every live one, so a window that has lost
+an expired `event_sequence` sits below every live one, so a window that has lost
 its rows reads as empty rather than as new. A surface that wants to read further
 back than ninety days needs this number raised, not a second table.
 
@@ -109,7 +114,7 @@ development emits two events per check run and three per workflow run, so the
 oldest two hundred events in a window can be seventeen minutes of one morning's
 builds while the reviews, merges and comments sit behind them unread.
 
-**Every event carries the answer on its row**, in `activity_events.digestible`,
+**Every event carries the answer on its row**, in `workspace_activity_events.digestible`,
 and `listActivityEventsForUser` takes a required `digestibleOnly` — required
 rather than defaulted because both readings are legitimate and the wrong one is
 invisible. An activity feed wants everything that happened; a digest, which
@@ -123,7 +128,7 @@ its audience covers. It simply does not interrupt anybody.
 is deliberately left that way — see the changelog entry below for what it cost
 and why changing it is expensive. It governs only an insert that does not name
 the column, which no production code path performs, so anything reaching
-`activity_events` outside `recordActivityEvent` must set `digestible` itself
+the workspace activity log outside `recordActivityEvent` must set `digestible` itself
 rather than expect the column to withhold on its behalf.
 
 **The window still ends at the top of the log.** The cursor steps over what was
@@ -156,6 +161,7 @@ Producers today:
 | Producer | Event type | Audience | Digestible |
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
+| Authoritative `SubstreamAgent` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ### The digest
@@ -212,8 +218,8 @@ Saving replaces everything: destinations are resolved and frozen *before*
 anything is written, so a destination that has gone away fails the request rather
 than leaving a schedule that fires into nowhere. A disabled digest keeps its
 configuration and loses its schedule rows, so re-enabling is a save rather than a
-rebuild. The workspace alarm is refreshed *after* the write — the Durable Object
-reads D1, so refreshing early would arm it from the rows the save just replaced.
+rebuild. The workspace alarm is refreshed *after* the write — the scheduler
+reads WorkspaceDO, so refreshing early would arm it from the rows the save just replaced.
 
 #### The run
 
@@ -223,7 +229,7 @@ scheduler:
 1. Re-validates the execution principal and the membership.
 2. Freezes the window: `cursor_from` is the last settled delivery's
    `cursor_through`; `cursor_through` is the workspace's current maximum
-   `log_sequence`. Freezing the top is what makes events arriving mid-run belong
+   `event_sequence`. Freezing the top is what makes events arriving mid-run belong
    to the *next* digest rather than being skipped.
 3. Claims the occurrence by inserting `digest_deliveries`, unique on
    `(digest_schedule_id, planned_for)`. A retried alarm resolves to the attempt
@@ -291,8 +297,8 @@ both.
   own access. Another member cannot open it knowing its id, because the brief
   inside is assembled from their private activity.
 - **`system_kind` — whether it is machinery.** This decides whether the row is
-  *listed*: off by default, and `GET /workstreams?includeSystem=true` asks for
-  it, which the desktop sends when Application → Developer → **Debug enabled**
+  *listed*: off by default, and the WorkspaceDO directory request's
+  `includeSystem: true` asks for it, which the desktop sends when Application → Developer → **Debug enabled**
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
@@ -333,31 +339,26 @@ Nothing reaps them, so they accumulate — roughly one per digest per person, wh
 a weekday digest makes about 260 a year each. That is a deliberate trade for
 being able to open any past run and read what it actually did; the rows are
 small, and `digest_deliveries.summary_markdown` keeps the digest text whether the
-transcript survives or not. If the volume ever stops being worth it, a reaper on
-the ordinary cron tick alongside `reapExpiredActivityEvents` is the shape it
-should take, and the cascade already takes the messages, tool invocations and
-artifacts.
+   transcript survives or not. If the volume ever stops being worth it, a
+   bounded maintenance Workflow driven by the workspace scheduler is the shape
+   it should take, and the cascade already takes the transcript's dependent rows.
 
 **They are listed the same way everything else is**, paged by recency, with no
-cap and no separate section. `WorkstreamService.list` filters them out unless the
-caller passes `includeSystem`, and when it does they simply take their place in
+cap and no separate section. WorkspaceDO filters them out unless the caller
+passes `includeSystem`, and when it does they simply take their place in
 the order. With Debug enabled a daily digest therefore does take the newest
 pages — but the sidebar follows `nextCursor` as it scrolls, so that costs a
 scroll rather than the rows themselves. Lifting them out into a bounded set was
 tried and reverted: it put a second population inside one method, with its own
 cap and its own ordering, to solve a reachability problem that paging had already
 solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
-`GET /workstreams` paging.
+workspace-directory paging.
 
-What the accumulation does change is the index. The ordinary list — every listing
-outside Debug enabled, so very nearly all of them — carries
-`system_kind IS NULL`, and on the shared `workstreams_sidebar_recency_idx` it
-would step over each digest row newer than the last row it returns, a scan that
-grows with digest history for a result set that does not.
-`workstreams_sidebar_recency_ordinary_idx` is that clause as a partial index.
-There is deliberately no counterpart for machinery: a listing that asks for it
-asks for everything, so it has no predicate a partial index could serve, and it
-keeps the general one.
+What the accumulation does change is the index. The ordinary WorkspaceDO query
+uses `workspace_workstream_directory_list_idx` over archive, system kind,
+recency, and work-stream ID, so hidden digest rows do not require a fan-out or a
+scan of child databases. A listing that asks for machinery uses the same bounded
+local SQLite authority and simply widens its predicate.
 
 #### Delivery
 
@@ -378,6 +379,12 @@ Each destination settles independently and records its own
 not landed. The delivery is marked `delivered` only after every destination has
 settled. A destination the provider permanently rejects is moved to
 `needs_input` and surfaced on the digest rather than failing silently forever.
+Digest configuration, schedule rows, frozen targets, occurrence cursors, and
+per-target `last_delivered_delivery_id` fences all live in WorkspaceDO. The
+regional sender resolves current D1 member/user identity before sending; a
+future transport needing a multi-destination lease can use the object-local
+`external_delivery_attempts` ledger, but D1 is never a delivery-state projection
+or fallback.
 
 #### The email
 
@@ -471,9 +478,13 @@ cannot change a saved schedule, cursor, or settlement.
   `listActivityEventsForUser` and nowhere else. Storing recipients instead freezes
   the audience at write time, so someone added to a work stream today would never
   see what happened in it yesterday.
+- **After the DO authority switch, work-stream audience uses the versioned
+  WorkspaceDO viewer directory**, not the frozen legacy participant table.
+  System work streams are excluded through the matching common row. Before the
+  switch, the legacy rows remain the authority for the same query.
 - **Recording involvement never grants visibility.** A target row outside the
   audience is stored and still filtered out on read.
-- **`log_sequence` is the only cursor axis.** Never cursor on `created_at`, which
+- **`event_sequence` is the only cursor axis.** Never cursor on `created_at`, which
   is display and retention only, and never on `occurred_at` — a connector poll
   inserts events whose provider timestamp is hours old. Timestamps tie within a
   millisecond and any tiebreak can place the second event below a cursor taken
@@ -482,9 +493,11 @@ cannot change a saved schedule, cursor, or settlement.
   `listActivityEventsForUser` takes a *required* `digestibleOnly` — required rather
   than defaulted because both readings are legitimate and the wrong one is
   invisible.
-- **Anything reaching `activity_events` outside `recordActivityEvent` sets
-  `digestible` itself.** The column's `DEFAULT 1` fails open and will not withhold
-  on a caller's behalf.
+- **Anything reaching `workspace_activity_events` goes through the typed
+  `recordActivityEvent` contract and sets `digestible` itself.** The strict
+  object-local column has no default, so an undecided producer cannot fail open.
+  Legacy D1 rows use their historical default only while being imported and are
+  scrubbed before the WorkspaceDO route activates.
 - **The window ends at the top of the log, not at the last digestible event.** The
   cursor steps over what was withheld; stopping short would make every later
   occurrence re-scan the same withheld rows forever.
@@ -512,34 +525,35 @@ cannot change a saved schedule, cursor, or settlement.
 - **Destinations are resolved and frozen before anything is written on save**, so a
   destination that has gone away fails the request rather than leaving a schedule
   that fires into nowhere. The workspace alarm is refreshed *after* the write,
-  because the Durable Object reads D1.
+  because the scheduler reads WorkspaceDO.
 - **A digest row is never deleted.** Switching one off keeps the row with
   `enabled = 0`, so absence unambiguously means "never had one" and the reconciler
   cannot resurrect it.
 
 ## Boundary
 
-This document owns the `activity_events` log and the scheduled digest that is its
+This document owns the WorkspaceDO activity log and the scheduled digest that is its
 first consumer. It does not own:
 
 | For | Read |
 | --- | --- |
 | Which connector activity types are worth telling someone about | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
-| The `activities` ingest table and the pipeline that fills it | [`connectors.md`](connectors.md) |
+| The WorkspaceDO connector-event authority, global route, Queue, and processing Workflow | [`connectors.md`](connectors.md) |
 | The agent loop a digest run rides on | [`agent-harness.md`](agent-harness.md) |
-| `GET /workstreams` paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
+| WorkspaceDO directory paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
 | The scheduler and its alarm | [`architecture.md`](architecture.md) |
 | The columns and their constraints | [`data-model.md`](data-model.md) |
 | The other consumer of a connector's `userDelivery` surface | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
 
 A surface that wants "what happened, for this person, since this instant" reads
-`activity_events` through `listActivityEventsForUser`. Nothing else is a supported
+the workspace activity log through `listActivityEventsForUser`. Nothing else is a supported
 entry point, and nothing else resolves audience correctly.
 
 ## Failure modes and limits
 
-- **Events older than ninety days are reaped**, oldest-first, on the ordinary cron
-  tick. Reaping never disturbs a cursor — an expired `log_sequence` sits below every
+- **Events older than ninety days are reaped**, oldest-first, by the owning
+  WorkspaceDO's one alarm in bounded batches. Reaping never disturbs a cursor —
+  an expired `event_sequence` sits below every
   live one, so a window that has lost its rows reads as empty rather than as new. A
   surface that wants to read further back needs this number raised, not a second
   table.
@@ -566,10 +580,9 @@ entry point, and nothing else resolves audience correctly.
   per person, about 260 a year each for a weekday digest. That is a deliberate trade
   for being able to open any past run and read what it actually did; the rows are
   small, and `digest_deliveries.summary_markdown` keeps the digest text whether the
-  transcript survives or not. If the volume ever stops being worth it, a reaper on
-  the ordinary cron tick alongside `reapExpiredActivityEvents` is the shape it
-  should take, and the cascade already takes the messages, tool invocations and
-  artifacts.
+  transcript survives or not. If the volume ever stops being worth it, a bounded
+  maintenance Workflow driven by the workspace scheduler is the shape it should
+  take, and the cascade already takes the transcript's dependent rows.
 - **The email is dark only**, by design, and renders a Markdown subset — `##`
   sections, `###` subheads, bullets, links, bold, inline code, blockquote. Unknown
   syntax degrades to visible text rather than being passed through as HTML.
@@ -596,6 +609,118 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-18 — Slack-only members still receive schedule repair
+
+**What changed:** Digest reconciliation pages across every active member rather
+than excluding blank email addresses in the regional query. A member without an
+email still does not receive a newly invented email target, but an existing
+Slack-backed digest has its missing or timezone-stale scheduler rows repaired.
+
+**Why:** Email availability is a delivery-target concern, not a prerequisite
+for maintaining an existing digest. Applying it to the outer member scan made
+a Slack-only member's enabled digest silently stop after partial creation or a
+timezone change.
+
+**Considered and rejected:** Synthesizing an email destination or skipping the
+member entirely. The former is invalid product state; the latter also skips
+delivery-independent schedule repair.
+
+**Consequences:** The keyset sweep covers more members, still in bounded pages.
+New defaults remain email-backed only when a real nonblank address exists.
+
+### 2026-08-18 — Digest scheduling and delivery move beside the activity log
+
+**What changed:** Digest schedules/times/targets/deliveries, their canonical
+`schedules` rows, and external-delivery attempts now live in WorkspaceDO with
+the activity cursor they consume. WorkspaceScheduler reads those rows through
+typed RPC; the sender rechecks D1 identity but settles attempts in WorkspaceDO.
+
+**Why:** A digest and all of its state belong to one workspace. Keeping timing
+and delivery state in D1 split each occurrence across two authorities.
+
+**Considered and rejected:** D1 schedule/delivery projections and copying the
+activity cursor into D1. Either makes the control plane authoritative again.
+
+**Consequences:** Save-before-arm and idempotent occurrence semantics are
+unchanged, but their transaction boundary is local to WorkspaceDO. An object
+outage fails closed rather than reading or writing legacy D1 rows.
+
+### 2026-08-18 — The first-party activity log moves into WorkspaceDO
+
+**What changed:** `workspace_activity_events` and target edges now live in the
+owning WorkspaceDO. The same object resolves work-stream audience against its
+directory, maintains the monotonic cursor, and reaps retention by alarm. The
+maintenance importer preserves existing D1 cursor values before writer fences
+make the source immutable.
+
+**Why:** Every event belongs to one workspace, and its only non-membership
+visibility join is already WorkspaceDO-owned. Keeping the log in D1 made digest
+serving depend on two product authorities and retained a regional serving table
+solely for a join the object could execute locally.
+
+**Considered and rejected:** Copying directory visibility back into D1, fanning
+out one event per recipient, and keeping a D1 read projection. Those alternatives
+either restore split authority or freeze a mutable audience at write time.
+
+**Consequences:** D1 still owns schedules, delivery destinations, active
+membership, and notification transport state. Digest windows and user-facing
+activity reads are WorkspaceDO RPCs; a WorkspaceDO outage fails closed and never
+falls back to frozen D1 rows.
+
+### 2026-08-18 — Digest projection starts from a WorkspaceDO-owned connector event
+
+**What changed:** Connector ingest authority is now the owning WorkspaceDO and
+the connector-event Workflow performs the projection into the existing
+insertion-ordered first-party activity log. D1 `activities` is documented as a
+24-hour handoff, not provider history.
+
+**Why:** The normalized provider event belongs to one workspace, while the
+derived log has separate audience/cursor semantics. Conflating either with a
+long-lived regional staging row preserved an unnecessary second authority.
+
+**Considered and rejected:** Reading raw provider deliveries during a digest
+and keeping D1 activity bodies indefinitely for convenience. The former cannot
+reproduce normalized visibility; the latter defeats WorkspaceDO ownership.
+
+**Consequences:** Digest projection retries from the durable Workflow claim.
+The activity log remains a derived first-party product and never becomes the
+source for reconstructing the normalized provider event.
+
+### 2026-08-18 — Activity audience and system-work-stream lists use WorkspaceDO
+
+**What changed:** Post-cutover activity-event audience resolution asks
+WorkspaceDO for visible work-stream IDs, and renderer list pagination/system-row
+filtering is served from the same object's authoritative directory. D1 retains
+the insertion-ordered `activity_events` log and digest schedules/deliveries, but
+not work-stream audience or sidebar projections.
+
+**Why:** The log is a relational workspace-wide workload, while participant
+visibility and list placement are work-stream product state. Keeping the former
+in D1 does not require copying the latter there.
+
+**Considered and rejected:** Reading every WorkstreamDO for each digest page and
+retaining D1 common/user projections only for audience joins. The former is
+unbounded; the latter restores a second authority solely to make one join local.
+
+**Consequences:** Activity reads perform one bounded WorkspaceDO visibility call
+before their D1 query. A WorkspaceDO outage fails the audience read closed;
+frozen legacy participant rows are never a post-cutover fallback.
+
+### 2026-08-17 — WorkstreamDO events enter the regional activity log durably
+
+**What changed:** Authoritative work-stream mutations emit first-party activity
+events through their local outbox and the regional Queue/D1 inbox. Audience
+resolution switches to common/user directory projections after cutover.
+
+**Why:** Digests still require one regional insertion-ordered log, while message
+and participant authority no longer lives in D1.
+
+**Considered and rejected:** Reading every WorkstreamDO during a digest or
+continuing to resolve post-cutover audience from frozen legacy rows.
+
+**Consequences:** Activity delivery is eventually consistent and idempotent;
+membership remains evaluated at read time from the current regional projection.
 
 ### 2026-08-13 — Digest telemetry cannot interrupt required settlement
 
@@ -632,7 +757,6 @@ high-cardinality content.
 **Consequences:** Product analytics can join configuration cohorts to delivery
 outcomes without becoming the cursor or delivery source of truth. A retry keeps
 the delivery's stable event identity.
-
 ### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
 
 **What changed:** `0070_drop_digest_schedule_workstream.sql` drops

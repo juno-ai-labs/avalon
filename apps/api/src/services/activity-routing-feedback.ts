@@ -1,4 +1,7 @@
 import type { Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * What a workspace's own accept and dismiss decisions say about suggesting
@@ -8,9 +11,9 @@ import type { Env } from "../env";
  * scored its own match and anything at or above 0.8 became a card. Nothing read
  * the resolution back, so a workspace could dismiss the same kind of suggestion
  * every day and the next one arrived with identical odds. These two reads are
- * the feedback that was missing, and `activity_suggestions` is already the
- * labelled data for both — a row is written at the moment the card is published,
- * so every row was seen, and `status` is the label.
+ * the feedback that was missing. After cutover the action stays with its
+ * SubstreamAgent and its resolved label is indexed in WorkspaceDO; the legacy
+ * D1 row supplies the same evidence before cutover.
  *
  * Both reads are windowed. A suppression rule that blocks the only mechanism
  * that could produce positive evidence is permanent by construction: a
@@ -58,10 +61,7 @@ const EVENT_TYPE_SAMPLE_MINIMUM = 4;
  *
  * A card sits in a shared transcript and anybody may resolve it, so a
  * workspace-wide decision made on one person's clicking is a decision one
- * person made for everybody. Corroboration is the cheapest guard; note that a
- * deleted user's dismissals stop corroborating, because `resolved_by_user_id`
- * is nulled on delete and `COUNT(DISTINCT …)` skips nulls. That fails toward
- * the maximum floor rather than toward suppression, which is the safe side.
+ * person made for everybody. Corroboration is the cheapest guard.
  */
 const EVENT_TYPE_SUPPRESSION_DISMISSERS = 2;
 
@@ -137,12 +137,38 @@ export async function suggestionAdmission(
   now: Date = new Date(),
 ): Promise<SuggestionAdmission> {
   const since = new Date(now.getTime() - EVENT_TYPE_WINDOW_MS).toISOString();
-  // Driven from `activity_suggestions` and joined outward: the workspace's
-  // resolved suggestions are few and indexed, where `activities` holds every
-  // event the workspace has ever ingested and filtering that by event type
-  // first would read most of it.
-  const row = await env.DB.prepare(
-    `SELECT COALESCE(SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted,
+  const authority = await readWorkstreamAuthorityControl(env);
+  let accepted = 0;
+  let dismissed = 0;
+  const dismissingUsers = new Set<string>();
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, input.workspaceId),
+    );
+    const feedback = await workspace.suggestionFeedback({
+      workspaceId: input.workspaceId,
+      source: "contextual_routing",
+      since,
+      provider: input.provider,
+      eventType: input.eventType,
+    });
+    for (const item of feedback.items) {
+      if (item.status === "accepted") accepted += 1;
+      else {
+        dismissed += 1;
+        if (item.resolvedByUserId) dismissingUsers.add(item.resolvedByUserId);
+      }
+    }
+  } else {
+    // Driven from `activity_suggestions` and joined outward: the workspace's
+    // resolved suggestions are few and indexed, where `activities` holds every
+    // event the workspace has ever ingested and filtering that by event type
+    // first would read most of it.
+    const row = await env.DB.prepare(
+      `SELECT COALESCE(SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted,
             COALESCE(SUM(CASE WHEN s.status = 'dismissed' THEN 1 ELSE 0 END), 0) AS dismissed,
             COUNT(DISTINCT CASE WHEN s.status = 'dismissed' THEN s.resolved_by_user_id END) AS dismissers
        FROM activity_suggestions s
@@ -157,15 +183,19 @@ export async function suggestionAdmission(
         AND s.resolved_at >= ?2
         AND a.provider = ?3
         AND a.event_type = ?4`,
-  ).bind(input.workspaceId, since, input.provider, input.eventType).first<{
-    accepted: number;
-    dismissed: number;
-    dismissers: number;
-  }>();
+    ).bind(input.workspaceId, since, input.provider, input.eventType).first<{
+      accepted: number;
+      dismissed: number;
+      dismissers: number;
+    }>();
+    accepted = Number(row?.accepted ?? 0);
+    dismissed = Number(row?.dismissed ?? 0);
+    for (let index = 0; index < Number(row?.dismissers ?? 0); index += 1) {
+      dismissingUsers.add(`legacy:${index}`);
+    }
+  }
 
-  const accepted = Number(row?.accepted ?? 0);
-  const dismissed = Number(row?.dismissed ?? 0);
-  const dismissers = Number(row?.dismissers ?? 0);
+  const dismissers = dismissingUsers.size;
   const resolved = accepted + dismissed;
   if (resolved < EVENT_TYPE_SAMPLE_MINIMUM) {
     return { suppressed: false, confidenceFloor: input.declaredFloor, accepted, dismissed, dismissers };

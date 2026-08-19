@@ -1,8 +1,15 @@
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { createTestD1Database, createTestD1PreparedStatement } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -10,6 +17,7 @@ const RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = "00000000-0000-4000-8000-000000000004";
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000005";
 const ACTIVITY_ID = "00000000-0000-4000-8000-000000000006";
+const CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 
 type AuthorityState = {
   memberStatus: string;
@@ -28,6 +36,7 @@ type AuthorityState = {
 
 class AuthorityDatabase {
   readonly binding: D1Database;
+  legacyActivityReads = 0;
 
   constructor(readonly state: AuthorityState) {
     this.binding = createTestD1Database({
@@ -55,6 +64,17 @@ class AuthorityStatement {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.state.memberStatus } as T;
     }
+    if (sql.includes("FROM workstream_authority_control")) {
+      return {
+        phase: "durable_object_open",
+        generation: 1,
+        required_serving_contract_version: 1,
+        serving_contract_version: 1,
+      } as T;
+    }
+    if (sql.includes("SELECT placement_affinity FROM workspaces")) {
+      return { placement_affinity: "wnam" } as T;
+    }
     if (sql.includes("FROM workstreams") && sql.includes("automation_subscription_id")) {
       expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
       return {
@@ -79,6 +99,7 @@ class AuthorityStatement {
       } as T;
     }
     if (sql.includes("SELECT id FROM activities")) {
+      this.database.legacyActivityReads += 1;
       expect(this.values).toEqual([ACTIVITY_ID, WORKSPACE_ID]);
       return (this.database.state.activityExists ? { id: ACTIVITY_ID } : null) as T | null;
     }
@@ -161,6 +182,66 @@ describe("durable run authority revalidation", () => {
     database.state.activityExists = false;
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, activityInput, snapshot))
       .rejects.toThrow(/trigger is no longer available/i);
+  });
+
+  it("revalidates connector trigger evidence against WorkspaceDO after cutover", async () => {
+    const database = new AuthorityDatabase(state({
+      triggerType: "issue.created",
+      triggerActivityId: ACTIVITY_ID,
+      activityExists: false,
+    }));
+    let durableActivityExists = true;
+    const connectorEvent = vi.fn(async () => durableActivityExists ? {
+      connectorType: "github",
+      activity: {
+        id: ACTIVITY_ID,
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        connectionId: CONNECTION_ID,
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "github",
+        providerEventId: "delivery-1",
+        eventType: "issue.created",
+        resourceType: "issue",
+        providerResourceId: "issue-1",
+        actor: {},
+        subject: {},
+        occurredAt: "2026-08-18T00:00:00.000Z",
+        receivedAt: "2026-08-18T00:00:01.000Z",
+        title: "Issue created",
+        summary: "A new issue needs attention",
+        textSnippet: "Details",
+        payloadRef: null,
+        visibility: {},
+        targetUserIds: [],
+        entityKeys: ["issue-1"],
+        dedupeKey: "issue-created-1",
+        rawContentHash: null,
+        metadata: {},
+        externalPeople: [],
+      },
+    } : null);
+    const namespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({ connectorEvent }),
+    });
+    const env = createTestEnv({
+      DB: database.binding,
+      WORKSPACE_DOS: namespace,
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+    });
+    const activityInput = input(ACTIVITY_ID);
+
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(env, activityInput);
+    expect(database.legacyActivityReads).toBe(0);
+    expect(connectorEvent).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, eventId: ACTIVITY_ID });
+
+    durableActivityExists = false;
+    await expect(__integrationTesting.assertRunAuthorityStillValid(env, activityInput, snapshot))
+      .rejects.toThrow(/trigger is no longer available/i);
+    expect(database.legacyActivityReads).toBe(0);
   });
 
   it("rejects an archived work stream before a tool can run", async () => {

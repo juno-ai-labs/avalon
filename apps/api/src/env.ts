@@ -20,9 +20,14 @@ import type {
 import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bridge";
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+import type { SubstreamAgent } from "./durable-objects/substream-agent";
+import type { WorkspaceDO } from "./durable-objects/workspace-do";
+import type { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
+import type { WorkstreamDO } from "./durable-objects/workstream-do";
+import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
-export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
+export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
@@ -38,12 +43,17 @@ export interface Env {
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
-  WORKSTREAM_ROOMS: DurableObjectNamespace;
-  WORKSPACE_SCHEDULERS: DurableObjectNamespace;
+  SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
+  BLOCK_DASHBOARD_AGENTS: DurableObjectNamespace<BlockDashboardAgent>;
+  WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
+  WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
+  WORKSPACE_SCHEDULERS: DurableObjectNamespace<WorkspaceScheduler>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
   WORKSTREAM_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
+  CONNECTOR_EVENT_WORKFLOW: Workflow;
+  WORK_OPPORTUNITY_WORKFLOW: Workflow;
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
@@ -220,12 +230,17 @@ const EnvContractSchema = z.object({
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
-  WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
-  WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
+  SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
+  BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
+  WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
+  WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
+  WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace<WorkspaceScheduler>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
+  CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
+  WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: z.enum(["global", "eu"]),

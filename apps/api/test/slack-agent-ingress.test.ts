@@ -40,11 +40,17 @@ class IngressDatabase {
   prepare(sql: string) { return new IngressStatement(this, sql); }
 
   async first(sql: string, values: unknown[]) {
+    if (sql.includes("FROM slack_installation_routes") && sql.includes("team_id = ?")) {
+      return {
+        workspace_id: "22222222-2222-4222-8222-222222222222",
+        connection_id: "11111111-1111-4111-8111-111111111111",
+      };
+    }
     if (sql.includes("FROM connector_connections") && sql.includes("provider_account_id = ?")) {
       return {
         id: "11111111-1111-4111-8111-111111111111",
         workspace_id: "22222222-2222-4222-8222-222222222222",
-        provider_account_id: String(values[0]),
+        provider_account_id: String(values.at(-1)),
         encrypted_credentials: "encrypted",
         credential_iv: "iv",
         status: "healthy",

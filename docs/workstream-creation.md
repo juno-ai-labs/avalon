@@ -22,9 +22,11 @@ attempt at the opposite that the changelog records.
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
-| `apps/api/src/durable-objects/workstream-room.ts` | `loadWorkstreamRoomSnapshot`, which has to describe the latest run because a snapshot replaces the client's whole detail. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The authoritative create, opening turn/run, feed snapshot, and synchronous child-effect drain used by the route-activation fence. |
+| `apps/api/src/durable-objects/workstream-do.ts`, `workspace-do.ts` | Aggregate the child's metadata, commit the authoritative workspace directory row, and prove it exists before the D1 route becomes active. |
 | `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
-| `apps/api/src/services/workstream-service.ts` | `create`, and `launchWorkstreamHarness` — the run row, the Workflows start, and what happens when it fails. |
+| `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, verified-to-active route transition, hierarchy drain, and email activation. |
+| `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 
 ## How it works
 
@@ -136,10 +138,20 @@ it.
 ### What the server makes you wait for
 
 Everything. `POST /workstreams` finishes the participant and attachment checks,
-the address reservation, the work-stream and opening-message write, the route
-activation, the `message_created` publish, the harness run row, and the Workflows
-round trip that starts the run — and only then answers. The one thing off the
-path is the naming call, which was already deferred before this module existed.
+the address reservation, the authoritative SubstreamAgent work-stream/opening
+message/run write, the `message_created` publish, and the Workflows round trip
+that starts the run. It then synchronously drains the committed directory facts
+through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
+changes the minimal D1 route from `verified` to `active`, and activates email —
+only then does it answer. The one thing off the path is the naming call, which
+was already deferred before this module existed.
+
+The explicit drain is not the normal delivery mechanism. Ordinary mutations
+use the child and parent SQL outboxes plus alarms. Creation overrides any alarm
+backoff because route activation is a publication fence: no reader may observe
+an active D1 route before the WorkspaceDO socket can serve that work stream.
+Every receiver is idempotent, so retrying after an ambiguous RPC completes the
+same drain rather than creating a second row.
 
 That is deliberate, and it is a reversal: deferring the route activation and the
 Workflows round trip to `waitUntil` was built, reviewed, and taken back out. The
@@ -188,6 +200,11 @@ than whichever rejection landed first.
   reaps that shape: `stop` only records a request a live workflow has to observe,
   `retry` refuses a `running` work stream, and no screen offers either. A start
   that is not awaited can therefore leave a work stream permanently "working".
+- **A route is not active until WorkspaceDO can serve it.** New routes begin in
+  `verified`; the child and parent outboxes drain, `hasWorkstreamDirectory`
+  proves the authoritative row, and only then may D1 advertise `active`.
+  Optimistic UI is not a substitute for this fence because another client may
+  list the workspace immediately.
 - **The pre-flight checks run ahead of the reservation.** A create that is going
   to be refused must not leave an address reserved for a work stream that never
   exists.
@@ -235,6 +252,10 @@ see
   published so anyone already watching is not left on a `running` row, and the
   caller gets a 503. The work stream and its opening message exist either way;
   the client clears its launch surface and restores the composer.
+- **The directory handoff fails.** The product row and outbox remain durable,
+  but the D1 route remains `verified`, so the work stream is not advertised
+  without a WorkspaceDO row. Retrying the same client message resumes the
+  idempotent drain and activation.
 - **A create is refused.** The participant and attachment checks run ahead of the
   reservation deliberately, so a create that is going to be refused does not leave
   an address reserved for a work stream that never exists.
@@ -262,10 +283,14 @@ see
   code for a request that violates both pre-flight checks. That last one loops
   five creates rather than asserting once — a fixed order that only held by luck
   would pass a single run.
-- `apps/api/test/workstream-room-snapshot.test.ts` — includes the case that the
+- `apps/api/test/substream-agent-snapshot.test.ts` — includes the case that the
   snapshot describes the latest run rather than naming its id. The snapshot
   replaces the client's whole detail, so a field dropped there is invisible until
   something notices a missing timer.
+- `apps/api/test-workers/durable-object-runtime.test.ts` — inserts a backed-off
+  child directory snapshot, explicitly drains both parent hops, and proves the
+  WorkspaceDO row exists while both SQL outboxes are empty. This guards the
+  verified-to-active creation fence in the real Workers runtime.
 - `apps/desktop/src/renderer/styles/app.css.node.test.ts` — guards the one thing
   a component test cannot see: that the launching state states no geometry of its
   own. It reads the stylesheet from disk, so it is typed by `tsconfig.node.json`
@@ -285,6 +310,28 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-18 — Route activation waits for the WorkspaceDO directory
+
+**What changed:** A new D1 route now begins `verified`. Creation explicitly
+drains the SubstreamAgent outbox to WorkstreamDO, drains the parent directory
+outbox to WorkspaceDO, verifies the resulting authoritative directory row, and
+only then marks the route `active`.
+
+**Why:** Moving sidebar serving out of D1 removed its projection fallback. An
+active route without a WorkspaceDO row would therefore be a real serving gap,
+especially for a second client that does not have the creator's optimistic
+cache.
+
+**Considered and rejected:** Relying on the normal alarms or the optimistic
+renderer entry. Alarms are eventual and can be backed off after an ambiguous
+RPC; optimistic state exists on only one client and cannot establish server
+authority.
+
+**Consequences:** Creation pays two deterministic cross-object RPC hops before
+responding. Retrying is safe because every handoff has an outbox/receipt fence,
+and a failed handoff leaves the route non-active rather than exposing partial
+state.
 
 ### 2026-08-13 — Creation analytics follows the committed server row
 
@@ -307,7 +354,6 @@ on its entry path, making totals and funnels structurally incorrect.
 fail creation. Any new API or ingress that commits a user-visible work stream
 must register its closed source with the server telemetry helper; hidden system
 work streams remain excluded.
-
 ### 2026-08-12 — The participant picker opens on its first option without stretching its checkboxes
 
 **What changed:** Opening Add people initially focuses the first available

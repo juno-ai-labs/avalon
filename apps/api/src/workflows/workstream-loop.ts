@@ -4,9 +4,10 @@ import { connectorRetryAfterMs } from "@avalon/connectors";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -21,17 +22,19 @@ import {
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
 import { runWorkstreamHarness } from "../services/integrations";
-import {
-  hyperSightBlockRunFromRow,
-  publishHyperSightRun,
-  type HyperSightBlockRunRow,
-} from "../services/hypersight-service";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
+import {
+  acceptsNewWorkstreamWork,
+  permitsLegacyRuntimeDrain,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
+import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 const HarnessWorkflowOutcomeSchema = z.object({
@@ -100,42 +103,6 @@ function slackSafeFailureText(outcome: HarnessWorkflowOutcome): string {
     " — if it keeps happening, the work stream has the details for support.",
   );
 }
-
-async function updateHyperSightRun(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  status: HyperSightBlockRunRow["status"],
-  error?: { code: string; message: string },
-): Promise<void> {
-  const at = new Date().toISOString();
-  await env.DB.prepare(
-    `UPDATE hypersight_block_runs
-        SET status = ?,
-            started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
-            completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN COALESCE(completed_at, ?) ELSE completed_at END,
-            error_json = CASE WHEN ? IS NULL THEN error_json ELSE ? END
-      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?
-        AND status NOT IN ('completed', 'failed', 'stopped')`,
-  ).bind(
-    status,
-    status,
-    at,
-    status,
-    at,
-    error ? JSON.stringify(error) : null,
-    error ? JSON.stringify(error) : null,
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-  ).run();
-  const row = await env.DB.prepare(
-    `SELECT id, block_id, configuration_version_id, trigger_sequence, status, markdown, error_json, created_at, started_at, completed_at
-       FROM hypersight_block_runs
-      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<HyperSightBlockRunRow>();
-  if (row) await publishHyperSightRun(env, input.workspaceId, input.workstreamId, hyperSightBlockRunFromRow(row));
-}
-
 /** Static workflow definition used by every ad-hoc and automated harness run. */
 export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWorkflowInput> {
   override async run(
@@ -144,31 +111,49 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   ): Promise<HarnessWorkflowOutcome> {
     const input = WorkstreamWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
-    const hyperSightRun = input.reason === "hypersight_block";
+    if (input.reason === "block_dashboard_block") throw new Error("block_dashboard_runs_require_block_agent");
+
+    const authority = await step.do("check-workstream-authority-fence", async () => {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (!permitsLegacyRuntimeDrain(authority) && !acceptsNewWorkstreamWork(authority)) {
+        throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
+      }
+      return authority;
+    });
+    const executionEnv = authority.phase === "durable_object_open"
+      ? withWorkstreamRuntimeDatabase(
+        this.env,
+        input.workspaceId,
+        input.workstreamId,
+        input.substreamId,
+      )
+      : this.env;
+    const runtimeDb = executionEnv.DB;
 
     const identity = await step.do("create-durable-attempt-identity", async (): Promise<AttemptIdentity> => {
-      const attemptId = crypto.randomUUID();
+      const attemptId = uuidV7();
       return { attemptId, owner: `workflow:${input.harnessRunId}:${attemptId}` };
     });
 
     await step.do("reap-expired-workstream-attempts", async () => {
-      await reapStaleHarnessRuns(this.env.DB, {
+      await reapStaleHarnessRuns(runtimeDb, {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         limit: 25,
+        automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
       });
     });
 
     let lease: AttemptLease | null = null;
     for (let poll = 0; poll < MAX_QUEUE_POLLS; poll += 1) {
       const claim = await step.do(`claim-harness-run-${poll}`, async () => claimHarnessAttempt(
-        this.env.DB,
+        runtimeDb,
         input,
         { ...identity, leaseSeconds: 300 },
       ));
       if (claim.state === "terminal") {
         await step.do("emit-recovered-run-outcome-telemetry", async () => {
-          await this.emitRunOutcomeBestEffort(input);
+          await this.emitRunOutcomeBestEffort(executionEnv, input);
         });
         return { status: claim.status };
       }
@@ -176,7 +161,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         const outcome: HarnessWorkflowOutcome = { status: "stopped" };
         await step.do("terminalize-cancelled-queued-run", async () => {
           await terminalizeQueuedHarnessRun(
-            this.env.DB,
+            runtimeDb,
             input,
             identity,
             { code: "run_cancelled", message: "The run was stopped before it started" },
@@ -184,16 +169,10 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           );
         });
         await step.do("emit-cancelled-run-outcome-telemetry", async () => {
-          await this.emitRunOutcomeBestEffort(input);
+          await this.emitRunOutcomeBestEffort(executionEnv, input);
         });
-        if (hyperSightRun) {
-          await step.do("publish-hypersight-cancelled-before-start", async () => {
-            await updateHyperSightRun(this.env, input, "stopped");
-          });
-          return outcome;
-        }
         const cancellationReason = await step.do("load-queued-cancellation-reason", async () => {
-          const row = await this.env.DB.prepare(
+          const row = await runtimeDb.prepare(
             "SELECT cancellation_reason FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
           ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
             .first<{ cancellation_reason: string | null }>();
@@ -201,7 +180,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         });
         if (cancellationReason !== "superseded_by_follow_up") {
           await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
-            await this.deliverResultsDurably(input, outcome);
+            await this.deliverResultsDurably(runtimeDb, input, outcome);
           });
         }
         return outcome;
@@ -218,30 +197,18 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         error: { code: "run_admission_timeout", message: "The work stream remained busy for too long" },
       };
       await step.do("terminalize-queued-admission-timeout", async () => {
-        await terminalizeQueuedHarnessRun(this.env.DB, input, identity, outcome.error!);
+        await terminalizeQueuedHarnessRun(runtimeDb, input, identity, outcome.error!);
       });
       await step.do("emit-timeout-run-outcome-telemetry", async () => {
-        await this.emitRunOutcomeBestEffort(input);
+        await this.emitRunOutcomeBestEffort(executionEnv, input);
       });
-      if (hyperSightRun) {
-        await step.do("publish-hypersight-admission-timeout", async () => {
-          await updateHyperSightRun(this.env, input, "failed", outcome.error);
-        });
-        return outcome;
-      }
       await step.do("deliver-slack-admission-timeout", SlackDeliveryRetryConfig, async () => {
-        await this.deliverResultsDurably(input, outcome);
+        await this.deliverResultsDurably(runtimeDb, input, outcome);
       });
       return outcome;
     }
 
-    if (hyperSightRun) {
-      await step.do("publish-hypersight-running", async () => {
-        await updateHyperSightRun(this.env, input, "running");
-      });
-    } else {
-      await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
-    }
+    await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
 
     let outcome: HarnessWorkflowOutcome;
     try {
@@ -252,7 +219,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           timeout: workstreamWorkflowStepTimeout(),
         },
         async () => HarnessWorkflowOutcomeSchema.parse(await runWorkstreamHarness(
-          this.env,
+          executionEnv,
           input,
           undefined,
           { lease: lease! },
@@ -263,7 +230,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     }
 
     const stopState = await step.do("recheck-persisted-stop", async () => {
-      const row = await this.env.DB.prepare(
+      const row = await runtimeDb.prepare(
         "SELECT status, cancellation_requested_at, cancellation_reason FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
       ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
         .first<{ status: string; cancellation_requested_at: string | null; cancellation_reason: string | null }>();
@@ -275,7 +242,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     const effectiveOutcome: HarnessWorkflowOutcome = stopState.stopped ? { ...outcome, status: "stopped" } : outcome;
 
     await step.do("terminalize-harness-attempt", async () => {
-      await terminalizeHarnessAttempt(this.env.DB, input, lease!, {
+      await terminalizeHarnessAttempt(runtimeDb, input, lease!, {
         status: effectiveOutcome.status,
         ...(effectiveOutcome.messageId ? { finalMessageId: effectiveOutcome.messageId } : {}),
         ...(effectiveOutcome.error ? { error: effectiveOutcome.error } : {}),
@@ -283,10 +250,10 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           ? { code: effectiveOutcome.error.code }
           : {},
       });
-      if (!hyperSightRun) await this.finalizeAutomation(input, effectiveOutcome, lease!);
+      await this.finalizeAutomation(runtimeDb, input, effectiveOutcome, lease!);
     });
     await step.do("emit-run-outcome-telemetry", async () => {
-      await this.emitRunOutcomeBestEffort(input);
+      await this.emitRunOutcomeBestEffort(executionEnv, input);
     });
 
     const runMetrics = outcome.metrics;
@@ -296,7 +263,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
           harnessRunId: input.harnessRunId,
-          source: hyperSightRun ? "hypersight" : "workstream",
+          source: "workstream",
           status: effectiveOutcome.status,
           ...(effectiveOutcome.error ? { failureCode: effectiveOutcome.error.code } : {}),
           metrics: runMetrics,
@@ -304,31 +271,17 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       });
     }
 
-    if (hyperSightRun) {
-      await step.do("publish-hypersight-terminal", async () => {
-        await updateHyperSightRun(
-          this.env,
-          input,
-          effectiveOutcome.status === "completed"
-            ? "completed"
-            : effectiveOutcome.status === "stopped" ? "stopped" : "failed",
-          effectiveOutcome.error,
-        );
-      });
-      return effectiveOutcome;
-    }
-
     if (effectiveOutcome.messageId) {
-      await this.publishPersistedFinalBestEffort(input, effectiveOutcome.messageId);
+      await this.publishPersistedFinalBestEffort(runtimeDb, input, effectiveOutcome.messageId);
     }
     if (stopState.reason !== "superseded_by_follow_up") {
       await step.do("deliver-slack-terminal-outcome", SlackDeliveryRetryConfig, async () => {
-        await this.deliverResultsDurably(input, effectiveOutcome);
+        await this.deliverResultsDurably(runtimeDb, input, effectiveOutcome);
       });
     }
 
     const currentStatus = await step.do("load-current-workstream-status", async () => {
-      const row = await this.env.DB.prepare(
+      const row = await runtimeDb.prepare(
         "SELECT harness_status FROM workstreams WHERE id = ? AND workspace_id = ?",
       ).bind(input.workstreamId, input.workspaceId)
         .first<{ harness_status: "idle" | "scheduled" | "running" | "needs_input" | "completed" | "failed" }>();
@@ -347,7 +300,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     // model call over a transient read and then fail an instance whose work is
     // already committed.
     await step.do("refresh-workstream-name", async () => {
-      await refreshWorkstreamName(this.env, {
+      await refreshWorkstreamName(executionEnv, {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
       });
@@ -360,7 +313,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     // them. It never throws — a description that could not be re-evaluated is
     // the description the work stream already had.
     await step.do("refresh-workstream-description", async () => {
-      await refreshWorkstreamDescription(this.env, {
+      await refreshWorkstreamDescription(executionEnv, {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
       });
@@ -368,18 +321,20 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     return effectiveOutcome;
   }
 
-  private async emitRunOutcomeBestEffort(input: WorkstreamWorkflowInput): Promise<void> {
-    await emitCorrelatedRunOutcome(this.env, input).catch(() => undefined);
+  private async emitRunOutcomeBestEffort(env: Env, input: WorkstreamWorkflowInput): Promise<void> {
+    await emitCorrelatedRunOutcome(env, input).catch(() => undefined);
   }
 
   // The `deliver-slack-*` step names are durable workflow step identities and
   // stay as they are; the step itself now covers every frozen delivery target.
   private async deliverResultsDurably(
+    runtimeDb: D1Database,
     input: WorkstreamWorkflowInput,
     outcome: HarnessWorkflowOutcome,
   ): Promise<void> {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const messages = outcome.messageId
-      ? await createDatabase(this.env.DB).workstreams.listMessages(input.workspaceId, input.workstreamId, 250)
+      ? await createDatabase(runtimeDb).workstreams.listMessages(input.workspaceId, input.workstreamId, 250)
       : [];
     const message = outcome.messageId
       ? messages.find((candidate) => candidate.id === outcome.messageId)
@@ -394,7 +349,13 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       // which is right for a work stream someone is watching and wrong for a
       // digest — mailing it would consume the window and say nothing. Pass what
       // the run actually wrote, or nothing.
-      await settleDigestRun(this.env, input.digestDeliveryId, outcome.status, message?.textContent ?? null);
+      await settleDigestRun(
+        this.env,
+        input.workspaceId,
+        input.digestDeliveryId,
+        outcome.status,
+        message?.textContent ?? null,
+      );
       return;
     }
     const slack = new SlackAgentService(this.env);
@@ -407,7 +368,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       input.slackOrigin?.actorSlackUserId ?? null,
     );
     if (input.automationSubscriptionId) {
-      const automation = await this.env.DB.prepare(
+      const automation = await workspaceEnv.DB.prepare(
         `SELECT t.name FROM automation_subscriptions s
          JOIN automation_templates t ON t.id = s.template_id
          WHERE s.id = ? AND s.workspace_id = ?`,
@@ -424,7 +385,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       // retried by this step without holding back the other.
       const failures = (await Promise.allSettled([
         slack.deliverAutomationResult(result),
-        deliverAutomationResultEmail(this.env, result),
+        deliverAutomationResultEmail(workspaceEnv, result),
       ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
       // Only the first is rethrown, so the rest would otherwise be lost — and
       // which one that is depends on settle order rather than on severity.
@@ -440,11 +401,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   }
 
   private async publishPersistedFinalBestEffort(
+    runtimeDb: D1Database,
     input: WorkstreamWorkflowInput,
     messageId: string,
   ): Promise<void> {
     try {
-      const messages = await createDatabase(this.env.DB).workstreams.listMessages(
+      const messages = await createDatabase(runtimeDb).workstreams.listMessages(
         input.workspaceId,
         input.workstreamId,
         250,
@@ -458,25 +420,28 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   }
 
   private async finalizeAutomation(
+    runtimeDb: D1Database,
     input: WorkstreamWorkflowInput,
     outcome: HarnessWorkflowOutcome,
     lease: AttemptLease,
   ): Promise<void> {
     if (!input.automationSubscriptionId) return;
+    const owned = await runtimeDb.prepare(
+      `SELECT 1 AS owned FROM harness_runs
+        WHERE id = ? AND attempt_id = ? AND terminalized_at IS NOT NULL`,
+    ).bind(input.harnessRunId, lease.attemptId).first<{ owned: number }>();
+    if (!owned) throw new Error("automation_run_terminal_fence_missing");
     const now = new Date().toISOString();
     const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
-    await this.env.DB.prepare(
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
+    await workspaceEnv.DB.prepare(
       `UPDATE automation_runs
           SET status = ?1,
               completed_at = CASE WHEN ?1 IN ('completed', 'failed') THEN ?2 ELSE completed_at END,
               result_summary = COALESCE(result_summary, ?3)
         WHERE workstream_id = ?4
           AND automation_subscription_id = ?5
-          AND workspace_id = ?6
-          AND EXISTS (
-            SELECT 1 FROM harness_runs
-             WHERE id = ?7 AND attempt_id = ?8 AND terminalized_at IS NOT NULL
-          )`,
+          AND workspace_id = ?6`,
     ).bind(
       automationStatus,
       now,
@@ -484,25 +449,26 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       input.workstreamId,
       input.automationSubscriptionId,
       input.workspaceId,
-      input.harnessRunId,
-      lease.attemptId,
     ).run();
   }
 
   private async publishBestEffort(input: WorkstreamWorkflowInput, event: unknown): Promise<void> {
     try {
-      const rooms = durableObjectNamespaceForRegion(
-        this.env.WORKSTREAM_ROOMS,
-        input.region,
-        this.env.APP_ENV,
+      const agent = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.SUBSTREAM_AGENTS,
+        input.workspaceId,
+        substreamAgentName(
+          input.region,
+          input.workspaceId,
+          input.workstreamId,
+          input.substreamId,
+        ),
       );
-      const id = rooms.idFromName(
-        workstreamRoomName(input.region, input.workspaceId, input.workstreamId),
-      );
-      await rooms.get(id).fetch("https://workstream-room/internal/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event }),
+      await agent.publishEvent({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        event,
       });
     } catch {
       // Realtime display is best-effort. D1 terminal state and lifecycle events

@@ -1110,7 +1110,7 @@ export function createTextDeltaBatcher(
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
 ): TextDeltaBatcher {
   const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 75;
+  const maxDelayMs = options.maxDelayMs ?? 100;
   const now = options.now ?? Date.now;
   let pending = "";
   let lastFlushAt = now();
@@ -2358,6 +2358,19 @@ export interface HarnessPlugin {
 }
 
 export type HarnessEvent =
+  | {
+      /** A lossy context checkpoint has begun and ordinary token output is paused. */
+      type: "compaction_started";
+      compactionIndex: number;
+      trigger: "manual" | "auto";
+    }
+  | {
+      /** The matching checkpoint either became durable or failed the run. */
+      type: "compaction_finished";
+      compactionIndex: number;
+      trigger: "manual" | "auto";
+      outcome: "completed" | "failed";
+    }
   | {
       type: "stream_started";
       model: string;

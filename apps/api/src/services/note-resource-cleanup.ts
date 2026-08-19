@@ -1,7 +1,10 @@
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
-export async function reapDeletedNoteObjects(env: Env): Promise<void> {
+export async function reapDeletedNoteObjects(env: Env, workspaceId?: string): Promise<void> {
+  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("note_cleanup_workspace_required");
+  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const pending = await env.DB.prepare(
     `SELECT resource_id, content_ref, model_content_ref
      FROM note_resource_deletion_outbox ORDER BY created_at ASC LIMIT 100`,

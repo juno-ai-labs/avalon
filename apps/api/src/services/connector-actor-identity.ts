@@ -2,6 +2,7 @@ import { ExternalActorSchema, type ExternalActor } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
+import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 /**
  * How a provider identity was mapped to an Avalon member, strongest first. The
@@ -48,7 +49,8 @@ export async function resolveConnectorActorIdentity(
 }
 
 /**
- * Resolve a whole provider audience with one D1 read.
+ * Resolve a whole provider audience with one regional membership read and one
+ * WorkspaceDO-local identity read.
  *
  * The precedence is the single-actor resolver's: an explicit Slack account
  * link, a stored connector identity, one unambiguous personal connection, then
@@ -71,6 +73,35 @@ export async function resolveConnectorActorIdentities(
       verifiedEmail: input.verifiedEmail?.trim().toLowerCase() || null,
     };
   });
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const regionalRows = await workspaceRegionalDatabase(env).prepare(
+    `WITH requested AS (
+       SELECT CAST(entry.key AS INTEGER) AS request_index,
+              CAST(json_extract(entry.value, '$.verifiedEmail') AS TEXT) AS verified_email
+       FROM json_each(?) entry
+     ), active_members AS (
+       SELECT user_id FROM workspace_members
+       WHERE workspace_id = ? AND status = 'active'
+     )
+     SELECT -1 AS request_index, member.user_id, 'member' AS row_kind
+       FROM active_members member
+     UNION ALL
+     SELECT requested.request_index, MIN(user.id) AS user_id, 'email' AS row_kind
+       FROM requested
+       JOIN users user ON lower(user.email) = requested.verified_email
+       JOIN active_members member ON member.user_id = user.id
+      WHERE requested.verified_email IS NOT NULL
+      GROUP BY requested.request_index
+     HAVING COUNT(DISTINCT user.id) = 1`,
+  ).bind(JSON.stringify(requested), workspaceId).all<{
+    request_index: number;
+    user_id: string;
+    row_kind: "member" | "email";
+  }>();
+  const memberIds = (regionalRows.results ?? [])
+    .filter((row) => row.row_kind === "member")
+    .map((row) => row.user_id);
+  if (memberIds.length === 0) return inputs.map(() => null);
   const result = await env.DB.prepare(
     `WITH requested AS (
        SELECT CAST(entry.key AS INTEGER) AS request_index,
@@ -79,6 +110,8 @@ export async function resolveConnectorActorIdentities(
               CAST(json_extract(entry.value, '$.providerUserId') AS TEXT) AS provider_user_id,
               CAST(json_extract(entry.value, '$.verifiedEmail') AS TEXT) AS verified_email
        FROM json_each(?) entry
+     ), active_members AS (
+       SELECT CAST(value AS TEXT) AS user_id FROM json_each(?)
      ), candidate_rows AS (
        SELECT requested.request_index, link.user_id, 1 AS priority,
               'account_link' AS verification_source
@@ -87,9 +120,8 @@ export async function resolveConnectorActorIdentities(
          ON requested.provider = 'slack'
         AND link.slack_team_id = requested.provider_tenant_id
         AND link.slack_user_id = requested.provider_user_id
-       JOIN workspace_members member
-         ON member.workspace_id = link.workspace_id AND member.user_id = link.user_id
-       WHERE link.workspace_id = ? AND link.status = 'active' AND member.status = 'active'
+       JOIN active_members member ON member.user_id = link.user_id
+       WHERE link.workspace_id = ? AND link.status = 'active'
        UNION ALL
        SELECT requested.request_index, identity.user_id, 2 AS priority,
               identity.verification_source
@@ -98,9 +130,8 @@ export async function resolveConnectorActorIdentities(
          ON identity.provider = requested.provider
         AND identity.provider_tenant_id = requested.provider_tenant_id
         AND identity.provider_user_id = requested.provider_user_id
-       JOIN workspace_members member
-         ON member.workspace_id = identity.workspace_id AND member.user_id = identity.user_id
-       WHERE identity.workspace_id = ? AND member.status = 'active'
+       JOIN active_members member ON member.user_id = identity.user_id
+       WHERE identity.workspace_id = ?
        UNION ALL
        SELECT requested.request_index, connection.owner_user_id, 3 AS priority,
               'personal_connection' AS verification_source
@@ -111,19 +142,9 @@ export async function resolveConnectorActorIdentities(
             = requested.provider_user_id
         AND COALESCE(json_extract(connection.config_json, '$.providerTenantId'), connection.provider_account_id)
             = requested.provider_tenant_id
-       JOIN workspace_members member
-         ON member.workspace_id = connection.workspace_id AND member.user_id = connection.owner_user_id
+       JOIN active_members member ON member.user_id = connection.owner_user_id
        WHERE connection.workspace_id = ? AND connection.scope = 'personal'
          AND connection.status <> 'disabled' AND connection.owner_user_id IS NOT NULL
-         AND member.status = 'active'
-       UNION ALL
-       SELECT requested.request_index, user.id AS user_id, 4 AS priority,
-              'verified_email' AS verification_source
-       FROM requested
-       JOIN users user ON lower(user.email) = requested.verified_email
-       JOIN workspace_members member ON member.user_id = user.id
-       WHERE member.workspace_id = ? AND member.status = 'active'
-         AND requested.verified_email IS NOT NULL
      ), distinct_candidates AS (
        SELECT DISTINCT request_index, user_id, priority, verification_source
        FROM candidate_rows
@@ -141,7 +162,7 @@ export async function resolveConnectorActorIdentities(
      FROM ranked WHERE choice = 1`,
   ).bind(
     JSON.stringify(requested),
-    workspaceId,
+    JSON.stringify(memberIds),
     workspaceId,
     workspaceId,
     workspaceId,
@@ -158,6 +179,12 @@ export async function resolveConnectorActorIdentities(
       userId: String(row.user_id),
       verification: storedVerification(String(row.verification_source)),
     };
+  }
+  for (const row of regionalRows.results ?? []) {
+    if (row.row_kind !== "email") continue;
+    const index = Number(row.request_index);
+    if (!Number.isInteger(index) || index < 0 || index >= identities.length || identities[index]) continue;
+    identities[index] = { userId: row.user_id, verification: "verified_email" };
   }
   return identities;
 }
@@ -200,6 +227,7 @@ export async function recordConnectorActorIdentity(
 ): Promise<void> {
   if (identity.verification !== "verified_email") return;
   const actor = ExternalActorSchema.parse(actorInput);
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const at = nowIso();
   await env.DB.prepare(
     `INSERT INTO external_user_identities

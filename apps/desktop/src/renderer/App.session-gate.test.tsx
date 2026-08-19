@@ -23,6 +23,9 @@ vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,
 }));
+vi.mock('./lib/workspace-socket', () => ({
+  WorkspaceSocketProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
   InvitationOnboarding: ({ invitations }: { invitations: unknown[] }) => <div>invitations {invitations.length}</div>,
@@ -101,7 +104,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(screen.queryByText('main workspace UI')).not.toBeInTheDocument();
   });
 
-  it('refreshes workspace members every five minutes while the workspace is open', async () => {
+  it('does not poll members while the WorkspaceDO socket owns invalidation', async () => {
     vi.useFakeTimers();
     sessionState.session = {
       ...identitySession,
@@ -115,14 +118,9 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1_000 - 1);
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000);
     });
     expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(2);
   });
 
   it('shows authenticated invitations before workspace setup', async () => {

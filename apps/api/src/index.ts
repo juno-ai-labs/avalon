@@ -6,12 +6,7 @@ import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/acti
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { reconcileDigestDefaults } from "./services/digest-service";
-import { processMemoryIndexOutbox } from "./services/memory-service";
-import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
-import { reapDeletedResourceObjects } from "./services/resource-object-cleanup";
-import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
-import { SlackAgentService } from "./services/slack-agent-service";
-import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
+import { reapProcessedActivityPayloads } from "./services/normalized-activity-service";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
@@ -22,6 +17,12 @@ import {
   reapExpiredCrashReports,
 } from "./telemetry/crash-delivery";
 import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+  workstreamMaintenanceResponse,
+} from "./services/workstream-authority";
+import { processWorkstreamAuthorityMigration } from "./services/workstream-authority-migration";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -87,11 +88,16 @@ async function processTelemetry(env: Env): Promise<void> {
   });
 }
 
-export { WorkstreamRoom } from "./durable-objects/workstream-room";
+export { SubstreamAgent } from "./durable-objects/substream-agent";
+export { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
+export { WorkstreamDO } from "./durable-objects/workstream-do";
+export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
+export { ConnectorEventWorkflow } from "./workflows/connector-event";
+export { WorkOpportunityWorkflow } from "./workflows/work-opportunity";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
 export { GitHubRoutingBridge } from "./github-routing-bridge";
@@ -145,7 +151,7 @@ function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
 }
 
 export default {
-  fetch: (request, env, context) => {
+  fetch: async (request, env, context) => {
     // `/health` is exempt. It is the endpoint whose job is to report which
     // pieces of configuration are present, and it already models every one of
     // them as configured/not configured. Letting the 503 swallow it would make
@@ -160,25 +166,58 @@ export default {
     if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
       return misconfiguredResponse(request, env);
     }
+    const url = new URL(request.url);
+    if (url.pathname !== "/health") {
+      const authority = await readWorkstreamAuthorityControl(env);
+      if (!acceptsNewWorkstreamWork(authority)) return workstreamMaintenanceResponse(authority);
+    }
     return app.fetch(request, env, context);
   },
-  queue: withEnvContract(consumeActivityQueue),
+  queue: withEnvContract(async (batch, env) => {
+    const authority = await readWorkstreamAuthorityControl(env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
+    }
+    return consumeActivityQueue(batch, env);
+  }),
   scheduled: withEnvContract((_controller, env, context) => {
-    context.waitUntil(Promise.all([
-      reapExpiredHarnessAttempts(env),
-      reapExpiredDraftAttachments(env),
-      reapDeletedNoteObjects(env),
-      reapDeletedResourceObjects(env),
-      processPendingNotePrivacyNotifications(env),
-      processMemoryIndexOutbox(env),
-      new SlackAgentService(env).maintainIngress(),
-      refreshSlackWorkstreamUnfurls(env),
-      processDueOpportunityWindows(env),
-      processDueSuggestedWork(env),
-      recoverPendingActivityQueue(env),
-      reapExpiredActivityEvents(env),
-      reconcileDigestDefaults(env),
-      processTelemetry(env),
-    ]));
+    context.waitUntil((async () => {
+      const authority = await readWorkstreamAuthorityControl(env);
+      if (authority.phase === "maintenance_importing" || authority.phase === "maintenance_verified") {
+        // The importer deliberately reserves one of the invocation's six
+        // outbound-connection slots. Do not make telemetry compete with its
+        // route waves during the maintenance window.
+        await processWorkstreamAuthorityMigration(env, authority);
+        await processTelemetry(env);
+        return;
+      }
+      if (authority.phase === "maintenance_draining") {
+        await Promise.all([
+          reapExpiredHarnessAttempts(env),
+          processTelemetry(env),
+        ]);
+        return;
+      }
+      if (authority.phase === "quarantined") {
+        await processTelemetry(env);
+        return;
+      }
+      const backgroundTasks = [
+        reapExpiredActivityEvents(env),
+        reapProcessedActivityPayloads(env),
+        processTelemetry(env),
+      ];
+      const legacyWorkspaceStorageTasks = authority.phase === "legacy_open"
+        ? [reapExpiredHarnessAttempts(env), reapExpiredDraftAttachments(env)]
+        : [];
+      await Promise.all([
+        processDueOpportunityWindows(env),
+        processDueSuggestedWork(env),
+        recoverPendingActivityQueue(env),
+        reconcileDigestDefaults(env),
+        ...legacyWorkspaceStorageTasks,
+        ...backgroundTasks,
+      ]);
+    })());
   }),
 } satisfies ExportedHandler<Env>;

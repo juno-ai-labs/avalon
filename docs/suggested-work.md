@@ -16,11 +16,12 @@ ranks**, and **ranking follows attention**.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/services/work-opportunity-batching.ts` | Candidate ingestion — `enqueueActivityOpportunity` and the debounce windows. |
-| `apps/api/src/services/work-opportunity-service.ts` | Everything else: admission, the tournament, every bound and constant, the scheduler claim, and the read path. |
+| `apps/api/src/services/work-opportunity-service.ts` | Admission/ranking model work and the HTTP product service; post-cutover storage calls are typed WorkspaceDO RPCs. |
+| `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | The authoritative workspace-local tables, atomic repository operations, leases, and alarm due times. |
+| `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute against fenced WorkspaceDO inputs. |
 | `apps/api/src/routes/work-opportunities.ts` | `GET /work-opportunities` and `POST /work-opportunities/:id/start`. |
-| `apps/api/src/index.ts` | The five-minute cron that calls `processDueOpportunityWindows` and `processDueSuggestedWork`. |
 | `packages/agent-harness/src/prompts/work-opportunity.ts` | The admission and ranking prompts. |
-| `packages/db/migrations/0049_work_opportunities.sql` | The tables. |
+| `packages/db/migrations/0083_workspace_product_do_authority.sql` | The maintenance import ledger and permanent D1 writer fences; it is not the product schema. |
 
 Model contracts are in [`agent-harness.md`](agent-harness.md) and the flags that
 route them are in [`feature-flags.md`](feature-flags.md).
@@ -29,14 +30,14 @@ route them are in [`feature-flags.md`](feature-flags.md).
 
 ```
 connector activity / Avalon mention
-  → activity consumer: watches and automations (contextual routing paused)
+  → WorkspaceDO event → connector-event Workflow: watches and automations (contextual routing paused)
   → nothing claimed it? enqueueActivityOpportunity()
-  → opportunity_batch_windows          (10-minute debounce, 60-minute cap)
-  → cron: processDueOpportunityWindows()
-  → admission model                    → work_opportunities
+  → WorkspaceDO.opportunity_batch_windows          (10-minute debounce, 60-minute cap)
+  → WorkspaceDO alarm → fenced admission Workflow
+  → admission model                    → WorkspaceDO.work_opportunities + provenance
   → marks the affected members due
-  → cron: processDueSuggestedWork()    → ranking tournament → suggested_work_sets
-  → GET /work-opportunities            reads the stored set, nothing more
+  → WorkspaceDO alarm → ranking Workflow → suggested_work_sets
+  → GET /work-opportunities → typed WorkspaceDO RPC reads the stored set, nothing more
 ```
 
 ### Admission
@@ -122,15 +123,16 @@ is a regression the member can see.
 
 ### Member activity
 
-`workspace_members.last_seen_at` is written by `requireAuth`, debounced to
+`workspace_members.last_seen_at` remains a D1 membership/control input written by `requireAuth`, debounced to
 `LAST_SEEN_RESOLUTION_MS` (5 minutes) in the statement rather than by reading
 first. It is deferred and its failures are swallowed: it schedules background work
 and is never worth failing a request over.
 
 It is on the membership, not the user — someone can be active in one workspace and
-dormant in another, and this schedules per-workspace work. `NULL` reads the same as
-dormant, which is correct for a member who has not been seen since the column was
-added; no backfill.
+dormant in another. A WorkspaceDO alarm claims only active/non-dormant members;
+if every due member is dormant it deliberately leaves the request parked and
+sets no replacement alarm. The next authenticated suggestion read wakes the
+object. `NULL` reads as dormant, so an idle workspace does not pay for polling.
 
 ### Starting one
 
@@ -144,9 +146,13 @@ it from there rather than from the author. The creation path itself belongs to
 [`workstream-creation.md`](workstream-creation.md).
 
 The activity provenance roots behind the suggestion are attached to the new work
-stream as origin resources — up to eight, and only those held through a
-workspace connection or the selecting member's own — so the work stream links
-back to the issue, thread, or page it was proposed from. See
+stream as origin resources — up to eight, and only unrestricted,
+workspace-visible connector objects — so the work stream links back to the
+issue, thread, or page it was proposed from. WorkspaceDO resolves the authorized
+provenance roots, and the regional creation coordinator materializes their
+resource IDs into SubstreamAgent's initial SQL transaction before that RPC
+enqueues the first Workflow. The first model context therefore cannot race the
+origin attachments. See
 [work-stream origin attachments](workstream-origin-attachments.md).
 
 ### Product measurement
@@ -214,7 +220,7 @@ gate belongs here.
 
 ## Failure modes and limits
 
-The tournament is bounded on four axes, and every one of them exists because the
+The tournament is bounded on three axes, and every one of them exists because the
 unbounded version did not finish:
 
 | Bound | Value | What it stops |
@@ -222,20 +228,16 @@ unbounded version did not finish:
 | `MAX_RANK_CANDIDATES` / `MAX_RANK_CHARACTERS` | 12 / 80k | A group too large for one call |
 | `MAX_RANK_ROUNDS` | 10 | A tournament that will not converge |
 | `RANK_BUDGET_MS` | 2 min | A tournament that converges too slowly to matter |
-| `SCHEDULER_BUDGET_MS` | 4 min | A whole pass overrunning the cron it lives in |
 
-`SCHEDULER_BUDGET_MS` is the one that has to be safe. The pass runs inside the
-scheduled handler's `waitUntil`, on a five-minute cron, beside eleven other jobs and
-under a fifteen-minute ceiling; bounding only the per-member budget left a pass free
-to cost `MAX_RANKINGS_PER_TICK` times that in sequence. With the pass bounded by
-time, the per-tick count (6) is a ceiling rather than the throughput limit — it is
-region-wide across every workspace, and the hourly impression trigger alone wants
-one ranking per active member per hour.
+Each WorkspaceDO alarm claims at most six independent Workflow instances. That
+is an object-local admission ceiling, not a fleet-wide throughput limit, and no
+Workflow extends the alarm invocation. Each ranking still has its two-minute
+tournament budget and a fifteen-minute Workflow-step timeout.
 
 What the scheduler will not do:
 
 - **Rank a dormant member.** Their request stays outstanding and is served on the
-  first pass after the auth middleware records them again.
+  first object wake after the auth middleware records them again.
 - **Starve the less-active tier.** A request waiting longer than
   `RANK_STARVATION_MS` (30 min) is promoted to the top tier, so a handful of
   members who are always due cannot hold the queue indefinitely.
@@ -250,33 +252,36 @@ What the scheduler will not do:
 - **Release the lease before the run is over.** `storeRankingSet` writes the ranking
   and touches neither `due_at` nor the lease, because it is also called mid-run for
   the provisional write. Only `settleRankingRequest` ends a claim.
-- **Rank more than `MAX_RANKINGS_PER_TICK` members per cron pass.**
+- **Rank more than the bounded per-alarm claim batch.** Each claimed member is a
+  separate Workflow, and the next WorkspaceDO alarm continues from durable due
+  rows rather than holding one regional cron invocation open.
+- **Turn an ambiguous terminal callback into a fence error.** Once a batch
+  window is `completed`, repeating either its final event mutation or settlement
+  is a successful no-op. A different lease against a nonterminal window still
+  fails, so Workflow redelivery cannot duplicate attempts or requeue evidence.
 
-Two known defects, both left in place:
+One known defect remains:
 
 - **Failed batch events are abandoned silently.** `requeueFailures` retries below
   `attempt_count < 3`; there is no dead letter and no alert, so the activities
   behind them are never considered. In production this had consumed 1,775 events —
   mostly admission timeouts — by the time anyone looked.
-- **A retired freshness counter is still in the schema.** There used to be a
-  `workspace_opportunity_versions` counter ANDed into the fingerprint check. It was
-  redundant on every axis and wrong on one — being workspace-wide, it invalidated
-  every member's set when an opportunity was admitted for one member's private
-  audience. In production it drifted 517 versions ahead of a valid stored set and
-  discarded it on every read, so every home-screen load re-ran a full tournament
-  that could not finish inside a request, was cancelled when the client gave up, and
-  stored nothing — leaving a workspace with 245 live suggestions showing an empty
-  section indefinitely. The counter and `suggested_work_sets.workspace_version` are
-  no longer read or written, and are dropped in a follow-up migration once a release
-  has passed.
+The retired `workspace_opportunity_versions` counter and
+`suggested_work_sets.workspace_version` are not present in the WorkspaceDO
+schema; the D1 counter table itself is dropped by
+`0085_retire_dead_tables.sql`, having lost its last reader long before the
+cutover. Legacy D1 source columns are migration input only; activation removes
+the imported rows and retains only redacted opportunity IDs needed by D1's
+unshipped workstream identity-anchor foreign key.
 
 ## Testing
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/work-opportunity-batching.test.ts` | The debounce window, its cap, and the audience partition. |
+| `apps/api/test/work-opportunity-batching.test.ts` | The legacy debounce semantics retained by the WorkspaceDO repository. |
 | `apps/api/test/suggested-work-scheduling.test.ts` | `request_seq` claiming, the tiers, starvation promotion, the budgets, and every rule in [Failure modes and limits](#failure-modes-and-limits). |
 | `apps/api/test/suggested-work-opening-turn.test.ts` | That the opening message is the member's own turn carrying `suggested_work_expansion`. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, and serving. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/suggested-work-scheduling.test.ts`
@@ -287,7 +292,7 @@ The trap is the clock. Every scheduling rule here is a comparison against
 on a slow machine. Stub the clock, and assert on the stored `request_seq` and
 `due_at` rather than on how long a pass took.
 
-## Data model
+## WorkspaceDO data model
 
 | Table | Holds |
 | --- | --- |
@@ -300,8 +305,15 @@ on a slow machine. Stub the clock, and assert on the stored `request_seq` and
 | `suggested_work_ranking_rounds` | Every tournament round, for explaining a ranking after the fact |
 | `opportunity_batch_windows` | The debounce window candidates accumulate in |
 
+None repeats `workspace_id`: `workspace_identity` binds the database once.
+User, connector, work-stream, message, and Workflow identifiers cross authority
+boundaries as stable text IDs and therefore are not fake local foreign keys.
+Within the object, opportunity roots, links, user states, and snapshots have
+real SQLite foreign keys and commit with the owning opportunity transaction.
+
 ## Operations
 
+Open the workspace's Durable Object Data Studio.
 `suggested_work_ranking_rounds` is the first place to look when suggestions are
 wrong or missing: rounds accumulating with no corresponding `last_ranked_at` means
 tournaments are starting and never finishing. From there, check
@@ -310,6 +322,69 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-18 — Completed opportunity windows settle idempotently
+
+**What changed:** Duplicate event-mutation and window-settlement callbacks
+return success after completion; nonterminal lease mismatches remain fenced.
+
+**Why:** A Workflow may retry after the object committed but before the caller
+observed its response. Treating that ambiguity as a fresh failure can
+double-count attempts or create duplicate retry windows.
+
+**Considered and rejected:** Persisting every callback receipt separately and
+accepting a stale lease while a window is still processing.
+
+**Consequences:** Terminal retries converge without extra rows. Active work
+still requires the exact current lease.
+
+### 2026-08-18 — Suggested work becomes WorkspaceDO-owned Workflow compute
+
+**What changed:** The complete opportunity graph and resolved per-user product
+state moved into WorkspaceDO SQLite. Local alarms claim due admission/ranking
+rows and create deterministic Workflows; reads, impressions, dismissal, and
+start bookkeeping use typed RPC. Starting an opportunity also reads its bounded,
+authorized provenance roots from WorkspaceDO and places their origin resources
+in the new SubstreamAgent before its first run is dispatched. The maintenance
+importer copies all D1 rows in foreign-key order before D1 writers are
+permanently fenced, then route activation scrubs the source product rows.
+
+**Why:** Opportunities and their evidence are scoped to one workspace, while a
+regional D1 scheduler made cost and correctness depend on fleet-wide scans. A
+workspace-local transaction can persist the opportunity, provenance, user
+resolution, and ranking invalidation atomically.
+
+**Considered and rejected:** Using D1 as a read projection, running model work
+inside the DO alarm, and periodically waking dormant workspaces. Projections
+restore dual authority, inference blocks the object's control plane, and idle
+alarms spend money without improving a user-visible result.
+
+**Consequences:** Workflow payloads contain only fenced object pointers. D1
+still supplies active membership/last-seen and verified connector identity
+inputs, but no opportunity content, provenance, or user state remains or is read
+after cutover; only redacted opportunity ID anchors satisfy the unshipped
+workstream foreign key. Restricted personal connector evidence remains in the
+opportunity snapshot but is never widened into a workstream-visible origin
+resource.
+
+### 2026-08-18 — Connector-event Workflows admit suggested work
+
+**What changed:** Unclaimed connector evidence reaches batching from the
+per-event Workflow after its normalized body has committed to WorkspaceDO. The
+regional Queue consumer no longer runs watches, automations, or suggestion
+admission inline. Pending batch rows fence the 24-hour D1 handoff redaction until
+the admission source has been snapshotted.
+
+**Why:** Queue callbacks should remain short admission bridges, while semantic
+admission can take seconds and must have durable retries independent of Queue
+redelivery. The source event itself belongs to one workspace object.
+
+**Considered and rejected:** Increasing Queue retries around inference and
+retaining connector bodies indefinitely in D1 for the delayed batch reader.
+
+**Consequences:** New connector suggestion sources must be reconstructible from
+WorkspaceDO or materialize a bounded batch snapshot before the handoff expires;
+they must not extend D1 event-body retention.
 
 ### 2026-08-13 — Older suggestion clients retain successful-start telemetry
 
@@ -348,7 +423,6 @@ content, multiply conversions, or inflate starts.
 **Consequences:** Every suggestion surface must report a bounded position and
 version. Older clients without that context keep the legacy success fallback;
 current requests produce one detailed event per state transition.
-
 ### 2026-08-12 — Existing-work decisions stopped creating transcript cards
 
 **What changed:** Admission still recognizes `route_existing`, but while
