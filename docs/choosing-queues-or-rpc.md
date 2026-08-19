@@ -58,9 +58,11 @@ made to satisfy them without rebuilding RPC on top of it, which
 - **You are having a conversation with one specific stateful object.** Several
   ordered calls against the same Durable Object inside one request, where its
   state changes between them. Queues do not guarantee ordering at all.
-- **A person is waiting.** RPC over a service binding is same-thread with zero
-  added latency and does not count against the simultaneous-connection limit. A
-  Queue's `max_batch_timeout` alone can be up to 60 seconds.
+- **A person would notice the delay.** Not "a person is waiting" — those are
+  different claims, and [the difference](#be-honest-about-question-three) decides
+  more of these than anything else in this document. When it is genuinely
+  perceived, RPC over a service binding is same-thread with zero added latency
+  and does not count against the simultaneous-connection limit.
 - **The error has to reach the caller.** When a failure must become a 4xx or 5xx
   for a user on this request, the caller needs to see it happen.
 
@@ -90,8 +92,45 @@ Ask these in order and stop at the first yes:
 1. Does the caller read the result? → **RPC.**
 2. Is it wrong for the caller to carry on as though this already happened? →
    **RPC.**
-3. Is this hop inside a request a person is waiting on? → **RPC.**
+3. Would the delay actually change what a person sees or does? → **RPC.**
 4. Otherwise → **Queue.**
+
+### Be honest about question three
+
+**This is the one that gets answered wrong, and it is answered wrong in the same
+direction every time.** Real-time synchronisation feels like the safe choice, so
+it gets chosen by default, and the cost is paid forever by a system that is more
+coupled than the product ever needed it to be.
+
+The delay a Queue actually costs is the batch window plus consumer scheduling —
+call it a few hundred milliseconds to a second with a tuned `max_batch_timeout`.
+So the question is not "is this in a request path" but **"name the user story
+that breaks if this lands a second later."** If you cannot name one, the delay is
+acceptable, and you should stop arguing from discomfort.
+
+Most hops cannot name one. A projection catching up, a counter incrementing, an
+audit row landing, a notification going out, a search index refreshing, a
+dashboard learning something — a person waiting on a page does not perceive that
+the work behind it settled 800 ms after the response. "A person is waiting" and
+"a person would notice" are different claims, and only the second one buys RPC.
+
+What that second buys you is **resource isolation**, which is a real product
+property and usually worth more than the latency: the slow side cannot slow the
+fast side, a saturated consumer cannot make the producer's request time out, and
+a spike is absorbed rather than shed. Trading a second of invisible delay for a
+failure mode that never reaches a user is a good trade, and it is available far
+more often than it is taken.
+
+Where the second does genuinely matter: **read-your-writes**, where someone acts
+and immediately expects to see the result, and anything a person will refresh to
+check. Those are worth naming precisely, because naming them is what stops the
+requirement from spreading to everything nearby.
+
+And when a Queue is right but the default window is too slow, **tune the window
+before you abandon the mechanism.** Avalon's activity queue runs at
+`max_batch_timeout: 1` for exactly this reason: at five seconds a Slack unfurl
+appeared six seconds after the message, which was a real complaint with a real
+user story behind it. The fix was one second, not a service binding.
 
 ## What a Queue makes you handle
 
@@ -110,6 +149,9 @@ account for them:
   total.
 - **A dead-letter queue is not optional.** Without one, a message that exhausts
   `max_retries` is deleted. Configure a DLQ on any queue whose messages matter.
+
+Handle these four, and nothing beyond them — see
+[Trust the primitives](#trust-the-primitives).
 
 ## The limits that decide the argument
 
@@ -148,6 +190,36 @@ terms, which is why RPC is right when someone is waiting. And one Durable Object
 tops out around 1,000 requests per second on one thread, which is why RPC is
 wrong when everyone is converging on one.
 
+## Trust the primitives
+
+**Take Cloudflare's guarantees at face value and build on them optimistically.**
+Queues and Workers RPC are production systems with published contracts, operated
+by people whose job is keeping them true. Design against what the contract says
+and then stop.
+
+Concretely, that means the guarantee replaces the thing you would have built:
+
+- The docs say retries and a dead-letter queue, so you do not need a retry
+  ledger, a redelivery alarm, delivery receipts, or a reconciliation sweep that
+  asks whether messages really arrived.
+- The docs say a service-binding call has zero added latency and runs on the same
+  thread, so you do not need a cache in front of one to avoid a network hop that
+  does not exist.
+- The docs say 5,000 messages per second and a 25 GB backlog, so you do not need
+  your own admission control before you have measured a queue near either.
+
+Defensive scaffolding is not free. It runs on every message, it has its own bugs,
+and it is exercised far less than the platform path it distrusts — so when it
+fails it fails in the least tested code you own. The asymmetry is the whole
+argument: the platform's failure modes are documented, monitored by someone else,
+and fixed without you; your compensation layer is none of those things.
+
+This is not the same as being credulous. **Design for the guarantee you were
+given, not a stronger one.** At-least-once means plan for twice. Unordered means
+plan for out of order. One consumer per queue means plan for one. Reading the
+contract carefully and then relying on it completely is the posture — the failure
+is assuming a guarantee nobody made, not trusting the one they did.
+
 ## Do not over-engineer
 
 **Use the right tool for the hop in front of you, and do not reinvent one
@@ -185,7 +257,8 @@ mistake available here, and it is always made with good intentions.
 The test for all of this: if you find yourself writing infrastructure — retry
 schedules, correlation ids, backpressure, delivery receipts — stop and check
 whether you have chosen the wrong mechanism and are now paying to reimplement the
-right one.
+right one, or whether you have chosen the right one and are paying to distrust
+it.
 
 ## Where Avalon stands today
 
