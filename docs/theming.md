@@ -54,12 +54,23 @@ between light and dark: a dark theme makes the sidebar recede by darkening it
 below the content pane, a light theme by greying it above one. Nothing derives
 one from another, because there is no derivation that is right in both.
 
-**Everything monotonic lives on the `--n-*` ramp**, fourteen steps running from
-the faintest mark a theme can make on its own surface (`--n-1`) to its strongest
-text (`--n-14`). The ramp is ordered by *contrast against the surface*, never by
-lightness, so `--n-3` is a border and `--n-10` is muted text in every theme, and
-a rule can name either without knowing which way round the theme runs. A test
-asserts the monotonicity in each direction.
+**Everything monotonic lives on a ramp**, ordered by *contrast against the
+surface* rather than by lightness, so a rule can name a step without knowing
+which way round the theme runs. There are two, and the split is the second
+design decision worth understanding.
+
+`--n-1` … `--n-14` is the neutral ramp: fills at the faint end, text at the
+strong end. `--line-1` … `--line-6` is the line ramp, and every border and
+outline in the stylesheet draws from it — a divider you should barely see, the
+default border, one that should read, one under the pointer, one on an engaged
+control, and a focus border.
+
+They were one ramp until Airy needed borders that all but disappear. A border
+and a faint fill sit at the same contrast level, so they shared a step: `--n-4`
+was simultaneously the default border and the selected sidebar row's background.
+Making the border vanish took the selection with it. Separating them lets a
+theme say "draw with space, not lines" in six values without touching anything
+it fills. A test asserts the monotonicity of both.
 
 On top of those sit the accent families — `brand`, `blue`, `green`, `gold`,
 `red` — each with the same six roles:
@@ -137,9 +148,14 @@ next report.
   missing `--tooltip-ink` draws near-black on near-black, nothing else looks
   wrong, and nobody finds it until a person hovers something. Lengths, font
   stacks, and the `var(--n-*)` aliases are deliberately inherited.
-- **The `--n-*` ramp is monotonic in contrast against the surface**, in every
-  theme. A rule that names `--n-3` for a border is relying on this and on nothing
-  else.
+- **Both ramps are monotonic in contrast against the surface**, in every theme.
+- **Lines come off `--line-*` and fills come off `--n-*`.** A border that reaches
+  back onto the neutral ramp re-creates the coupling the split exists to remove,
+  and does it silently — it looks right in whichever theme it was written
+  against. A test rejects any `border` or `outline` declaration naming `--n-*`.
+- **A focus border stays visible in every theme.** `--line-6` is the one step
+  Airy does not flatten; an invisible focus indicator is an accessibility defect,
+  not a design choice.
 - **No component reads a colour.** Two places would otherwise have to: the
   `prism-react-renderer` theme and the per-participant accent, both of which take
   JavaScript values. Both pass `var(--code-*)` and `var(--person-*)` strings into
@@ -216,6 +232,47 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — Borders moved onto a ramp of their own
+
+**What changed:** Every border and outline in `app.css` — 114 declarations —
+draws from a new six-step `--line-*` ramp instead of from `--n-*`. Airy's line
+values sit within a few units of the surface they are drawn on, so its cards,
+composer, sidebar edge, and message bubbles read as blocks of tone rather than
+as boxes. Its `--n-1` came down with them, because the composer's fill was the
+other half of what made it a box. `--n-4` upward is untouched.
+
+**Why:** Airy is meant to draw with negative space, and it could not. A border
+and a faint fill sit at the same contrast level, so on a single ramp they shared
+a step — `--n-4` was the default border *and* the selected sidebar row, the
+inline-code background, and every list hover. Flattening the border flattened the
+selection, and the alternative, leaving the border visible, is the thing the
+theme exists not to do. The conflation was invisible while only the dark theme
+shipped, because there both roles want the same value.
+
+**Considered and rejected:**
+
+- *Compressing the low end of `--n-*` for Airy alone.* This is the one-line
+  version and it is what exposed the problem: the selected work stream in the
+  sidebar disappeared. The ramp cannot be compressed at a step that two roles
+  share.
+- *Theme-specific rules — `[data-theme='airy'] .card { border: 0 }`.* It would
+  have worked and it ends the engine. Once `app.css` branches on the theme, every
+  later change has to be made once per theme, which is the cost the token layer
+  was built to avoid.
+- *Setting Airy's borders to `transparent`.* Cheaper, but it removes the
+  one-pixel edge that still separates a control from what is behind it at the
+  extremes, and it leaves nothing for a focus state to shift *from*.
+
+**Consequences:** A border may no longer name `--n-*`, and a test enforces it.
+The dark theme is byte-identical at five of the nine steps that moved; the other
+four shift 2–5 units of luminance across 23 of the 114 declarations, which is
+below the threshold of visibility and was accepted rather than adding three more
+steps to keep the mapping exact. `--line-6` is reserved for focus borders and is
+the step Airy deliberately does not flatten. A theme that wants flat, borderless
+chrome now changes six values; one that wants heavy chrome changes the same six.
+
+Shipped in #TBD.
 
 ### 2026-08-18 — Colour became a theme's decision instead of the stylesheet's
 

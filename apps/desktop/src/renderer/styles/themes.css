@@ -54,6 +54,19 @@
   --n-13: #dfded9;
   --n-14: #ecebe5;
 
+  /* Line ramp. Borders are not faint fills, and a theme that wants to draw with
+   * space instead of lines needs to say so without also erasing the fills that
+   * share a contrast level with them — `--n-4` is both the default border and
+   * the selected sidebar row. Six steps: a divider you should barely see, the
+   * default border, one that should read, one under the pointer, one on an
+   * engaged control, and a focus border, which stays visible in every theme. */
+  --line-1: #292a26;
+  --line-2: #343530;
+  --line-3: #3b3c36;
+  --line-4: #44453f;
+  --line-5: #55564f;
+  --line-6: #74746d;
+
   /* Accents. Six roles each: the hue itself, a brighter one for hover, a
    * readable-on-surface text tone, a tinted block, a tinted border, and the
    * text drawn on top of a filled swatch of the hue. */
@@ -214,9 +227,9 @@
   --ink-soft: var(--n-12);
   --muted: var(--n-10);
   --muted-2: var(--n-8);
-  --line: var(--n-4);
-  --line-soft: var(--n-2);
-  --line-strong: var(--n-5);
+  --line: var(--line-2);
+  --line-soft: var(--line-1);
+  --line-strong: var(--line-3);
   --brand-hover: var(--brand-strong);
   --yellow: var(--gold);
   --orange: var(--brand-ink);
@@ -259,6 +272,13 @@
   --n-12: #3b372f;
   --n-13: #2a2721;
   --n-14: #1a1814;
+
+  --line-1: #ebe9e2;
+  --line-2: #e2dfd7;
+  --line-3: #d9d5cb;
+  --line-4: #cbc7bb;
+  --line-5: #b6b1a3;
+  --line-6: #9c9789;
 
   /* Avalon's chartreuse survives as a fill with dark text on it, and is
    * replaced by an olive for anything that has to be read as text or a line —
@@ -402,9 +422,13 @@
   --elevated: #17120c;
   --elevated-hover: #221b13;
 
-  --n-1: #16120c;
-  --n-2: #1b1610;
-  --n-3: #221c14;
+  /* The composer and the input fields sit on `--n-1`, and in a theme with no
+   * borders that fill is the only thing making them a box. It is a breath above
+   * the page rather than a panel; `--n-4` upward is left alone, because the
+   * selected sidebar row and every hover state are drawn from it. */
+  --n-1: #100d09;
+  --n-2: #16120c;
+  --n-3: #1d1710;
   --n-4: #2a2318;
   --n-5: #342c1f;
   --n-6: #453c2e;
@@ -416,6 +440,13 @@
   --n-12: #d3c8b5;
   --n-13: #e4dbcb;
   --n-14: #f2ebdf;
+
+  --line-1: #0f0c08;
+  --line-2: #131009;
+  --line-3: #171208;
+  --line-4: #1d170d;
+  --line-5: #262013;
+  --line-6: #4a4030;
 
   /* Amber carries everything the chartreuse carries elsewhere. */
   --brand: #e08c3a;
