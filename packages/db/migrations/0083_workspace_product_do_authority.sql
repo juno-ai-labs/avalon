@@ -823,3 +823,37 @@ BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
 CREATE TRIGGER work_opportunity_snapshots_reject_do_authority_delete BEFORE DELETE ON work_opportunity_snapshots
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining', 'maintenance_verified')
 BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+
+-- Inbound-email processing receipts and dictation admission state follow the
+-- same authority move: WorkspaceDO owns the rows once the route opens, the
+-- maintenance campaign imports and scrubs the legacy copies, and these fences
+-- keep any later writer from resurrecting a second store.
+CREATE TRIGGER workstream_email_receipts_reject_workspace_do_insert BEFORE INSERT ON workstream_email_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER workstream_email_receipts_reject_workspace_do_update BEFORE UPDATE ON workstream_email_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER workstream_email_receipts_reject_workspace_do_delete BEFORE DELETE ON workstream_email_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining', 'maintenance_verified')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+
+CREATE TRIGGER realtime_transcription_sessions_reject_workspace_do_insert BEFORE INSERT ON realtime_transcription_sessions
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER realtime_transcription_sessions_reject_workspace_do_update BEFORE UPDATE ON realtime_transcription_sessions
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER realtime_transcription_sessions_reject_workspace_do_delete BEFORE DELETE ON realtime_transcription_sessions
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining', 'maintenance_verified')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+
+CREATE TRIGGER realtime_transcription_ticket_receipts_reject_workspace_do_insert BEFORE INSERT ON realtime_transcription_ticket_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER realtime_transcription_ticket_receipts_reject_workspace_do_update BEFORE UPDATE ON realtime_transcription_ticket_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;
+CREATE TRIGGER realtime_transcription_ticket_receipts_reject_workspace_do_delete BEFORE DELETE ON realtime_transcription_ticket_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining', 'maintenance_verified')
+BEGIN SELECT RAISE(ABORT, 'workspace_do_authoritative'); END;

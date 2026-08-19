@@ -1,6 +1,7 @@
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logError } from "../observability/logger";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import {
   isAllowedSocketOrigin,
   issueTranscriptionSocketTicket,
@@ -141,13 +142,18 @@ async function reserveTranscriptionSession(
   env: Env,
   claims: TranscriptionSocketClaims,
 ): Promise<string> {
+  // Admission state is owned by this workspace's WorkspaceDO. The object
+  // serializes the expiry sweep, the one-time ticket consumption, and the
+  // cap-checked insert, so two simultaneous upgrades cannot both pass the
+  // concurrency check the way racing D1 writes could.
+  const db = withWorkspaceRuntimeDatabase(env, claims.workspaceId).DB;
   const now = Math.floor(Date.now() / 1_000);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at <= ?").bind(now),
-    env.DB.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at <= ?").bind(now),
+  await db.batch([
+    db.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at <= ?").bind(now),
+    db.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at <= ?").bind(now),
   ]);
 
-  const receipt = await env.DB.prepare(
+  const receipt = await db.prepare(
     `INSERT OR IGNORE INTO realtime_transcription_ticket_receipts
        (ticket_id, workspace_id, user_id, consumed_at, expires_at)
      VALUES (?, ?, ?, ?, ?)`,
@@ -158,7 +164,7 @@ async function reserveTranscriptionSession(
 
   const sessionId = crypto.randomUUID();
   const expiresAt = now + SESSION_LEASE_SECONDS;
-  const reserved = await env.DB.prepare(
+  const reserved = await db.prepare(
     `INSERT INTO realtime_transcription_sessions
        (id, ticket_id, workspace_id, user_id, started_at, expires_at)
      SELECT ?, ?, ?, ?, ?, ?
@@ -191,13 +197,22 @@ async function reserveTranscriptionSession(
   return sessionId;
 }
 
-async function releaseTranscriptionSession(env: Env, sessionId: string): Promise<void> {
-  await env.DB.prepare("DELETE FROM realtime_transcription_sessions WHERE id = ?").bind(sessionId).run();
+async function releaseTranscriptionSession(
+  env: Env,
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  await withWorkspaceRuntimeDatabase(env, workspaceId).DB
+    .prepare("DELETE FROM realtime_transcription_sessions WHERE id = ?").bind(sessionId).run();
 }
 
-async function renewTranscriptionSession(env: Env, sessionId: string): Promise<void> {
+async function renewTranscriptionSession(
+  env: Env,
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
   const expiresAt = Math.floor(Date.now() / 1_000) + SESSION_LEASE_SECONDS;
-  await env.DB.prepare(
+  await withWorkspaceRuntimeDatabase(env, workspaceId).DB.prepare(
     "UPDATE realtime_transcription_sessions SET expires_at = ? WHERE id = ?",
   ).bind(expiresAt, sessionId).run();
 }
@@ -239,7 +254,7 @@ export class RealtimeTranscriptionService {
     const release = (): Promise<void> => {
       if (released) return Promise.resolve();
       if (releaseInFlight) return releaseInFlight;
-      releaseInFlight = releaseTranscriptionSession(this.env, sessionId)
+      releaseInFlight = releaseTranscriptionSession(this.env, claims.workspaceId, sessionId)
         .then(() => { released = true; })
         .finally(() => { releaseInFlight = undefined; });
       return releaseInFlight;
@@ -313,12 +328,13 @@ export class RealtimeTranscriptionService {
         }
         if (now - leaseRefreshedAt >= SESSION_LEASE_REFRESH_MS) {
           leaseRefreshedAt = now;
-          const renewal = renewTranscriptionSession(this.env, sessionId).catch((error: unknown) => {
-            logError(this.env, "realtime_transcription_session_renewal_failed", {
-              session_id: sessionId,
-              reason: error instanceof Error ? error.message : String(error),
+          const renewal = renewTranscriptionSession(this.env, claims.workspaceId, sessionId)
+            .catch((error: unknown) => {
+              logError(this.env, "realtime_transcription_session_renewal_failed", {
+                session_id: sessionId,
+                reason: error instanceof Error ? error.message : String(error),
+              });
             });
-          });
           try { this.defer(renewal); } catch { void renewal; }
         }
 

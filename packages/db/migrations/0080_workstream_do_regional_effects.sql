@@ -1,28 +1,7 @@
--- Durable inbox for external/regional effects emitted by authoritative
--- Workstream Durable Objects. Workspace directory effects travel directly to
--- WorkspaceDO and never land in D1.
-CREATE TABLE workstream_regional_effect_receipts (
-  message_id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  partition_key TEXT NOT NULL,
-  source_version INTEGER NOT NULL CHECK (source_version > 0),
-  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('activity_event', 'mention_notification')),
-  payload_hash TEXT NOT NULL,
-  applied_at TEXT NOT NULL,
-  acknowledged_at TEXT,
-  UNIQUE (workstream_id, generation, partition_key, source_version)
-);
-
-CREATE INDEX workstream_regional_effect_receipts_source_idx
-  ON workstream_regional_effect_receipts(
-    workspace_id, workstream_id, generation, partition_key, source_version DESC
-  );
-
-CREATE INDEX workstream_regional_effect_receipts_ack_idx
-  ON workstream_regional_effect_receipts(acknowledged_at, applied_at)
-  WHERE acknowledged_at IS NOT NULL;
+-- Activity/mention effect replay receipts deliberately have no D1 table:
+-- WorkspaceDO commits each effect and its receipt in one object transaction
+-- (workspace_workstream_effect_receipts), the same fence the directory path
+-- uses. Workspace directory effects likewise never land in D1.
 
 -- External delivery is deliberately a regional concern. The WorkstreamDO
 -- provides the immutable intent, while this short-lived row resolves current

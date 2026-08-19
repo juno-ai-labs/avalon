@@ -63,6 +63,8 @@ import {
   WorkspaceDirectoryVisibilityRequestSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
+  WorkspaceRegionalEffectApplyRequestSchema,
+  WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
@@ -90,6 +92,8 @@ import {
   type WorkspaceDirectoryVisibilityRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
+  type WorkspaceRegionalEffectApplyRequest,
+  type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
@@ -173,6 +177,10 @@ import {
   type WorkspaceProductImportRequest,
 } from "./workspace-product-import";
 import { importWorkspaceProductRows } from "./workspace-product-import-storage";
+import {
+  applyWorkstreamRegionalEnvelope,
+  insertWorkstreamEffectReceipt,
+} from "./workspace-regional-effect-storage";
 import {
   responseToRpcResult,
   type DurableObjectRpcResult,
@@ -1730,6 +1738,26 @@ export class WorkspaceDO extends DurableObject<Env> {
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
 
+  /**
+   * Apply one WorkstreamDO activity/mention effect and its replay receipt in a
+   * single transaction. The caller resolves current D1 identity (actor, target
+   * membership, mention recipient) before the call; the object never reaches
+   * back into the regional database mid-transaction, and the receipt can never
+   * commit without the product row it acknowledges.
+   */
+  async applyWorkstreamRegionalEffect(
+    input: WorkspaceRegionalEffectApplyRequest,
+  ): Promise<WorkspaceRegionalEffectApplyResult> {
+    await this.initialized;
+    const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
+    if (!result.replayed && request.envelope.effect.kind === "activity_event") {
+      await this.refreshProductAlarm();
+    }
+    return WorkspaceRegionalEffectApplyResultSchema.parse(result);
+  }
+
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {
     await this.initialized;
     const request = WorkspaceDirectoryListRequestSchema.parse(input);
@@ -2579,10 +2607,8 @@ export class WorkspaceDO extends DurableObject<Env> {
         }
       }
 
-      this.state.storage.sql.exec(
-        `INSERT INTO workspace_workstream_effect_receipts
-           (message_id, workstream_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?)`,
+      insertWorkstreamEffectReceipt(
+        this.state.storage,
         envelope.messageId,
         envelope.workstreamId,
         envelope.payloadHash,
