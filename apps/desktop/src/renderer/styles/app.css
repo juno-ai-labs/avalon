@@ -533,7 +533,7 @@ pre {
   padding: 6px 8px 18px;
 }
 
-.sidebar-primary-actions { display: grid; gap: 3px; margin-bottom: 18px; }
+.sidebar-primary-actions { display: grid; gap: var(--row-gap); margin-bottom: var(--group-gap); }
 
 .sidebar-action,
 .sidebar-row {
@@ -561,7 +561,7 @@ pre {
 .sidebar-action.is-active,
 .sidebar-row.is-active { background: var(--n-4); color: var(--ink); }
 
-.sidebar-section { margin-top: 10px; }
+.sidebar-section { margin-top: var(--group-gap); }
 .workstreams-section { margin-top: 22px; }
 .sidebar-section-heading { align-items: center; display: flex; height: 26px; padding: 0 8px; }
 .sidebar-section-heading h2,
@@ -573,9 +573,9 @@ pre {
   margin: 0;
   text-transform: var(--label-transform);
 }
-.sidebar-group { margin-top: 13px; }
+.sidebar-group { margin-top: var(--group-gap); }
 .sidebar-group h3 { padding: 0 8px 4px; }
-.sidebar-list { display: grid; gap: 1px; }
+.sidebar-list { display: grid; gap: var(--row-gap); }
 .sidebar-context-target { min-width: 0; }
 .sidebar-context-target .sidebar-row { width: 100%; }
 
@@ -2102,15 +2102,15 @@ pre {
 .transcript-history-control { display: flex; justify-content: center; margin-bottom: 18px; }
 .transcript-history-control + .inline-error { margin-bottom: 18px; }
 .virtual-message-row { display: flow-root; }
-.message-block { margin: 0 0 29px; }
+.message-block { margin: 0 0 var(--stack-gap); }
 .message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
 .message-author { font-size: 12px; font-weight: 620; }
 .human-message .message-author { color: var(--person-accent); }
 .message-block time { color: var(--n-8); font-size: 9.5px; }
-.markdown-body { color: var(--n-13); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.markdown-body { color: var(--n-13); font-size: 14px; line-height: var(--leading-prose); overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
-.markdown-body p { margin: 0 0 14px; }
+.markdown-body p { margin: 0 0 var(--prose-gap); }
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3,
@@ -2158,7 +2158,7 @@ pre {
 .markdown-body ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
-.markdown-body li { margin: 5px 0; padding-left: 1px; }
+.markdown-body li { margin: calc(var(--prose-gap) / 3) 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: 7px; }
 .markdown-body li::marker { color: var(--n-13); }
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
@@ -2195,7 +2195,7 @@ pre {
 .agent-message-actions button:disabled:hover { color: var(--muted-2); }
 .agent-message:has(.agent-message-actions button:disabled) .agent-message-actions { opacity: 1; }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--orange); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
-.transcript-event { margin: 0 0 16px; }
+.transcript-event { margin: 0 0 var(--block-gap); }
 .system-message { --system-message-lines: 5; align-items: flex-start; color: var(--n-9); display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }
 .system-message-dot { background: var(--n-7); border-radius: 50%; flex: none; height: 4px; margin-top: 6px; width: 4px; }
 .system-message-body { min-width: 0; }
@@ -3339,11 +3339,11 @@ pre {
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble {
-  background: var(--raised-hover);
-  border: 1px solid var(--line-3);
+  background: var(--bubble-fill);
+  border: 1px solid var(--bubble-edge);
   border-radius: calc(var(--radius-xl) + 6px);
   max-width: 100%;
-  padding: 9px 14px;
+  padding: var(--bubble-pad);
   width: fit-content;
 }
 
@@ -3410,7 +3410,7 @@ pre {
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
   color: var(--n-14);
   font-size: 13.5px;
-  line-height: 1.46;
+  line-height: calc(var(--leading-prose) - 0.14);
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body p {
