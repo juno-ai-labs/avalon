@@ -6,19 +6,22 @@
  *
  * - the **default fetch handler** serves the operator site, and every request
  *   to it is verified against Cloudflare Access;
- * - **`MigrationReportBridge`** takes migration reports from the API Workers. It
- *   is a Worker RPC entrypoint rather than an HTTP route so it has no public
- *   address: it is reachable over a service binding and by nothing else, which
- *   is a stronger statement than any shared secret on a public path would be;
+ *
+ * - the **queue handler** consumes migration reports from both regional report
+ *   queues. A Queue rather than a service-binding RPC, per
+ *   `docs/choosing-queues-or-rpc.md`: the whole fleet converges on one registry
+ *   object, nothing waits on the outcome, and batching means a herd of
+ *   reporters costs one registry write instead of one each. It also means the
+ *   report path has no public address, and neither API Worker's deploy depends
+ *   on this script existing;
+ *
  * - the **scheduled handler** runs the hourly inventory sweep.
  *
  * `docs/durable-object-migration-tracking.md` owns the design.
  */
-import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   DurableObjectMigrationReportSchema,
   type DurableObjectMigrationReport,
-  type DurableObjectMigrationTracker,
 } from "@avalon/contracts/durable-object-migrations";
 import { app, registry } from "./app";
 import type { Env } from "./env";
@@ -28,49 +31,60 @@ import { logEvent } from "./logger";
 export { MigrationRegistry } from "./registry";
 
 /**
- * The ingress for `apps/api`.
+ * Validate a batch and record what survives.
  *
- * The report is parsed here even though the producer parsed it before sending.
- * The producer's parse protects the tracker from a malformed report; this one
- * protects the registry from a producer that was changed without this contract
- * being changed with it, and it is the boundary that enforces the opaque-name
- * rule for a region that is not this Worker's own.
+ * A message that does not match the contract is acknowledged rather than
+ * retried. It will never become valid, so retrying it to the dead-letter queue
+ * would spend the batch's redelivery budget on a message nobody can fix, and —
+ * because an unacknowledged failure redelivers the *whole* batch — would drag
+ * every valid report alongside it. Acknowledging it drops it, loudly.
+ *
+ * Everything else is left unacknowledged, so a registry write that throws
+ * redelivers exactly the reports that were not recorded.
  */
-export class MigrationReportBridge
-  extends WorkerEntrypoint<Env>
-  implements DurableObjectMigrationTracker {
-  async report(input: DurableObjectMigrationReport): Promise<void> {
-    const parsed = DurableObjectMigrationReportSchema.safeParse(input);
+export async function consumeMigrationReports(
+  batch: MessageBatch<unknown>,
+  env: Env,
+): Promise<void> {
+  const accepted: DurableObjectMigrationReport[] = [];
+  let rejected = 0;
+
+  for (const message of batch.messages) {
+    const parsed = DurableObjectMigrationReportSchema.safeParse(message.body);
     if (!parsed.success) {
+      rejected += 1;
+      message.ack();
       logEvent("warn", "migration_report_rejected", {
         message: "migration_report_rejected the report did not match the contract",
+        queue: batch.queue,
         issues: parsed.error.issues.map((issue) => issue.path.map(String).join(".") || "(root)"),
       });
-      // Thrown rather than swallowed: the caller treats a rejection as a
-      // delivery failure and retries on its next wake, and the reporter never
-      // records an unaccepted report as delivered.
-      throw new Error("migration_report_rejected");
+      continue;
     }
+    accepted.push(parsed.data);
+  }
 
-    const report = parsed.data;
-    await registry(this.env).recordReport(report);
-    logEvent(report.status === "failed" ? "error" : "info", "migration_report_recorded", {
-      message: `migration_report_recorded ${report.component} ${report.status}`
-        + ` v${report.schemaVersion}/v${report.latestVersion}`,
+  if (accepted.length > 0) await registry(env).recordReports(accepted);
+
+  const failures = accepted.filter((report) => report.status === "failed");
+  logEvent(failures.length > 0 ? "error" : "info", "migration_reports_recorded", {
+    message: `migration_reports_recorded ${accepted.length} recorded`
+      + `${failures.length > 0 ? `, ${failures.length} failed migrations` : ""}`
+      + `${rejected > 0 ? `, ${rejected} rejected` : ""}`,
+    queue: batch.queue,
+    recorded_count: accepted.length,
+    rejected_count: rejected,
+    // Named rather than counted: a failed migration is the reason this Worker
+    // exists, and it should be findable in the log without opening the site.
+    failed_objects: failures.map((report) => ({
       object_id: report.objectId,
       object_name: report.objectName,
-      class_name: report.className,
       component: report.component,
       region: report.region,
-      app_env: report.appEnv,
-      status: report.status,
       schema_version: report.schemaVersion,
-      latest_version: report.latestVersion,
-      applied_versions: report.appliedVersions,
       failure_message: report.failure?.message ?? null,
-      worker_version_id: report.workerVersionId,
-    });
-  }
+    })),
+  });
 }
 
 /**
@@ -115,8 +129,9 @@ export async function runInventorySweep(env: Env, fetcher?: typeof fetch): Promi
 
 export default {
   fetch: app.fetch,
+  queue: consumeMigrationReports,
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     controller.noRetry();
     await runInventorySweep(env);
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, unknown>;

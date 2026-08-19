@@ -97,6 +97,7 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`dev-environment.md`](dev-environment.md) | **Read at the start of every session.** Install, the local D1 database, starting both regional Workers, and running the Electron client headlessly with screenshots. |
+| [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) | Which mechanism carries a hop between two Workers, a Worker and a Durable Object, or two Durable Objects: why a Queue is the default, the cases that hard-require RPC, the platform limits that decide the argument, and the rule against reinventing either one inside the other. Read before adding any such hop. |
 | [`when-adding-a-new-http-header.md`](when-adding-a-new-http-header.md) | The request, CORS, response-exposure, and production-preflight checklist for adding a header between the Electron renderer and either regional API. Read before adding or consuming an HTTP header. |
 | [`sandbox.md`](sandbox.md) | The Claude Code remote sandbox: environment definition, setup script, egress host list, and version parity against CI and production. |
 | [`sandbox-proxy.md`](sandbox-proxy.md) | Outbound HTTPS failures behind the sandbox proxy — policy denials versus clients that break on the CONNECT tunnel — and the fix for each. |

@@ -1,19 +1,25 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
-import { createExecutionContext, runInDurableObject } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import { app, parseObjectQuery } from "../src/app";
 import type { Env } from "../src/env";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
-import { MigrationReportBridge } from "../src/index";
+import type { MigrationRegistry } from "../src/registry";
+import { ObjectQuerySchema } from "../src/protocol";
+import { consumeMigrationReports } from "../src/index";
+import { createTestMessageBatch } from "./helpers/cloudflare-test";
 
 const OBJECT_ID = "a".repeat(64);
+let reportSequence = 0;
 const OBJECT_NAME = "global:00000000-0000-7000-8000-0000000000a1:00000000-0000-7000-8000-0000000000a2";
 
 function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableObjectMigrationReport {
+  reportSequence += 1;
   return {
+    reportId: `00000000-0000-7000-8000-${String(reportSequence).padStart(12, "0")}`,
     objectId: OBJECT_ID,
     objectName: OBJECT_NAME,
     className: "SubstreamAgent",
@@ -31,6 +37,13 @@ function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableO
   };
 }
 
+/** Drive the queue consumer the way the runtime would, one batch at a time. */
+async function deliver(...bodies: unknown[]): Promise<ReturnType<typeof createTestMessageBatch>> {
+  const delivery = createTestMessageBatch(bodies);
+  await consumeMigrationReports(delivery.batch, env);
+  return delivery;
+}
+
 /** The same bindings the Worker holds, with the local Access bypass turned on. */
 function developerEnv(): Env {
   return { ...env, APP_ENV: "development", MIGRATION_TRACKER_DEV_AUTH: "true" };
@@ -41,6 +54,15 @@ async function get(path: string, environment: Env = developerEnv()): Promise<Res
     new Request(`https://migrations.internal.with-avalon.com${path}`),
     environment,
   );
+}
+
+async function withRegistry<T>(
+  run: (registry: MigrationRegistry, state: DurableObjectState) => T | Promise<T>,
+): Promise<T> {
+  const stub = env.MIGRATION_REGISTRY.get(
+    env.MIGRATION_REGISTRY.idFromName(REGISTRY_OBJECT_NAME),
+  );
+  return runInDurableObject(stub, async (instance, state) => run(instance, state));
 }
 
 beforeEach(async () => {
@@ -101,7 +123,7 @@ describe("access enforcement", () => {
 
 describe("the operator site", () => {
   it("renders the overview with the fleet's counts", async () => {
-    await new MigrationReportBridge(createExecutionContext(), env).report(report());
+    await deliver(report());
 
     const response = await get("/");
     const body = await response.text();
@@ -113,9 +135,7 @@ describe("the operator site", () => {
   });
 
   it("renders an object's report history", async () => {
-    const bridge = new MigrationReportBridge(createExecutionContext(), env);
-    await bridge.report(report());
-    await bridge.report(report({
+    await deliver(report(), report({
       status: "failed",
       schemaVersion: 3,
       appliedVersions: [],
@@ -132,7 +152,7 @@ describe("the operator site", () => {
   });
 
   it("abbreviates a name in the list but keeps the whole one reachable", async () => {
-    await new MigrationReportBridge(createExecutionContext(), env).report(report());
+    await deliver(report());
 
     const body = await (await get("/objects")).text();
 
@@ -148,7 +168,7 @@ describe("the operator site", () => {
   });
 
   it("serves the same data as JSON", async () => {
-    await new MigrationReportBridge(createExecutionContext(), env).report(report());
+    await deliver(report());
 
     const response = await get("/api/objects?status=current");
     const body = await response.json() as { total: number; objects: { objectId: string }[] };
@@ -158,7 +178,7 @@ describe("the operator site", () => {
   });
 
   it("escapes a failure message rather than rendering it as markup", async () => {
-    await new MigrationReportBridge(createExecutionContext(), env).report(report({
+    await deliver(report({
       status: "failed",
       appliedVersions: [],
       failure: { message: "<script>alert(1)</script>", version: null },
@@ -205,18 +225,68 @@ describe("parseObjectQuery", () => {
   });
 });
 
-describe("MigrationReportBridge", () => {
-  it("rejects a report that does not match the contract", async () => {
-    const bridge = new MigrationReportBridge(createExecutionContext(), env);
+describe("the queue consumer", () => {
+  it("acknowledges a malformed message rather than redelivering the batch", async () => {
+    const valid = report();
+    const delivery = await deliver({ ...report(), objectId: "too-short" }, valid);
 
-    await expect(bridge.report({ ...report(), objectId: "too-short" }))
-      .rejects.toThrow("migration_report_rejected");
+    // The malformed one is dropped on purpose: it can never become valid, and
+    // leaving it unacknowledged would redeliver the valid report beside it.
+    expect(delivery.messages[0]?.acked).toBe(true);
+    expect(delivery.messages[1]?.acked).toBe(false);
+
+    const page = await withRegistry((registry) => registry.listObjects(ObjectQuerySchema.parse({})));
+    expect(page.total).toBe(1);
   });
 
-  it("rejects a report whose object name is not opaque", async () => {
-    const bridge = new MigrationReportBridge(createExecutionContext(), env);
+  it("refuses a report whose object name is not opaque", async () => {
+    const delivery = await deliver({ ...report(), objectName: "eu:acme-corporation:payroll" });
 
-    await expect(bridge.report({ ...report(), objectName: "eu:acme-corporation:payroll" }))
-      .rejects.toThrow("migration_report_rejected");
+    expect(delivery.messages[0]?.acked).toBe(true);
+    const page = await withRegistry((registry) => registry.listObjects(ObjectQuerySchema.parse({})));
+    expect(page.total).toBe(0);
+  });
+
+  it("leaves a well-formed message unacknowledged so a failed write redelivers it", async () => {
+    const delivery = await deliver(report());
+
+    expect(delivery.messages[0]?.acked).toBe(false);
+    expect(delivery.messages[0]?.retried).toBe(false);
+  });
+
+  it("records a redelivered report once", async () => {
+    // Queues deliver at least once; the same message arriving twice is normal.
+    const duplicate = report();
+    await deliver(duplicate);
+    await deliver(duplicate);
+
+    const detail = await withRegistry((registry) => registry.objectDetail(OBJECT_ID));
+    expect(detail?.events).toHaveLength(1);
+  });
+
+  it("does not let an out-of-order delivery overwrite a newer report", async () => {
+    const older = report({ schemaVersion: 3, occurredAt: 1_700_000_000_000 });
+    const newer = report({ schemaVersion: 4, latestVersion: 4, occurredAt: 1_700_000_060_000 });
+
+    await deliver(newer);
+    await deliver(older);
+
+    const detail = await withRegistry((registry) => registry.objectDetail(OBJECT_ID));
+    // The object row keeps the newer version...
+    expect(detail?.object.schemaVersion).toBe(4);
+    // ...while the history keeps both reports.
+    expect(detail?.events).toHaveLength(2);
+  });
+
+  it("folds a whole batch into one pass", async () => {
+    const delivery = await deliver(
+      report({ objectId: "b".repeat(64), objectName: null }),
+      report({ objectId: "c".repeat(64), objectName: null }),
+      report({ objectId: "d".repeat(64), objectName: null }),
+    );
+
+    expect(delivery.messages.every((message) => !message.acked)).toBe(true);
+    const page = await withRegistry((registry) => registry.listObjects(ObjectQuerySchema.parse({})));
+    expect(page.total).toBe(3);
   });
 });

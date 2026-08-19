@@ -131,107 +131,128 @@ export class MigrationRegistry extends DurableObject<Env> {
     });
   }
 
-  /** Record one Durable Object migration report. Idempotent per wake, not per call. */
-  recordReport(report: DurableObjectMigrationReport): void {
+  /**
+   * Record a batch of Durable Object migration reports in one transaction.
+   *
+   * One transaction per *batch* rather than per report is the reason this
+   * subsystem uses a Queue at all: a herd of reporters costs the registry one
+   * write instead of one each. The batch is bounded by the consumer's
+   * `max_batch_size`, so the transaction stays small.
+   *
+   * Written against the two things Cloudflare Queues do not promise. Delivery
+   * is at least once, so the same report can arrive twice; ordering is not
+   * guaranteed, so an older report can arrive after a newer one. Both are
+   * handled in the SQL rather than by sorting the batch, because a late
+   * redelivery can arrive in a later batch entirely, where sorting cannot see
+   * it.
+   */
+  recordReports(reports: readonly DurableObjectMigrationReport[]): void {
     const recordedAt = Date.now();
     this.storage.transactionSync(() => {
-      const sql = this.storage.sql;
-
-      // Monotonic: the head is the highest version this component has ever been
-      // seen running in this region. A rolled-back deploy reporting a lower
-      // number must leave every other object marked behind rather than silently
-      // declaring the fleet current again.
-      sql.exec(
-        `INSERT INTO component_versions
-           (component, region, class_name, latest_version, worker_version_id, observed_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(component, region) DO UPDATE SET
-           class_name = excluded.class_name,
-           observed_at = excluded.observed_at,
-           worker_version_id = CASE
-             WHEN excluded.latest_version >= component_versions.latest_version
-               THEN excluded.worker_version_id
-             ELSE component_versions.worker_version_id
-           END,
-           latest_version = MAX(component_versions.latest_version, excluded.latest_version)`,
-        report.component,
-        report.region,
-        report.className,
-        report.latestVersion,
-        report.workerVersionId,
-        recordedAt,
-      );
-
-      const failed = report.status === "failed";
-      sql.exec(
-        `INSERT INTO durable_objects (
-           object_id, object_name, class_name, component, region, app_env,
-           worker_version_id, report_status, schema_version, failure_message,
-           failure_version, first_seen_at, last_reported_at, last_failed_at,
-           absent_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-         ON CONFLICT(object_id) DO UPDATE SET
-           object_name = COALESCE(excluded.object_name, durable_objects.object_name),
-           class_name = excluded.class_name,
-           component = excluded.component,
-           region = excluded.region,
-           app_env = excluded.app_env,
-           worker_version_id = excluded.worker_version_id,
-           report_status = excluded.report_status,
-           schema_version = excluded.schema_version,
-           failure_message = excluded.failure_message,
-           failure_version = excluded.failure_version,
-           last_reported_at = excluded.last_reported_at,
-           last_failed_at = COALESCE(excluded.last_failed_at, durable_objects.last_failed_at),
-           -- A report proves the object exists, whatever the last sweep decided.
-           absent_since = NULL`,
-        report.objectId,
-        report.objectName,
-        report.className,
-        report.component,
-        report.region,
-        report.appEnv,
-        report.workerVersionId,
-        report.status,
-        report.schemaVersion,
-        report.failure?.message ?? null,
-        report.failure?.version ?? null,
-        recordedAt,
-        recordedAt,
-        failed ? recordedAt : null,
-      );
-
-      sql.exec(
-        `INSERT INTO migration_events (
-           object_id, object_name, class_name, component, region, app_env,
-           worker_version_id, status, schema_version, latest_version,
-           applied_versions, failure_message, failure_version, occurred_at,
-           recorded_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        report.objectId,
-        report.objectName,
-        report.className,
-        report.component,
-        report.region,
-        report.appEnv,
-        report.workerVersionId,
-        report.status,
-        report.schemaVersion,
-        report.latestVersion,
-        JSON.stringify(report.appliedVersions),
-        report.failure?.message ?? null,
-        report.failure?.version ?? null,
-        report.occurredAt,
-        recordedAt,
-      );
-
-      sql.exec(
+      for (const report of reports) this.applyReport(report, recordedAt);
+      this.storage.sql.exec(
         `DELETE FROM migration_events WHERE id <= (
            SELECT MAX(id) - ? FROM migration_events
          )`,
         MIGRATION_EVENT_RETENTION,
       );
     });
+  }
+
+  private applyReport(report: DurableObjectMigrationReport, recordedAt: number): void {
+    const sql = this.storage.sql;
+
+    // Monotonic: the head is the highest version this component has ever been
+    // seen running in this region. A rolled-back deploy reporting a lower
+    // number must leave every other object marked behind rather than silently
+    // declaring the fleet current again.
+    sql.exec(
+      `INSERT INTO component_versions
+         (component, region, class_name, latest_version, worker_version_id, observed_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(component, region) DO UPDATE SET
+         class_name = excluded.class_name,
+         observed_at = excluded.observed_at,
+         worker_version_id = CASE
+           WHEN excluded.latest_version >= component_versions.latest_version
+             THEN excluded.worker_version_id
+           ELSE component_versions.worker_version_id
+         END,
+         latest_version = MAX(component_versions.latest_version, excluded.latest_version)`,
+      report.component,
+      report.region,
+      report.className,
+      report.latestVersion,
+      report.workerVersionId,
+      recordedAt,
+    );
+
+    const failed = report.status === "failed";
+    sql.exec(
+      `INSERT INTO durable_objects (
+         object_id, object_name, class_name, component, region, app_env,
+         worker_version_id, report_status, schema_version, failure_message,
+         failure_version, first_seen_at, last_reported_at, last_failed_at,
+         absent_since
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(object_id) DO UPDATE SET
+         object_name = COALESCE(excluded.object_name, durable_objects.object_name),
+         class_name = excluded.class_name,
+         component = excluded.component,
+         region = excluded.region,
+         app_env = excluded.app_env,
+         worker_version_id = excluded.worker_version_id,
+         report_status = excluded.report_status,
+         schema_version = excluded.schema_version,
+         failure_message = excluded.failure_message,
+         failure_version = excluded.failure_version,
+         last_reported_at = excluded.last_reported_at,
+         last_failed_at = COALESCE(excluded.last_failed_at, durable_objects.last_failed_at),
+         -- A report proves the object exists, whatever the last sweep decided.
+         absent_since = NULL
+       WHERE excluded.last_reported_at >= COALESCE(durable_objects.last_reported_at, 0)`,
+      report.objectId,
+      report.objectName,
+      report.className,
+      report.component,
+      report.region,
+      report.appEnv,
+      report.workerVersionId,
+      report.status,
+      report.schemaVersion,
+      report.failure?.message ?? null,
+      report.failure?.version ?? null,
+      recordedAt,
+      report.occurredAt,
+      failed ? report.occurredAt : null,
+    );
+
+    sql.exec(
+      `INSERT INTO migration_events (
+         report_id, object_id, object_name, class_name, component, region,
+         app_env, worker_version_id, status, schema_version, latest_version,
+         applied_versions, failure_message, failure_version, occurred_at,
+         recorded_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       -- A redelivered message is the same report, not a second one.
+       ON CONFLICT(report_id) DO NOTHING`,
+      report.reportId,
+      report.objectId,
+      report.objectName,
+      report.className,
+      report.component,
+      report.region,
+      report.appEnv,
+      report.workerVersionId,
+      report.status,
+      report.schemaVersion,
+      report.latestVersion,
+      JSON.stringify(report.appliedVersions),
+      report.failure?.message ?? null,
+      report.failure?.version ?? null,
+      report.occurredAt,
+      recordedAt,
+    );
   }
 
   /**

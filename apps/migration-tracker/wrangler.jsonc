@@ -26,6 +26,26 @@
   // reports, so a faster sweep would find the same set more often without
   // learning anything new about it.
   "triggers": { "crons": ["0 * * * *"] },
+  // One queue for both regions, created before either Worker is deployed; see
+  // docs/runbook.md. It is not split per region because its destination is not
+  // split per region — every report lands in the one registry object either
+  // way, so a second queue would buy resources rather than isolation.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "avalon-migration-reports",
+        // The maximum, and unlike the activity queue's batch this one earns it:
+        // the consumer folds a whole batch into a single registry transaction,
+        // so a batch of 100 costs one write instead of 100. Ten seconds is the
+        // wait that lets a deploy's herd actually fill it — nobody is waiting on
+        // a migration report, and the site is not a latency surface.
+        "max_batch_size": 100,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-migration-reports-dead-letter"
+      }
+    ]
+  },
   "durable_objects": {
     "bindings": [
       { "name": "MIGRATION_REGISTRY", "class_name": "MigrationRegistry" }

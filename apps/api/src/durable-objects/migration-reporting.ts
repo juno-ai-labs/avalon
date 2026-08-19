@@ -13,17 +13,26 @@
  * module wraps the migration call, and afterwards decides whether the tracker
  * already knows what it would be told.
  *
+ * The report goes onto a Queue rather than a service-binding RPC. Every object
+ * in the fleet converges on one registry object, and an operator-driven fan-out
+ * — the authority cutover walking every workspace, the scheduler's due-work
+ * sweep — wakes hundreds of them at once. A Durable Object is single-threaded
+ * with a soft ceiling near a thousand requests a second, so a synchronous hop
+ * would make each reporter wait behind every other one, on a monitor nobody is
+ * waiting for. `docs/choosing-queues-or-rpc.md` has the full reasoning.
+ *
  * Three rules keep the traffic bounded and the object safe:
  *
- * - **Reporting never breaks the object.** A tracker that is unreachable,
- *   unbound, or throwing must leave the object exactly as it would have been.
- *   Every failure here is swallowed after being logged.
+ * - **Reporting never breaks the object.** A queue that is unbound or refusing
+ *   sends must leave the object exactly as it would have been. Every failure
+ *   here is swallowed after being logged.
  * - **A wake that changes nothing sends nothing.** The object keeps its own
  *   one-row report ledger, so the common case — an object waking on the version
  *   it last reported — costs one local SQL read and no subrequest.
  * - **A migration failure always reports**, before the constructor rethrows.
- *   That is the case the tracker exists for, and it is also the case where the
- *   object is about to become unusable, so there is no later wake to rely on.
+ *   That is the case the tracker exists for. The queue's own retry and
+ *   dead-letter queue carry it from there, which matters most exactly here: an
+ *   object that fails construction may not be woken again for a long time.
  *
  * The heartbeat covers the third state: an object that has been reported and
  * has not migrated since. Without it, a tracker whose store was rebuilt would
@@ -38,6 +47,7 @@ import {
   type DurableObjectMigrationStatus,
 } from "@avalon/contracts/durable-object-migrations";
 import type { Env } from "../env";
+import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
 
 /**
@@ -182,20 +192,24 @@ function send(
   outcome: ReportOutcome,
   onAccepted?: () => void,
 ): void {
-  const tracker = context.env.MIGRATION_TRACKER;
+  const queue = context.env.MIGRATION_REPORT_QUEUE;
   // Unbound is the normal state in local development and in every test that
   // builds a partial `Env`. It is not an error, and it must not become one.
-  if (!tracker) return;
+  if (!queue) return;
 
   const report = buildReport(context, outcome);
   if (!report) return;
 
   context.state.waitUntil((async () => {
     try {
-      await tracker.report(report);
+      await queue.send(report);
+      // `send` resolving means the message was accepted by the queue, not that
+      // the tracker recorded it. That is the right thing to record here: the
+      // queue owns delivery from this point, with retries and a dead-letter
+      // queue, and neither needs this object to be alive.
       onAccepted?.();
     } catch (error) {
-      logReportProblem(context, "migration_report_delivery_failed", error);
+      logReportProblem(context, "migration_report_enqueue_failed", error);
     }
   })());
 }
@@ -206,6 +220,9 @@ function buildReport(
 ): DurableObjectMigrationReport | null {
   const name = context.state.id.name;
   const candidate = {
+    // Fresh per send. Queues deliver at least once, and this is what lets the
+    // consumer collapse a redelivery without collapsing two real reports.
+    reportId: uuidV7(),
     objectId: context.state.id.toString(),
     // A name that is not opaque is dropped rather than sent. The report crosses
     // a regional boundary and the guard is what makes that crossing defensible;
