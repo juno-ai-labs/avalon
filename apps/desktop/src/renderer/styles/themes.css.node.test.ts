@@ -106,6 +106,25 @@ describe('no colour is written into app.css', () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * Lines come off the line ramp and fills come off the neutral one.
+   *
+   * The two were one ramp until Airy needed borders that all but disappear: at
+   * the border band `--n-4` was simultaneously the default border and the
+   * selected sidebar row's fill, so making the border vanish took the selection
+   * with it. A border that reaches back onto `--n-*` re-creates that coupling
+   * silently — it looks right in whichever theme it was written against.
+   */
+  it('draws every border and outline from the line ramp', () => {
+    const offenders = app
+      .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+      .split('\n')
+      .filter((line) => /(?:border[a-z-]*|outline(?:-color)?)\s*:[^;{}]*var\(--n-\d+\)/u.test(line))
+      .map((line) => line.trim().slice(0, 70));
+
+    expect(offenders).toEqual([]);
+  });
+
   // The guard has to be able to see one, or it is asserting that its own
   // regular expressions are broken.
   it('would catch a colour that came back', () => {
@@ -159,20 +178,26 @@ describe('theme completeness', () => {
   // A theme that redefined one to a literal would be pinning a colour that a
   // ramp step already decides, and the two would drift.
   it('leaves the legacy aliases pointing at ramp steps', () => {
-    for (const alias of ['--ink', '--ink-soft', '--muted', '--muted-2', '--line', '--line-soft', '--line-strong']) {
+    for (const alias of ['--ink', '--ink-soft', '--muted', '--muted-2']) {
       expect(dark.get(alias)).toMatch(/^var\(--n-\d+\)$/u);
+    }
+    // The three line aliases point at the *line* ramp, not the neutral one. A
+    // border and a faint fill sit at the same contrast level and want opposite
+    // treatment in a theme that draws with space, so they cannot share a step.
+    for (const alias of ['--line', '--line-soft', '--line-strong']) {
+      expect(dark.get(alias)).toMatch(/^var\(--line-\d+\)$/u);
     }
     for (const name of ['light', 'airy'] as const) {
       expect(tokensIn(themeBlock(BLOCKS[name])).has('--ink')).toBe(false);
     }
   });
 
-  it('orders each ramp from the faintest mark to the strongest text', () => {
+  it.each([['--n-', 14], ['--line-', 6]] as const)('orders the %s ramp by contrast', (prefix, length) => {
     for (const [name, selector] of Object.entries(BLOCKS)) {
       const declared = tokensIn(themeBlock(selector));
-      const steps = Array.from({ length: 14 }, (_, index) => declared.get(`--n-${index + 1}`));
+      const steps = Array.from({ length }, (_, index) => declared.get(`${prefix}${index + 1}`));
 
-      expect(steps.every(Boolean), `${name} declares all fourteen ramp steps`).toBe(true);
+      expect(steps.every(Boolean), `${name} declares all ${length} ${prefix} steps`).toBe(true);
       // Ordered by contrast against the surface, so the direction is whichever
       // way the theme runs: monotonic *distance* from the first step is what
       // has to hold, in a light theme and a dark one alike.
