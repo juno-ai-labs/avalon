@@ -139,6 +139,15 @@
   /* Density. These are the handful of measurements that decide how much air the
    * interface has; a theme changes its feel mostly by changing them. */
   --sidebar-width: 300px;
+  /* The navigation floats over the background rather than being bolted to the
+   * window edge: `--sidebar-inset` is the gutter of `--canvas` left around it on
+   * three sides, and it mirrors the right rail's own 8px so the two panels read
+   * as the same kind of object. Keep it near 8px on macOS — the traffic lights
+   * are drawn by the system at (18, 17) and a larger inset walks the panel's
+   * rounded corner into them. */
+  --sidebar-inset: 8px;
+  --sidebar-radius: var(--radius-lg);
+  --sidebar-shadow: 0 6px 24px rgba(0, 0, 0, 0.34);
   --row-height: 31px;
   --control-height: 32px;
   --pane-pad: 20px;
@@ -344,6 +353,9 @@
   --radius-lg: 12px;
   --radius-xl: 14px;
 
+  --sidebar-inset: 8px;
+  --sidebar-radius: var(--radius-lg);
+  --sidebar-shadow: 0 2px 10px rgba(30, 28, 22, 0.08);
   --row-height: 33px;
   --pane-pad: 22px;
   --stack-gap: 32px;
@@ -512,6 +524,9 @@
   --radius-xl: 8px;
 
   --sidebar-width: 320px;
+  --sidebar-inset: 12px;
+  --sidebar-radius: var(--radius-lg);
+  --sidebar-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   --row-height: 40px;
   --control-height: 36px;
   --pane-pad: 34px;
