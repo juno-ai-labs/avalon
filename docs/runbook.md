@@ -396,7 +396,7 @@ Current production status: the site, both regional APIs, and the private nightly
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
-The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0082_shared_notion_connection_routing.sql` and `0071_notion_webhook_setup_nonces.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
+The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0083_shared_notion_connection_routing.sql` and `0071_notion_webhook_setup_nonces.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
 
 After the migration and Worker release are live, finish the Notion subscription
 without putting either setup material or its signing secret into logs:
@@ -612,9 +612,9 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 ### WorkstreamDO authority maintenance cutover
 
 Run one region at a time. Deploy the compatibility Worker and apply migrations
-`0077_workstream_do_authority_cutover.sql`,
-`0078_workstream_do_regional_effects.sql`, and
-`0079_workstream_do_full_serving.sql` before starting. Use a new positive
+`0078_workstream_do_authority_cutover.sql`,
+`0079_workstream_do_regional_effects.sql`, and
+`0080_workstream_do_full_serving.sql` before starting. Use a new positive
 generation; never reuse one from a quarantined attempt.
 
 1. Set `workstream_authority_control` from `legacy_open` (or `quarantined` with

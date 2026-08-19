@@ -21,7 +21,7 @@ ranks**, and **ranking follows attention**.
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute against fenced WorkspaceDO inputs. |
 | `apps/api/src/routes/work-opportunities.ts` | `GET /work-opportunities` and `POST /work-opportunities/:id/start`. |
 | `packages/agent-harness/src/prompts/work-opportunity.ts` | The admission and ranking prompts. |
-| `packages/db/migrations/0081_workspace_product_do_authority.sql` | The maintenance import ledger and permanent D1 writer fences; it is not the product schema. |
+| `packages/db/migrations/0082_workspace_product_do_authority.sql` | The maintenance import ledger and permanent D1 writer fences; it is not the product schema. |
 
 Model contracts are in [`agent-harness.md`](agent-harness.md) and the flags that
 route them are in [`feature-flags.md`](feature-flags.md).

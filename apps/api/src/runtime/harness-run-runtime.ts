@@ -1520,7 +1520,7 @@ async function replanCompletedReadReceipt(
 ): Promise<ToolPlanClaim> {
   // Its own id rather than the one the planning batch minted: that one is bound
   // to an insert that did not land here, and keeping the two apart costs a UUID.
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `INSERT INTO tool_invocation_checkpoints

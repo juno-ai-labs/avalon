@@ -56,11 +56,11 @@ serve workspace product state or transcripts after cutover.
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
 | `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
 | `scripts/eslint-rules/durable-object-native-rpc.mjs` | Rejects internal Durable Object `fetch()` calls; HTTP `fetch()` remains for WebSocket upgrades and genuine HTTP flows. |
-| `packages/db/migrations/0077_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0078_workstream_do_regional_effects.sql` | Minimal regional activity/mention effect inbox and causally fenced notification intents. |
-| `packages/db/migrations/0079_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent workspace-driven work-stream creation receipts; it intentionally creates no directory projection tables. |
-| `packages/db/migrations/0080_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
-| `packages/db/migrations/0081_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
+| `packages/db/migrations/0078_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
+| `packages/db/migrations/0079_workstream_do_regional_effects.sql` | Minimal regional activity/mention effect inbox and causally fenced notification intents. |
+| `packages/db/migrations/0080_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent workspace-driven work-stream creation receipts; it intentionally creates no directory projection tables. |
+| `packages/db/migrations/0081_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
+| `packages/db/migrations/0082_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
 
 ## How it works
 
@@ -625,7 +625,7 @@ policy revisions, automations/digests/schedules, resources/notes/watches and R2
 outboxes, memory, and notification intents. Activity insertion sequences, stable
 IDs, leases, versions, credentials, resource references, and revision history
 are preserved. A workspace product route must be `verified` and then `active`
-before the serving-contract attestation can advance. Migration `0081` rejects
+before the serving-contract attestation can advance. Migration `0082` rejects
 all legacy D1 writers as soon as import starts and scrubs imported connector
 event bodies before open, so there is no dual-write or fallback path.
 
