@@ -2175,6 +2175,45 @@ describe("Durable Objects in the Workers runtime", () => {
         archived_at: null,
       }],
     })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "workstream_email_receipts",
+      rows: [{
+        resend_email_id: "imported-email",
+        workstream_id: WORKSTREAM_ID,
+        workspace_id: WORKSPACE_ID,
+        svix_id: "imported-svix",
+        payload_ref: null,
+        received_at: "2098-08-18T20:00:00.000Z",
+        processed_at: null,
+        error_json: null,
+        lease_token: null,
+        lease_expires_at: null,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "realtime_transcription_ticket_receipts",
+      rows: [{
+        ticket_id: "imported-ticket",
+        workspace_id: WORKSPACE_ID,
+        user_id: USER_ID,
+        consumed_at: 100,
+        expires_at: 200,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "realtime_transcription_sessions",
+      rows: [{
+        id: "imported-session",
+        ticket_id: "imported-ticket",
+        workspace_id: WORKSPACE_ID,
+        user_id: USER_ID,
+        started_at: 100,
+        expires_at: 220,
+      }],
+    })).resolves.toBe(1);
     await expect(stub.listActivityEvents({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
@@ -2211,6 +2250,14 @@ describe("Durable Objects in the Workers runtime", () => {
         "SELECT title FROM notes WHERE resource_id = ?",
         resourceId,
       ).one().title).toBe("Imported note");
+      expect(state.storage.sql.exec<{ svix_id: string }>(
+        "SELECT svix_id FROM workstream_email_receipts WHERE resend_email_id = ?",
+        "imported-email",
+      ).one().svix_id).toBe("imported-svix");
+      expect(state.storage.sql.exec<{ expires_at: number }>(
+        "SELECT expires_at FROM realtime_transcription_sessions WHERE id = ?",
+        "imported-session",
+      ).one().expires_at).toBe(220);
     });
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.importWorkspaceProductRows({

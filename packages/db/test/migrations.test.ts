@@ -430,10 +430,19 @@ describe("database migrations", () => {
             'workstream_directory_user_projections',
             'workstream_resource_link_projections',
             'workstream_suggestion_feedback_projections',
-            'workstream_regional_effect_receipts'
+            'workstream_regional_effect_receipts',
+            'workstream_authority_commands',
+            'workspace_opportunity_versions',
+            'web_usage_log'
           )`,
       ).all();
       expect(productProjectionTables).toEqual([]);
+      expect(() => database.exec(`
+        INSERT INTO attachment_tool_receipts
+          (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+        VALUES ('authority-workspace', 'forbidden-resource', 'forbidden-invocation',
+                'hash', '2026-08-16T01:06:00.000Z');
+      `)).toThrow(/workstream_do_authoritative/u);
       expect(() => database.exec(`
         INSERT INTO workstream_email_receipts
           (resend_email_id, workstream_id, workspace_id, svix_id, received_at)
@@ -451,6 +460,76 @@ describe("database migrations", () => {
         VALUES ('forbidden-session', 'forbidden-ticket', 'authority-workspace',
                 'authority-user', 1, 2);
       `)).toThrow(/workspace_do_authoritative/u);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("carries deployed data through the cutover migrations and drops only dead tables", () => {
+    // The deployed boundary is 0077; everything after it ships with this
+    // branch and must apply over a database that already holds rows shaped by
+    // the old Worker — including rows in the tables 0085 drops.
+    const database = migrateDatabaseThrough("0077_connector_oauth_telemetry_shape.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('carried-user', 'google-carried', 'carried@example.com', 'Carried', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('carried-workspace', 'Carried', 'carried', 'global', 'carried-user', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('carried-workstream', 'carried-workspace', 'Carried', '', 'ad_hoc', 'carried-user',
+              'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('carried-run', 'carried-workspace', 'carried-workstream', 'opening_message',
+              '{}', 'completed', '2026-01-01');
+      INSERT INTO web_usage_log
+        (id, workspace_id, workstream_id, harness_run_id, tool_name, url_count,
+         credits_used, estimated, status, duration_ms, created_at)
+      VALUES ('carried-usage', 'carried-workspace', 'carried-workstream', 'carried-run',
+              'avalon.web_search', 1, 0.5, 0, 'completed', 1200, '2026-01-01');
+      INSERT INTO workspace_opportunity_versions (workspace_id, version, updated_at)
+      VALUES ('carried-workspace', 4, '2026-01-01');
+      INSERT INTO workstream_email_receipts
+        (resend_email_id, workstream_id, workspace_id, svix_id, received_at,
+         lease_token, lease_expires_at)
+      VALUES ('carried-email', 'carried-workstream', 'carried-workspace', 'carried-svix',
+              '2026-01-01T00:00:00.000Z', NULL, NULL);
+      INSERT INTO realtime_transcription_ticket_receipts
+        (ticket_id, workspace_id, user_id, consumed_at, expires_at)
+      VALUES ('carried-ticket', 'carried-workspace', 'carried-user', 100, 200);
+      INSERT INTO realtime_transcription_sessions
+        (id, ticket_id, workspace_id, user_id, started_at, expires_at)
+      VALUES ('carried-session', 'carried-ticket', 'carried-workspace', 'carried-user', 100, 220);
+    `);
+    const remaining = readdirSync(migrationsDirectory)
+      .filter((fileName) => fileName.endsWith(".sql") && fileName.slice(0, 4) > "0077")
+      .sort();
+    expect(remaining[0]).toBe("0078_rename_hypersight_to_block_dashboard.sql");
+    for (const fileName of remaining) {
+      database.exec(readFileSync(new URL(`../migrations/${fileName}`, import.meta.url), "utf8"));
+    }
+    try {
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name IN ('web_usage_log', 'workspace_opportunity_versions')`,
+      ).all()).toEqual([]);
+      // Maintenance-import input survives the forward migrations untouched.
+      expect(database.prepare(
+        `SELECT svix_id FROM workstream_email_receipts WHERE resend_email_id = 'carried-email'`,
+      ).get()).toEqual({ svix_id: "carried-svix" });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM realtime_transcription_sessions`,
+      ).get()).toEqual({ count: 1 });
+      // The old Worker keeps writing in legacy_open; fences arm only when the
+      // maintenance campaign advances the phase.
+      database.exec(`
+        INSERT INTO workstream_email_receipts
+          (resend_email_id, workstream_id, workspace_id, svix_id, received_at)
+        VALUES ('carried-email-2', 'carried-workstream', 'carried-workspace',
+                'carried-svix-2', '2026-01-02T00:00:00.000Z');
+      `);
     } finally {
       database.close();
     }
