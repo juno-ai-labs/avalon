@@ -670,6 +670,36 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-19 — Dead tables drop and the last unfenced object table gains its tripwire
+
+**What changed:** `attachment_tool_receipts` received the same phase-conditional
+`workstream_do_authoritative` writer fences as its `tool_invocations` siblings
+in unshipped `0079` — its authority had already moved to the SubstreamAgent
+runtime port, but the D1 shell alone accepted direct writes silently.
+`workstream_authority_commands`, created in `0079` and referenced by nothing,
+was removed from that unshipped migration. New migration
+`0085_retire_dead_tables.sql` drops `web_usage_log` and
+`workspace_opportunity_versions`, and the workspace activation scrub no longer
+names the dropped counter.
+
+**Why:** An object-owned table without a fence is exactly how split authority
+comes back: every other moved table rejects a stray D1 writer loudly, and this
+one did not. The two dropped tables have no reader or writer on this branch
+*or* on the deployed Worker, so — unlike `artifacts`, whose live reader forces
+the deferred-drop procedure — nothing serves during the migration window that
+could touch them.
+
+**Considered and rejected:** Fencing the two dead tables instead of dropping
+them (a fence protects an authority; these have none), and keeping
+`workstream_authority_commands` for a future operator command ledger (nothing
+was ever designed to write it, and an unshipped migration is the one place a
+table can simply not exist).
+
+**Consequences:** A new direct D1 write to `attachment_tool_receipts` aborts
+after cutover instead of silently diverging from the object. Anything wanting
+web-usage metering or an opportunity version counter starts from a new design
+rather than a dead shell.
+
 ### 2026-08-18 — The last workspace-scoped receipts leave regional D1
 
 **What changed:** Three residues of the cutover moved behind WorkspaceDO

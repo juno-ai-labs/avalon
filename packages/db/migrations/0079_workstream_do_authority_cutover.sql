@@ -66,22 +66,6 @@ CREATE TABLE workstream_authority_routes (
 CREATE INDEX workstream_authority_routes_state_idx
   ON workstream_authority_routes(generation, state, workstream_id);
 
-CREATE TABLE workstream_authority_commands (
-  command_id TEXT PRIMARY KEY,
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  command TEXT NOT NULL CHECK (command IN (
-    'begin_maintenance', 'begin_import', 'verify', 'open', 'quarantine'
-  )),
-  request_hash TEXT NOT NULL,
-  result_hash TEXT,
-  result_code TEXT,
-  created_at TEXT NOT NULL,
-  completed_at TEXT
-);
-
-CREATE INDEX workstream_authority_commands_generation_idx
-  ON workstream_authority_commands(generation, created_at);
-
 CREATE TRIGGER workstream_authority_phase_transition_guard
 BEFORE UPDATE OF phase ON workstream_authority_control
 WHEN NEW.phase != OLD.phase AND NOT (
@@ -647,6 +631,27 @@ END;
 
 CREATE TRIGGER tool_invocations_reject_do_authority_delete
 BEFORE DELETE ON tool_invocations
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workstream_do_authoritative');
+END;
+
+CREATE TRIGGER attachment_tool_receipts_reject_do_authority_insert
+BEFORE INSERT ON attachment_tool_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workstream_do_authoritative');
+END;
+
+CREATE TRIGGER attachment_tool_receipts_reject_do_authority_update
+BEFORE UPDATE ON attachment_tool_receipts
+WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
+BEGIN
+  SELECT RAISE(ABORT, 'workstream_do_authoritative');
+END;
+
+CREATE TRIGGER attachment_tool_receipts_reject_do_authority_delete
+BEFORE DELETE ON attachment_tool_receipts
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');

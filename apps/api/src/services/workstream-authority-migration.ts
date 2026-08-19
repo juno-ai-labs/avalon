@@ -1294,8 +1294,6 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
       .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM activity_events WHERE workspace_id = ?`)
       .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM workspace_opportunity_versions WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM workstream_email_receipts WHERE workspace_id = ?`)
       .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM realtime_transcription_sessions WHERE workspace_id = ?`)
