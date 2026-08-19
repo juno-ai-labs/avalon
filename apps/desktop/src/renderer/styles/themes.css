@@ -196,6 +196,20 @@
   --text-base: 14px;
   --leading-base: 1.48;
   --weight-strong: 560;
+  /* The type scale. `--text-base` is the document's; these are the sizes the
+   * interface actually sets, and a theme that wants larger, lighter type moves
+   * them together rather than overriding rules. */
+  --text-prose: 14px;
+  --text-row: 12.5px;
+  --text-hint: 10.5px;
+  --text-action: 13px;
+  --text-meta: 9.5px;
+  --text-author: 12px;
+  --text-title: 13px;
+  --text-feed-author: 10.5px;
+  --weight-heading: 600;
+  --weight-emphasis: 620;
+  --weight-feed-author: 560;
   /* Micro-labels: the small type over a group of rows. A theme that wants
    * letterspaced small capitals changes these four and nothing else. */
   --label-size: 10px;
@@ -408,6 +422,17 @@
   --row-height-dense: 30px;
   --label-height: 26px;
   --label-gap: 4px;
+  --text-prose: 14px;
+  --text-row: 12.5px;
+  --text-hint: 10.5px;
+  --text-action: 13px;
+  --text-meta: 9.5px;
+  --text-author: 12px;
+  --text-title: 13px;
+  --text-feed-author: 10.5px;
+  --weight-heading: 600;
+  --weight-emphasis: 620;
+  --weight-feed-author: 560;
 
   --shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
   --shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
@@ -608,7 +633,18 @@
   --font-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
   --text-base: 15px;
   --leading-base: 1.75;
-  --weight-strong: 500;
+  --weight-strong: 450;
+  --text-prose: 16.5px;
+  --text-row: 14.5px;
+  --text-hint: 11px;
+  --text-action: 14.5px;
+  --text-meta: 10.5px;
+  --text-author: 12.5px;
+  --text-title: 15px;
+  --text-feed-author: 12px;
+  --weight-heading: 480;
+  --weight-emphasis: 500;
+  --weight-feed-author: 470;
   --label-size: 10px;
   --label-tracking: 0.18em;
   --label-transform: uppercase;
