@@ -173,11 +173,6 @@ import {
 } from "./workspace-opportunity-protocol";
 import { WorkspaceProductStorage } from "./workspace-product-storage";
 import {
-  WorkspaceProductImportRequestSchema,
-  type WorkspaceProductImportRequest,
-} from "./workspace-product-import";
-import { importWorkspaceProductRows } from "./workspace-product-import-storage";
-import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
 } from "./workspace-regional-effect-storage";
@@ -1683,22 +1678,6 @@ export class WorkspaceDO extends DurableObject<Env> {
     await this.refreshProductAlarm();
   }
 
-  async importWorkspaceProductRows(input: WorkspaceProductImportRequest): Promise<number> {
-    await this.initialized;
-    const request = WorkspaceProductImportRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const route = await this.env.DB.prepare(
-      `SELECT 1 FROM workspace_product_authority_routes route
-        JOIN workstream_authority_control control
-          ON control.id = 1 AND control.generation = route.generation
-       WHERE route.workspace_id = ? AND route.state = 'importing'
-         AND control.phase = 'maintenance_importing' LIMIT 1`,
-    ).bind(request.workspaceId).first();
-    if (!route) throw new Error("workspace_product_import_not_active");
-    const inserted = importWorkspaceProductRows(this.state.storage, request.stage, request.rows);
-    await this.refreshProductAlarm();
-    return inserted;
-  }
 
   /** Commit WorkstreamDO-owned facts into the workspace's authoritative directory. */
   async applyWorkstreamDirectoryEffects(

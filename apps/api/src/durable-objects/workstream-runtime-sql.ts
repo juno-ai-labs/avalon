@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { workstreamImportHash } from "./workstream-authority-import";
+import { workstreamImportHash } from "./workstream-import-hash";
 import type { WorkstreamObjectProductService } from "./workstream-object-product";
 
 const RuntimeValueSchema = z.union([z.string(), z.number(), z.null()]);
