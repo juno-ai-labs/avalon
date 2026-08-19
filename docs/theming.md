@@ -91,7 +91,8 @@ it. `--brand-on` is the dark text that goes on a chartreuse fill. `green` carrie
 `--green-fill` and `--green-fill-edge` for a filled control — a switch that is
 on, a selected preset — which is neither the vivid hue nor the wash.
 
-The rest is geometry (`--radius-*`), density (`--sidebar-width`, `--row-height`,
+The rest is geometry (`--radius-*`), density (`--sidebar-width`,
+`--sidebar-inset`, `--sidebar-radius`, `--sidebar-shadow`, `--row-height`,
 `--control-height`, `--pane-pad`, `--stack-gap`, `--feed-width`,
 `--feed-width-wide`, `--feed-pad-x`, `--feed-pad-y`), type (`--font-*`,
 `--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
@@ -102,9 +103,32 @@ things that oppose the theme on purpose: `--tooltip-bg`, `--tooltip-ink`,
 light on a dark theme and dark on a light one, so it cannot be a ramp step in
 either.
 
-`--canvas-wash` is a `background-image` rather than a colour, painted on `body`
-and on `.main-pane`. Most themes set it to `none`; Airy uses it for the light in
-the corner, which no single element could own.
+`--canvas-wash` is a `background-image` rather than a colour, painted on `body`,
+`.workspace-shell`, and `.main-pane`. Most themes set it to `none`; Airy uses it
+for the light in the corner, which no single element could own.
+
+### The navigation floats
+
+The sidebar is a panel over the background rather than a column bolted to the
+window edge: `--sidebar-inset` is the gutter of `--canvas` left around it on
+three sides, and it mirrors the right rail's own 8px so the two read as the same
+kind of object. `--sidebar-radius` and `--sidebar-shadow` finish it.
+
+That makes the room the navigation occupies *wider* than the panel, so there is
+one derived token for it:
+
+```css
+--sidebar-slot: calc(var(--sidebar-width) + var(--sidebar-inset) * 2);
+```
+
+Everything that sits beside the navigation — the main pane's margin, the right
+rail's width cap, the automation composer's centring — measures the slot.
+`--sidebar-width` is now only ever the panel's own width.
+
+`--sidebar-slot` is declared on `.workspace-shell`, not on `:root`, because the
+resize handle writes `--sidebar-width` onto that element as an inline style. A
+copy on the root would keep answering 300px however wide the person had dragged
+it, and nothing would look wrong until someone resized.
 
 ### The themes
 
@@ -153,6 +177,10 @@ next report.
   back onto the neutral ramp re-creates the coupling the split exists to remove,
   and does it silently — it looks right in whichever theme it was written
   against. A test rejects any `border` or `outline` declaration naming `--n-*`.
+- **Anything beside the navigation measures `--sidebar-slot`, never
+  `--sidebar-width`.** The second is the panel; the first is the panel plus its
+  gutter. Using the width leaves an element overlapping the sidebar by twice the
+  inset, which at 8px reads as a rendering glitch rather than as a layout bug.
 - **A focus border stays visible in every theme.** `--line-6` is the one step
   Airy does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
@@ -203,6 +231,12 @@ reads a stylesheet.
   `--shadow-sm` lift, and the state is also conveyed by its position and by the
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
+- **`--sidebar-inset` is bounded by the macOS traffic lights.** They are drawn
+  by the system at (18, 17), so an inset much past 12px walks the panel's rounded
+  corner into them. Airy uses 12px because its corner radius is small; the other
+  themes use 8px. There is no way to detect this from a Linux sandbox — the
+  lights do not exist there — so it is a constraint to reason about rather than
+  to screenshot.
 - **Themes are not animated.** Switching repaints immediately, and the reported
   window background applies to the *next* window rather than the current one.
 
@@ -232,6 +266,39 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — The navigation floats over the background
+
+**What changed:** The sidebar is inset from the window on three sides, rounded,
+and shadowed, with `--canvas` showing in the gutter around it — the same
+treatment the right rail already had. Three tokens carry it
+(`--sidebar-inset`, `--sidebar-radius`, `--sidebar-shadow`) and one derived
+token, `--sidebar-slot`, carries the room it occupies. `.workspace-shell` paints
+`--canvas` rather than `--surface`, so the gutter shows the background and, in
+Airy, the wash.
+
+**Why:** Asked for directly, and the app already had the idiom: `.rail-surface`
+floats at 8px with a radius and a shadow, so the navigation being welded to the
+window edge made the two panels read as different kinds of object. The gutter
+also gives Airy's corner light somewhere to land on the left of the window,
+which it previously had only on the right.
+
+**Considered and rejected:** Doing it for Airy alone with a
+`[data-theme='airy']` rule in `app.css`. That is the third time this shape has
+come up and the answer has not changed: once the stylesheet branches on the
+theme, every later change costs one edit per theme. Expressing it as an inset
+token means a theme that wants the panel flush sets `--sidebar-inset: 0` and
+gets exactly the old layout back.
+
+**Consequences:** `--sidebar-width` is now only the panel's own width, and
+anything beside the navigation must measure `--sidebar-slot` — a rule that used
+the width would overlap the panel by twice the inset. `--sidebar-slot` lives on
+`.workspace-shell` because the resize handle writes `--sidebar-width` there
+inline; moving it to `:root` would freeze the layout at the default width, and
+nothing would look wrong until someone dragged the handle. The inset is bounded
+near 12px by the macOS traffic lights, which a Linux sandbox cannot show.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — Borders moved onto a ramp of their own
 
