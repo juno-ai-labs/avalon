@@ -26,7 +26,7 @@ boundary this module bends is defined in
 | `apps/api/src/notion-regional-bridge.ts` | EU-side `WorkerEntrypoint`: completes callbacks, ingests forwarded bytes, stores the replicated challenge. |
 | `apps/api/src/notion-routing-bridge.ts` | Global-side `WorkerEntrypoint` the EU Worker calls to register and retire routes. |
 | `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **both** regions. |
-| `packages/db/migrations/0084_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
+| `packages/db/migrations/0066_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
 | `packages/db/migrations/0071_notion_webhook_setup_nonces.sql` | Short-lived setup nonces and their link to the active encrypted verification token. |
 | `packages/db/migrations/0072_notion_connection_scope_split.sql` | Converts historical public-integration bot grants from personal to workspace scope without touching hosted-MCP rows. |
 | `scripts/notion-webhook-setup.mjs` | Prepares a one-time subscription URL and copies the captured token without server-side plaintext output. |
@@ -252,6 +252,32 @@ subscription handshake. Registration steps are in
 [`provider-apps.md`](provider-apps.md).
 
 ## Changelog
+
+### 2026-08-19 — The shared ingress migration returns to its deployed filename
+
+**What changed:** `0084_shared_notion_connection_routing.sql` is again
+`0066_shared_notion_connection_routing.sql`, byte-identical to the copy on
+`main`, restoring the documented duplicate-`0066` prefix.
+
+**Why:** The 2026-08-18 rename below rested on a false premise — "this branch
+has not shipped." The migration *had* shipped: `main` carried it and both
+production databases had applied it under the `0066` filename. Wrangler tracks
+applied migrations by full filename, so the rename made production treat the
+same DDL as a new pending migration, and the first automated deploy failed on
+EU with `table notion_workspace_routes already exists` before any Worker
+deployed. Duplicate numeric prefixes are an accepted, documented condition in
+this repository (`0039`, `0041`, `0046`); an edited deployed filename is not.
+
+**Considered and rejected:** Hand-inserting a `0084` row into each region's
+`d1_migrations` ledger. That repairs two databases while leaving the rename to
+break the next fresh region, and it normalizes editing production migration
+state to match a file instead of the file matching production.
+
+**Consequences:** Remote databases see nothing new for `0066`; only the truly
+new migrations remain pending. A filename under `packages/db/migrations/` that
+exists on `main` is deployed state and must never be renamed, renumbered, or
+edited — the duplicate-prefix warning in
+[`pull-requests.md`](pull-requests.md) exists precisely for this.
 
 ### 2026-08-18 — Shared ingress migration receives a unique sequence
 
