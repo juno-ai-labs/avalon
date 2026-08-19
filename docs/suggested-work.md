@@ -323,6 +323,29 @@ value.
 
 ## Changelog
 
+### 2026-08-19 — Provenance roots and user links import under the object's uniqueness
+
+**What changed:** The maintenance-import source queries normalize two legacy
+shapes the object schema refuses: provenance root positions are exported as a
+dense per-opportunity rank over `(position, node_id)`, and duplicate user-link
+identity assertions collapse to the latest row (highest rowid) per
+`(opportunity, user, role, resolution, provenance node)` group.
+
+**Why:** Legacy D1 keyed roots only by `(opportunity_id, node_id)` and treated
+NULL `user_id` link rows as distinct under its unique, so re-rootings stacked
+several node sets onto the same positions and duplicate NULL-user assertions
+accumulated. The object enforces `UNIQUE (opportunity_id, position)` and a
+COALESCE'd link identity index; both quarantined generation 3 of the Global
+authority cutover mid-import. Normalizing in the source query keeps the
+transform deterministic across pages and retries, which the exact-match import
+check requires. A fleet audit of every other object-side unique found identical
+D1 constraints, so these two are the complete set.
+
+**Considered and rejected:** Relaxing the object's uniques (they encode the
+product's real invariants — one node per position, one assertion per identity),
+and deduplicating inside the Durable Object importer (cross-row state there
+breaks the page-idempotent exact-match contract).
+
 ### 2026-08-18 — Completed opportunity windows settle idempotently
 
 **What changed:** Duplicate event-mutation and window-settlement callbacks
