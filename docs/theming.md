@@ -97,7 +97,10 @@ The rest is geometry (`--radius-*`), density (`--sidebar-width`, `--row-height`,
 list, `--group-gap` between one group of rows and the next, `--block-gap`
 between events in the feed, `--stack-gap` between message blocks, `--prose-gap`
 between paragraphs, and `--leading-prose` for the leading of prose itself — the
-five a theme changes to make the interface breathe downward), the fill behind a
+five a theme changes to make the interface breathe downward), the inside of a
+navigation row (`--row-pad`, `--row-leading`, `--row-hint-gap`,
+`--row-height-dense`) and the band its group label sits in (`--label-height`,
+`--label-gap`), the fill behind a
 person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`) and where that
 turn sits (`--turn-align`, `--turn-margin`, `--turn-width`), type (`--font-*`,
 `--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
@@ -275,6 +278,37 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — The navigation's own vertical rhythm became themeable
+
+**What changed:** Six more measurements inside the navigation are tokens: a
+row's padding (`--row-pad`), the leading of its two lines (`--row-leading`), the
+gap between a row's title and its hint (`--row-hint-gap`), the floor under the
+denser rows that carry both (`--row-height-dense`), and the band a group's label
+sits in with the gap beneath it (`--label-height`, `--label-gap`). Airy's
+`--group-gap` went to 60px and its `--label-gap` to 22px. A work-stream row in
+Airy is now 61px against 37px, and the break between groups 60px against 28px.
+
+**Why:** Airy's sidebar was still tight where it mattered most, and the reason
+was a rule rather than a value. `.workstream-row` and `.note-row` set
+`min-height: 30px` outright, which overrode `--row-height` on exactly the rows
+that carry two lines — the ones with the most to gain from breathing. The
+result was upside down: a two-line work-stream row rendered *shorter* (37px)
+than a single-line automation row (46px), and no theme could reach it.
+
+**Considered and rejected:** Raising `--row-height` alone. It has no effect on
+those rows, because the `min-height` override replaced it; the number would have
+moved and the sidebar would not.
+
+**Consequences:** `--row-height` is the floor for a single-line row and
+`--row-height-dense` for a row whose height comes from its content; a new row
+kind should say which of the two it is rather than writing a third number. The
+values here were fitted against the reference by proportion — the action pitch,
+the two-line row pitch, the label-to-row gap and the group break, measured from
+the running app rather than eyeballed — so a later change to the row's font
+sizes will pull them out of true and they should be re-measured, not nudged.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — Where a person's own turn sits is a theme's decision
 
