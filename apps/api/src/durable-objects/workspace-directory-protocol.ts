@@ -254,6 +254,41 @@ export const WorkspaceDirectoryApplyResultSchema = z.object({
   directoryChanged: z.boolean(),
 }).strict();
 
+/**
+ * One WorkstreamDO activity/mention effect, applied with its receipt in a
+ * single WorkspaceDO transaction. Current member/user identity crosses the
+ * boundary as data: the regional caller resolves it from D1 and the object
+ * commits only what it was handed, so the effect and its idempotency receipt
+ * can never land in different authorities.
+ */
+export const WorkspaceRegionalEffectApplyRequestSchema = z.object({
+  workspaceId: IdSchema,
+  envelope: WorkstreamRegionalEffectEnvelopeSchema,
+  actorUserId: IdSchema.nullable(),
+  targetUserIds: z.array(IdSchema).max(100),
+  recipientIsActiveMember: z.boolean(),
+}).strict().superRefine((request, context) => {
+  if (request.envelope.workspaceId !== request.workspaceId) {
+    context.addIssue({
+      code: "custom",
+      path: ["envelope", "workspaceId"],
+      message: "Workstream regional effects must target their owning workspace",
+    });
+  }
+  if (!["activity_event", "mention_notification"].includes(request.envelope.effect.kind)) {
+    context.addIssue({
+      code: "custom",
+      path: ["envelope", "effect", "kind"],
+      message: "Only activity and mention effects may use the regional apply handoff",
+    });
+  }
+});
+
+export const WorkspaceRegionalEffectApplyResultSchema = z.object({
+  replayed: z.boolean(),
+  notificationIntentId: z.string().min(1).max(300).nullable(),
+}).strict();
+
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
@@ -281,3 +316,5 @@ export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDi
 export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;
 export type WorkspaceDirectoryApplyResult = z.infer<typeof WorkspaceDirectoryApplyResultSchema>;
+export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
+export type WorkspaceRegionalEffectApplyResult = z.infer<typeof WorkspaceRegionalEffectApplyResultSchema>;

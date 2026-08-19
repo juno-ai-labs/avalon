@@ -81,7 +81,7 @@ describe("realtime transcription admission", () => {
       __realtimeTranscriptionTesting.reserveTranscriptionSession(env, ticketClaims),
     ).rejects.toMatchObject({ status: 401, code: "socket_ticket_replayed" });
 
-    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, sessionId);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", sessionId);
   });
 
   it("bounds concurrent sessions and keeps a rejected ticket consumed", async () => {
@@ -94,14 +94,14 @@ describe("realtime transcription admission", () => {
     await expect(
       __realtimeTranscriptionTesting.reserveTranscriptionSession(env, rejectedClaims),
     ).rejects.toMatchObject({ status: 429, code: "dictation_concurrency_limit" });
-    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, first);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", first);
     await expect(
       __realtimeTranscriptionTesting.reserveTranscriptionSession(env, rejectedClaims),
     ).rejects.toMatchObject({ status: 401, code: "socket_ticket_replayed" });
 
     const replacement = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, claims("ticket-4"));
-    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, second);
-    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, replacement);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", second);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", replacement);
   });
 
   it("bounds aggregate workspace concurrency across distinct users", async () => {
@@ -121,7 +121,7 @@ describe("realtime transcription admission", () => {
     )).rejects.toMatchObject({ status: 429, code: "dictation_concurrency_limit" });
 
     await Promise.all(sessions.map((sessionId) =>
-      __realtimeTranscriptionTesting.releaseTranscriptionSession(env, sessionId)));
+      __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", sessionId)));
   });
 
   it("renews a live session lease without replacing the transcription session", async () => {
@@ -133,9 +133,9 @@ describe("realtime transcription admission", () => {
     const originalExpiry = adapter.sessionExpiry(sessionId);
 
     vi.setSystemTime(new Date("2026-08-07T18:01:00.000Z"));
-    await __realtimeTranscriptionTesting.renewTranscriptionSession(env, sessionId);
+    await __realtimeTranscriptionTesting.renewTranscriptionSession(env, "workspace-1", sessionId);
 
     expect(adapter.sessionExpiry(sessionId)).toBe(originalExpiry + 60);
-    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, sessionId);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, "workspace-1", sessionId);
   });
 });

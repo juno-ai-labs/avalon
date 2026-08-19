@@ -87,6 +87,9 @@ export const WORKSPACE_LOCAL_TABLES = [
   "workstream_notification_intents",
   "external_delivery_attempts",
   "workspace_workstream_pins",
+  "workstream_email_receipts",
+  "realtime_transcription_ticket_receipts",
+  "realtime_transcription_sessions",
 ] as const;
 
 const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({

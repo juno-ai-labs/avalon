@@ -215,6 +215,9 @@ const RELATIONAL_KEYS = {
   memory_table_cells: ["memory_table_row_id", "memory_table_column_id"],
   memory_table_mutations: ["memory_table_mutation_id"],
   workstream_notification_intents: ["intent_id"],
+  workstream_email_receipts: ["resend_email_id", "workstream_id"],
+  realtime_transcription_ticket_receipts: ["ticket_id"],
+  realtime_transcription_sessions: ["id"],
 } as const satisfies Partial<Record<WorkspaceProductImportStage, readonly string[]>>;
 
 function importRelationalRows(

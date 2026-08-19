@@ -429,13 +429,28 @@ describe("database migrations", () => {
             'workstream_directory_projections',
             'workstream_directory_user_projections',
             'workstream_resource_link_projections',
-            'workstream_suggestion_feedback_projections'
+            'workstream_suggestion_feedback_projections',
+            'workstream_regional_effect_receipts'
           )`,
       ).all();
       expect(productProjectionTables).toEqual([]);
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
-      ).get()).toEqual({ count: 0 });
+      expect(() => database.exec(`
+        INSERT INTO workstream_email_receipts
+          (resend_email_id, workstream_id, workspace_id, svix_id, received_at)
+        VALUES ('forbidden-email', 'authority-workstream', 'authority-workspace',
+                'forbidden-svix', '2026-08-16T01:06:00.000Z');
+      `)).toThrow(/workspace_do_authoritative/u);
+      expect(() => database.exec(`
+        INSERT INTO realtime_transcription_ticket_receipts
+          (ticket_id, workspace_id, user_id, consumed_at, expires_at)
+        VALUES ('forbidden-ticket', 'authority-workspace', 'authority-user', 1, 2);
+      `)).toThrow(/workspace_do_authoritative/u);
+      expect(() => database.exec(`
+        INSERT INTO realtime_transcription_sessions
+          (id, ticket_id, workspace_id, user_id, started_at, expires_at)
+        VALUES ('forbidden-session', 'forbidden-ticket', 'authority-workspace',
+                'authority-user', 1, 2);
+      `)).toThrow(/workspace_do_authoritative/u);
     } finally {
       database.close();
     }

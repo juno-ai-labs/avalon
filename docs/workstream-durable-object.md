@@ -59,7 +59,7 @@ serve workspace product state or transcripts after cutover.
 | `packages/db/migrations/0043_hypersight.sql` | Immutable deployed HyperSight baseline; its complete filename is the migration identity and must not change. |
 | `packages/db/migrations/0078_rename_hypersight_to_block_dashboard.sql` | Forward-only rename from the deployed `hypersight_*` D1 vocabulary to internal `block_dashboard_*` identifiers. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Minimal regional activity/mention effect inbox and causally fenced notification intents. |
+| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells; the activity/mention effect replay receipt is object-local (`workspace_workstream_effect_receipts`), never a D1 row. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent workspace-driven work-stream creation receipts; it intentionally creates no directory projection tables. |
 | `packages/db/migrations/0082_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
@@ -538,8 +538,8 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | BlockDashboardAgent | WorkstreamDO | typed RPC | terminal outcome retained until the parent result receipt accepts it |
 | WorkstreamDO | regional Worker | Cloudflare Queue | every directory/user/feedback/activity/mention change is retained in the parent outbox; the message is an opaque UUIDv7 wake-up |
 | regional Queue Worker | WorkspaceDO | typed RPC | unordered directory/user/feedback envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
-| regional Queue Worker | WorkspaceDO | typed RPC | first-party activity event and all target edges commit atomically; the object-local sequence is the digest/feed cursor |
-| regional Queue Worker | WorkspaceDO | typed RPC | notification intent and bounded destination payload commit before a thin D1 Queue receipt; current user/member identity is resolved from D1 before send |
+| regional Queue Worker | WorkspaceDO | typed RPC | first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
+| regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
 | regional Queue Worker | ConnectorEventWorkflow | Workflow binding | deterministic instance created only after WorkspaceDO acceptance; duplicate instance conflict is success |
@@ -762,13 +762,15 @@ already have committed across the object boundary.
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
 | `workstream_notification_intents`, `external_delivery_attempts` | Causally fenced mention intents plus the normalized ledger available to multi-destination delivery paths. Existing automation/digest transports keep their smaller idempotency receipts on their local target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
+| `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
+| `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds, imported unchanged. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
 | `workspace_workstream_directory` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, provenance, planning, attention, recency, archive, wakeup, and Terminal scheduling fields. |
 | `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
-| `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent. |
+| `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -956,6 +958,44 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-18 — Regional effect receipts, email receipts, and dictation admission move into WorkspaceDO
+
+**What changed:** Activity/mention effect replay receipts left D1 entirely: the
+regional Queue consumer resolves current actor/target/membership identity from
+D1, then one `applyWorkstreamRegionalEffect` RPC commits the activity event or
+notification intent *and* its receipt in a single WorkspaceDO transaction,
+sharing `workspace_workstream_effect_receipts` with the directory path. The
+unshipped `0080` migration no longer creates a D1 receipt table. WorkspaceDO's
+initial schema also gained `workstream_email_receipts` (inbound-email
+idempotency/lease) and the two `realtime_transcription_*` admission tables,
+imported, scrubbed, and fenced through the standard workspace product campaign.
+Receipt inserts now age rows older than 30 days out of the shared receipt
+table.
+
+**Why:** The D1 receipt could not commit atomically with the WorkspaceDO
+product row it acknowledged, which was exactly the split invariant 14 forbids;
+its safety already rested on the object-side idempotency guards, making the D1
+row a second authority with no second job. Email receipt leases and dictation
+concurrency caps were compare-and-set races in D1 that a serialized object
+removes outright — the transcription release path even carried a retry-delay
+loop to paper over lost D1 races.
+
+**Considered and rejected:** Keeping a composite `(workstream, generation,
+partition, source_version)` receipt axis in the object (a same-source
+re-emission under a new message ID now converges on the event dedupe key or
+intent identity instead), a separate object receipt table for regional effects
+(one inbox, one retention rule), and WorkstreamDO ownership of email receipts
+(one email may fan out to several work streams, and the ingest path already
+addresses the workspace object).
+
+**Consequences:** A crash between the atomic commit and the
+mention-opportunity snapshot enqueue is repaired by redelivery, so the enqueue
+now also runs on replays and relies on the batch-event unique key to converge.
+Un-acknowledged effects older than 30 days lose their fast replay receipt and
+fall back to product-identity convergence. The legacy pre-cutover email branch
+still claims and settles its receipt in one regional D1 batch; the two stores
+never mix within one phase.
 
 ### 2026-08-18 — Cross-authority retries converge without weakening ownership
 
