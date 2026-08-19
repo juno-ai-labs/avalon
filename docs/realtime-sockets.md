@@ -27,7 +27,7 @@ is recorded.
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and HyperSight-block ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
-| `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
+| `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
@@ -76,7 +76,9 @@ admission is split in two.
    D1 membership and WorkstreamDO authorizes the block/viewer pair. The block
    consumes its own ticket receipt and persists only the bounded authorization
    timestamp in the hibernation attachment.
-   Dictation consumes its `jti` in D1 and reserves a session lease before
+   Dictation consumes its `jti` and reserves a session lease in the owning
+   WorkspaceDO — one serialized transaction, so two simultaneous upgrades
+   cannot both pass the per-user/per-workspace concurrency caps — before
    opening Azure.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
@@ -370,6 +372,28 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — Dictation admission serializes in the owning WorkspaceDO
+
+**What changed:** The dictation bridge consumes its ticket `jti` and holds its
+session lease in WorkspaceDO-local SQL (`realtime_transcription_ticket_receipts`
+and `realtime_transcription_sessions`) through the workspace runtime port; the
+D1 tables are fenced maintenance-import input after the authority cutover.
+
+**Why:** The per-user and per-workspace concurrency caps were counted with D1
+compare-and-set, so two simultaneous upgrades could both pass the check, and a
+lost release needed a retry-delay loop. The workspace object serializes the
+expiry sweep, ticket consumption, and cap-checked insert as one transaction —
+the same receipt model every other socket audience already uses.
+
+**Considered and rejected:** A dedicated admission object (the workspace
+object already exists on this path and the caps are workspace facts), and
+leaving admission in D1 for latency (one RPC ahead of opening a
+cross-continent Azure WebSocket).
+
+**Consequences:** Dictation admission fails closed if the workspace object is
+unreachable. The lease-release retry loop remains as defense in depth but no
+longer papers over a racing store.
 
 ### 2026-08-18 — Block sockets and optimistic ordering survive stale browser events
 

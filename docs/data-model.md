@@ -7,7 +7,8 @@ operational audit/telemetry. `WorkspaceDO` owns every workspace-scoped product
 that is not intrinsically one work stream: connector credentials and local
 handoff state, Terminal egress policy history, automations, digests and
 schedules, resources/notes/watches and R2 lifecycle references, memory,
-external-delivery intents/attempts, the cross-work-stream directory,
+external-delivery intents/attempts, inbound-email processing receipts,
+dictation socket admission, the cross-work-stream directory,
 first-party activity, and suggested work. D1 keeps no rebuildable workspace
 product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
@@ -82,9 +83,12 @@ authorization.
 `WorkspaceDO` is the relational authority for workspace product state and
 cross-work-stream serving. It stores connector/product configuration, Terminal
 policy revisions, automations/digests/schedules, resource/note/watch/memory
-records, external-delivery state, the common directory, per-viewer overlays,
-pins, inverted indexes, activity, opportunities, receipts, consumed socket
-tickets, and a bounded monotonic `workspace_sync_events` log. A sync row names
+records, external-delivery state, inbound-email processing receipts and their
+exclusive leases, dictation admission (one-time transcription ticket receipts
+and the concurrency session leases the per-user/per-workspace caps count), the
+common directory, per-viewer overlays, pins, inverted indexes, activity,
+opportunities, receipts, consumed socket tickets, and a bounded monotonic
+`workspace_sync_events` log. A sync row names
 typed query topics; it never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
@@ -378,8 +382,12 @@ no projection fallback when that object is unavailable.
   membership/profile state from D1 and current destination state from
   WorkspaceDO; a newer revocation/listability row wins;
   terminal delivery or skip erases `payload_json` rather than retaining a second
-  transcript. Acknowledged receipts and terminal intent shells are retained for
-  30 days; pending/unacknowledged rows do not expire.
+  transcript. Effect receipts and terminal intent shells are retained for 30
+  days; a redelivery past that window converges on the idempotent product
+  identities (directory waterline, activity dedupe key, intent ID) rather than
+  a receipt row. Activity and mention effects commit their receipt in the same
+  WorkspaceDO transaction as the event or intent they acknowledge; no regional
+  D1 receipt exists for them.
 - `WorkspaceDO.workspace_activity_events` is the first-party derived record of what happened that someone should
   hear about, separate from the WorkspaceDO-owned normalized provider event.
   `audience_kind`
@@ -661,6 +669,41 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-18 — The last workspace-scoped receipts leave regional D1
+
+**What changed:** Three residues of the cutover moved behind WorkspaceDO
+authority. `workstream_email_receipts` (inbound-email idempotency and its
+processing lease) and the two `realtime_transcription_*` dictation-admission
+tables joined the workspace product import/scrub/fence campaign, with the
+resend and transcription services routing through the workspace runtime port
+on the open phase. The regional activity/mention effect receipt table was
+removed from unshipped migration `0080` outright: the effect and its replay
+receipt now commit in one WorkspaceDO transaction via a typed RPC, reusing
+`workspace_workstream_effect_receipts`.
+
+**Why:** All three were workspace-scoped product state written after the
+workspace was fully resolved, failing this document's own retention test —
+"Global provider receipts and setup routes may remain in D1 only when they
+exist before a workspace can be selected." The effect receipt additionally
+violated invariant 14: it could never commit atomically with the WorkspaceDO
+row it acknowledged, and its correctness already rested on the object-side
+idempotency guards. Dictation's concurrency caps were D1 compare-and-set races
+that object serialization removes.
+
+**Considered and rejected:** Fencing the D1 effect-receipt shell instead of
+deleting it (`0080` is unshipped, so the table simply never exists), moving
+email receipts into WorkstreamDO (one email may intentionally name several
+work streams, and ingestion already addresses the workspace object), and
+keeping transcription admission regional for latency (the object hop is one
+RPC on a path that then opens a cross-continent Azure WebSocket).
+
+**Consequences:** D1's live surface for these flows is reduced to the
+pre-workspace routing rows (`workstream_email_routes`,
+`resend_webhook_receipts`). Effect receipts age out after 30 days uniformly;
+redeliveries older than that converge on product identities. The legacy
+pre-cutover email path still claims and settles its receipt in regional D1 so
+one phase never splits a lease across two stores.
 
 ### 2026-08-18 — Opportunity batches have an indexed retention boundary
 

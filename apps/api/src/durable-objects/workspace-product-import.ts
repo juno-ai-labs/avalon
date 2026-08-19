@@ -64,6 +64,9 @@ export const WORKSPACE_PRODUCT_IMPORT_STAGES = [
   "memory_table_cells",
   "memory_table_mutations",
   "workstream_notification_intents",
+  "workstream_email_receipts",
+  "realtime_transcription_ticket_receipts",
+  "realtime_transcription_sessions",
 ] as const;
 
 export const WORKSPACE_RELATIONAL_IMPORT_STAGES = WORKSPACE_PRODUCT_IMPORT_STAGES.slice(14);

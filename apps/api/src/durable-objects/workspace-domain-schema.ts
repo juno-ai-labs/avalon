@@ -35,6 +35,9 @@ const WORKSPACE_FENCED_TABLES = [
   "memory_table_mutations",
   "workstream_notification_intents",
   "external_delivery_attempts",
+  "workstream_email_receipts",
+  "realtime_transcription_ticket_receipts",
+  "realtime_transcription_sessions",
 ] as const;
 
 function workspaceIdentityFences(): string[] {
@@ -973,5 +976,52 @@ export const WORKSPACE_DOMAIN_SCHEMA_STATEMENTS = [
   ) STRICT`,
   `CREATE INDEX external_delivery_attempts_due_idx
     ON external_delivery_attempts(state, available_at, lease_expires_at, delivery_id)`,
+  // Inbound-email processing idempotency and its exclusive processing lease.
+  // One received email may intentionally name more than one work stream, so the
+  // work-stream identifier is part of the key. Keyed and shaped exactly like the
+  // imported D1 rows; timestamps remain ISO strings for repository compatibility.
+  `CREATE TABLE workstream_email_receipts (
+    resend_email_id TEXT NOT NULL,
+    workstream_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    svix_id TEXT NOT NULL,
+    payload_ref TEXT,
+    received_at TEXT NOT NULL,
+    processed_at TEXT,
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    PRIMARY KEY (resend_email_id, workstream_id)
+  ) STRICT`,
+  `CREATE INDEX workstream_email_receipts_workstream_idx
+    ON workstream_email_receipts(workstream_id, received_at DESC)`,
+  `CREATE INDEX workstream_email_receipts_lease_idx
+    ON workstream_email_receipts(lease_expires_at)
+    WHERE processed_at IS NULL`,
+  // Dictation socket admission: one-time ticket consumption plus the short
+  // concurrency leases the per-user/per-workspace session caps are counted
+  // over. Serialized here so two simultaneous upgrades cannot both pass the
+  // cap check. Epochs are Unix seconds, imported unchanged from D1.
+  `CREATE TABLE realtime_transcription_ticket_receipts (
+    ticket_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    consumed_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL CHECK (expires_at > consumed_at)
+  ) STRICT`,
+  `CREATE INDEX realtime_transcription_ticket_receipts_expiry_idx
+    ON realtime_transcription_ticket_receipts(expires_at)`,
+  `CREATE TABLE realtime_transcription_sessions (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL UNIQUE,
+    workspace_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL CHECK (expires_at > started_at)
+  ) STRICT`,
+  `CREATE INDEX realtime_transcription_sessions_user_idx
+    ON realtime_transcription_sessions(workspace_id, user_id, expires_at)`,
+  `CREATE INDEX realtime_transcription_sessions_workspace_idx
+    ON realtime_transcription_sessions(workspace_id, expires_at)`,
   ...workspaceIdentityFences(),
 ] as const;

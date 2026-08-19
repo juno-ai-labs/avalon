@@ -208,9 +208,9 @@ without matching the exact regional route and object-local
 workspace/work-stream/generation rows;
 final diffs and ambiguous publication state may still require preservation.
 
-Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
+Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. After the Durable Object cutover these rows live in the owning `WorkspaceDO` (`realtime_transcription_ticket_receipts` and `realtime_transcription_sessions`); the D1 tables are fenced maintenance-import input. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
 
-Alert on `realtime_transcription_session_release_failed`. The Worker retries the idempotent D1 lease deletion before emitting this event; repeated occurrences can leave a user at the concurrency limit until the five-minute lease expires.
+Alert on `realtime_transcription_session_release_failed`. The Worker retries the idempotent lease deletion in the owning WorkspaceDO before emitting this event; repeated occurrences can leave a user at the concurrency limit until the five-minute lease expires.
 
 Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
@@ -668,17 +668,20 @@ outbox/receipt first. For a missing sidebar badge/resource route/suggestion
 feedback row, inspect `WorkspaceDO.workspace_workstream_effect_receipts` and the
 corresponding `workspace_workstream_*` row's authority generation, waterline,
 and UUIDv7 `source_event_id`. For a missing digest event, Slack
-mention, or email notification, inspect D1
-`workstream_regional_effect_receipts` and notification intents. A receiver
-receipt with no local outbox row means the owning WorkspaceDO or D1 transaction
+mention, or email notification, inspect that same
+`WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
+effects commit their receipt in the object transaction that commits the event
+or intent — and `WorkspaceDO.workstream_notification_intents`. A receiver
+receipt with no local outbox row means the owning WorkspaceDO transaction
 committed and acknowledged the effect; an outbox row with no receiver receipt
 means Queue/consumer-RPC delivery is still retrying. Both rows with the same hash mean
 only the acknowledgement RPC is retrying. Never delete an object outbox row to
 clear an alert. Repair the receiver/consumer and let the alarm resend it. A
 generation/waterline/hash conflict is a producer bug or restore-generation error
 and requires quarantine, not last-writer-wins repair.
-Acknowledged receipts and terminal notification shells disappear after 30 days;
-pending or unacknowledged rows never age out and must reach zero operationally.
+Effect receipts and terminal notification shells disappear after 30 days; a
+redelivery older than that converges on the idempotent product identities
+(directory waterline, activity dedupe key, intent ID) instead of a receipt.
 
 The legacy D1 product triggers are the post-open tripwire. An error containing
 `workstream_do_authoritative` means a missed writer; quarantine and fix that

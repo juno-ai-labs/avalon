@@ -8,6 +8,8 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
+import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import {
   consumeActivityQueue,
 } from "../src/queues/activity-consumer";
@@ -22,6 +24,7 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const USER_ID = "00000000-0000-7000-8000-0000000000d1";
@@ -98,12 +101,23 @@ function workspaceSyncNamespace() {
        (id, workspace_id, region, placement_affinity, created_at, updated_at)
      VALUES (1, ?, 'global', 'wnam', 0, 0)`,
   ).run(WORKSPACE_ID);
+  // The apply path runs the real object storage logic over this database, so
+  // the receipt-with-effect transaction is exercised rather than stubbed.
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
+    transactionSync: (body: () => unknown) => body(),
+    sql: createTestSqlStorage(database),
+  });
   const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
       initializeWorkspace: vi.fn(async () => undefined),
       publishSync: vi.fn(async () => 1),
-      recordActivityEvent: vi.fn(async (input: { eventId?: string }) => input.eventId),
+      applyWorkstreamRegionalEffect: vi.fn(async (input: unknown) =>
+        applyWorkstreamRegionalEnvelope(
+          storage,
+          WorkspaceRegionalEffectApplyRequestSchema.parse(input),
+          Date.now(),
+        )),
       executeRuntimeSql: vi.fn(async (input: {
         statements: Array<{ sql: string; params: Array<string | number | null> }>;
       }) => ({
@@ -173,7 +187,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
     }
   });
 
-  it("treats the composite source receipt as a replay and adopts the current message id", async () => {
+  it("replays through the WorkspaceDO receipt without re-applying the effect", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
     const env = createTestEnv({
@@ -201,31 +215,71 @@ describe("the WorkstreamDO regional effect inbox", () => {
       targets: [],
     };
     const envelope = message(effect, {
-      messageId: `activity:${MESSAGE_ID}:current`,
+      messageId: `activity:${MESSAGE_ID}`,
       partitionKey: `activity:${MESSAGE_ID}`,
       sourceVersion: 1,
     });
-    database.prepare(
-      `INSERT INTO workstream_regional_effect_receipts
-         (message_id, workspace_id, workstream_id, generation, partition_key,
-          source_version, effect_kind, payload_hash, applied_at)
-       VALUES (?, ?, ?, 1, ?, 1, 'activity_event', ?, ?)`,
-    ).run(
-      `activity:${MESSAGE_ID}:previous`,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      envelope.partitionKey,
-      envelope.payloadHash,
-      AT,
-    );
     try {
+      await expect(applyWorkstreamRegionalEffect(env, envelope)).resolves.toEqual({
+        replayed: false,
+        notificationIntentId: null,
+      });
       await expect(applyWorkstreamRegionalEffect(env, envelope)).resolves.toEqual({
         replayed: true,
         notificationIntentId: null,
       });
-      expect(database.prepare(
-        "SELECT message_id FROM workstream_regional_effect_receipts",
-      ).get()).toEqual({ message_id: envelope.messageId });
+      expect(workspace.database.prepare(
+        "SELECT COUNT(*) AS count FROM workspace_activity_events WHERE event_id = ?",
+      ).get(EVENT_ID)).toEqual({ count: 1 });
+      expect(workspace.database.prepare(
+        "SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?",
+      ).get(envelope.messageId)).toEqual({ payload_hash: envelope.payloadHash });
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("rejects a replayed message id whose payload hash changed", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+    });
+    const effect: WorkstreamRegionalEffect = {
+      kind: "activity_event",
+      eventId: EVENT_ID,
+      eventType: "workstream.message.posted",
+      subjectSequenceNumber: 1,
+      actorType: "system",
+      actorUserId: null,
+      actorLabel: "Avalon",
+      title: "Conflicting content",
+      body: "Original",
+      canonicalUrl: null,
+      digestible: false,
+      occurredAt: AT,
+      sourceKind: "message",
+      sourceId: MESSAGE_ID,
+      dedupeKey: `message:${MESSAGE_ID}`,
+      metadata: {},
+      targets: [],
+    };
+    const envelope = message(effect, {
+      messageId: `activity:${MESSAGE_ID}`,
+      partitionKey: `activity:${MESSAGE_ID}`,
+      sourceVersion: 1,
+    });
+    workspace.database.prepare(
+      `INSERT INTO workspace_workstream_effect_receipts
+         (message_id, workstream_id, payload_hash, received_at)
+       VALUES (?, ?, 'fnv1a64:0000000000000000', 0)`,
+    ).run(envelope.messageId, WORKSTREAM_ID);
+    try {
+      await expect(applyWorkstreamRegionalEffect(env, envelope))
+        .rejects.toThrow("workstream_effect_receipt_hash_conflict");
     } finally {
       database.close();
       workspace.database.close();
@@ -303,9 +357,6 @@ describe("the WorkstreamDO regional effect inbox", () => {
       });
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
-      ).get()).toEqual({ count: 0 });
     } finally {
       database.close();
     }
@@ -375,8 +426,8 @@ describe("the WorkstreamDO regional effect inbox", () => {
       });
       await expect(applyWorkstreamRegionalEffect(env, commonMessage))
         .rejects.toThrow("workspace_owned_effect_misdirected_to_regional_queue");
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
+      expect(workspace.database.prepare(
+        `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts`,
       ).get()).toEqual({ count: 0 });
     } finally {
       database.close();
@@ -428,6 +479,19 @@ describe("the WorkstreamDO regional effect inbox", () => {
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM activity_events WHERE id = ?`,
       ).get(EVENT_ID)).toEqual({ count: 0 });
+      expect(workspace.database.prepare(
+        `SELECT actor_user_id, audience_workstream_id FROM workspace_activity_events
+          WHERE event_id = ?`,
+      ).get(EVENT_ID)).toEqual({
+        actor_user_id: AUTHOR_ID,
+        audience_workstream_id: WORKSTREAM_ID,
+      });
+      expect(workspace.database.prepare(
+        `SELECT relation FROM workspace_activity_event_targets WHERE event_id = ? AND user_id = ?`,
+      ).get(EVENT_ID, USER_ID)).toEqual({ relation: "mentioned" });
+      expect(workspace.database.prepare(
+        `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts`,
+      ).get()).toEqual({ count: 1 });
 
       const mention: WorkstreamRegionalEffect = {
         kind: "mention_notification",

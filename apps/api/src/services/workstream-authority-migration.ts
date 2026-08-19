@@ -122,6 +122,9 @@ function workspaceProductSourceQuery(stage: WorkspaceProductImportStage): string
     case "memory_table_rows":
     case "memory_table_mutations":
     case "workstream_notification_intents":
+    case "workstream_email_receipts":
+    case "realtime_transcription_ticket_receipts":
+    case "realtime_transcription_sessions":
       return `SELECT rowid AS source_rowid, * FROM ${stage}
                WHERE workspace_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`;
     case "webhook_receipts":
@@ -1292,6 +1295,12 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
     env.DB.prepare(`DELETE FROM activity_events WHERE workspace_id = ?`)
       .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM workspace_opportunity_versions WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM workstream_email_receipts WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM realtime_transcription_sessions WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM realtime_transcription_ticket_receipts WHERE workspace_id = ?`)
       .bind(route.workspace_id),
     env.DB.prepare(
       `UPDATE workspace_product_authority_routes SET state = 'active', updated_at = ?

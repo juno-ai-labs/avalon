@@ -64,12 +64,10 @@ import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/pr
 import { newId } from "@avalon/db";
 import {
   acknowledgeWorkstreamOutboxEffect,
-  acknowledgeWorkstreamRegionalEffect,
   applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
   isWorkspaceDirectoryEffect,
   loadWorkstreamRegionalEffect,
-  markWorkstreamRegionalEffectAcknowledged,
   processWorkstreamNotificationIntent,
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
@@ -296,14 +294,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     try {
       const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
       if (!envelope) {
-        // An already acknowledged DO row no longer needs work. Regional D1
-        // receipts exist only for activity/notification effects, so an absent
-        // workspace-state wake-up has nothing to mark there.
-        await markWorkstreamRegionalEffectAcknowledged(
-          env,
-          regionalEffect.data.messageId,
-          regionalEffect.data.payloadHash,
-        );
+        // An already acknowledged DO outbox row no longer needs work, and the
+        // replay receipt lives in WorkspaceDO beside the state it fenced —
+        // there is nothing regional left to mark.
         message.ack();
         return;
       }
@@ -325,7 +318,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           return;
         }
       }
-      await acknowledgeWorkstreamRegionalEffect(env, envelope);
+      await acknowledgeWorkstreamOutboxEffect(env, envelope);
       message.ack();
     } catch (error) {
       logWarn(env, "workstream_regional_effect_processing_failed", {

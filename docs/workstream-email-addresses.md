@@ -96,11 +96,12 @@ Mail sent to an active **automation** address creates a new automation run and a
 new work stream. The received message is its explicit opening input and attached
 resource, labelled as untrusted external data before it reaches the model. A
 provider retry uses the Resend email ID as the idempotency key, so it resolves to
-the same work stream and run. Regional receipt rows use reclaimable processing
+the same work stream and run. Receipt rows use reclaimable processing
 leases so an interrupted delivery can continue after the lease expires. The
-automation receipt, rate window and resulting product state are WorkspaceDO
-rows; the Global address registry remains only the opaque address-to-region/
-workspace/owner route needed before the regional object can be selected.
+work-stream email receipt, the automation receipt, its rate window and the
+resulting product state are all WorkspaceDO rows; the Global address registry
+remains only the opaque address-to-region/workspace/owner route needed before
+the regional object can be selected.
 
 For a personal automation, the normalized From mailbox must match its owner. For a
 workspace automation, it must match an active workspace member. This check is
