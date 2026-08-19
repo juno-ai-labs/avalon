@@ -63,16 +63,11 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import {
-  WorkstreamAuthorityImporter,
-  WorkstreamAuthorityImportRequestSchema,
-} from "./workstream-authority-import";
-import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 import { workstreamDOName } from "./names";
 import {
-  BlockDashboardControlRequestSchema,
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
 } from "./block-dashboard-protocol";
@@ -390,7 +385,6 @@ export class SubstreamAgent extends DurableObject<Env> {
   private lastRevalidatedAt = 0;
   private readonly objectStore: WorkstreamObjectStore;
   private readonly product: WorkstreamObjectProductService;
-  private readonly authorityImporter: WorkstreamAuthorityImporter;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -408,7 +402,6 @@ export class SubstreamAgent extends DurableObject<Env> {
       env.AVALON_REGION,
     );
     this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
-    this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.initialized = state.blockConcurrencyWhile(async () => {
       await this.objectStore.waitUntilReady();
@@ -483,10 +476,6 @@ export class SubstreamAgent extends DurableObject<Env> {
       (url.pathname === "/internal/events" || url.pathname === "/events")
     ) {
       return this.acceptEvent(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/internal/authority-import") {
-      return this.acceptAuthorityImport(request);
     }
 
     if (request.method === "POST" && url.pathname === "/internal/regional-effect-ack") {
@@ -605,13 +594,6 @@ export class SubstreamAgent extends DurableObject<Env> {
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRunDispatch(this.rpcRequest(input)));
-  }
-
-  async importAuthority(
-    input: z.input<typeof WorkstreamAuthorityImportRequestSchema>,
-  ): Promise<DurableObjectRpcResult> {
-    await this.initialized;
-    return responseToRpcResult(await this.acceptAuthorityImport(this.rpcRequest(input)));
   }
 
   async publishEvent(input: SubstreamPublishedEvent): Promise<DurableObjectRpcResult> {
@@ -1515,57 +1497,6 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
-  private async acceptAuthorityImport(request: Request): Promise<Response> {
-    const parsed = WorkstreamAuthorityImportRequestSchema.safeParse(await request.json());
-    if (!parsed.success) return jsonResponse({ error: "invalid_authority_import" }, 400);
-    const control = await readWorkstreamAuthorityControl(this.env);
-    const requiredPhase = parsed.data.operation === "activate"
-      ? "maintenance_verified"
-      : "maintenance_importing";
-    if (control.phase !== requiredPhase || control.generation !== parsed.data.generation) {
-      return jsonResponse({
-        error: "authority_import_phase_mismatch",
-        phase: control.phase,
-        generation: control.generation,
-      }, 409);
-    }
-    try {
-      if (parsed.data.operation === "begin") {
-        for (const socket of this.state.getWebSockets()) {
-          disconnect(socket, 1012, "Work stream maintenance");
-        }
-        this.ensureSubstreamIdentity("0");
-        this.objectStore.ensureIdentity({
-          workspaceId: parsed.data.workspaceId,
-          workstreamId: parsed.data.workstreamId,
-        }, this.env.AVALON_REGION);
-      }
-      const result = this.authorityImporter.execute(parsed.data);
-      if (parsed.data.operation === "activate") {
-        await this.product.enqueueDirectorySnapshot();
-        const effects = this.objectStore.dueRegionalEffects(Date.now(), 100);
-        if (effects.length > 0) {
-          await this.forwardEffectsToWorkstreamDO(effects);
-          for (const effect of effects) {
-            this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
-          }
-        }
-        const activatedIdentity = this.objectStore.identity();
-        if (!activatedIdentity) throw new Error("block_dashboard_authority_import_identity_missing");
-        await this.forwardImportedBlockDashboardAuthority(
-          activatedIdentity.workspaceId,
-          activatedIdentity.workstreamId,
-          parsed.data.generation,
-        );
-      }
-      return jsonResponse(result);
-    } catch (error) {
-      return jsonResponse({
-        error: error instanceof Error ? error.message : "authority_import_failed",
-      }, 409);
-    }
-  }
-
   private async acceptRegionalEffectAck(request: Request): Promise<Response> {
     const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json());
     if (!parsed.success) return jsonResponse({ error: "invalid_regional_effect_ack" }, 400);
@@ -1905,133 +1836,6 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
-  private async forwardImportedBlockDashboardAuthority(
-    workspaceId: string,
-    workstreamId: string,
-    generation: number,
-  ): Promise<void> {
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, workspaceId, workstreamId),
-    );
-    const pageSize = 250;
-    const send = async (body: z.input<typeof BlockDashboardControlRequestSchema>): Promise<void> => {
-      const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse(body));
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`block_dashboard_authority_import_rejected:${response.status}`);
-      }
-    };
-    for (let offset = 0; ; offset += pageSize) {
-      const rows = this.state.storage.sql.exec<{
-        configuration_version_id: string;
-        version_number: number;
-        blocks_json: string;
-        created_by_user_id: string;
-        created_at: number;
-      }>(
-        `SELECT configuration_version_id, version_number, blocks_json,
-                created_by_user_id, created_at
-           FROM block_dashboard_configuration_versions
-          ORDER BY version_number LIMIT ? OFFSET ?`,
-        pageSize,
-        offset,
-      ).toArray();
-      if (rows.length === 0) break;
-      await send({
-        operation: "import_authority_rows",
-        workspaceId,
-        workstreamId,
-        generation,
-        configurations: rows.map((row) => ({
-          configurationVersionId: row.configuration_version_id,
-          versionNumber: row.version_number,
-          blocksJson: row.blocks_json,
-          createdByUserId: row.created_by_user_id,
-          createdAt: row.created_at,
-        })),
-        runs: [],
-        preferences: [],
-      });
-      if (rows.length < pageSize) break;
-    }
-    for (let offset = 0; ; offset += pageSize) {
-      const rows = this.state.storage.sql.exec<{
-        block_run_id: string;
-        configuration_version_id: string;
-        block_id: string;
-        prompt: string;
-        trigger_sequence: number;
-        run_id: string;
-        status: "queued" | "running" | "completed" | "failed" | "stopped";
-        markdown: string | null;
-        error_json: string | null;
-        created_at: number;
-        started_at: number | null;
-        completed_at: number | null;
-      }>(
-        `SELECT block_run_id, configuration_version_id, block_id, prompt,
-                trigger_sequence, run_id, status, markdown, error_json,
-                created_at, started_at, completed_at
-           FROM block_dashboard_block_runs
-          ORDER BY created_at, block_run_id LIMIT ? OFFSET ?`,
-        pageSize,
-        offset,
-      ).toArray();
-      if (rows.length === 0) break;
-      await send({
-        operation: "import_authority_rows",
-        workspaceId,
-        workstreamId,
-        generation,
-        configurations: [],
-        runs: rows.map((row) => ({
-          blockRunId: row.block_run_id,
-          configurationVersionId: row.configuration_version_id,
-          blockId: row.block_id,
-          prompt: row.prompt,
-          triggerSequence: row.trigger_sequence,
-          harnessRunId: row.run_id,
-          status: row.status,
-          markdown: row.markdown,
-          errorJson: row.error_json,
-          createdAt: row.created_at,
-          startedAt: row.started_at,
-          completedAt: row.completed_at,
-        })),
-        preferences: [],
-      });
-      if (rows.length < pageSize) break;
-    }
-    for (let offset = 0; ; offset += pageSize) {
-      const rows = this.state.storage.sql.exec<{
-        user_id: string;
-        visible: number;
-        updated_at: number;
-      }>(
-        `SELECT user_id, visible, updated_at FROM block_dashboard_user_preferences
-          ORDER BY user_id LIMIT ? OFFSET ?`,
-        pageSize,
-        offset,
-      ).toArray();
-      if (rows.length === 0) break;
-      await send({
-        operation: "import_authority_rows",
-        workspaceId,
-        workstreamId,
-        generation,
-        configurations: [],
-        runs: [],
-        preferences: rows.map((row) => ({
-          userId: row.user_id,
-          visible: row.visible === 1,
-          updatedAt: row.updated_at,
-        })),
-      });
-      if (rows.length < pageSize) break;
-    }
-  }
 
   override async webSocketClose(
     socket: WebSocket,
