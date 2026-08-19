@@ -138,6 +138,45 @@ describe("the D1 to WorkstreamDO authority source", () => {
     }
   });
 
+  it("recovers tool identity for legacy tool messages with no invocation row", () => {
+    // The Global cutover quarantined on exactly this shape: an early tool
+    // message whose tool_invocations row matches neither the message id nor
+    // the embedded invocation id. The transcript fact must come from the
+    // structured content, and a bare row must still satisfy the parts CHECK
+    // with an explicit legacy name and a non-pending outcome.
+    const embedded = normalizeWorkstreamAuthoritySourceRow("parts", {
+      source_rowid: 7,
+      id: "legacy-tool-part",
+      author_type: "agent",
+      message_type: "tool",
+      text_content: "",
+      structured_content_json: JSON.stringify({
+        invocation: { id: "detached", toolName: "workstream.read", status: "completed" },
+      }),
+      sequence_number: 4,
+      created_at: AT,
+    }, "global");
+    expect(embedded).toEqual(expect.objectContaining({
+      kind: "tool_call",
+      tool_name: "workstream.read",
+      tool_status: "completed",
+    }));
+    const bare = normalizeWorkstreamAuthoritySourceRow("parts", {
+      source_rowid: 8,
+      id: "bare-tool-part",
+      author_type: "agent",
+      message_type: "tool",
+      text_content: "",
+      sequence_number: 5,
+      created_at: AT,
+    }, "global");
+    expect(bare).toEqual(expect.objectContaining({
+      kind: "tool_call",
+      tool_name: "legacy.tool",
+      tool_status: "ambiguous",
+    }));
+  });
+
   it("preserves completion and suggested-action display content", () => {
     expect(normalizeWorkstreamAuthoritySourceRow("workstream", {
       source_rowid: 1,

@@ -235,17 +235,6 @@ describe("database migrations", () => {
          VALUES ('object-ref', 'drain-workspace', 'resource', 'original', '2026-08-18', '2026-08-18')`,
         `DELETE FROM resource_object_deletion_outbox`,
       );
-      for (const status of ["pending", "processing"] as const) {
-        assertGuarded(
-          `INSERT INTO activities
-             (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
-              event_type, occurred_at, received_at, title, dedupe_key, processing_status)
-           VALUES ('activity-${status}', 'drain-workspace', 'drain-slack', 'workspace', 'slack',
-                   'event-${status}', 'message', '2026-08-18', '2026-08-18', 'Activity',
-                   'dedupe-${status}', '${status}')`,
-          `DELETE FROM activities`,
-        );
-      }
       for (const [status, payload, attempts] of [
         ["queued", "{}", 0],
         ["processing", "{}", 1],
@@ -261,6 +250,18 @@ describe("database migrations", () => {
           `DELETE FROM slack_ingress_jobs`,
         );
       }
+      // Unprocessed activities deliberately do NOT block the flip: the import
+      // carries their processing state into WorkspaceDO and the phase machine
+      // is forward-only, so blocking on work the drained consumer refuses to
+      // do would strand the region in maintenance (0086's rationale).
+      database.exec(`
+        INSERT INTO activities
+          (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+           event_type, occurred_at, received_at, title, dedupe_key, processing_status)
+        VALUES ('activity-stuck', 'drain-workspace', 'drain-slack', 'workspace', 'slack',
+                'event-stuck', 'message', '2026-08-18', '2026-08-18', 'Activity',
+                'dedupe-stuck', 'processing');
+      `);
       database.exec(
         `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
       );
