@@ -7,8 +7,8 @@ method and waits for what comes back. This document says which to reach for.
 
 **The default is a Queue.** Reach for RPC when the hop has a property from the
 [list below](#you-must-use-rpc-when) that a Queue cannot provide — most often a
-return value the caller acts on. That is a real list, not a formality: roughly
-half of Avalon's inter-resource hops are on it. But when neither list decides it,
+return value the caller acts on. That is a real list, not a formality — several
+of the hops in [the table at the end](#where-avalon-stands-today) are on it. But when neither list decides it,
 the Queue is the answer, because the failure it prevents is the one that only
 appears under load, in production, at the worst moment.
 
@@ -36,6 +36,15 @@ A Queue also owns retry. RPC failure is the caller's problem, and the caller is
 frequently a Durable Object that will not exist again for hours. A Queue retries
 up to 100 times and then writes the message to a dead-letter queue where a person
 can find it.
+
+There is a second reason the default matters more here than it would somewhere
+with a real metrics stack: **the two mechanisms fail differently when nobody is
+watching.** An overloaded Queue produces a backlog and eventually a dead-letter
+queue with messages in it — a binary, zero-setup signal that something is wrong.
+An overloaded synchronous hop produces latency and timeouts smeared across
+unrelated requests, which presents as "the product feels slow today" and is
+diagnosable only with tooling Avalon does not have. Prefer the failure you will
+notice.
 
 ## You must use RPC when
 
@@ -132,6 +141,50 @@ before you abandon the mechanism.** Avalon's activity queue runs at
 appeared six seconds after the message, which was a real complaint with a real
 user story behind it. The fix was one second, not a service binding.
 
+### Deciding without measurement
+
+Avalon has no load history, no queue-depth dashboard, and no capacity model. A
+rule in this document that said "measure it first" would be a rule nobody could
+follow: it would either block the decision indefinitely or get waved through with
+a guess wearing the costume of data. So **none of the criteria here depend on
+measurement.** Three things replace it.
+
+**Arithmetic against the published limits.** You cannot measure throughput, but
+you can multiply. Five thousand messages a second is 432 million a day. If the
+hop you are adding emits one message per user action and the product has
+thousands of users, it sits four orders of magnitude under the ceiling and the
+capacity question is settled on a napkin. Do that sum, record the answer in a
+comment next to the resource, and move on — being wrong by a hundredfold still
+leaves you inside the limit. The
+[limits table](#the-limits-that-decide-the-argument) exists to make this sum
+possible.
+
+**Reversibility over correctness under invisible load.** When you cannot see the
+load, optimise for how cheap the decision is to undo rather than for being right
+about a future you cannot observe. Splitting a shared queue later is a
+configuration change and a deploy; merging two split queues is the same. Neither
+is a rewrite, so take the simpler shape now and change it when something tells
+you to.
+
+**Let the platform's own failures be the monitoring.** This is the other half of
+[trusting the primitives](#trust-the-primitives): you do not have to build
+observability to find out you were wrong, because the platform reports it.
+
+- **A non-empty dead-letter queue** is the highest-signal, zero-setup alarm
+  available anywhere in this system. No dashboard, no instrumentation — messages
+  are in there or they are not, and if they are, something is broken. This is
+  the concrete reason a DLQ is not optional.
+- **Cloudflare's overloaded errors** on a Durable Object are the capacity signal
+  you would otherwise have built a metric to approximate.
+- **The structured log line each consumer already writes** — one per batch, with
+  counts — is a queryable record in Workers Logs that costs nothing extra.
+- **Somebody saying it feels slow** is a real signal, and at this size it is
+  usually the first one to arrive. The activity queue's batch window was found
+  that way, not on a chart.
+
+None of this makes guessing acceptable. It means the guess should be arithmetic
+against a published number, written down where the next person can check it.
+
 ## What a Queue makes you handle
 
 These are consequences of the platform, not of Avalon, and every consumer has to
@@ -222,8 +275,11 @@ step, bought for nothing.
 - **The regions genuinely need different policy** — retention, retry budget, or
   batch window differing for a stated compliance or product reason, not from
   drift.
-- **One region's volume alone approaches a per-resource ceiling.** Real, but rare
-  at Avalon's scale; measure before claiming it.
+- **One region's volume alone approaches a per-resource ceiling.** Settle this
+  with [arithmetic, not a dashboard](#deciding-without-measurement): estimate
+  messages per user action times users, compare against 5,000 a second, and put
+  the sum in a comment. At Avalon's size the answer is almost always no by
+  several orders of magnitude.
 
 ### No-go — share one resource when all of these hold
 
@@ -232,8 +288,9 @@ step, bought for nothing.
 - **The payload is operational metadata, not workspace content** — opaque
   identifiers, versions, class names, error strings that describe code. There is
   nothing here for a residency boundary to protect.
-- **Volume is nowhere near the ceiling**, so the split would buy no headroom
-  either.
+- **The arithmetic puts volume nowhere near the ceiling**, so the split would buy
+  no headroom either. One sum, recorded in a comment — see
+  [Deciding without measurement](#deciding-without-measurement).
 
 That combination is exactly the migration-report queue: an opaque object id, a
 schema version, and an error describing code, all converging on one account-wide
@@ -303,7 +360,9 @@ Concretely, that means the guarantee replaces the thing you would have built:
   thread, so you do not need a cache in front of one to avoid a network hop that
   does not exist.
 - The docs say 5,000 messages per second and a 25 GB backlog, so you do not need
-  your own admission control before you have measured a queue near either.
+  your own admission control until the arithmetic puts you near either. The
+  platform enforces its own ceiling and tells you when you hit it; that is the
+  capacity monitoring you have, and it is enough.
 
 Defensive scaffolding is not free. It runs on every message, it has its own bugs,
 and it is exercised far less than the platform path it distrusts — so when it
@@ -348,8 +407,9 @@ mistake available here, and it is always made with good intentions.
   exists for fan-in and durability. A low-volume call that needs no retry and no
   answer can stay a simple call.
 - **Do not add a second queue to shape traffic you do not have.** Priority
-  queues, sharded queues, and fan-out topologies are answers to a measured
-  problem. Add them when you have measured it.
+  queues, sharded queues, and fan-out topologies are answers to a problem you
+  have actually hit. Add one when something told you — a backlog, a dead-letter
+  queue with messages in it, a complaint — not when you imagined one.
 
 The test for all of this: if you find yourself writing infrastructure — retry
 schedules, correlation ids, backpressure, delivery receipts — stop and check
