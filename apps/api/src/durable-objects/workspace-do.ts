@@ -20,7 +20,6 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
   assertDurableObjectJurisdiction,
-  fallbackWorkspacePlacementAffinity,
   isWorkspacePlacementAffinityForRegion,
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
@@ -742,11 +741,6 @@ export class WorkspaceDO extends DurableObject<Env> {
         component: "workspace_do",
         workerVersionId: env.APP_VERSION ?? "unknown",
       });
-      state.storage.sql.exec(
-        `UPDATE workspace_identity SET placement_affinity = ?
-          WHERE id = 1 AND placement_affinity IS NULL`,
-        fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
-      );
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
