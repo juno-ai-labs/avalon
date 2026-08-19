@@ -453,16 +453,15 @@ pre {
 /* Application shell and sidebar */
 
 .workspace-shell {
-  /* The room the navigation occupies: the panel plus the gutter on either side
-     of it. Declared here rather than on `:root` because the resize handle writes
-     `--sidebar-width` onto this element as an inline style — a copy on the root
-     would keep answering 300px however wide the person had dragged it. */
-  --sidebar-slot: calc(var(--sidebar-width) + var(--sidebar-inset) * 2);
-  /* The ground the navigation floats over, and the only place it shows: the
-     gutter around that panel. A theme lit from a corner repeats its wash here
-     so the gutter carries the same light as the pane beside it. */
+  /* What the translucent navigation reads through. The shell paints the
+     background rather than the content surface, so the sidebar shows the page
+     and the light a theme casts across it, not the pane beside it. */
   background: var(--canvas);
   background-image: var(--canvas-wash);
+  /* Anchored to the viewport, not to the element. The shell and the main pane
+     each paint the wash, and a gradient positioned per-element would put the
+     same glow at two different places and show a seam down the sidebar's edge. */
+  background-attachment: fixed;
   height: 100%;
   overflow: hidden;
   position: relative;
@@ -471,12 +470,12 @@ pre {
 
 .main-pane {
   background: var(--surface);
-  /* The shell paints over the body, so a theme whose canvas is lit from a
-     corner has to have that light repeated here or it only ever shows in the
-     margins. Most themes set `--canvas-wash: none` and this costs nothing. */
+  /* The pane is opaque, so it needs its own copy of the light; `fixed` is what
+     keeps that copy in register with the shell's. */
   background-image: var(--canvas-wash);
+  background-attachment: fixed;
   height: 100%;
-  margin-left: var(--sidebar-slot);
+  margin-left: var(--sidebar-width);
   min-width: 0;
   overflow: hidden;
   position: relative;
@@ -488,15 +487,13 @@ pre {
 
 .sidebar {
   background: var(--sidebar);
-  border: var(--hairline) solid var(--line-1);
-  border-radius: var(--sidebar-radius);
-  bottom: var(--sidebar-inset);
-  box-shadow: var(--sidebar-shadow);
+  border-right: var(--hairline) solid var(--sidebar-edge);
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  left: var(--sidebar-inset);
+  left: 0;
   position: fixed;
-  top: var(--sidebar-inset);
+  top: 0;
   width: var(--sidebar-width);
   z-index: 30;
 }
@@ -591,7 +588,7 @@ pre {
 .sidebar-context-target.is-dragging .sidebar-row { background: var(--surface-2); }
 
 .sidebar-row {
-  --sidebar-row-background: var(--sidebar);
+  --sidebar-row-background: var(--sidebar-solid);
   font-size: 12.5px;
   gap: 5px;
   padding: 3px 7px;
@@ -746,9 +743,8 @@ pre {
 
 .account-trigger {
   align-items: center;
-  background: var(--sidebar);
+  background: transparent;
   border-top: 1px solid var(--line-1);
-  border-radius: 0 0 var(--sidebar-radius) var(--sidebar-radius);
   color: var(--ink-soft);
   display: flex;
   gap: 8px;
@@ -1544,6 +1540,7 @@ pre {
 }
 
 .settings-theme-swatch {
+  background: var(--canvas);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   display: flex;
@@ -2347,7 +2344,7 @@ pre {
 .attachment-tile-content img { height: 100%; object-fit: cover; width: 100%; }
 .attachment-extension { font-size: 12px; font-weight: 600; letter-spacing: .01em; max-width: 48px; overflow: hidden; text-overflow: ellipsis; text-transform: lowercase; }
 .attachment-remove,
-.attachment-retry { align-items: center; background: var(--sidebar); border: 1px solid var(--line-4); border-radius: var(--radius-pill); color: var(--n-13); display: flex; height: 21px; justify-content: center; opacity: 0; padding: 0; position: absolute; transition: opacity 120ms ease; width: 21px; z-index: 3; }
+.attachment-retry { align-items: center; background: var(--sidebar-solid); border: 1px solid var(--line-4); border-radius: var(--radius-pill); color: var(--n-13); display: flex; height: 21px; justify-content: center; opacity: 0; padding: 0; position: absolute; transition: opacity 120ms ease; width: 21px; z-index: 3; }
 .attachment-remove { right: -7px; top: -7px; }
 .attachment-retry { bottom: 4px; left: 50%; opacity: 1; transform: translateX(-50%); }
 .attachment-tile:hover .attachment-remove,
@@ -2497,7 +2494,7 @@ pre {
    remembered width, so a handle or a header cannot part company with a panel the
    window has capped. Each breakpoint that changes the room available restates
    it. */
-.workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--sidebar-slot) - 24px)); transition: --rail-width 190ms cubic-bezier(.32, .72, 0, 1); }
+.workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--sidebar-width) - 24px)); transition: --rail-width 190ms cubic-bezier(.32, .72, 0, 1); }
 .rail-surface { background: var(--surface-2); border: 1px solid var(--line-3); border-radius: var(--radius-lg); bottom: 8px; box-shadow: var(--shadow-rail); display: grid; grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
 /* The panel that just lost the slot dissolves over the one that took it. Only
    the outgoing panel animates: the incoming one is already opaque underneath,
@@ -2679,8 +2676,8 @@ pre {
 .new-workstream-home > .suggested-prompt-list { margin-left: 0; margin-top: 35px; max-width: none; }
 .message-context-label { color: var(--n-9); font-size: 9px; font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--blue); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
-.automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--sidebar-slot) / 2)); width: calc(100% - var(--sidebar-slot) - 76px); z-index: 4; }
-.rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-slot) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--sidebar-slot) - var(--rail-slot) - 76px); }
+.automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--sidebar-width) / 2)); width: calc(100% - var(--sidebar-width) - 76px); z-index: 4; }
+.rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--sidebar-width) - var(--rail-slot) - 76px); }
 .automation-composer { --composer-text-padding: 14px 15px 4px; background: var(--raised); border-color: var(--line-4); border-radius: var(--radius-xl); box-shadow: var(--shadow-md); }
 .automation-composer textarea { min-height: 54px; }
 .automation-composer .composer-toolbar { min-height: 37px; padding: 1px 8px 7px; }
@@ -2721,7 +2718,7 @@ pre {
 .automation-plugin-defaults label { align-items: flex-start; display: flex; gap: 9px; }
 .automation-plugin-defaults .automation-activity-source { align-items: center; justify-content: space-between; }
 .automation-activity-source select,
-.automation-source-fields select { background: var(--sidebar); border: 1px solid var(--line-4); border-radius: var(--radius-sm); color: var(--ink-soft); min-width: 190px; padding: 6px 28px 6px 8px; }
+.automation-source-fields select { background: var(--sidebar-solid); border: 1px solid var(--line-4); border-radius: var(--radius-sm); color: var(--ink-soft); min-width: 190px; padding: 6px 28px 6px 8px; }
 .automation-source-fields { display: grid; gap: 10px; margin-top: 14px; }
 .automation-delivery-target li:has(input:disabled) { background: var(--brand-wash); border-color: var(--brand-tint); }
 .automation-delivery-target input:disabled + .automation-plugin-check { background: var(--yellow); border-color: var(--yellow); }
@@ -2859,9 +2856,9 @@ pre {
 
 @media (max-width: 1180px) {
   .rail-scrim { background: var(--scrim-soft); display: block; inset: 0; position: fixed; z-index: 35; }
-  .workspace-shell { --rail-slot: min(var(--rail-width), 560px, calc(100vw - var(--sidebar-slot) - 20px)); }
+  .workspace-shell { --rail-slot: min(var(--rail-width), 560px, calc(100vw - var(--sidebar-width) - 20px)); }
   .rail-surface { box-shadow: var(--shadow-rail-strong); }
-  .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-slot) / 2)); width: calc(100% - var(--sidebar-slot) - 60px); }
+  .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2)); width: calc(100% - var(--sidebar-width) - 60px); }
   .automation-overview-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .automation-overview-actions .button:not(.run-now-button) { font-size: 0; gap: 0; padding: 5px 8px; }
 }
@@ -2878,7 +2875,7 @@ pre {
   :root { --sidebar-width: 0px; }
   .workspace-shell { --sidebar-width: 0px !important; }
   .main-pane { margin-left: 0; }
-  .sidebar { box-shadow: var(--shadow-drawer); transform: translateX(calc(-100% - var(--sidebar-inset) - 4px)); transition: transform 160ms ease; width: 300px; z-index: 70; }
+  .sidebar { background: var(--sidebar-solid); box-shadow: var(--shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
   .sidebar.is-mobile-open { transform: translateX(0); }
   .sidebar-scrim { background: var(--scrim); display: block; inset: 0; position: fixed; z-index: 65; }
   .mobile-only,
@@ -3000,7 +2997,7 @@ pre {
 
 .meeting-titlebar {
   align-items: center;
-  background: var(--sidebar);
+  background: var(--sidebar-solid);
   border-bottom: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
@@ -3203,7 +3200,7 @@ pre {
 
 .meeting-controls {
   align-items: center;
-  background: var(--sidebar);
+  background: var(--sidebar-solid);
   border-top: 1px solid var(--line);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
