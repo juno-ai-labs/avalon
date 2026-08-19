@@ -6,13 +6,7 @@ import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/acti
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { reconcileDigestDefaults } from "./services/digest-service";
-import { processMemoryIndexOutbox } from "./services/memory-service";
-import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
-import { reapDeletedResourceObjects } from "./services/resource-object-cleanup";
-import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
 import { reapProcessedActivityPayloads } from "./services/normalized-activity-service";
-import { SlackAgentService } from "./services/slack-agent-service";
-import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
@@ -210,24 +204,20 @@ export default {
         return;
       }
       const backgroundTasks = [
-        reapDeletedNoteObjects(env),
-        reapDeletedResourceObjects(env),
-        processMemoryIndexOutbox(env),
         reapExpiredActivityEvents(env),
         reapSettledWorkstreamRegionalEffects(env),
         reapProcessedActivityPayloads(env),
         processTelemetry(env),
       ];
+      const legacyWorkspaceStorageTasks = authority.phase === "legacy_open"
+        ? [reapExpiredHarnessAttempts(env), reapExpiredDraftAttachments(env)]
+        : [];
       await Promise.all([
-        reapExpiredHarnessAttempts(env),
-        reapExpiredDraftAttachments(env),
-        processPendingNotePrivacyNotifications(env),
-        new SlackAgentService(env).maintainIngress(),
-        refreshSlackWorkstreamUnfurls(env),
         processDueOpportunityWindows(env),
         processDueSuggestedWork(env),
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
+        ...legacyWorkspaceStorageTasks,
         ...backgroundTasks,
       ]);
     })());

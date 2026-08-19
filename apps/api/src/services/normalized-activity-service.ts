@@ -6,6 +6,8 @@ import {
 import { newId } from "@avalon/db";
 import type { Env } from "../env";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { enqueueWorkspaceConnectorEvent } from "./workspace-connector-event-ingress";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const NormalizedActivityInputSchema = NormalizedActivitySchema.omit({ id: true });
 const D1_ACTIVITY_PAYLOAD_RETENTION_HOURS = 24;
@@ -18,9 +20,30 @@ const D1_ACTIVITY_PAYLOAD_RETENTION_HOURS = 24;
 export async function persistNormalizedActivity(
   env: Env,
   input: Omit<NormalizedActivity, "id">,
+  knownConnectorType?: string,
 ): Promise<{ activityId: string; duplicate: boolean }> {
   const activity = NormalizedActivityInputSchema.parse(input);
   const proposedId = newId();
+  if (env.WORKSPACE_DOS) {
+    let connectorType = knownConnectorType;
+    if (!connectorType) {
+      const workspaceEnv = withWorkspaceRuntimeDatabase(env, activity.workspaceId);
+      const connection = await workspaceEnv.DB.prepare(
+        `SELECT connector_type FROM connector_connections
+          WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
+      ).bind(activity.connectionId, activity.workspaceId).first<{ connector_type: string }>();
+      if (!connection) throw new Error("Connector connection is unavailable");
+      connectorType = connection.connector_type;
+    }
+    await enqueueWorkspaceConnectorEvent(env, {
+      connectorType,
+      activity: { id: proposedId, ...activity },
+    });
+    // WorkspaceDO resolves provider/dedupe uniqueness when the Queue delivers.
+    // The HTTP/Slack/Workflow caller needs the handoff identity, not a second
+    // synchronous cross-object round trip to predict the canonical event ID.
+    return { activityId: proposedId, duplicate: false };
+  }
   const inserted = await env.DB.prepare(
     `INSERT INTO activities
      (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
@@ -113,11 +136,15 @@ export async function persistNormalizedActivity(
  * handoff retention.
  */
 export async function reapProcessedActivityPayloads(env: Env, limit = 500): Promise<number> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  // The verified maintenance scrub removes the imported source rows before
+  // authority opens. Post-cutover connector events and retry state exist only
+  // in WorkspaceDO, so this legacy redactor must not keep scanning D1.
+  if (authority.phase === "durable_object_open") return 0;
   const cutoff = new Date(
     Date.now() - D1_ACTIVITY_PAYLOAD_RETENTION_HOURS * 60 * 60_000,
   ).toISOString();
-  const authority = await readWorkstreamAuthorityControl(env);
-  const legacyProductFences = authority.phase === "durable_object_open" ? "" : `
+  const legacyProductFences = `
            AND NOT EXISTS (
              SELECT 1 FROM activity_suggestions suggestion
               WHERE suggestion.activity_id = activity.id AND suggestion.status = 'pending'

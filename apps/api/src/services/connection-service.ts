@@ -58,6 +58,12 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { persistNormalizedActivity } from "./normalized-activity-service";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -113,6 +119,38 @@ interface StoredConnection extends Record<string, unknown> {
   encrypted_credentials?: string | null;
   credential_iv?: string | null;
   credential_key_version?: number;
+}
+
+interface ConnectorIngressRouteSource {
+  id: string;
+  workspace_id: string;
+  connector_type: string;
+  scope: Scope;
+  provider_account_id: string | null;
+  status: string;
+  config_json: string;
+  updated_at: string;
+}
+
+function connectorIngressRouteValues(
+  connection: ConnectorIngressRouteSource,
+  region: "global" | "eu",
+) {
+  const config = parseJson<Record<string, unknown>>(connection.config_json, {});
+  const providerUserId = typeof config.providerUserId === "string"
+    ? config.providerUserId
+    : typeof config.githubUserId === "string" ? config.githubUserId : null;
+  return {
+    connectionId: connection.id,
+    workspaceId: connection.workspace_id,
+    region,
+    connectorType: connection.connector_type,
+    scope: connection.scope,
+    providerAccountId: connection.provider_account_id,
+    providerUserId,
+    status: connection.status === "disabled" ? "disabled" as const : "active" as const,
+    updatedAt: connection.updated_at,
+  };
 }
 
 type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
@@ -204,7 +242,13 @@ async function attemptConnectorRepair(
 }
 
 export class ConnectionService {
-  constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
+  private env: Env;
+  private readonly auth: AuthContext | undefined;
+
+  constructor(env: Env, auth?: AuthContext) {
+    this.env = auth ? withWorkspaceRuntimeDatabase(env, auth.workspaceId) : env;
+    this.auth = auth;
+  }
 
   private async emitConnectorAction(
     connection: StoredConnection,
@@ -286,18 +330,28 @@ export class ConnectionService {
   async list(): Promise<Connection[]> {
     const auth = this.requireAuth();
     const result = await this.env.DB.prepare(
-      `SELECT c.*, u.name AS owner_name FROM connector_connections c
-       LEFT JOIN users u ON u.id = c.owner_user_id
+      `SELECT c.* FROM connector_connections c
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
     const rows = result.results ?? [];
+    const ownerIds = [...new Set(rows.flatMap((row) =>
+      typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
+    const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
+    ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
+    const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
     const userDelivery = await resolveUserDelivery(
       this.env,
       { workspaceId: auth.workspaceId, userId: auth.userId },
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
-    return rows.map((row) => connectionFromRow(row, userDelivery.get(String(row.id)) ?? null));
+    return rows.map((row) => connectionFromRow({
+      ...row,
+      owner_name: typeof row.owner_user_id === "string"
+        ? ownerNames.get(row.owner_user_id) ?? null
+        : null,
+    }, userDelivery.get(String(row.id)) ?? null));
   }
 
   async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
@@ -353,8 +407,7 @@ export class ConnectionService {
       })),
     };
     const nextPolicyJson = JSON.stringify(nextPolicy);
-    const [update] = await this.env.DB.batch([
-      this.env.DB.prepare(
+    const update = await this.env.DB.prepare(
         `UPDATE connector_connections
             SET config_json = json_set(COALESCE(config_json, '{}'), '$.githubRepositoryAccess', json(?)),
                 updated_at = ?
@@ -366,30 +419,42 @@ export class ConnectionService {
         connection.id,
         connection.workspace_id,
         input.expectedRevision,
-      ),
-      // D1 batches are transactional. Credential expiry therefore changes in
-      // the same commit as the policy, and the EXISTS guard keeps a losing CAS
-      // from touching credentials refreshed by the winning writer.
-      this.env.DB.prepare(
-        `UPDATE workstream_terminal_repositories
-            SET read_token_expires_at = NULL, updated_at = ?
-          WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'
-            AND EXISTS (
-              SELECT 1 FROM connector_connections connection
-               WHERE connection.id = ? AND connection.workspace_id = ?
-                 AND json_extract(connection.config_json, '$.githubRepositoryAccess') = json(?)
-            )`,
-      ).bind(
-        updatedAt,
-        connection.workspace_id,
-        connection.id,
-        connection.id,
-        connection.workspace_id,
-        nextPolicyJson,
-      ),
-    ]);
-    if (Number(update?.meta.changes ?? 0) !== 1) {
+      ).run();
+    if (Number(update.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
+    }
+    // The policy is authoritative first. Invalidating any legacy terminal
+    // repository credential is a recoverable cross-authority effect.
+    try {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (authority.phase !== "durable_object_open") {
+        await workspaceRegionalDatabase(this.env).prepare(
+          `UPDATE workstream_terminal_repositories
+              SET read_token_expires_at = NULL, updated_at = ?
+            WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'
+          `,
+        ).bind(
+          updatedAt,
+          connection.workspace_id,
+          connection.id,
+        ).run();
+      }
+    } catch (error) {
+      // Cross-authority changes cannot share a transaction. Restore the
+      // previous connector policy only if our revision still owns the row; a
+      // concurrent newer policy wins and is never overwritten.
+      await this.env.DB.prepare(
+        `UPDATE connector_connections SET config_json = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ?
+            AND CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER) = ?`,
+      ).bind(
+        connection.config_json,
+        nowIso(),
+        connection.id,
+        connection.workspace_id,
+        nextRevision,
+      ).run();
+      throw error;
     }
     await this.recordConnectionAudit(
       connection.workspace_id,
@@ -1233,6 +1298,7 @@ export class ConnectionService {
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
       });
     }
+    this.env = withWorkspaceRuntimeDatabase(this.env, String(row.workspace_id));
     let attemptId: string;
     try {
       attemptId = await this.oauthAttemptIdFromState(row);
@@ -1529,19 +1595,25 @@ export class ConnectionService {
       remoteRevocation = "failed";
     } finally {
       const disabledAt = nowIso();
-      await this.env.DB.batch([
-        this.env.DB.prepare(
-          `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
-           credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
-        ).bind(disabledAt, id),
-        this.env.DB.prepare(
+      await this.env.DB.prepare(
+        `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
+         credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
+      ).bind(disabledAt, id).run();
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (authority.phase !== "durable_object_open") {
+        await workspaceRegionalDatabase(this.env).prepare(
           `UPDATE workstream_terminal_repositories
               SET state = 'revoked', read_token_expires_at = NULL, updated_at = ?
             WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
-        ).bind(disabledAt, connection.workspace_id, id),
-      ]);
+        ).bind(disabledAt, connection.workspace_id, id).run();
+      }
+      // Object-local Terminal repository selections are immutable provenance,
+      // not a copy of connector authority. Every bootstrap rechecks this
+      // WorkspaceDO row, so a disabled connection is unusable without a fanout
+      // write to every SubstreamAgent.
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
+      await this.syncConnectorIngressRoute(id);
       await this.refreshScheduler(connection.workspace_id);
       if (connection.connector_type === "github" && connection.provider_account_id) {
         const sibling = await this.env.DB.prepare(
@@ -1705,6 +1777,7 @@ export class ConnectionService {
       this.assertWebhookCreationReplay(winner, input);
       return this.webhookConnectionResult(winner);
     }
+    await this.syncConnectorIngressRoute(id);
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
@@ -1834,6 +1907,7 @@ export class ConnectionService {
       at,
       at,
     ).run();
+    await this.syncConnectorIngressRoute(id);
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "x",
       scope: input.scope,
@@ -1887,8 +1961,7 @@ export class ConnectionService {
       const providerAccountId = `workspace:${(await sha256(apiKey)).slice(0, 32)}`;
       const at = nowIso();
       const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "granola");
-      await this.env.DB.batch([
-        this.env.DB.prepare(
+      await this.env.DB.prepare(
           `INSERT INTO connector_connections
            (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
             display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -1907,8 +1980,8 @@ export class ConnectionService {
           modelPluginId,
           at,
           at,
-        ),
-        this.env.DB.prepare(
+        ).run();
+      await this.env.DB.prepare(
           `INSERT INTO audit_events
            (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
            VALUES (?, ?, 'user', ?, 'connector.authorized', 'connector_connection', ?, ?, ?)`,
@@ -1919,8 +1992,8 @@ export class ConnectionService {
           id,
           JSON.stringify({ provider: "granola", scope: "workspace", capabilities }),
           at,
-        ),
-      ]);
+        ).run();
+      await this.syncConnectorIngressRoute(id);
     } catch (error) {
       try {
         await deleteGranolaWebhookEndpoint(apiKey, webhook.id, AbortSignal.timeout(10_000));
@@ -1953,6 +2026,7 @@ export class ConnectionService {
     if (rawBody.byteLength > numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000)) {
       throw new ApiError(413, "webhook_too_large", "Granola webhook payload exceeds the configured limit");
     }
+    await this.routeIngressConnection(connectionId, "granola");
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
        WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status <> 'disabled'`,
@@ -1988,6 +2062,29 @@ export class ConnectionService {
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
     const normalized = source.normalize(context, envelope, payloadKey);
     if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Granola webhook event is not supported");
+    if (this.env.WORKSPACE_DOS) {
+      const receiptId = newId();
+      const receipt = await this.env.DB.prepare(
+        `INSERT INTO webhook_receipts
+           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
+      ).bind(
+        receiptId,
+        connection.workspace_id,
+        connection.id,
+        envelope.receiptKey ?? envelope.deliveryId,
+        receivedAt,
+        new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
+      ).run();
+      const persisted = await persistNormalizedActivity(this.env, {
+        ...normalized,
+        rawContentHash: normalized.rawContentHash ?? envelope.bodyHash,
+      }, "granola");
+      return {
+        duplicate: Number(receipt.meta.changes ?? 0) === 0 || persisted.duplicate,
+        activityId: persisted.activityId,
+      };
+    }
     const activityId = newId();
     const receiptId = newId();
     const results = await this.env.DB.batch([
@@ -2068,6 +2165,7 @@ export class ConnectionService {
     } catch {
       throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
     }
+    await this.routeIngressConnection(connectionId, "generic_webhook");
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status <> 'disabled'`,
     ).bind(connectionId).first<StoredConnection>();
@@ -2109,6 +2207,33 @@ export class ConnectionService {
       if ((members.results ?? []).length !== uniqueTargets.length) {
         throw new ApiError(422, "invalid_target_user", "Every webhook target must be an active member of this workspace");
       }
+    }
+    if (this.env.WORKSPACE_DOS) {
+      await this.env.DB.prepare(
+        `DELETE FROM webhook_receipts
+          WHERE workspace_id = ? AND connection_id = ? AND expires_at <= ?`,
+      ).bind(connection.workspace_id, connectionId, nowIso()).run();
+      await this.env.PAYLOADS.put(payloadKey, rawBody, {
+        httpMetadata: { contentType: "application/json" },
+      });
+      const receivedAt = nowIso();
+      const receipt = await this.env.DB.prepare(
+        `INSERT INTO webhook_receipts
+           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
+      ).bind(
+        receiptId,
+        connection.workspace_id,
+        connectionId,
+        envelope.receiptKey ?? envelope.deliveryId,
+        receivedAt,
+        new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+      ).run();
+      const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
+      return {
+        duplicate: Number(receipt.meta.changes ?? 0) === 0 || persisted.duplicate,
+        activityId: persisted.activityId,
+      };
     }
     await this.env.DB.prepare(
       `DELETE FROM webhook_receipts
@@ -2298,24 +2423,85 @@ export class ConnectionService {
     return connectorRegistryForEnv(this.env);
   }
 
+  private async routeIngressConnection(connectionId: string, connectorType: string): Promise<void> {
+    if (!this.env.WORKSPACE_DOS) {
+      const legacy = await this.env.DB.prepare(
+        `SELECT workspace_id FROM connector_connections
+          WHERE id = ? AND connector_type = ? AND status <> 'disabled'`,
+      ).bind(connectionId, connectorType).first<{ workspace_id: string }>();
+      if (!legacy) throw new ApiError(404, "connection_not_found", "Connector route not found");
+      return;
+    }
+    const route = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT workspace_id FROM connector_ingress_routes
+        WHERE connection_id = ? AND region = ? AND connector_type = ? AND status = 'active'`,
+    ).bind(connectionId, this.env.AVALON_REGION, connectorType).first<{ workspace_id: string }>();
+    if (!route) throw new ApiError(404, "connection_not_found", "Connector route not found");
+    this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
+  }
+
   private async persistConnectionMutation(
     statement: D1PreparedStatement,
     attemptId: string | null,
     connectionId: string,
   ): Promise<D1Result<unknown>> {
-    if (!attemptId) return statement.run();
     const at = nowIso();
-    const [result] = await this.env.DB.batch([
-      statement,
-      this.env.DB.prepare(
-        `UPDATE connector_oauth_attempts
-         SET connection_id = ?, updated_at = ?
-         WHERE id = ? AND region = ?
-           AND status IN ('pending', 'failed')`,
-      ).bind(connectionId, at, attemptId, this.env.AVALON_REGION),
-    ]);
-    if (!result) throw new ApiError(500, "connector_persistence_failed", "The connector could not be persisted");
+    // Connection and attempt share WorkspaceDO authority, so the user-visible
+    // handoff can never remain pending after its connection commits. The D1
+    // ingress route is the recoverable post-commit control-plane edge.
+    const result = attemptId
+      ? (await this.env.DB.batch([
+          statement,
+          this.env.DB.prepare(
+            `UPDATE connector_oauth_attempts
+             SET connection_id = ?, updated_at = ?
+             WHERE id = ? AND region = ?
+               AND status IN ('pending', 'failed')`,
+          ).bind(connectionId, at, attemptId, this.env.AVALON_REGION),
+        ]))[0]
+      : await statement.run();
+    if (!result) {
+      throw new ApiError(500, "connector_persistence_failed", "The connector could not be persisted");
+    }
+    await this.syncConnectorIngressRoute(connectionId);
     return result;
+  }
+
+  private async syncConnectorIngressRoute(connectionId: string): Promise<void> {
+    // Focused unit/legacy environments without WorkspaceDO authority still
+    // write connector rows directly; migration triggers maintain the route in
+    // a real deployment. Explicit synchronization is required only after the
+    // connector row has moved into WorkspaceDO.
+    if (!this.env.WORKSPACE_DOS) return;
+    const connection = await this.env.DB.prepare(
+      `SELECT id, workspace_id, connector_type, scope, provider_account_id,
+              status, config_json, updated_at
+         FROM connector_connections WHERE id = ?`,
+    ).bind(connectionId).first<ConnectorIngressRouteSource>();
+    if (!connection) return;
+    const route = connectorIngressRouteValues(connection, this.env.AVALON_REGION);
+    await workspaceRegionalDatabase(this.env).prepare(
+      `INSERT INTO connector_ingress_routes (
+         connection_id, workspace_id, region, connector_type, scope,
+         provider_account_id, provider_user_id, status, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(connection_id) DO UPDATE SET
+         workspace_id = excluded.workspace_id, region = excluded.region,
+         connector_type = excluded.connector_type, scope = excluded.scope,
+         provider_account_id = excluded.provider_account_id,
+         provider_user_id = excluded.provider_user_id,
+         status = excluded.status, updated_at = excluded.updated_at`,
+    ).bind(
+      route.connectionId,
+      route.workspaceId,
+      route.region,
+      route.connectorType,
+      route.scope,
+      route.providerAccountId,
+      route.providerUserId,
+      route.status,
+      route.updatedAt,
+    ).run();
   }
 
   private async extendOAuthAttempt(attemptId: string, expiresAt: string): Promise<void> {
@@ -2341,8 +2527,7 @@ export class ConnectionService {
     reconnect: boolean;
   }): Promise<void> {
     const at = nowIso();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
+    await this.env.DB.prepare(
         `INSERT INTO connector_oauth_attempts
          (id, region, provider, user_id, workspace_id, status, connection_id,
           error_code, expires_at, completed_at, created_at, updated_at,
@@ -2360,8 +2545,9 @@ export class ConnectionService {
         input.scope,
         input.capabilityCount,
         input.reconnect ? 1 : 0,
-      ),
-      this.env.DB.prepare(
+      ).run();
+    try {
+      await workspaceRegionalDatabase(this.env).prepare(
         `INSERT INTO oauth_states
          (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
           return_uri, expires_at)
@@ -2376,8 +2562,18 @@ export class ConnectionService {
         input.auth.workspaceId,
         this.env.DESKTOP_DEEP_LINK_URI,
         input.expiresAt,
-      ),
-    ]);
+      ).run();
+    } catch (error) {
+      // The attempt is workspace-local and is created first so a valid OAuth
+      // state can never point at a missing product receipt. Best-effort cleanup
+      // avoids leaving a pending row when the D1 routing receipt fails; expiry
+      // remains the recovery fence if this compensating RPC is interrupted.
+      await this.env.DB.prepare(
+        `DELETE FROM connector_oauth_attempts
+          WHERE id = ? AND workspace_id = ? AND status = 'pending'`,
+      ).bind(input.attemptId, input.auth.workspaceId).run().catch(() => undefined);
+      throw error;
+    }
   }
 
   private async oauthAttemptIdFromState(row: Record<string, unknown>): Promise<string> {
@@ -2516,6 +2712,7 @@ export class ConnectionService {
        AND consumed_at IS NULL AND expires_at > ? RETURNING *`,
     ).bind(nowIso(), state, provider, purpose, this.env.AVALON_REGION, nowIso()).first<Record<string, unknown>>();
     if (!row) throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
+    this.env = withWorkspaceRuntimeDatabase(this.env, String(row.workspace_id));
     return row;
   }
 
@@ -3095,6 +3292,7 @@ function assertLinearNativeAgentCapabilityEnabled(
 }
 
 export const __connectionServiceTesting = {
+  connectorIngressRouteValues,
   attemptConnectorRepair,
   reconcileGoogleAccount,
   googleConnectionDisplayName,

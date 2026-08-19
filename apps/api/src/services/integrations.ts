@@ -82,8 +82,9 @@ import {
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { z } from "zod";
-import { substreamAgentName } from "../durable-objects/names";
+import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
+import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
@@ -130,14 +131,18 @@ import {
 } from "../telemetry/product-usage";
 import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import {
-  regionalDatabase,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 import {
   markConnectorNeedsReconnect,
   withAuthorizedConnection,
 } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
   buildAttachmentManifestPart,
   buildAttachmentModelParts,
@@ -1732,7 +1737,7 @@ async function recordWorkflowLaunch(
          AND ? != 'block_dashboard_block'`,
     ).bind(launchedAt, input.workstreamId, input.workspaceId, input.reason),
   ]);
-  await regionalDatabase(executionEnv).prepare(
+  await withWorkspaceRuntimeDatabase(executionEnv, input.workspaceId).DB.prepare(
     `UPDATE automation_runs
      SET workflow_instance_id = ?,
          status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
@@ -1854,6 +1859,10 @@ export async function runWorkstreamHarness(
   onEvent?: (event: Record<string, unknown>) => void | Promise<void>,
   runtime?: { lease: AttemptLease; publishRealtime?: boolean },
 ): Promise<WorkstreamHarnessResult> {
+  // Layer WorkspaceDO product state over the work-stream/substream runtime
+  // database supplied by the owning agent. Each statement then resolves to its
+  // actual authority without copying connector/resource state into the agent.
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const runStartedAtMs = Date.now();
   const database = createDatabase(env.DB);
   const workstream = await env.DB.prepare(
@@ -1898,7 +1907,7 @@ export async function runWorkstreamHarness(
     const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(env.DB, input);
     if (persistedHostOutcome) return persistedHostOutcome;
   }
-  const runAuthoritySnapshot = await assertRunAuthorityStillValid(env.DB, input);
+  const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
     code: "run_ownership_lost",
   });
@@ -2190,7 +2199,7 @@ export async function runWorkstreamHarness(
         compaction: {
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
-            await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
               env.DB,
               input.workspaceId,
@@ -2199,7 +2208,7 @@ export async function runWorkstreamHarness(
           },
           renderAppendix: async () => {
             await liveness.pulse("compaction_inventory", true);
-            await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             if (!preparedCompactionVisibilityFingerprint) {
               throw new Error("compaction_resource_visibility_changed");
             }
@@ -2224,7 +2233,7 @@ export async function runWorkstreamHarness(
           },
           persist: async (checkpoint) => {
             await liveness.pulse("compaction_persist", true);
-            await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             if (!preparedCompactionVisibilityFingerprint) {
               throw new Error("compaction_resource_visibility_changed");
             }
@@ -2301,7 +2310,7 @@ export async function runWorkstreamHarness(
         : undefined,
       async ({ pluginId, toolName }) => {
         await liveness.pulse("before_tool", true);
-        await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
         const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
         if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
         const frozen = harnessTools.frozenConnections.get(pluginId);
@@ -2393,7 +2402,7 @@ export async function runWorkstreamHarness(
     },
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
-      await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+      await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
       if (stage === "iteration_boundary") {
         const steering = await env.DB.prepare(
           `UPDATE run_steering
@@ -3593,7 +3602,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             async ({ pluginId, toolName }) => {
             await childLiveness.pulse("before_tool", true);
             await assertChildOwned();
-            await assertRunAuthorityStillValid(options.env.DB, childInput, options.runAuthoritySnapshot);
+            await assertRunAuthorityStillValid(options.env, childInput, options.runAuthoritySnapshot);
             const policy = toolPolicyForCall(pluginId, toolName, childHarnessTools);
             if (!policy || policy.mode !== "read") {
               throw new ConnectorError("unauthorized", "Sub-agents may only use read-only tools in their frozen scope");
@@ -3685,7 +3694,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           onLiveness: async (stage) => {
             await childLiveness.pulse(stage, stage === "before_model" || stage === "after_tool");
             await assertChildOwned();
-            await assertRunAuthorityStillValid(options.env.DB, childInput, options.runAuthoritySnapshot);
+            await assertRunAuthorityStillValid(options.env, childInput, options.runAuthoritySnapshot);
           },
           onTranscriptIssues: (issues) => {
             logStructuredEvent(options.env, "warn", "inline_child_transcript_healed", {
@@ -4002,6 +4011,67 @@ async function recordOpenRouterInferenceAttempt(
   });
 }
 
+interface ConnectorTriggerContext {
+  provider: string;
+  eventType: string;
+  occurredAt: string;
+  title: string;
+  summary: string;
+  textSnippet: string;
+  metadata: Record<string, unknown>;
+}
+
+/** Read automation trigger evidence from its live authority on both sides of cutover. */
+async function loadConnectorTriggerContext(
+  env: Env,
+  workspaceId: string,
+  eventId: string,
+): Promise<ConnectorTriggerContext | null> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    const event = WorkspaceConnectorEventSchema.nullable().parse(
+      await workspace.connectorEvent({ workspaceId, eventId }),
+    );
+    if (!event) return null;
+    return {
+      provider: event.activity.provider,
+      eventType: event.activity.eventType,
+      occurredAt: event.activity.occurredAt,
+      title: event.activity.title,
+      summary: event.activity.summary,
+      textSnippet: event.activity.textSnippet,
+      metadata: event.activity.metadata,
+    };
+  }
+  const row = await env.DB.prepare(
+    `SELECT provider, event_type, occurred_at, title, summary, text_snippet, metadata_json
+       FROM activities WHERE id = ? AND workspace_id = ?`,
+  ).bind(eventId, workspaceId).first<{
+    provider: string;
+    event_type: string;
+    occurred_at: string;
+    title: string;
+    summary: string;
+    text_snippet: string;
+    metadata_json: string;
+  }>();
+  return row ? {
+    provider: row.provider,
+    eventType: row.event_type,
+    occurredAt: row.occurred_at,
+    title: row.title,
+    summary: row.summary,
+    textSnippet: row.text_snippet,
+    metadata: parseJson(row.metadata_json, {}),
+  } : null;
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -4070,20 +4140,17 @@ async function loadRunPromptContext(
   }
   let triggerMessage: ModelMessage | null = null;
   if (input.activityId) {
-    const activity = await env.DB.prepare(
-      `SELECT provider, event_type, occurred_at, title, summary, text_snippet, metadata_json
-       FROM activities WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.activityId, input.workspaceId).first<Record<string, unknown>>();
+    const activity = await loadConnectorTriggerContext(env, input.workspaceId, input.activityId);
     if (!activity) throw new Error("trigger_activity_context_not_found");
     const triggerContext = {
       id: input.activityId,
       provider: activity.provider,
-      eventType: activity.event_type,
-      occurredAt: activity.occurred_at,
+      eventType: activity.eventType,
+      occurredAt: activity.occurredAt,
       title: activity.title,
       summary: activity.summary,
-      textSnippet: activity.text_snippet,
-      metadata: parseJson(activity.metadata_json, {}),
+      textSnippet: activity.textSnippet,
+      metadata: activity.metadata,
     };
     memoryQueryParts.push(JSON.stringify(triggerContext));
     triggerMessage = renderTriggerActivityMessage(triggerContext);
@@ -4452,25 +4519,47 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [subscriptionDefaults, attachedRows, connectionRows] = await Promise.all([
+  const workstreamDatabase = workspaceRegionalDatabase(env);
+  const [subscriptionDefaults, attachedLinks, connectionRows] = await Promise.all([
     input.automationSubscriptionId
       ? env.DB.prepare(
           `SELECT default_plugins_json FROM automation_subscriptions
            WHERE id = ? AND workspace_id = ?`,
         ).bind(input.automationSubscriptionId, input.workspaceId).first<{ default_plugins_json: string }>()
       : Promise.resolve(null),
-    env.DB.prepare(
-      `SELECT DISTINCT r.connection_id FROM workstream_resources wr
-       JOIN resources r ON r.id = wr.resource_id
-       WHERE wr.workstream_id = ? AND r.workspace_id = ? AND r.connection_id IS NOT NULL`,
-    ).bind(input.workstreamId, input.workspaceId).all<{ connection_id: string }>(),
+    env.WORKSPACE_DOS
+      ? workstreamDatabase.prepare(
+          `SELECT DISTINCT resource_id FROM workstream_resources WHERE workstream_id = ?`,
+        ).bind(input.workstreamId).all<{ resource_id: string; connection_id?: never }>()
+      : workstreamDatabase.prepare(
+          `SELECT DISTINCT r.connection_id FROM workstream_resources wr
+           JOIN resources r ON r.id = wr.resource_id
+           WHERE wr.workstream_id = ? AND r.workspace_id = ? AND r.connection_id IS NOT NULL`,
+        ).bind(input.workstreamId, input.workspaceId)
+        .all<{ resource_id?: never; connection_id: string }>(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
   const defaultModelPluginIds = new Set(parseJson<string[]>(subscriptionDefaults?.default_plugins_json, []));
-  const attached = new Set((attachedRows.results ?? []).map((row) => row.connection_id));
+  const attached = new Set<string>(attachedLinks.results.flatMap((row) => (
+    row.connection_id ? [row.connection_id] : []
+  )));
+  if (env.WORKSPACE_DOS) {
+    for (let offset = 0; offset < attachedLinks.results.length; offset += 100) {
+      const ids = attachedLinks.results.slice(offset, offset + 100).flatMap((row) => (
+        row.resource_id ? [row.resource_id] : []
+      ));
+      if (ids.length === 0) continue;
+      const rows = await env.DB.prepare(
+        `SELECT DISTINCT connection_id FROM resources
+          WHERE workspace_id = ? AND id IN (${ids.map(() => "?").join(", ")})
+            AND connection_id IS NOT NULL`,
+      ).bind(input.workspaceId, ...ids).all<{ connection_id: string }>();
+      for (const row of rows.results) attached.add(row.connection_id);
+    }
+  }
   const registry = connectorRegistryForEnv(env);
   const coreTools = createAvalonTools(env, input);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
@@ -5196,7 +5285,7 @@ async function assertFrozenConnectionAuthorized(
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
     throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
   }
-  await assertRunAuthorityStillValid(env.DB, input, frozen.runAuthoritySnapshot);
+  await assertRunAuthorityStillValid(env, input, frozen.runAuthoritySnapshot);
   const row = await env.DB.prepare(
     `SELECT id, workspace_id, connector_type, scope, owner_user_id, granted_scopes_json,
             encrypted_credentials, credential_iv, cursor_json, config_json, status
@@ -5243,10 +5332,12 @@ async function assertExecutionPrincipalAuthorized(
 }
 
 async function assertRunAuthorityStillValid(
-  db: D1Database,
+  source: Env | D1Database,
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
 ): Promise<RunAuthoritySnapshot> {
+  const env = "DB" in source ? source as Env : null;
+  const db: D1Database = env ? env.DB : source as D1Database;
   await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
   const workstream = await db.prepare(
     `SELECT archived_at, automation_subscription_id, automation_run_id
@@ -5324,9 +5415,11 @@ async function assertRunAuthorityStillValid(
     throw new ConnectorError("unauthorized", "Automation trigger evidence changed");
   }
   if (automation.trigger_activity_id) {
-    const activity = await db.prepare(
-      "SELECT id FROM activities WHERE id = ? AND workspace_id = ?",
-    ).bind(automation.trigger_activity_id, input.workspaceId).first<{ id: string }>();
+    const activity = env
+      ? await loadConnectorTriggerContext(env, input.workspaceId, automation.trigger_activity_id)
+      : await db.prepare(
+        "SELECT id FROM activities WHERE id = ? AND workspace_id = ?",
+      ).bind(automation.trigger_activity_id, input.workspaceId).first<{ id: string }>();
     if (!activity) throw new ConnectorError("unauthorized", "Automation trigger is no longer available");
   }
   if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {
@@ -6631,8 +6724,13 @@ export async function pollConnectorConnection(
   ));
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
-    for (const activityId of await persistPolledActivity(env.DB, activity)) {
-      activityIds.add(activityId);
+    if (env.WORKSPACE_DOS) {
+      const persisted = await persistNormalizedActivity(env, activity, String(row.connector_type));
+      activityIds.add(persisted.activityId);
+    } else {
+      for (const activityId of await persistPolledActivity(env.DB, activity)) {
+        activityIds.add(activityId);
+      }
     }
   }
   return {
@@ -6653,6 +6751,9 @@ export async function hydrateConnectorActivitySource(
     resourceType: string;
   },
 ): Promise<unknown | null> {
+  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") {
+    env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  }
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections
      WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
@@ -6941,16 +7042,31 @@ function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPlu
 }
 
 async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: string): Promise<ToolInvocation | null> {
-  const row = await env.DB.prepare(
-    `SELECT invocation.*,
-            owner.connector_type AS owner_connector_type,
-            owner.display_name AS owner_display_name,
-            owner.model_plugin_id AS owner_model_plugin_id
-       FROM tool_invocations invocation
-       LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id
-      WHERE invocation.harness_run_id = ? AND invocation.tool_call_id = ?`,
-  ).bind(harnessRunId, toolCallId).first<Record<string, unknown>>();
+  const row = await workspaceRegionalDatabase(env).prepare(env.WORKSPACE_DOS
+    ? `SELECT * FROM tool_invocations
+        WHERE harness_run_id = ? AND tool_call_id = ?`
+    : `SELECT invocation.*,
+              owner.connector_type AS owner_connector_type,
+              owner.display_name AS owner_display_name,
+              owner.model_plugin_id AS owner_model_plugin_id
+         FROM tool_invocations invocation
+         LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id
+        WHERE invocation.harness_run_id = ? AND invocation.tool_call_id = ?`)
+    .bind(harnessRunId, toolCallId).first<Record<string, unknown>>();
   if (!row) return null;
+  if (env.WORKSPACE_DOS && row.connection_id != null) {
+    const owner = await env.DB.prepare(
+      `SELECT connector_type, display_name, model_plugin_id
+         FROM connector_connections WHERE id = ?`,
+    ).bind(row.connection_id).first<{
+      connector_type: string;
+      display_name: string;
+      model_plugin_id: string;
+    }>();
+    row.owner_connector_type = owner?.connector_type ?? null;
+    row.owner_display_name = owner?.display_name ?? null;
+    row.owner_model_plugin_id = owner?.model_plugin_id ?? null;
+  }
   const error = parseJson<{ code: string; message: string } | null>(row.error_json, null);
   const status = String(row.status) as ToolInvocation["status"];
   const plugin = toolInvocationOwningPlugin(row);

@@ -2530,7 +2530,13 @@ export async function recordInferenceAttempt(
 
 export async function reapStaleHarnessRuns(
   db: D1Database,
-  options: { workspaceId?: string; workstreamId?: string; limit?: number } = {},
+  options: {
+    workspaceId?: string;
+    workstreamId?: string;
+    limit?: number;
+    /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
+    automationDatabase?: D1Database | null;
+  } = {},
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
   // Ordinary attempts are the only runs whose expired lease is itself a
@@ -2538,7 +2544,7 @@ export async function reapStaleHarnessRuns(
   // parent still owns a live attempt, so including children in this query
   // races the child's idempotent takeover path.
   const rows = await db.prepare(
-    `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at
+    `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at, origin
        FROM harness_runs
       WHERE status = 'running' AND terminalized_at IS NULL
         AND parent_tool_call_id IS NULL
@@ -2555,6 +2561,7 @@ export async function reapStaleHarnessRuns(
       workstream_id: string;
       attempt_id: string;
       lease_expires_at: string;
+      origin: string;
     }>();
   const reaped: string[] = [];
   for (const row of rows.results ?? []) {
@@ -2611,23 +2618,6 @@ export async function reapStaleHarnessRuns(
             )`,
       ).bind(now, row.id),
       db.prepare(
-        `UPDATE automation_runs
-            SET status = 'failed', completed_at = ?1,
-                result_summary = COALESCE(
-                  result_summary,
-                  'The harness executor lost its durable lease'
-                )
-          WHERE workstream_id = ?2 AND workspace_id = ?3
-            AND status IN ('scheduled', 'running', 'needs_input')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs
-               WHERE id = ?4 AND workstream_id = ?2 AND workspace_id = ?3
-                 AND terminalized_at = ?1 AND status = 'failed'
-                 AND parent_tool_call_id IS NULL
-                 AND origin != 'block_dashboard_block'
-            )`,
-      ).bind(now, row.workstream_id, row.workspace_id, row.id),
-      db.prepare(
         `UPDATE harness_runs
             SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
                 cancellation_reason = COALESCE(cancellation_reason, 'parent_stale_run_reaped')
@@ -2643,6 +2633,21 @@ export async function reapStaleHarnessRuns(
     ]);
     if (d1Changes(results[1]) > 0) {
       reaped.push(row.id);
+      const automationDatabase = options.automationDatabase === undefined
+        ? db
+        : options.automationDatabase;
+      if (automationDatabase && row.origin !== "block_dashboard_block") {
+        await automationDatabase.prepare(
+          `UPDATE automation_runs
+              SET status = 'failed', completed_at = ?1,
+                  result_summary = COALESCE(
+                    result_summary,
+                    'The harness executor lost its durable lease'
+                  )
+            WHERE workstream_id = ?2 AND workspace_id = ?3
+              AND status IN ('scheduled', 'running', 'needs_input')`,
+        ).bind(now, row.workstream_id, row.workspace_id).run();
+      }
     }
   }
 

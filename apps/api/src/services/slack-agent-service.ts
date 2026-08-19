@@ -74,6 +74,10 @@ import {
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "./workspace-runtime-database";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -251,7 +255,11 @@ const SlackAutomationTargetSchema = z.object({
 }).passthrough();
 
 export class SlackAgentService {
-  constructor(private readonly env: Env) {}
+  private env: Env;
+
+  constructor(env: Env) {
+    this.env = env;
+  }
 
   /** Durably schedule a full public-channel join after install or reconnect. */
   async schedulePublicChannelSync(connectionId: string, retryAfterMs = 0): Promise<void> {
@@ -277,7 +285,11 @@ export class SlackAgentService {
     });
   }
 
-  async maintainIngress(limit = 100): Promise<void> {
+  async maintainIngress(limit = 100, workspaceId?: string): Promise<void> {
+    if (!workspaceId && this.env.WORKSPACE_DOS) {
+      throw new Error("slack_ingress_maintenance_workspace_required");
+    }
+    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     await this.prewarmWorkspaceCredentials();
     const at = nowIso();
     await this.redriveReauthorizedIngress(limit);
@@ -637,17 +649,33 @@ export class SlackAgentService {
     return { response_type: "ephemeral", text: "Avalon queued your request. I’ll continue in your Agent conversation." };
   }
 
-  async processQueuedIngress(jobId: string): Promise<void> {
+  async processQueuedIngress(workspaceId: string, jobId: string): Promise<void>;
+  async processQueuedIngress(jobId: string): Promise<void>;
+  async processQueuedIngress(workspaceIdOrJobId: string, maybeJobId?: string): Promise<void> {
+    const workspaceId = maybeJobId === undefined ? null : workspaceIdOrJobId;
+    const jobId = maybeJobId ?? workspaceIdOrJobId;
+    if (workspaceId === null && this.env.WORKSPACE_DOS) {
+      throw new Error("slack_ingress_workspace_required");
+    }
+    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const leaseId = crypto.randomUUID();
     const at = nowIso();
     const claimed = await this.env.DB.prepare(
       `UPDATE slack_ingress_jobs SET
          status = 'processing', attempt_count = attempt_count + 1,
          lease_id = ?, lease_expires_at = ?, error_code = NULL, updated_at = ?
-       WHERE id = ? AND workspace_id IN (SELECT id FROM workspaces WHERE region = ?)
+       WHERE id = ? AND (? = '' OR workspace_id = ?)
          AND (status IN ('queued', 'failed') OR (status = 'processing' AND lease_expires_at < ?))
        RETURNING id, workspace_id, connection_id, team_id, body_hash, kind, payload_json, lease_id`,
-    ).bind(leaseId, new Date(Date.now() + 5 * 60_000).toISOString(), at, jobId, this.env.AVALON_REGION, at).first<Record<string, unknown>>();
+    ).bind(
+      leaseId,
+      new Date(Date.now() + 5 * 60_000).toISOString(),
+      at,
+      jobId,
+      workspaceId ?? "",
+      workspaceId ?? "",
+      at,
+    ).first<Record<string, unknown>>();
     if (!claimed) return;
     const job = SlackQueuedJobRowSchema.parse(claimed);
     try {
@@ -901,11 +929,12 @@ export class SlackAgentService {
     userId: string,
     verifiedEmail: string,
   ): Promise<number> {
-    const membership = await this.env.DB.prepare(
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT 1 AS active FROM workspace_members
        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(workspaceId, userId).first<{ active: number }>();
     if (!membership) return 0;
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const rawConnections = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
@@ -1148,6 +1177,7 @@ export class SlackAgentService {
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
     triggeringSlackUserId: string | null = null,
   ): Promise<void> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const session = await this.env.DB.prepare(
       `SELECT * FROM slack_agent_sessions WHERE workspace_id = ? AND workstream_id = ?`,
     ).bind(workspaceId, workstreamId).first<SlackSessionRow>();
@@ -1284,11 +1314,11 @@ export class SlackAgentService {
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
   }): Promise<void> {
     if (shouldSuppressAutomationResult(input.text)) return;
+    this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const rawTarget = await this.env.DB.prepare(
       `SELECT dt.*, cc.encrypted_credentials, cc.credential_iv, cc.status AS connection_status
        FROM automation_delivery_targets dt
        JOIN connector_connections cc ON cc.id = dt.connection_id
-       JOIN workspace_members wm ON wm.workspace_id = dt.workspace_id AND wm.user_id = dt.user_id AND wm.status = 'active'
        JOIN slack_user_links link ON link.connection_id = dt.connection_id AND link.user_id = dt.user_id
          AND link.slack_user_id = dt.slack_user_id AND link.status = 'active'
        LEFT JOIN slack_delivery_preferences pref
@@ -1301,6 +1331,11 @@ export class SlackAgentService {
          END = 1`,
     ).bind(input.workspaceId, input.automationSubscriptionId, input.outcomeStatus).first<Record<string, unknown>>();
     if (!rawTarget) return;
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(input.workspaceId, rawTarget.user_id).first();
+    if (!membership) return;
     const target = SlackAutomationTargetSchema.parse(rawTarget);
     if (target.last_delivered_workstream_id === input.workstreamId) return;
     // Not gated on the stored status. Marking the target `needs_input` without
@@ -1357,6 +1392,7 @@ export class SlackAgentService {
     title: string;
     markdown: string;
   }): Promise<void> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const rawConnection = await this.env.DB.prepare(
       `SELECT cc.*, cc.status AS connection_status
          FROM connector_connections cc
@@ -2202,7 +2238,7 @@ export class SlackAgentService {
         channelType: channelResolution.channelType,
         ...(channelResolution.channelName ? { channelName: channelResolution.channelName } : {}),
       },
-    });
+    }, "slack");
     return channelResolution;
   }
 
@@ -2216,12 +2252,17 @@ export class SlackAgentService {
     const linked = await this.env.DB.prepare(
       `SELECT DISTINCT l.user_id
        FROM slack_user_links l
-       JOIN workspace_members wm
-         ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-       WHERE l.connection_id = ? AND l.status = 'active' AND wm.status = 'active'
+       WHERE l.connection_id = ? AND l.status = 'active'
          AND l.slack_user_id IN (${placeholders})`,
     ).bind(connection.id, ...uniqueIds).all<{ user_id: string }>();
-    return linked.results.map((row) => row.user_id);
+    if (linked.results.length === 0) return [];
+    const active = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT user_id FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active'
+          AND user_id IN (${linked.results.map(() => "?").join(",")})`,
+    ).bind(connection.workspace_id, ...linked.results.map((row) => row.user_id))
+      .all<{ user_id: string }>();
+    return active.results.map((row) => row.user_id);
   }
 
   private async hasSubscribedSlackActivity(
@@ -2667,13 +2708,16 @@ export class SlackAgentService {
   private async publishHome(teamId: string, slackUserId: string, viewHash?: string): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
-    const link = await this.env.DB.prepare(
-      `SELECT l.user_id, u.name, u.timezone, wm.role
-       FROM slack_user_links l
-       JOIN users u ON u.id = l.user_id
-       JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-       WHERE l.connection_id = ? AND l.slack_user_id = ? AND l.status = 'active' AND wm.status = 'active'`,
-    ).bind(connection.id, slackUserId).first<{ user_id: string; name: string; timezone: string; role: string }>();
+    const localLink = await this.env.DB.prepare(
+      `SELECT user_id FROM slack_user_links
+        WHERE connection_id = ? AND slack_user_id = ? AND status = 'active'`,
+    ).bind(connection.id, slackUserId).first<{ user_id: string }>();
+    const link = localLink ? await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT user.id AS user_id, user.name, user.timezone, member.role
+         FROM users user JOIN workspace_members member ON member.user_id = user.id
+        WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
+    ).bind(connection.workspace_id, localLink.user_id)
+      .first<{ user_id: string; name: string; timezone: string; role: string }>() : null;
     let blocks: Record<string, unknown>[];
     if (!link) {
       // No challenge is minted here. App Home is a published document with no
@@ -2934,17 +2978,22 @@ export class SlackAgentService {
   }
 
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
+    await this.connectionForTeam(teamId);
     const row = await this.env.DB.prepare(
-      `SELECT l.user_id, l.workspace_id, l.connection_id, wm.role, wm.status AS member_status,
+      `SELECT l.user_id, l.workspace_id, l.connection_id,
               cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,
               cc.granted_scopes_json, cc.status
        FROM slack_user_links l
        JOIN connector_connections cc ON cc.id = l.connection_id
-       JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
        WHERE l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status <> 'disabled'`,
     ).bind(teamId, slackUserId).first<Record<string, unknown>>();
-    if (!row || row.member_status !== "active") return null;
+    if (!row) return null;
+    const membership = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT role FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(row.workspace_id, row.user_id).first<{ role: AuthContext["role"] }>();
+    if (!membership) return null;
     const connection: SlackConnectionRow = {
       id: String(row.connection_id),
       workspace_id: String(row.workspace_id),
@@ -2954,26 +3003,59 @@ export class SlackAgentService {
       granted_scopes_json: String(row.granted_scopes_json),
       status: String(row.status),
     };
-    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: String(row.role) as AuthContext["role"] }, connection, slackUserId, teamId };
+    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
   }
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
+    const route = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT workspace_id, connection_id FROM slack_installation_routes
+        WHERE team_id = ? AND region = ? AND status = 'active'`,
+    ).bind(teamId, this.env.AVALON_REGION).first<{ workspace_id: string; connection_id: string }>();
+    if (!route && !this.env.WORKSPACE_DOS) {
+      const legacy = await this.env.DB.prepare(
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                credential_key_version, granted_scopes_json, status
+           FROM connector_connections
+          WHERE connector_type = 'slack' AND scope = 'workspace'
+            AND provider_account_id = ? AND status <> 'disabled'`,
+      ).bind(teamId).first<SlackConnectionRow>();
+      if (legacy) return legacy;
+    }
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
        FROM connector_connections
-       WHERE connector_type = 'slack' AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
-    ).bind(teamId).first<SlackConnectionRow>();
+       WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'
+         AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
+    ).bind(route.connection_id, route.workspace_id, teamId).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
     return row;
   }
 
   private async connectionById(id: string): Promise<SlackConnectionRow> {
+    const route = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT workspace_id FROM slack_installation_routes
+        WHERE connection_id = ? AND region = ? AND status = 'active'`,
+    ).bind(id, this.env.AVALON_REGION).first<{ workspace_id: string }>();
+    if (!route && !this.env.WORKSPACE_DOS) {
+      const legacy = await this.env.DB.prepare(
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                credential_key_version, granted_scopes_json, status
+           FROM connector_connections
+          WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+      ).bind(id).first<SlackConnectionRow>();
+      if (legacy) return legacy;
+    }
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
-       FROM connector_connections WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
-    ).bind(id).first<SlackConnectionRow>();
+       FROM connector_connections WHERE id = ? AND workspace_id = ?
+         AND connector_type = 'slack' AND scope = 'workspace'`,
+    ).bind(id, route.workspace_id).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
     return row;
   }
@@ -3210,48 +3292,25 @@ async function claimWorkspaceSession(
     if (mismatchedTarget) {
       throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
     }
-    const regionalResults = await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE slack_agent_sessions
-            SET execution_scope = 'user', linked_user_id = ?, assigned_user_id = ?,
-                assigned_at = ?, assignment_method = 'explicit_link',
-                claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ?
-          WHERE id = ? AND workspace_id = ? AND connection_id = ? AND execution_scope = 'workspace'`,
-      ).bind(
-        identity.auth.userId,
-        identity.auth.userId,
-        at,
-        identity.slackUserId,
-        at,
-        at,
-        session.id,
-        identity.auth.workspaceId,
-        identity.connection.id,
-      ),
-      env.DB.prepare(
-        `INSERT INTO audit_events
-           (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
-            target_type, target_id, metadata_json, created_at)
-         SELECT ?, workspace_id, 'user', ?, workstream_id,
-                'slack.workspace_workstream.claimed', 'slack_agent_session', id, ?, ?
-           FROM slack_agent_sessions
-          WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
-         ON CONFLICT(id) DO NOTHING`,
-      ).bind(
-        auditId,
-        identity.auth.userId,
-        JSON.stringify({
-          slackTeamId: identity.teamId,
-          slackUserId: identity.slackUserId,
-          explicit: true,
-        }),
-        at,
-        session.id,
-        identity.auth.userId,
-        at,
-      ),
-    ]);
-    if (Number(regionalResults[0]?.meta.changes ?? 0) === 1) {
+    const claimed = await env.DB.prepare(
+      `UPDATE slack_agent_sessions
+          SET execution_scope = 'user', linked_user_id = ?, assigned_user_id = ?,
+              assigned_at = ?, assignment_method = 'explicit_link',
+              claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND connection_id = ? AND execution_scope = 'workspace'`,
+    ).bind(
+      identity.auth.userId,
+      identity.auth.userId,
+      at,
+      identity.slackUserId,
+      at,
+      at,
+      session.id,
+      identity.auth.workspaceId,
+      identity.connection.id,
+    ).run();
+    if (Number(claimed.meta.changes ?? 0) === 1) {
+      await recordSlackWorkspaceClaimAudit(env, identity, session, auditId, at);
       await reconcileSlackWorkstreamIdentity(env, {
         workspaceId: session.workspace_id,
         workstreamId: session.workstream_id,
@@ -3262,9 +3321,14 @@ async function claimWorkspaceSession(
       return "claimed";
     }
     const current = await env.DB.prepare(
-      "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = ?",
-    ).bind(session.id).first<{ execution_scope: "workspace" | "user"; linked_user_id: string | null }>();
+      "SELECT execution_scope, linked_user_id, claimed_at FROM slack_agent_sessions WHERE id = ?",
+    ).bind(session.id).first<{
+      execution_scope: "workspace" | "user";
+      linked_user_id: string | null;
+      claimed_at: string | null;
+    }>();
     if (current?.execution_scope === "user" && current.linked_user_id === identity.auth.userId) {
+      await recordSlackWorkspaceClaimAudit(env, identity, session, auditId, current.claimed_at ?? at);
       await reconcileSlackWorkstreamIdentity(env, {
         workspaceId: session.workspace_id,
         workstreamId: session.workstream_id,
@@ -3370,6 +3434,35 @@ async function claimWorkspaceSession(
     throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
   }
   throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
+}
+
+async function recordSlackWorkspaceClaimAudit(
+  env: Env,
+  identity: SlackIdentity,
+  session: SlackSessionRow,
+  auditId: string,
+  claimedAt: string,
+): Promise<void> {
+  await workspaceRegionalDatabase(env).prepare(
+    `INSERT INTO audit_events
+       (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+        target_type, target_id, metadata_json, created_at)
+     VALUES (?, ?, 'user', ?, ?, 'slack.workspace_workstream.claimed',
+             'slack_agent_session', ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).bind(
+    auditId,
+    session.workspace_id,
+    identity.auth.userId,
+    session.workstream_id,
+    session.id,
+    JSON.stringify({
+      slackTeamId: identity.teamId,
+      slackUserId: identity.slackUserId,
+      explicit: true,
+    }),
+    claimedAt,
+  ).run();
 }
 
 const SlackResponseMessageSchema = z.object({

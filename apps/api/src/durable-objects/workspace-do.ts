@@ -63,6 +63,7 @@ import {
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
+  WorkspaceDirectoryVisibleIdsPageSchema,
   type WorkspaceDirectoryApplyRequest,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
@@ -89,6 +90,7 @@ import {
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
+  type WorkspaceDirectoryVisibleIdsPage,
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
@@ -108,6 +110,7 @@ import {
   type WorkspaceConnectorEventSettleRequest,
 } from "./workspace-connector-event-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
+import { WORKSPACE_DOMAIN_SCHEMA_STATEMENTS } from "./workspace-domain-schema";
 import {
   WorkspaceActivityEventCursorRequestSchema,
   WorkspaceActivityEventInputSchema,
@@ -171,6 +174,19 @@ import {
   type WorkspaceProductImportRequest,
 } from "./workspace-product-import";
 import { importWorkspaceProductRows } from "./workspace-product-import-storage";
+import {
+  responseToRpcResult,
+  type DurableObjectRpcResult,
+} from "./rpc-result";
+import {
+  executeWorkspaceRuntimeSql,
+  WorkspaceRuntimeSqlRequestSchema,
+  type WorkspaceRuntimeSqlRequest,
+} from "./workspace-runtime-sql";
+import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
+
+const WORKSPACE_ALARM_SOURCE_TABLE = /\b(?:schedules|resource_watches|resource_object_deletion_outbox|note_resource_deletion_outbox|note_privacy_change_outbox|memory_index_outbox|slack_ingress_jobs|slack_agent_thread_claims|slack_agent_pending_prompts|slack_link_challenges|slack_unfurled_links)\b/iu;
+const SQL_MUTATION = /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/iu;
 
 const SocketIdentitySchema = z.object({
   workspaceId: IdSchema,
@@ -475,6 +491,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX workspace_workstream_effect_receipts_received_idx
       ON workspace_workstream_effect_receipts(received_at, message_id)`,
     ...WORKSPACE_PRODUCT_SCHEMA_STATEMENTS,
+    ...WORKSPACE_DOMAIN_SCHEMA_STATEMENTS,
     `CREATE TRIGGER workspace_identity_placement_valid_insert
       BEFORE INSERT ON workspace_identity
       WHEN NEW.placement_affinity IS NULL
@@ -751,6 +768,25 @@ export class WorkspaceDO extends DurableObject<Env> {
       });
     }
     return json({ error: "not_found" }, 404);
+  }
+
+  /** Trusted Worker compatibility port for WorkspaceDO-owned relational state. */
+  async executeRuntimeSql(input: WorkspaceRuntimeSqlRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    try {
+      const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
+      this.assertWorkspace(request.workspaceId);
+      const results = executeWorkspaceRuntimeSql(this.state.storage, request);
+      if (request.statements.some((statement) =>
+        SQL_MUTATION.test(statement.sql) && WORKSPACE_ALARM_SOURCE_TABLE.test(statement.sql))) {
+        this.state.waitUntil(refreshWorkspaceSchedulerAlarm(this.env, request.workspaceId));
+      }
+      return responseToRpcResult(json({ results }));
+    } catch (error) {
+      return responseToRpcResult(json({
+        error: error instanceof Error ? error.message : "workspace_runtime_sql_failed",
+      }, 409));
+    }
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -1640,13 +1676,15 @@ export class WorkspaceDO extends DurableObject<Env> {
     const originLabels = new Map<string, string>();
     if (subscriptionIds.length > 0) {
       const placeholders = subscriptionIds.map(() => "?").join(",");
-      const labels = await this.env.DB.prepare(
+      const labels = this.state.storage.sql.exec<{ id: string; name: string }>(
         `SELECT subscription.id, template.name
            FROM automation_subscriptions subscription
            JOIN automation_templates template ON template.id = subscription.template_id
           WHERE subscription.workspace_id = ? AND subscription.id IN (${placeholders})`,
-      ).bind(request.workspaceId, ...subscriptionIds).all<{ id: string; name: string }>();
-      for (const label of labels.results ?? []) {
+        request.workspaceId,
+        ...subscriptionIds,
+      ).toArray();
+      for (const label of labels) {
         originLabels.set(label.id, truncateUtf16Safe(label.name, 120));
       }
     }
@@ -1693,11 +1731,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.directoryVisible(request.userId, request.workstreamId);
   }
 
-  async visibleWorkstreamIds(input: WorkspaceDirectoryVisibleIdsRequest): Promise<string[]> {
+  async visibleWorkstreamIds(input: WorkspaceDirectoryVisibleIdsRequest): Promise<WorkspaceDirectoryVisibleIdsPage> {
     await this.initialized;
     const request = WorkspaceDirectoryVisibleIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return this.state.storage.sql.exec<{ workstream_id: string }>(
+    const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id FROM workspace_workstream_directory directory
        LEFT JOIN workspace_workstream_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
@@ -1706,11 +1744,22 @@ export class WorkspaceDO extends DurableObject<Env> {
        WHERE directory.archived_at IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
          AND ((? = 0 AND directory.scope = 'workspace') OR viewer.is_participant = 1)
-       ORDER BY directory.workstream_id`,
+         AND (? IS NULL OR directory.workstream_id > ?)
+       ORDER BY directory.workstream_id
+       LIMIT ?`,
       request.userId,
       request.includeSystem ? 1 : 0,
       request.participantsOnly ? 1 : 0,
-    ).toArray().map((row) => row.workstream_id);
+      request.after ?? null,
+      request.after ?? null,
+      request.limit + 1,
+    ).toArray();
+    const hasMore = rows.length > request.limit;
+    if (hasMore) rows.pop();
+    return WorkspaceDirectoryVisibleIdsPageSchema.parse({
+      items: rows.map((row) => row.workstream_id),
+      nextCursor: hasMore ? rows.at(-1)?.workstream_id ?? null : null,
+    });
   }
 
   /** Maintenance fence used before a D1 route may advertise an active child. */
@@ -2082,12 +2131,17 @@ export class WorkspaceDO extends DurableObject<Env> {
       resolved_at: number;
       resolved_by_user_id: string;
     }>(
-      `SELECT workstream_id, activity_id, status, resolved_at, resolved_by_user_id
-         FROM workspace_workstream_suggestion_feedback
-        WHERE source = ? AND resolved_at >= ?
-        ORDER BY resolved_at, workstream_id, action_id`,
+      `SELECT feedback.workstream_id, feedback.activity_id, feedback.status,
+              feedback.resolved_at, feedback.resolved_by_user_id
+         FROM workspace_workstream_suggestion_feedback feedback
+         JOIN workspace_connector_events event ON event.event_id = feedback.activity_id
+        WHERE feedback.source = ? AND feedback.resolved_at >= ?
+          AND event.provider = ? AND event.event_type = ?
+        ORDER BY feedback.resolved_at, feedback.workstream_id, feedback.action_id`,
       request.source,
       epoch(request.since),
+      request.provider,
+      request.eventType,
     ).toArray();
     return WorkspaceDirectoryFeedbackResultSchema.parse({
       items: rows.map((row) => ({
@@ -2354,6 +2408,26 @@ export class WorkspaceDO extends DurableObject<Env> {
             epoch(effect.updatedAt ?? effect.lastActivityAt),
             now,
           );
+          const automationStatus = effect.state === "completed"
+            ? "completed"
+            : ["failed", "error", "stopped"].includes(effect.state)
+              ? "failed"
+              : effect.state === "needs_input" ? "needs_input" : null;
+          if (effect.automationRunId && automationStatus) {
+            this.state.storage.sql.exec(
+              `UPDATE automation_runs
+                  SET status = ?,
+                      completed_at = CASE WHEN ? IN ('completed', 'failed')
+                        THEN COALESCE(?, completed_at) ELSE completed_at END
+                WHERE id = ? AND workspace_id = ?
+                  AND status IN ('scheduled', 'running', 'needs_input')`,
+              automationStatus,
+              automationStatus,
+              effect.completedAt ?? effect.updatedAt ?? effect.lastActivityAt,
+              effect.automationRunId,
+              envelope.workspaceId,
+            );
+          }
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.workstreamId,

@@ -16,6 +16,7 @@ import { BlockDashboardAgent } from "../src/durable-objects/block-dashboard-agen
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
   substreamAgentName,
   blockDashboardAgentName,
@@ -33,6 +34,7 @@ import {
 } from "../src/durable-objects/block-dashboard-protocol";
 import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
 import type { WorkspaceOpportunityPersistRequest } from "../src/durable-objects/workspace-opportunity-protocol";
+import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000101";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000102";
@@ -85,6 +87,10 @@ async function seedOpenAuthority(): Promise<void> {
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, USER_ID, WORKSPACE_ID),
   ]);
+  const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+    workspaceDOName("global", WORKSPACE_ID),
+  ));
+  await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
 }
 
 function tableNames(state: DurableObjectState): string[] {
@@ -314,6 +320,65 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("repairs a missing creation projection when initialize is replayed", async () => {
+    await seedOpenAuthority();
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const auth = {
+      sessionId: SESSION_ID,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+    const input = {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+      title: "Replay-safe creation",
+      objective: "Repair the parent directory after an ambiguous creation response",
+      descriptionSource: "authored" as const,
+      titleStatus: "settled" as const,
+      emailAddress: null,
+      creatorUserId: USER_ID,
+      openingMessage: "Start",
+      openingStructuredContent: null,
+      clientMessageId: "creation-replay-client-message",
+      participantUserIds: [],
+      attachmentIds: [],
+      originResourceIds: [],
+      modelOverride: "test-model",
+      originType: "ad_hoc" as const,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      systemKind: null,
+      createdFromOpportunityId: null,
+      opportunityVersion: null,
+      opportunityDisplayPromptHash: null,
+      opportunityExecutionPromptHash: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      reason: "user_message",
+    };
+
+    await runInDurableObject(child, async (instance, state) => {
+      const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      await product.initialize(auth, input);
+      state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      state.storage.sql.exec(`DELETE FROM projection_keys`);
+
+      await product.initialize(auth, input);
+
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
+      ).one().count).toBe(2);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM projection_keys`,
+      ).one().count).toBe(2);
+    });
+  });
+
   it("constructs every object through its SQL migration ledger", async () => {
     const cases = [
       {
@@ -389,6 +454,7 @@ describe("Durable Objects in the Workers runtime", () => {
           "suggested_work_sets",
           "suggested_work_ranking_rounds",
           "work_opportunity_snapshots",
+          ...WORKSPACE_LOCAL_TABLES,
         ],
       },
       {
@@ -1501,6 +1567,25 @@ describe("Durable Objects in the Workers runtime", () => {
       before = tiedPage.nextCursor ?? undefined;
     } while (before);
     expect(pagedIds).toEqual([WORKSTREAM_ID, ...tiedIds]);
+    const firstVisiblePage = await stub.visibleWorkstreamIds({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      includeSystem: false,
+      participantsOnly: false,
+      limit: 2,
+    });
+    expect(firstVisiblePage).toEqual({
+      items: [WORKSTREAM_ID, tiedIds[0]],
+      nextCursor: tiedIds[0],
+    });
+    await expect(stub.visibleWorkstreamIds({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      includeSystem: false,
+      participantsOnly: false,
+      after: firstVisiblePage.nextCursor!,
+      limit: 2,
+    })).resolves.toEqual({ items: [tiedIds[1]], nextCursor: null });
     await expect(stub.workstreamsForResource({
       workspaceId: WORKSPACE_ID,
       resourceId: "00000000-0000-7000-8000-000000000108",
@@ -1722,6 +1807,63 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("makes opportunity batch mutation and settlement retries no-ops after completion", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const windowId = "00000000-0000-7000-8000-000000000411";
+    const eventId = "00000000-0000-7000-8000-000000000412";
+    const leaseId = "00000000-0000-7000-8000-000000000413";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO opportunity_batch_windows
+           (window_id, partition_key, audience_scope, audience_user_id,
+            first_event_at, last_event_at, process_after, status, attempt,
+            lease_id, lease_expires_at, created_at, updated_at, completed_at)
+         VALUES (?, 'workspace', 'workspace', NULL, 1, 1, 1, 'processing', 1,
+                 ?, 10000, 1, 1, NULL)`,
+        windowId,
+        leaseId,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO opportunity_batch_events
+           (batch_event_id, window_id, partition_key, source_kind, source_id,
+            occurred_at, input_characters, status, attempt_count, error_text,
+            created_at, updated_at)
+         VALUES (?, ?, 'workspace', 'activity', 'source', 1, 10, 'pending', 0, NULL, 1, 1)`,
+        eventId,
+        windowId,
+      );
+    });
+    const eventRequest = {
+      workspaceId: WORKSPACE_ID,
+      windowId,
+      leaseId,
+      eventIds: [eventId],
+      outcome: "processing" as const,
+      error: null,
+    };
+    await stub.mutateOpportunityBatchEvents(eventRequest);
+    await stub.mutateOpportunityBatchEvents({ ...eventRequest, outcome: "completed" });
+    const settleRequest = { workspaceId: WORKSPACE_ID, windowId, leaseId, retryDelayMs: 1_000 };
+    await stub.settleOpportunityWindow(settleRequest);
+
+    await expect(stub.mutateOpportunityBatchEvents(eventRequest)).resolves.toBeUndefined();
+    await expect(stub.settleOpportunityWindow(settleRequest)).resolves.toBeUndefined();
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string; attempt_count: number }>(
+        `SELECT status, attempt_count FROM opportunity_batch_events WHERE batch_event_id = ?`,
+        eventId,
+      ).one()).toEqual({ status: "completed", attempt_count: 1 });
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM opportunity_batch_windows WHERE window_id = ?`,
+        windowId,
+      ).one()).toEqual({ status: "completed" });
+    });
+  });
+
   it("imports workspace product rows idempotently and rejects conflicts outside the maintenance route", async () => {
     await seedOpenAuthority();
     await env.DB.batch([
@@ -1770,6 +1912,19 @@ describe("Durable Objects in the Workers runtime", () => {
       stage: "activity_events",
       rows: [activity],
     })).resolves.toBe(1);
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.importWorkspaceProductRows({
+        workspaceId: WORKSPACE_ID,
+        stage: "activity_events",
+        rows: [{
+          ...activity,
+          log_sequence: 43,
+          id: "00000000-0000-7000-8000-000000000423",
+          dedupe_key: "maintenance:activity:43",
+          metadata_json: "[]",
+        }],
+      })).rejects.toThrow("workspace_product_import_json_shape_invalid:metadata_json");
+    });
     await expect(stub.importWorkspaceProductRows({
       workspaceId: WORKSPACE_ID,
       stage: "activity_events",
@@ -1785,6 +1940,183 @@ describe("Durable Objects in the Workers runtime", () => {
         created_at: "2098-08-18T20:00:01.000Z",
       }],
     })).resolves.toBe(1);
+    const connectionId = "00000000-0000-7000-8000-000000000428";
+    const templateId = "00000000-0000-7000-8000-000000000429";
+    const templateVersionId = "00000000-0000-7000-8000-000000000430";
+    const resourceId = "00000000-0000-7000-8000-000000000431";
+    const noteId = "00000000-0000-7000-8000-000000000432";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "connector_connections",
+      rows: [{
+        id: connectionId,
+        workspace_id: WORKSPACE_ID,
+        connector_type: "github",
+        scope: "workspace",
+        owner_user_id: null,
+        provider_account_id: "installation-42",
+        display_name: "Imported GitHub",
+        encrypted_credentials: "ciphertext",
+        credential_iv: "iv",
+        credential_key_version: 1,
+        credential_refresh_lease_id: null,
+        credential_refresh_lease_expires_at: null,
+        granted_scopes_json: "[]",
+        status: "healthy",
+        cursor_json: "{}",
+        config_json: "{}",
+        last_sync_at: null,
+        next_poll_at: null,
+        error_json: null,
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+        model_plugin_id: `github-${connectionId}`,
+      }],
+    })).resolves.toBe(1);
+    const webhookReceiptId = "00000000-0000-7000-8000-000000000440";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "webhook_receipts",
+      rows: [{
+        id: webhookReceiptId,
+        workspace_id: WORKSPACE_ID,
+        connection_id: connectionId,
+        signature_hash: "signed-maintenance-delivery",
+        received_at: "2098-08-18T20:00:00.000Z",
+        expires_at: "2098-08-19T20:00:00.000Z",
+      }],
+    })).resolves.toBe(1);
+    const oauthAttemptId = "00000000-0000-7000-8000-000000000441";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "connector_oauth_attempts",
+      rows: [{
+        id: oauthAttemptId,
+        region: "global",
+        provider: "github",
+        user_id: USER_ID,
+        workspace_id: WORKSPACE_ID,
+        status: "succeeded",
+        connection_id: connectionId,
+        error_code: null,
+        expires_at: "2098-08-19T20:00:00.000Z",
+        completed_at: "2098-08-18T20:00:01.000Z",
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:01.000Z",
+        telemetry_operation_id: null,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "workspace_sandbox_network_policies",
+      rows: [{
+        workspace_id: WORKSPACE_ID,
+        mode: "trusted_only",
+        revision: 3,
+        verification_state: "verified",
+        baseline_manifest_version: "2026-08-18",
+        effective_domains_json: "[]",
+        last_verified_at: "2098-08-18T20:00:00.000Z",
+        failure_code: null,
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "automation_templates",
+      rows: [{
+        id: templateId,
+        workspace_id: WORKSPACE_ID,
+        owner_user_id: USER_ID,
+        name: "Imported automation",
+        description: "Maintenance import",
+        sharing_state: "workspace",
+        latest_version_number: 1,
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+        archived_at: null,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "automation_template_versions",
+      rows: [{
+        id: templateVersionId,
+        template_id: templateId,
+        version_number: 1,
+        instructions: "Summarize new work",
+        trigger_definitions_json: "[]",
+        required_capabilities_json: "[]",
+        expected_outputs_json: "[]",
+        default_behavior_json: "{}",
+        created_by_user_id: USER_ID,
+        created_at: "2098-08-18T20:00:00.000Z",
+        overview: "Imported",
+        recommended_plugins_json: "[]",
+        memory_tables_json: "[]",
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "resources",
+      rows: [{
+        id: resourceId,
+        workspace_id: WORKSPACE_ID,
+        connection_id: connectionId,
+        resource_type: "document",
+        provider: "github",
+        provider_resource_id: "repository:42:README.md",
+        title: "Imported resource",
+        mime_type: "text/markdown",
+        content_ref: "global/workspaces/imported/resource",
+        canonical_url: "https://example.test/imported",
+        metadata_json: "{}",
+        last_hydrated_at: null,
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+        uploaded_by_user_id: null,
+        attachment_status: "attached",
+        model_content_ref: null,
+        model_mime_type: null,
+        model_content_sha256: null,
+        model_metadata_json: null,
+        content_sha256: null,
+        model_content_status: null,
+        model_content_extractor_version: null,
+        model_content_character_count: null,
+        model_content_extracted_at: null,
+        model_content_error_code: null,
+        model_content_claimed_at: null,
+        model_content_claim_id: null,
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "notes",
+      rows: [{
+        id: noteId,
+        workspace_id: WORKSPACE_ID,
+        owner_user_id: USER_ID,
+        resource_id: resourceId,
+        scope: "workspace",
+        title: "Imported note",
+        recording_status: "complete",
+        manual_notes_markdown: "# Imported",
+        live_notes_markdown: "",
+        notes_through_sequence: 0,
+        next_segment_sequence: 1,
+        recorded_ms: 0,
+        started_at: null,
+        ended_at: null,
+        generated_at: null,
+        privacy_changed_by_user_id: null,
+        last_activity_at: "2098-08-18T20:00:00.000Z",
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+        archived_at: null,
+      }],
+    })).resolves.toBe(1);
     await expect(stub.listActivityEvents({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
@@ -1795,6 +2127,32 @@ describe("Durable Objects in the Workers runtime", () => {
       limit: 20,
     })).resolves.toMatchObject({
       items: [{ sequence: 42, id: eventId, isTarget: true, targetRelations: ["mentioned"] }],
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ display_name: string }>(
+        "SELECT display_name FROM connector_connections WHERE id = ?",
+        connectionId,
+      ).one().display_name).toBe("Imported GitHub");
+      expect(state.storage.sql.exec<{ signature_hash: string }>(
+        "SELECT signature_hash FROM webhook_receipts WHERE id = ?",
+        webhookReceiptId,
+      ).one().signature_hash).toBe("signed-maintenance-delivery");
+      expect(state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM connector_oauth_attempts WHERE id = ?",
+        oauthAttemptId,
+      ).one().status).toBe("succeeded");
+      expect(state.storage.sql.exec<{ revision: number }>(
+        "SELECT revision FROM workspace_sandbox_network_policies WHERE workspace_id = ?",
+        WORKSPACE_ID,
+      ).one().revision).toBe(3);
+      expect(state.storage.sql.exec<{ instructions: string }>(
+        "SELECT instructions FROM automation_template_versions WHERE template_id = ?",
+        templateId,
+      ).one().instructions).toBe("Summarize new work");
+      expect(state.storage.sql.exec<{ title: string }>(
+        "SELECT title FROM notes WHERE resource_id = ?",
+        resourceId,
+      ).one().title).toBe("Imported note");
     });
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.importWorkspaceProductRows({
@@ -1812,6 +2170,74 @@ describe("Durable Objects in the Workers runtime", () => {
         stage: "activity_events",
         rows: [activity],
       })).rejects.toThrow("workspace_product_import_not_active");
+    });
+  });
+
+  it("serves workspace product SQL locally and rejects a row for another workspace", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const connectionId = "00000000-0000-7000-8000-000000000423";
+    const insert = await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000424",
+      statements: [{
+        sql: `INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, status, cursor_json, config_json,
+           created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'github', 'workspace', NULL, NULL, 'Repository', '[]', 'healthy',
+                 '{}', '{}', '2026-08-18T20:00:00.000Z', '2026-08-18T20:00:00.000Z', ?)`,
+        params: [connectionId, WORKSPACE_ID, `github-${connectionId}`],
+      }],
+    });
+    expect(insert.status).toBe(200);
+    const receiptId = "00000000-0000-7000-8000-000000000428";
+    const receipt = await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000429",
+      statements: [{
+        sql: `INSERT INTO webhook_receipts
+          (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+         VALUES (?, ?, ?, 'signed-delivery',
+                 '2026-08-18T20:00:00.000Z', '2026-08-19T20:00:00.000Z')`,
+        params: [receiptId, WORKSPACE_ID, connectionId],
+      }],
+    });
+    expect(receipt.status).toBe(200);
+    const selected = await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000425",
+      statements: [{
+        sql: "SELECT id, display_name FROM connector_connections WHERE workspace_id = ?",
+        params: [WORKSPACE_ID],
+      }],
+    });
+    expect(JSON.parse(selected.bodyJson)).toMatchObject({
+      results: [{ rows: [{ id: connectionId, display_name: "Repository" }] }],
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ workspace_id: string }>(
+        "SELECT workspace_id FROM webhook_receipts WHERE id = ?",
+        receiptId,
+      ).one()).toEqual({ workspace_id: WORKSPACE_ID });
+    });
+    const mismatch = await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000426",
+      statements: [{
+        sql: `INSERT INTO external_user_identities
+          (id, workspace_id, user_id, provider, provider_tenant_id, provider_user_id,
+           verification_source, created_at, updated_at)
+         VALUES (?, ?, ?, 'github', 'tenant', 'provider-user', 'test',
+                 '2026-08-18T20:00:00.000Z', '2026-08-18T20:00:00.000Z')`,
+        params: ["00000000-0000-7000-8000-000000000427", WORKSTREAM_ID, USER_ID],
+      }],
+    });
+    expect(mismatch.status).toBe(409);
+    expect(JSON.parse(mismatch.bodyJson)).toMatchObject({
+      error: expect.stringContaining("workspace_identity_mismatch"),
     });
   });
 

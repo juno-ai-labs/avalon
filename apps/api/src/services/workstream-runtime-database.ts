@@ -206,16 +206,18 @@ class WorkstreamRuntimeDatabase implements D1Database {
   }
 
   async exec(query: string): Promise<D1ExecResult> {
-    const statements = query.split(";").map((entry) => entry.trim()).filter(Boolean);
-    const results = await Promise.all(statements.map((sql) => this.execute({
+    const statements = query.split(";").map((entry) => entry.trim()).filter(Boolean).map((sql) => ({
       sql,
-      params: [],
+      params: [] as RuntimeValue[],
       local: localStatement(sql),
-    })));
-    return {
-      count: results.length,
-      duration: 0,
-    } as D1ExecResult;
+    }));
+    const localCount = statements.filter((statement) => statement.local).length;
+    if (localCount !== 0 && localCount !== statements.length) {
+      throw new Error("workstream_runtime_cross_authority_transaction");
+    }
+    if (localCount === 0) return this.env.DB.exec(query);
+    await this.executeLocal(statements);
+    return { count: statements.length, duration: 0 } as D1ExecResult;
   }
 
   dump(): Promise<ArrayBuffer> {

@@ -21,6 +21,8 @@ import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
+import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 
 function workspaceTopicsForEffect(
   effect: WorkstreamRegionalEffectEnvelope["effect"],
@@ -93,10 +95,9 @@ export async function applyQueuedWorkspaceDirectoryEffect(
 
 /**
  * Apply one WorkstreamDO activity/mention effect to the regional delivery plane.
- * Activity commits idempotently in WorkspaceDO before its D1 delivery receipt;
- * a crash between those authorities retries the same event/dedupe identity.
- * Mention intent plus receipt remains one D1 transaction. Directory effects
- * never enter here.
+ * Product state commits idempotently in WorkspaceDO before the thin D1 Queue
+ * receipt; a crash between those authorities retries the same event or intent
+ * identity. Directory effects never enter here.
  */
 export async function applyWorkstreamRegionalEffect(
   env: Env,
@@ -228,7 +229,8 @@ export async function applyWorkstreamRegionalEffect(
         await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
         return { replayed: false, notificationIntentId: null };
       }
-      const existing = await env.DB.prepare(
+      const workspaceEnv = withWorkspaceRuntimeDatabase(env, message.workspaceId);
+      const existing = await workspaceEnv.DB.prepare(
         `SELECT intent_id, payload_hash FROM workstream_notification_intents
           WHERE intent_id = ?
              OR (source_message_id = ? AND recipient_user_id = ?
@@ -242,8 +244,7 @@ export async function applyWorkstreamRegionalEffect(
         existing
         && (existing.intent_id !== effect.intentId || existing.payload_hash !== message.payloadHash)
       ) throw new Error("workstream_effect_notification_id_conflict");
-      await env.DB.batch([
-        env.DB.prepare(
+      await workspaceEnv.DB.prepare(
           `INSERT INTO workstream_notification_intents
              (intent_id, workspace_id, workstream_id, recipient_user_id,
               source_message_id, source_generation, source_version,
@@ -267,9 +268,11 @@ export async function applyWorkstreamRegionalEffect(
           message.payloadHash,
           at,
           at,
-        ),
-        receiptStatement,
-      ]);
+        ).run();
+      // The regional receipt is only a Queue/control-plane acknowledgement.
+      // Product delivery state committed in WorkspaceDO first, so a crash here
+      // replays into the same intent rather than losing the notification.
+      await receiptStatement.run();
       await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: effect.intentId };
     }
@@ -279,8 +282,10 @@ export async function applyWorkstreamRegionalEffect(
 /** Resolve current regional identity/delivery state and execute one intent. */
 export async function processWorkstreamNotificationIntent(
   env: Env,
+  workspaceId: string,
   intentId: string,
 ): Promise<"delivered" | "skipped" | "busy"> {
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const leaseId = uuidV7();
   const at = nowIso();
   const claim = await env.DB.prepare(
@@ -301,27 +306,43 @@ export async function processWorkstreamNotificationIntent(
     const settled = await env.DB.prepare(
       `SELECT state FROM workstream_notification_intents WHERE intent_id = ?`,
     ).bind(intentId).first<{ state: string }>();
-    if (!settled || settled.state === "skipped") return "skipped";
-    return settled.state === "delivered" ? "delivered" : "busy";
+    if (!settled) return "skipped";
+    if (settled.state === "skipped") {
+      await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+      return "skipped";
+    }
+    if (settled.state === "delivered") {
+      // A prior delivery may have committed before scheduler refresh failed.
+      // Retrying the Queue item repairs that alarm edge without re-sending.
+      await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+      return "delivered";
+    }
+    return "busy";
   }
 
-  const row = await env.DB.prepare(
-      `SELECT intent.intent_id, intent.workspace_id, intent.workstream_id,
-            intent.recipient_user_id, intent.source_generation,
-            intent.required_directory_version, intent.payload_json,
-            user.email AS recipient_email, user.name AS recipient_name,
+  const intent = await env.DB.prepare(
+    `SELECT intent_id, workspace_id, workstream_id, recipient_user_id,
+            source_generation, required_directory_version, payload_json
+       FROM workstream_notification_intents
+      WHERE intent_id = ? AND workspace_id = ? AND lease_id = ?`,
+  ).bind(intentId, workspaceId, leaseId).first<Omit<
+    NotificationIntentRow,
+    "recipient_email" | "recipient_name" | "workspace_name"
+  >>();
+  const identity = intent ? await workspaceRegionalDatabase(env).prepare(
+    `SELECT user.email AS recipient_email, user.name AS recipient_name,
             workspace.name AS workspace_name
-       FROM workstream_notification_intents intent
-       JOIN users user ON user.id = intent.recipient_user_id
-       JOIN workspaces workspace ON workspace.id = intent.workspace_id
-       JOIN workspace_members member
-         ON member.workspace_id = intent.workspace_id
-        AND member.user_id = intent.recipient_user_id
-        AND member.status = 'active'
-      WHERE intent.intent_id = ? AND intent.lease_id = ?`,
-  ).bind(intentId, leaseId).first<NotificationIntentRow>();
+       FROM users user JOIN workspaces workspace ON workspace.id = ?
+       JOIN workspace_members member ON member.workspace_id = workspace.id
+        AND member.user_id = user.id AND member.status = 'active'
+      WHERE user.id = ?`,
+  ).bind(workspaceId, intent.recipient_user_id).first<Pick<
+    NotificationIntentRow,
+    "recipient_email" | "recipient_name" | "workspace_name"
+  >>() : null;
+  const row: NotificationIntentRow | null = intent && identity ? { ...intent, ...identity } : null;
   if (!row) {
-    await settleNotificationIntent(env, intentId, leaseId, "skipped");
+    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
     return "skipped";
   }
 
@@ -356,13 +377,13 @@ export async function processWorkstreamNotificationIntent(
     return "busy";
   }
   if (!viewer.listable) {
-    await settleNotificationIntent(env, intentId, leaseId, "skipped");
+    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
     return "skipped";
   }
 
   const effect = WorkstreamMentionNotificationEffectSchema.parse(JSON.parse(row.payload_json));
   if (effect.recipientUserId === effect.authorUserId) {
-    await settleNotificationIntent(env, intentId, leaseId, "skipped");
+    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
     return "skipped";
   }
   try {
@@ -388,7 +409,7 @@ export async function processWorkstreamNotificationIntent(
         region: env.AVALON_REGION,
       });
     }
-    await settleNotificationIntent(env, intentId, leaseId, "delivered");
+    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "delivered");
     return "delivered";
   } catch (error) {
     const code = error instanceof ApiError ? error.code : "notification_delivery_failed";
@@ -404,6 +425,7 @@ export async function processWorkstreamNotificationIntent(
 
 async function settleNotificationIntent(
   env: Env,
+  workspaceId: string,
   intentId: string,
   leaseId: string,
   state: "delivered" | "skipped",
@@ -416,6 +438,7 @@ async function settleNotificationIntent(
             delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE NULL END
       WHERE intent_id = ? AND lease_id = ?`,
   ).bind(state, at, state, at, intentId, leaseId).run();
+  await refreshWorkspaceSchedulerAlarm(env, workspaceId);
 }
 
 export async function acknowledgeWorkstreamRegionalEffect(
@@ -464,25 +487,35 @@ export async function reapSettledWorkstreamRegionalEffects(
 ): Promise<number> {
   const cutoff = new Date(Date.now() - REGIONAL_EFFECT_RECEIPT_RETENTION_MS).toISOString();
   const boundedLimit = Math.max(1, Math.min(limit, 1_000));
-  const results = await env.DB.batch([
-    env.DB.prepare(
-      `DELETE FROM workstream_regional_effect_receipts
-        WHERE message_id IN (
-          SELECT message_id FROM workstream_regional_effect_receipts
-           WHERE acknowledged_at IS NOT NULL AND acknowledged_at < ?
-           ORDER BY acknowledged_at, message_id LIMIT ?
-        )`,
-    ).bind(cutoff, boundedLimit),
-    env.DB.prepare(
-      `DELETE FROM workstream_notification_intents
-        WHERE intent_id IN (
-          SELECT intent_id FROM workstream_notification_intents
-           WHERE state IN ('delivered', 'skipped') AND updated_at < ?
-           ORDER BY updated_at, intent_id LIMIT ?
-        )`,
-    ).bind(cutoff, boundedLimit),
-  ]);
-  return results.reduce((total, result) => total + Number(result.meta.changes ?? 0), 0);
+  const result = await env.DB.prepare(
+    `DELETE FROM workstream_regional_effect_receipts
+      WHERE message_id IN (
+        SELECT message_id FROM workstream_regional_effect_receipts
+         WHERE acknowledged_at IS NOT NULL AND acknowledged_at < ?
+         ORDER BY acknowledged_at, message_id LIMIT ?
+      )`,
+  ).bind(cutoff, boundedLimit).run();
+  return Number(result.meta.changes ?? 0);
+}
+
+/** Reap terminal mention intents inside the one WorkspaceDO that owns them. */
+export async function reapSettledWorkspaceNotificationIntents(
+  env: Env,
+  workspaceId: string,
+  limit = 500,
+): Promise<number> {
+  const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const cutoff = new Date(Date.now() - REGIONAL_EFFECT_RECEIPT_RETENTION_MS).toISOString();
+  const boundedLimit = Math.max(1, Math.min(limit, 1_000));
+  const result = await workspaceEnv.DB.prepare(
+    `DELETE FROM workstream_notification_intents
+      WHERE intent_id IN (
+        SELECT intent_id FROM workstream_notification_intents
+         WHERE workspace_id = ? AND state IN ('delivered', 'skipped') AND updated_at < ?
+         ORDER BY updated_at, intent_id LIMIT ?
+      )`,
+  ).bind(workspaceId, cutoff, boundedLimit).run();
+  return Number(result.meta.changes ?? 0);
 }
 
 export async function loadWorkstreamRegionalEffect(

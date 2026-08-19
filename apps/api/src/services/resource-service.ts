@@ -27,6 +27,7 @@ function resourceTelemetryConnector(value: unknown):
 }
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -130,12 +131,16 @@ const DO_RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
 
 export class ResourceService {
   private connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
+  private readonly env: Env;
+  private readonly auth: AuthContext;
 
   constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
+    env: Env,
+    auth: AuthContext,
     connectorRegistry?: ReturnType<typeof connectorRegistryForEnv>,
   ) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+    this.auth = auth;
     this.connectorRegistry = connectorRegistry;
   }
 
@@ -280,7 +285,9 @@ export class ResourceService {
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-         AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
+         ${authority.phase === "durable_object_open"
+          ? ""
+          : "AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)"}
          ${authority.phase === "durable_object_open"
           ? ""
           : "AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)"}

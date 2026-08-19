@@ -27,6 +27,11 @@ or the New automation screen.
 | `apps/desktop/src/renderer/components/sidebar.tsx` | Sinks drafts below the automations that run and points their rows back at the builder. |
 | `packages/db/migrations/0065_automation_draft_conversation.sql` | `draft_conversation_json`, the saved transcript. |
 
+After the maintenance cutover, templates, versions, subscriptions, schedules,
+memory definitions, delivery targets, and automation-resource relationships are
+all WorkspaceDO rows. The services retain their repository shape through the
+typed workspace SQL adapter; D1 has no draft or automation serving projection.
+
 ## How it works
 
 ### A turn writes a draft
@@ -81,8 +86,9 @@ not authority on a later request.
 rather than inserting beside it: the template and version take the final draft's
 content, the subscription takes the chosen scope, principal, connector bindings,
 and model override, `status` becomes `active`, and `draft_conversation_json` is
-cleared. Schedules, memory tables, delivery targets, and resources are inserted
-in the same batch, and the email route is reserved and activated after it.
+cleared. Schedules, memory tables, delivery targets, and resource relationships
+are inserted in the same WorkspaceDO transaction, and the global email route is
+reserved and activated after it.
 
 The id therefore survives, which is the point: the sidebar row someone watched
 appear while they described the automation is the row that becomes the
@@ -262,6 +268,25 @@ creation, not at draft time.
 
 ## Changelog
 
+### 2026-08-18 — Draft and promotion state move into WorkspaceDO
+
+**What changed:** Automation templates/versions/subscriptions, draft
+conversation, schedules, memory definitions, resource relationships and frozen
+delivery targets now share the owning WorkspaceDO transaction. D1 is no longer
+an automation serving or fallback database.
+
+**Why:** Draft promotion intentionally changes several related workspace rows
+atomically. Keeping them in D1 split workspace product authority from the
+object that schedules, lists and invalidates them.
+
+**Considered and rejected:** A D1 projection and a separate AutomationDO per
+draft. Neither improves ownership, and the latter turns promotion into a
+distributed transaction.
+
+**Consequences:** The global inbound-email route remains a routing side effect
+after local commit, while the complete product lifecycle and retry evidence are
+WorkspaceDO-owned.
+
 ### 2026-08-13 — Automation authoring becomes a durable content-free funnel
 
 **What changed:** Builder entry, compiler turns, first create-ready state,
@@ -280,7 +305,6 @@ commits it.
 **Consequences:** Stable elicitation and draft IDs join the funnel without
 becoming authority. The server event owns successful creation and action state;
 current clients do not also emit the legacy completion contracts.
-
 ### 2026-08-12 — Draft manifests replace redundant resource pagination
 
 **What changed:** The automation architect exposes read, search, view, and

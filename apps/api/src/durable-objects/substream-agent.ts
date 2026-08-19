@@ -51,6 +51,7 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   fireWorkstreamWakeup,
   WorkstreamService,
@@ -1089,6 +1090,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
+      automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
     });
     const attemptId = uuidV7();
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {
@@ -1335,6 +1337,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const messages = outcome.messageId
       ? (await this.product.messagesForRuntime(250)).items
       : [];
@@ -1352,6 +1355,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,
+        input.workspaceId,
         input.digestDeliveryId,
         outcome.status,
         message?.textContent ?? null,
@@ -1368,7 +1372,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       outcome.status,
     );
     if (!input.automationSubscriptionId) return;
-    const automation = await this.env.DB.prepare(
+    const automation = await workspaceEnv.DB.prepare(
       `SELECT template.name FROM automation_subscriptions subscription
         JOIN automation_templates template ON template.id = subscription.template_id
        WHERE subscription.id = ? AND subscription.workspace_id = ?`,
@@ -1383,7 +1387,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     };
     const failures = (await Promise.allSettled([
       slack.deliverAutomationResult(result),
-      deliverAutomationResultEmail(this.env, result),
+      deliverAutomationResultEmail(workspaceEnv, result),
     ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
     for (const failure of failures) {
       logWarn(this.env, "automation_result_delivery_failed", {
@@ -1408,7 +1412,8 @@ export class SubstreamAgent extends DurableObject<Env> {
     ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ owned: number }>();
     if (!owned) throw new Error("automation_run_terminal_fence_missing");
     const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
-    await this.env.DB.prepare(
+    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
+    await workspaceEnv.DB.prepare(
       `UPDATE automation_runs
           SET status = ?1,
               completed_at = CASE WHEN ?1 IN ('completed', 'failed') THEN ?2 ELSE completed_at END,

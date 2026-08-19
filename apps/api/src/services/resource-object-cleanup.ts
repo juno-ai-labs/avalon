@@ -1,8 +1,10 @@
 import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const MAXIMUM_CLEANUP_BATCH = 100;
+const DRAFT_ATTACHMENT_TTL_HOURS = 24;
 
 interface PendingResourceObject {
   object_ref: string;
@@ -21,7 +23,9 @@ function boundedCleanupErrorCode(error: unknown): string {
   return "r2_delete_failed";
 }
 
-export async function reapDeletedResourceObjects(env: Env): Promise<void> {
+export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<void> {
+  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("resource_cleanup_workspace_required");
+  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const pending = await env.DB.prepare(
     `SELECT object_ref, workspace_id, resource_id, object_kind
      FROM resource_object_deletion_outbox
@@ -69,4 +73,35 @@ export async function reapDeletedResourceObjects(env: Env): Promise<void> {
       });
     }
   }
+}
+
+/** Remove unattached upload drafts from one WorkspaceDO; its SQL trigger queues R2 cleanup. */
+export async function reapExpiredDraftResources(env: Env, workspaceId: string): Promise<void> {
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const cutoff = new Date(
+    Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000,
+  ).toISOString();
+  const stale = await env.DB.prepare(
+    `SELECT id FROM resources resource
+      WHERE resource.workspace_id = ?
+        AND resource.provider = 'avalon_upload'
+        AND resource.attachment_status = 'draft'
+        AND resource.created_at < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM workspace_workstream_resource_links link
+           WHERE link.resource_id = resource.id
+        )
+      ORDER BY resource.created_at, resource.id
+      LIMIT ?`,
+  ).bind(workspaceId, cutoff, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
+  if (stale.results.length === 0) return;
+  await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
+    `DELETE FROM resources
+      WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
+        AND attachment_status = 'draft' AND created_at < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM workspace_workstream_resource_links link
+           WHERE link.resource_id = resources.id
+        )`,
+  ).bind(resource.id, workspaceId, cutoff)));
 }

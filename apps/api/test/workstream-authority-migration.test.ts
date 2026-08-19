@@ -13,9 +13,11 @@ import {
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import {
+  __workstreamAuthorityMigrationTesting,
   normalizeWorkstreamAuthoritySourceRow,
   workstreamAuthoritySourceQuery,
 } from "../src/services/workstream-authority-migration";
+import { WORKSPACE_PRODUCT_IMPORT_STAGES } from "../src/durable-objects/workspace-product-import";
 import {
   acceptsNewWorkstreamWork,
   requireWorkstreamIngress,
@@ -317,5 +319,86 @@ describe("the D1 to WorkstreamDO authority source", () => {
       source.close();
       target.close();
     }
+  });
+});
+
+describe("the D1 to WorkspaceDO authority source", () => {
+  it("keeps every workspace product import query executable against the current D1 schema", () => {
+    const database = migratedDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('workspace-source-user', 'workspace-source-subject',
+                'workspace-source@example.com', 'Workspace Source', '${AT}', '${AT}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('workspace-source', 'Workspace Source', 'workspace-source', 'global',
+                'workspace-source-user', '${AT}', '${AT}');
+      `);
+      for (const stage of WORKSPACE_PRODUCT_IMPORT_STAGES) {
+        expect(() => database.prepare(
+          __workstreamAuthorityMigrationTesting.workspaceProductSourceQuery(stage),
+        ).all("workspace-source", 0, 101), stage).not.toThrow();
+      }
+    } finally {
+      database.close();
+    }
+  });
+
+  it("translates historical connector events into stable WorkspaceDO payload identities", async () => {
+    const source = {
+      source_rowid: 17,
+      id: "00000000-0000-7000-8000-000000000601",
+      workspace_id: WORKSPACE_ID,
+      connection_id: "00000000-0000-7000-8000-000000000602",
+      connector_type: "github",
+      connection_scope: "workspace",
+      connection_owner_user_id: null,
+      provider: "github",
+      provider_event_id: "delivery-17",
+      event_type: "github.pull_request.edited",
+      resource_type: "github_pull_request",
+      provider_resource_id: "juno-ai-labs/avalon#17",
+      actor_json: '{"displayName":"Ada"}',
+      subject_json: '{"number":17}',
+      occurred_at: "2026-08-17T00:00:00.000Z",
+      received_at: "2026-08-17T00:00:01.000Z",
+      title: "Pull request edited",
+      summary: "Migration owns the event",
+      text_snippet: "WorkspaceDO",
+      payload_ref: "global/provider-webhooks/github/body.json",
+      visibility_json: "{}",
+      target_user_ids_json: `["${USER_ID}"]`,
+      entity_keys_json: '["github:pr:17"]',
+      dedupe_key: "github:delivery-17:edited",
+      raw_content_hash: "raw-hash",
+      metadata_json: "{}",
+      external_people_json: "[]",
+      processing_status: "processed",
+    };
+    const first = await __workstreamAuthorityMigrationTesting.productImportRow(
+      "workspace_connector_events",
+      source,
+      "global",
+    );
+    const replay = await __workstreamAuthorityMigrationTesting.productImportRow(
+      "workspace_connector_events",
+      {
+        ...source,
+        source_rowid: 18,
+        id: "00000000-0000-7000-8000-000000000603",
+        received_at: "2026-08-17T00:00:02.000Z",
+      },
+      "global",
+    );
+    expect(first).toMatchObject({
+      event_sequence: 17,
+      event_id: source.id,
+      connector_type: "github",
+      processing_status: "processed",
+      processing_attempt: 0,
+      processed_at: Date.parse(source.received_at),
+    });
+    expect(first.payload_hash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(replay.payload_hash).toBe(first.payload_hash);
   });
 });

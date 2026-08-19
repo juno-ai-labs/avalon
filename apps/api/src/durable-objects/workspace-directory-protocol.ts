@@ -52,6 +52,13 @@ export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
   userId: IdSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
+  after: IdSchema.optional(),
+  limit: z.number().int().min(1).max(250),
+}).strict();
+
+export const WorkspaceDirectoryVisibleIdsPageSchema = z.object({
+  items: z.array(IdSchema).max(250),
+  nextCursor: IdSchema.nullable(),
 }).strict();
 
 export const WorkspaceDirectoryExistsRequestSchema = z.object({
@@ -177,6 +184,8 @@ export const WorkspaceDirectoryFeedbackRequestSchema = z.object({
   workspaceId: IdSchema,
   source: z.enum(["contextual_routing", "suggested_work"]),
   since: TimestampSchema,
+  provider: z.string().min(1).max(120),
+  eventType: z.string().min(1).max(160),
 }).strict();
 
 export const WorkspaceDirectoryFeedbackResultSchema = z.object({
@@ -249,6 +258,7 @@ export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryLis
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
+export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
 export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;
 export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectoryPlannedRequestSchema>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
 
@@ -502,6 +503,7 @@ export async function memorySearch(
   input: WorkstreamWorkflowInput,
   query: string,
 ): Promise<MemorySearchResult> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const parsed = SearchInputSchema.parse({ query });
   if (!("query" in parsed)) throw new Error("memory_search_query_expected");
   const result = await hybridMemorySearch(env, input, parsed.query);
@@ -557,6 +559,7 @@ export async function freezeRunMemoryContext(
   lease: MemoryRunLease,
   rawQuery: string,
 ): Promise<FrozenMemoryContext> {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const query = rawQuery.trim() || "Current work-stream objective and trigger";
   const existing = await env.DB.prepare(
     `SELECT context.memory_scope_ids_json, context.query_text, context.retrieval_mode,
@@ -1000,6 +1003,7 @@ async function invalidateMemory(
 }
 
 export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   return [
     {
       definition: {
@@ -1202,7 +1206,13 @@ async function projectOutboxRow(env: Env, row: OutboxRow): Promise<void> {
 }
 
 /** Replay the transactional embedding outbox. Safe for concurrent cron workers. */
-export async function processMemoryIndexOutbox(env: Env, limit = 50): Promise<number> {
+export async function processMemoryIndexOutbox(
+  env: Env,
+  limit = 50,
+  workspaceId?: string,
+): Promise<number> {
+  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("memory_index_workspace_required");
+  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   if (!env.AI || !env.MEMORY_INDEX) return 0;
   const now = nowIso();
   const rows = await env.DB.prepare(

@@ -9,6 +9,7 @@ import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
@@ -402,7 +403,7 @@ export class ResendRegionalEmailService {
   private readonly publish: NonNullable<ResendRegionalEmailServiceOptions["publish"]>;
 
   constructor(
-    private readonly env: Env,
+    private env: Env,
     options: ResendRegionalEmailServiceOptions = {},
   ) {
     this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
@@ -425,6 +426,7 @@ export class ResendRegionalEmailService {
     if (configuredAddress !== parsed.emailAddress.toLowerCase()) {
       throw new ApiError(409, "email_route_mismatch", "The inbound-email address does not match this service");
     }
+    this.env = withWorkspaceRuntimeDatabase(this.env, parsed.workspaceId);
     const targetType = parsed.targetType ?? (parsed.automationSubscriptionId ? "automation" : "workstream");
     const baseInput = {
       resendEmailId: parsed.resendEmailId,

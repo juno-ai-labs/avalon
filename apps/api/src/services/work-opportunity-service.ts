@@ -29,6 +29,7 @@ import { logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
 import { WorkstreamService } from "./workstream-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { withWorkspaceRuntimeDatabase, workspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const MAX_BATCH_EVENTS = 16;
 const MAX_BATCH_CHARACTERS = 24_000;
@@ -442,12 +443,13 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
     : null;
   if (event.source_kind === "activity") {
     if (workspace) {
+      const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
       const durable = WorkspaceConnectorEventSchema.nullable().parse(
         await workspace.connectorEvent({ workspaceId, eventId: event.source_id }),
       );
       if (!durable) return null;
       const activity = durable.activity;
-      const connection = await env.DB.prepare(
+      const connection = await workspaceEnv.DB.prepare(
         `SELECT provider_account_id FROM connector_connections
           WHERE id = ? AND workspace_id = ? LIMIT 1`,
       ).bind(activity.connectionId, workspaceId).first<{ provider_account_id: string | null }>();
@@ -463,7 +465,7 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
         && activity.resourceType !== null
       ) {
         try {
-          const hydrated = await hydrateConnectorActivitySource(env, {
+          const hydrated = await hydrateConnectorActivitySource(workspaceEnv, {
             workspaceId,
             connectionId: activity.connectionId,
             providerResourceId: activity.providerResourceId,
@@ -703,6 +705,9 @@ function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }
 }
 
 async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Promise<void> {
+  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") {
+    env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  }
   const [connections, slackLinks] = await Promise.all([
     env.DB.prepare(
       `SELECT connector_type, owner_user_id, provider_account_id, config_json
@@ -840,7 +845,7 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
       `SELECT u.id, u.name, u.email FROM workspace_members wm JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = ? AND wm.status = 'active' ORDER BY u.name LIMIT 250`,
     ).bind(window.workspace_id).all<{ id: string; name: string; email: string }>(),
-    env.DB.prepare(
+    workspaceRuntimeDatabase(env, window.workspace_id).prepare(
       `SELECT user_id, provider, provider_tenant_id, provider_user_id, handle, email, display_name
        FROM external_user_identities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1000`,
     ).bind(window.workspace_id).all<Record<string, unknown>>(),
@@ -1181,7 +1186,7 @@ async function persistDecision(
         ? requestedUserId
         : null;
       const verifiedIdentity = resolution === "verified" && userId
-        ? await env.DB.prepare(
+        ? await workspaceRuntimeDatabase(env, window.workspace_id).prepare(
           `SELECT id, provider, provider_tenant_id FROM external_user_identities
             WHERE workspace_id = ? AND user_id = ? AND provider = ? AND provider_tenant_id = ?
             ORDER BY updated_at DESC LIMIT 1`,
@@ -1378,7 +1383,7 @@ async function persistDecision(
     }
     if (mentionNodeId && storedUserId) {
       const verifiedMapping = resolution === "verified"
-        ? await env.DB.prepare(
+        ? await workspaceRuntimeDatabase(env, window.workspace_id).prepare(
           `SELECT id, provider, provider_tenant_id FROM external_user_identities
            WHERE workspace_id = ? AND user_id = ? AND provider = ? AND provider_tenant_id = ?
            ORDER BY updated_at DESC LIMIT 1`,

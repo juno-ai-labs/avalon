@@ -270,7 +270,14 @@ export class WorkspaceProductStorage {
         input.windowId,
         input.leaseId,
       ).toArray()[0];
-      if (!lease) throw new Error("opportunity_window_lease_fenced");
+      if (!lease) {
+        const settled = this.storage.sql.exec<{ status: string }>(
+          `SELECT status FROM opportunity_batch_windows WHERE window_id = ?`,
+          input.windowId,
+        ).toArray()[0];
+        if (settled?.status === "completed") return;
+        throw new Error("opportunity_window_lease_fenced");
+      }
       const placeholders = input.eventIds.map(() => "?").join(",");
       const status = input.outcome === "missing" ? "completed" : input.outcome;
       this.storage.sql.exec(
@@ -293,12 +300,13 @@ export class WorkspaceProductStorage {
     this.storage.transactionSync(() => {
       const sql = this.storage.sql;
       const window = sql.exec<WindowRow>(
-        `SELECT * FROM opportunity_batch_windows
-          WHERE window_id = ? AND lease_id = ? AND status = 'processing'`,
+        `SELECT * FROM opportunity_batch_windows WHERE window_id = ?`,
         input.windowId,
-        input.leaseId,
       ).toArray()[0];
-      if (!window) throw new Error("opportunity_window_lease_fenced");
+      if (window?.status === "completed") return;
+      if (!window || window.status !== "processing" || window.lease_id !== input.leaseId) {
+        throw new Error("opportunity_window_lease_fenced");
+      }
       const failed = sql.exec<{ batch_event_id: string; occurred_at: number }>(
         `SELECT batch_event_id, occurred_at FROM opportunity_batch_events
           WHERE window_id = ? AND status = 'failed' AND attempt_count < 3

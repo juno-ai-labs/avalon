@@ -9,6 +9,7 @@ vi.mock("../src/services/structured-inference", () => ({ runStructuredInference 
 
 import type { Env } from "../src/env";
 import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
+import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -246,6 +247,76 @@ function suggestionCount(database: DatabaseSync): number {
 }
 
 describe("connector event Queue boundary", () => {
+  it("admits a post-cutover Queue event without a D1 activity-body handoff", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    const activityId = "00000000-0000-7000-8000-0000000000e1";
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const body = await workspaceConnectorEventQueueMessage({
+      connectorType: "github",
+      activity: {
+        id: activityId,
+        workspaceId: WORKSPACE,
+        region: "global",
+        connectionId: CONNECTION,
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "github",
+        providerEventId: "delivery-post-cutover",
+        eventType: NEWS,
+        resourceType: "github_pull_request",
+        providerResourceId: "juno-ai-labs/avalon#8",
+        actor: {},
+        subject: {},
+        occurredAt: "2026-08-11T11:30:00.000Z",
+        receivedAt: "2026-08-11T11:30:01.000Z",
+        title: "Review requested",
+        summary: "A normalized event travels in Queue",
+        textSnippet: "No D1 staging row",
+        payloadRef: "global/provider-webhooks/github/body.json",
+        visibility: {},
+        targetUserIds: [],
+        entityKeys: ["github:pr:8"],
+        dedupeKey: "github:delivery-post-cutover",
+        rawContentHash: "body-hash",
+        metadata: {},
+        externalPeople: [],
+      },
+    });
+    const message = {
+      id: "workspace-connector-event",
+      timestamp: new Date("2026-08-11T11:30:02.000Z"),
+      body,
+      attempts: 1,
+      ack,
+      retry,
+    } satisfies Message<unknown>;
+
+    await consumeActivityQueue({
+      messages: [message],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get())
+      .toEqual({ count: 0 });
+    expect(env.CONNECTOR_EVENT_WORKFLOW.create).toHaveBeenCalledWith({
+      id: `connector-event:${activityId}:0`,
+      params: {
+        region: "global",
+        workspaceId: WORKSPACE,
+        eventId: activityId,
+        workflowInstanceId: `connector-event:${activityId}:0`,
+        attempt: 0,
+      },
+    });
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
   it("commits to WorkspaceDO and starts a Workflow without processing the event in the Queue consumer", async () => {
     const database = seededDatabase();
     const env = envFor(database);

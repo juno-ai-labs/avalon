@@ -1,4 +1,4 @@
--- Notion issues one redirect URI and one webhook subscription per public
+-- Shared Notion ingress uses one redirect URI and one webhook subscription per public
 -- connection, so both regions share a single connection reached through the
 -- Global ingress. Global retains only the minimum Notion-workspace-to-region
 -- directory needed to hand exact signed bytes, and the authorization code, to

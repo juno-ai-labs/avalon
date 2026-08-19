@@ -9,6 +9,7 @@ import { ApiError } from "../lib/api-error";
 import { RPC_BATCH_LIMIT } from "../lib/rpc-contracts";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const MAX_ADDRESS_RESERVATION_ATTEMPTS = 1_024;
 /** One bound for both sides of the bridge. See `RPC_BATCH_LIMIT`. */
@@ -163,6 +164,7 @@ export class WorkstreamEmailRoutingService {
 
   async ensureAutomationAddress(input: AutomationEmailRouteInput): Promise<AutomationEmailRoute> {
     this.assertAutomationRegionalOwner(input);
+    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
     const current = await this.loadLocalAutomationEmailRow(input);
     // Always consult the authoritative Global registry. This heals a missing
     // route after a registry restore instead of trusting only the regional
@@ -172,7 +174,7 @@ export class WorkstreamEmailRoutingService {
       throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
     }
     if (!current.email_address) {
-      await this.env.DB.prepare(
+      await workspaceDatabase.prepare(
         `UPDATE automation_subscriptions
          SET email_address = ?, email_route_status = 'reserved', updated_at = ?
          WHERE id = ? AND workspace_id = ? AND email_address IS NULL`,
@@ -187,7 +189,7 @@ export class WorkstreamEmailRoutingService {
       await this.setAutomationStatuses([{ ...input, status: storedDesiredStatus }]);
     }
     if (stored.email_route_status !== storedDesiredStatus) {
-      const updated = await this.env.DB.prepare(
+      const updated = await workspaceDatabase.prepare(
         `UPDATE automation_subscriptions SET email_route_status = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ? AND email_address = ? COLLATE NOCASE`,
       ).bind(storedDesiredStatus, nowIso(), input.automationSubscriptionId, input.workspaceId, route.emailAddress).run();
@@ -218,11 +220,13 @@ export class WorkstreamEmailRoutingService {
     const at = nowIso();
     const missingReservations = reservations.filter((route, index) => !initial[index]!.email_address);
     if (missingReservations.length > 0) {
-      await this.env.DB.batch(missingReservations.map((route) => this.env.DB.prepare(
+      await Promise.all(missingReservations.map((route) => this.workspaceDatabase(
+        route.workspaceId,
+      ).prepare(
         `UPDATE automation_subscriptions
          SET email_address = ?, email_route_status = 'reserved', updated_at = ?
          WHERE id = ? AND workspace_id = ? AND email_address IS NULL`,
-      ).bind(route.emailAddress, at, route.automationSubscriptionId, route.workspaceId)));
+      ).bind(route.emailAddress, at, route.automationSubscriptionId, route.workspaceId).run()));
     }
     const stored = await this.loadLocalAutomationEmailRows(inputs);
     const routes = inputs.map((input, index) => {
@@ -244,12 +248,18 @@ export class WorkstreamEmailRoutingService {
     if (statusChanges.length > 0) {
       await this.setAutomationStatuses(statusChanges);
       const desiredByDestination = new Map(statusChanges.map((item) => [automationDestinationKey(item), item.status]));
-      await this.env.DB.batch(routes.flatMap((route) => {
+      await Promise.all(routes.flatMap((route) => {
         const desiredStatus = desiredByDestination.get(automationDestinationKey(route));
-        return desiredStatus ? [this.env.DB.prepare(
+        return desiredStatus ? [this.workspaceDatabase(route.workspaceId).prepare(
           `UPDATE automation_subscriptions SET email_route_status = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ? AND email_address = ? COLLATE NOCASE`,
-        ).bind(desiredStatus, nowIso(), route.automationSubscriptionId, route.workspaceId, route.emailAddress)] : [];
+        ).bind(
+          desiredStatus,
+          nowIso(),
+          route.automationSubscriptionId,
+          route.workspaceId,
+          route.emailAddress,
+        ).run()] : [];
       }));
     }
     return routes.map((route, index) => ({
@@ -610,7 +620,7 @@ export class WorkstreamEmailRoutingService {
   }
 
   private async loadLocalAutomationEmailRow(input: AutomationEmailRouteInput): Promise<LocalAutomationEmailRow> {
-    const row = await this.env.DB.prepare(
+    const row = await this.workspaceDatabase(input.workspaceId).prepare(
       `SELECT email_address, email_route_status, status, lifecycle_state
        FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
     ).bind(input.automationSubscriptionId, input.workspaceId).first<LocalAutomationEmailRow>();
@@ -619,15 +629,20 @@ export class WorkstreamEmailRoutingService {
   }
 
   private async loadLocalAutomationEmailRows(inputs: AutomationEmailRouteInput[]): Promise<LocalAutomationEmailRow[]> {
-    const results = await this.env.DB.batch(inputs.map((input) => this.env.DB.prepare(
+    const rows = await Promise.all(inputs.map((input) => this.workspaceDatabase(
+      input.workspaceId,
+    ).prepare(
       `SELECT email_address, email_route_status, status, lifecycle_state
        FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.automationSubscriptionId, input.workspaceId)));
-    return results.map((result) => {
-      const row = result.results[0] as LocalAutomationEmailRow | undefined;
+    ).bind(input.automationSubscriptionId, input.workspaceId).first<LocalAutomationEmailRow>()));
+    return rows.map((row) => {
       if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");
       return row;
     });
+  }
+
+  private workspaceDatabase(workspaceId: string): D1Database {
+    return withWorkspaceRuntimeDatabase(this.env, workspaceId).DB;
   }
 
   private mapRoute(row: RouteRow): WorkstreamEmailRoute {

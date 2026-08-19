@@ -67,7 +67,7 @@ interface LocalResourceLink extends Record<string, unknown> {
 /**
  * Resolve the cross-authority resource projection without a cross-database
  * join. Work-stream membership/watch state comes from the WorkstreamDO; the
- * workspace-owned resource and note authorization come from regional D1.
+ * workspace-owned resource and note authorization come from WorkspaceDO.
  */
 async function loadVisibleRows(
   database: D1Database,
