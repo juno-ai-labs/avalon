@@ -61,6 +61,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
@@ -292,12 +293,18 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       (drain) => this.state.waitUntil(drain),
     );
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      withMigrationReport({
+        state,
+        env,
+        component: "block_dashboard_block_agent",
+        className: "BlockDashboardAgent",
+        latestVersion: latestMigrationVersion(BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
         component: "block_dashboard_block_agent",
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
       // Whatever leases survive belong to the isolate this one replaced, so
       // the runs they cover are recoverable now rather than at expiry.
       releaseAgentRunDispatchLeases(
