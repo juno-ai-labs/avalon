@@ -102,10 +102,15 @@ navigation row (`--row-pad`, `--row-leading`, `--row-hint-gap`,
 `--row-height-dense`) and the band its group label sits in (`--label-height`,
 `--label-gap`), the fill behind a
 person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`) and where that
-turn sits (`--turn-align`, `--turn-margin`, `--turn-width`), type (`--font-*`,
-`--text-base`, `--leading-base`, `--weight-strong`, and the four `--label-*`
-properties that decide whether a section heading is sentence case or letterspaced
-small capitals), depth (`--shadow-*`, `--scrim*`, `--ring*`), and a handful of
+turn sits (`--turn-align`, `--turn-margin`, `--turn-width`), type — the families (`--font-*`), the
+document's own size and leading (`--text-base`, `--leading-base`), the sizes the
+interface actually sets (`--text-prose`, `--text-row`, `--text-hint`,
+`--text-action`, `--text-meta`, `--text-author`, `--text-feed-author`,
+`--text-title`), the weights (`--weight-strong`, `--weight-heading`,
+`--weight-emphasis`, `--weight-feed-author`), and the four `--label-*`
+properties that decide whether a label is sentence case or letterspaced small
+capitals — which apply to the label over a turn in the feed as well as the one
+over a group of navigation rows, depth (`--shadow-*`, `--scrim*`, `--ring*`), and a handful of
 things that oppose the theme on purpose: `--tooltip-bg`, `--tooltip-ink`,
 `--ink-on`, `--ink-hover`, `--toggle-track`, `--toggle-knob-off`. A tooltip is
 light on a dark theme and dark on a light one, so it cannot be a ramp step in
@@ -278,6 +283,42 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-19 — The type scale became themeable, and Airy went larger and lighter
+
+**What changed:** The sizes the interface sets are tokens rather than numbers in
+rules — prose, navigation row and hint, primary action, timestamp, author label,
+and screen title — along with three weights beside the existing
+`--weight-strong`. Airy runs prose at 16.5px against 14px and pulls every weight
+back: headings to 480, emphasis to 500, `--weight-strong` from 500 to 450. Its
+author label also picks up `--label-transform` and `--label-tracking`, so
+"Avalon" over a turn renders as letterspaced capitals the way a group label in
+the navigation does.
+
+**Why:** Asked for, and the reference carries its hierarchy with size and
+letterspacing rather than with boldness — which the theme could not express while
+the sizes were literals. Reusing the `--label-*` properties on the feed's author
+was the part worth finding: it is the same kind of object as a navigation group
+label, so a theme that asks for small capitals gets them in both places without
+saying so twice.
+
+**Considered and rejected:** Giving the work-stream feed its own author size and
+weight tokens *in addition* to the base ones. The feed already overrode the base
+rule with literals, and four tokens for one label is more vocabulary than the
+distinction earns; two (`--text-feed-author`, `--weight-feed-author`) keep the
+feed's deliberately smaller label without duplicating the whole family.
+
+**Consequences, and a limit on how this was checked:** The renderer names `Inter`
+but does not bundle it, so weight resolves against whatever the platform
+substitutes. On macOS that is SF Pro, which is variable and honours 450 and 480
+distinctly. In the Linux sandbox the substitute has two weights — everything at
+or below 500 renders identically and 560 upward renders bold — so **the weights
+here were verified as computed values, not as rendered glyphs**, and the sizes
+are the only half a screenshot from CI or a sandbox can confirm. Anyone retuning
+them should look on a Mac. Bundling the named family would remove the caveat and
+is the obvious next step if type keeps moving.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — The navigation's own vertical rhythm became themeable
 
