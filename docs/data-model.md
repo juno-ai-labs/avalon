@@ -723,7 +723,7 @@ WorkspaceDO and SubstreamAgent.
 first-party activity log/targets and the complete work-opportunity lifecycle:
 batch windows, opportunity records, provenance graph, user links/resolutions,
 rankings, impressions/dismissals, and immutable start snapshots. D1 migration
-`0081` adds only a maintenance import ledger and permanent writer fences for the
+`0082` adds only a maintenance import ledger and permanent writer fences for the
 legacy source table shells. Route activation atomically scrubs imported rows;
 only redacted opportunity ID anchors needed by the unshipped D1 workstream
 foreign key survive. Opportunity-start RPCs return authorized activity roots
@@ -1012,7 +1012,7 @@ without becoming work-stream product authority.
 
 **What changed:** The map now distinguishes workspace/control/projection tables
 that remain in D1 from normalized product tables owned by one WorkstreamDO after
-the maintenance generation opens. D1 migration `0077` records the phase/routes
+the maintenance generation opens. D1 migration `0078` records the phase/routes
 and permanently fences the legacy product tables after open.
 
 **Why:** The physical copy and the authority switch are separate facts. Without

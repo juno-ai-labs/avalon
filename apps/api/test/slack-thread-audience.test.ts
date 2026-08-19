@@ -235,12 +235,21 @@ function service(
       create: vi.fn(async () => ({ id: "workflow-instance" })),
     },
     ...(roomEvents ? {
-      WORKSTREAM_ROOMS: createCloudflareTestBinding<DurableObjectNamespace>({
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
+        jurisdiction: () => createCloudflareTestBinding<DurableObjectNamespace>({
+          idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
+          get: vi.fn(() => ({
+            publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
+              roomEvents.push(input.event);
+              return { status: 204, bodyJson: "null" };
+            }),
+          })),
+        }),
         idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
         get: vi.fn(() => ({
-          fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-            roomEvents.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-            return new Response(null, { status: 204 });
+          publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
+            roomEvents.push(input.event);
+            return { status: 204, bodyJson: "null" };
           }),
         })),
       }),

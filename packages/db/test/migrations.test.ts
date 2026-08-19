@@ -63,7 +63,7 @@ describe("database migrations", () => {
   });
 
   it("backfills and maintains the minimal connector ingress directory", () => {
-    const database = migrateDatabaseThrough("0080_workspace_durable_object_placement_affinity.sql");
+    const database = migrateDatabaseThrough("0081_workspace_durable_object_placement_affinity.sql");
     try {
       database.exec(`
         INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -87,7 +87,7 @@ describe("database migrations", () => {
            '2026-08-18', '2026-08-18');
       `);
       database.exec(readFileSync(
-        new URL("../migrations/0081_workspace_product_do_authority.sql", import.meta.url),
+        new URL("../migrations/0082_workspace_product_do_authority.sql", import.meta.url),
         "utf8",
       ));
 
