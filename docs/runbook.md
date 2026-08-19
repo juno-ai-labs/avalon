@@ -372,6 +372,76 @@ the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
 events, unexpected `dry-run` production reports, a non-five retained set, or any
 copy/delete count that does not match the plan.
 
+### The Durable Object migration tracker
+
+`avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
+at `migrations.internal.with-avalon.com` and receives a migration report from
+every Durable Object in both API Workers.
+[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
+owns the design; this is the provisioning and deployment procedure.
+
+**Deploy it before either API Worker.** Both regional Wrangler files carry a
+`MIGRATION_TRACKER` service binding, and Wrangler fails a deploy whose service
+binding names a script that does not exist. The binding is optional at runtime,
+so an API Worker deployed before the tracker existed keeps working and simply
+reports nothing.
+
+```text
+pnpm deploy:migration-tracker
+pnpm deploy:global
+pnpm deploy:eu
+```
+
+It needs no D1 database, R2 bucket, or Queue: its entire store is the
+`MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
+one-time steps are required outside the repository.
+
+**1. The hostname.** `migrations.internal.with-avalon.com` is declared as a
+custom domain in `wrangler.jsonc`; the `with-avalon.com` zone must be able to
+resolve it, and the deploy provisions the route.
+
+**2. Cloudflare Access.** In Zero Trust, add **Google** as a login method, then
+create a self-hosted application for that hostname with an Allow policy whose
+include rule is `Emails ending in @with-avalon.com`. Copy the application's
+**Application Audience (AUD) tag** into `ACCESS_APPLICATION_AUD` in
+`wrangler.jsonc`, and confirm `ACCESS_TEAM_DOMAIN` matches the team domain. The
+Worker verifies the assertion itself on every request, so the site refuses all
+traffic until both values are set — an unconfigured deployment is unreachable
+rather than open. Widening access is a policy change in Zero Trust plus a change
+to `ACCESS_ALLOWED_EMAIL_DOMAINS`; both are required, and the Worker is the one
+that fails closed.
+
+**3. A read-only Cloudflare API token.** The hourly sweep enumerates Durable
+Object namespaces and object IDs. Set `CLOUDFLARE_ACCOUNT_ID` in
+`wrangler.jsonc` and the token as a secret:
+
+```text
+pnpm --filter @avalon/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
+```
+
+Grant it **Account · Workers Scripts · Read** and nothing else. Without it the
+site still works and reports still arrive; the sweep logs
+`migration_inventory_sweep_skipped` and no object is ever discovered before it
+first wakes.
+
+Before deploying a change, run:
+
+```text
+pnpm --filter @avalon/migration-tracker test
+pnpm --filter @avalon/migration-tracker typecheck
+pnpm --filter @avalon/migration-tracker build
+```
+
+Locally, `pnpm dev:migrations` serves the site on port 8790 from
+`wrangler.dev.jsonc`, the one configuration that sets `APP_ENV=development` and
+`MIGRATION_TRACKER_DEV_AUTH=true`. Cloudflare Access does not stand in front of
+a local Wrangler, and the bypass is honoured in no other environment.
+
+After deployment, watch `migration_inventory_sweep_completed` for a `partial`
+status — it names the namespaces whose listing was truncated or failed — and
+`migration_report_recorded` at `error` level, which is a Durable Object whose
+migration threw and which the site lists under **Open failures**.
+
 For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
 configuration, deploy, and inspect one scheduled plan before authorizing live
 mode. Do not run ad hoc deletion commands while the scheduled Worker is enabled.

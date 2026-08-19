@@ -57,6 +57,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const SCHEDULER_RETRY_BASE_MS = 60_000;
@@ -243,12 +244,18 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      withMigrationReport({
+        state,
+        env,
+        component: "workspace_scheduler",
+        className: "WorkspaceScheduler",
+        latestVersion: latestMigrationVersion(WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS,
         component: "workspace_scheduler",
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
     });
   }
 
