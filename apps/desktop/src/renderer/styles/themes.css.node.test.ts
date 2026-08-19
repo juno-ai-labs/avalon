@@ -125,6 +125,35 @@ describe('no colour is written into app.css', () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * The navigation's width and the room it occupies are different numbers.
+   *
+   * `--sidebar-width` is the floating panel; `--sidebar-slot` is that plus the
+   * gutter on either side of it. A rule that sits beside the navigation and
+   * measures the width overlaps the panel by twice the inset — 16px, which
+   * reads as a rendering glitch rather than as a layout bug, and only in themes
+   * whose inset is non-zero. Two places may name the width: the derivation
+   * itself, and the panel's own `width`.
+   */
+  it('measures the navigation slot rather than the panel width', () => {
+    const offenders = app
+      .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+      .split('\n')
+      .filter((line) => line.includes('var(--sidebar-width)'))
+      .filter((line) => !line.includes('--sidebar-slot:') && !/^\s*width: var\(--sidebar-width\);/u.test(line))
+      .map((line) => line.trim().slice(0, 80));
+
+    expect(offenders).toEqual([]);
+  });
+
+  // The derivation has to live where the resize handle writes the width, or it
+  // freezes at the default and nothing looks wrong until someone drags.
+  it('derives the slot on the element the resize handle writes to', () => {
+    const shell = app.slice(app.indexOf('.workspace-shell {'), app.indexOf('}', app.indexOf('.workspace-shell {')));
+
+    expect(shell).toContain('--sidebar-slot:');
+  });
+
   // The guard has to be able to see one, or it is asserting that its own
   // regular expressions are broken.
   it('would catch a colour that came back', () => {
