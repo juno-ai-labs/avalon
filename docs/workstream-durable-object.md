@@ -958,6 +958,34 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The scrub's SET NULL cascades are admitted too
+
+**What changed:** Migration 0088 adds `maintenance_verified` to the update
+fences of the eight tables an `ON DELETE SET NULL` reference can reach from a
+table the scrub deletes: `automation_runs`, `connector_oauth_attempts`,
+`resources`, `sandbox_tasks`, `tool_invocations`,
+`work_opportunity_user_links`, `workstream_sandboxes`, and `workstreams`.
+
+**Why:** 0087 admitted the scrub's `ON DELETE CASCADE` deletions and stopped
+there, which covered only half of what a foreign key does on delete. A
+`SET NULL` reference makes SQLite issue an UPDATE against the child, and no
+update fence admitted a phase past draining — so activation aborted with the
+same `workspace_do_authoritative` on the same statement, after every route had
+imported and verified for a second time.
+
+**What a future change has to respect:** a fence's insert, update, and delete
+arms are not interchangeable, and the scrub needs whichever arm the foreign key
+happens to fire. A new reference onto a fenced table has to relax the matching
+arm — `ON DELETE CASCADE` the delete, `ON DELETE SET NULL` the update — or it
+stops activation rather than import, which is the most expensive place to fail.
+Inserts stay refused throughout, and every fence still refuses both updates and
+deletes once the region is open.
+
+**Considered and rejected:** dropping the `SET NULL` references so the scrub
+only ever deletes (they exist so a disconnected connector leaves its history
+readable), and relaxing every update fence rather than the eight reachable ones
+(a fence that nothing can legitimately fire should stay shut).
+
 ### 2026-08-20 — The verified scrub can finish: cascades admitted, and one statement corrected
 
 **What changed:** Migration 0087 adds `maintenance_verified` to the 34 work-stream
