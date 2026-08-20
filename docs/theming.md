@@ -279,6 +279,35 @@ theme reaching for `background-size: cover` should be able to write exactly
 that. What the theme file adds is the single step it cannot write by hand —
 turning artwork into something a `url()` can carry.
 
+### One mark, two shapes
+
+A navigation row carries one mark at its leading edge. Its **shape** is the
+theme's — `cmp.marker.*` — and its **colour** stays the row's state. Holding
+those two apart is what lets Airy flatten `cmp.row.background-selected` to
+`transparent` and mark selection with a line instead, without the navigation
+losing what the dot was saying: which stream needs an answer, and which one is
+running.
+
+The mark stretches between `cmp.marker.inset-block` and the row rather than
+carrying a height, because that one mechanism describes both shapes — a centred
+dot is `calc(50% - 3px)`, a line is however far in from the row's edges the theme
+wants it to start. A height token would have needed a second rule for the shape
+it could not express.
+
+### A card, or a rule
+
+The composer is built from one set of tokens either way. A card sets
+`cmp.composer.background`, `border-color` and `radius`; a rule sets those to
+nothing and gives `rule-color` a hairline, so the composer reads as a line the
+page rests on rather than a box floating over it. Airy takes the second.
+
+`rule-color-focus` exists because of what the first shape hides: once the border
+is gone, the rule turning warm is the only thing left saying the field is live.
+A theme that flattens the frame has to say what focus looks like.
+
+`send-background` follows the same frame. A flat composer carrying a raised
+button reads as two surfaces disagreeing about which one the page is.
+
 ### The navigation is translucent
 
 `--av-cmp-sidebar-background` is a translucent tint rather than an opaque colour,
@@ -386,6 +415,8 @@ next report.
 - **The renderer never names a remote font host.** It names
   `avalon-font://cache/<id>.woff2`; the main process is the only thing that
   fetches. A stylesheet pointing at `https://` is a per-launch beacon.
+- **A row's mark keeps its state colour.** A theme may reshape it; a theme that
+  recoloured it would be a theme that removed information.
 - **The backdrop is painted once.** Only `.workspace-shell` and the Settings
   miniature may name `--av-sys-backdrop-image`; anything else that paints it
   draws a second copy of one gradient and shows a seam where the two disagree.
@@ -476,7 +507,44 @@ Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — A theme may bring fonts and a document that moves
+### 2026-08-20 — The navigation marks selection with a line, and the composer is a rule
+
+**What changed:** two component shapes became a theme's decision.
+
+*The row mark.* `cmp.marker.*` describes the mark at a row's leading edge, and
+`cmp.row.background-selected` describes the fill behind a selected row. Airy sets
+the fill to `transparent` and the mark to a 2px line; dark and light keep a dot
+and a fill. Nothing else moved.
+
+**Why one element rather than two.** The design shows a line where the
+application had a status dot, and the obvious reading — delete the dot, add a
+selection bar — loses information: the dot says which stream needs an answer and
+which is running, and selection is already carried by the title's weight. So the
+mark stayed one element with its *shape* themed and its *colour* left as state.
+That is also why there is no `cmp.marker.color`: adding one would let a theme
+quietly turn a status indicator into decoration.
+
+**Why an inset and not a height.** A height token describes a dot and cannot
+describe a line that runs the row, so it would have needed a second rule for the
+case it could not express. Stretching between `inset-block` and the row covers
+both: a centred dot is `calc(50% - 3px)`. Two traps found on the way, both worth
+knowing: an absolutely positioned mark with a definite `height` silently ignores
+its bottom inset, and the mark is two elements deep in the row, so the slot in
+between needs `align-self: stretch` or the mark has nothing to stretch against.
+
+*The composer.* One set of tokens builds a card or a rule. `rule-color-focus`
+is not symmetry for its own sake — once the border is gone, the rule turning warm
+is the only feedback left that the field is live, so flattening the frame forces
+a theme to say what focus looks like.
+
+**Not done:** Airy's own turns are still left-aligned. The reference right-aligns
+them, and `cmp.turn.align` would carry it in one value, but left-alignment was
+asked for explicitly and a mockup is weaker evidence than that. Worth confirming
+before it changes. The reference's composer also labels its send control `SEND`
+in letterspaced caps rather than drawing an arrow; that is markup, not a value,
+and no token was invented to fake it.
+
+8-20 — A theme may bring fonts and a document that moves
 
 **What changed:** three things a theme could not previously carry.
 
