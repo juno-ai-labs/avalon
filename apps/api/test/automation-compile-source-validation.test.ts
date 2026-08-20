@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -15,8 +16,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "user-1",
-  workspaceId: "workspace-1",
+  userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+  workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
   region: "global",
   role: "member",
 };

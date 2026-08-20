@@ -1,4 +1,4 @@
-import { IdSchema, NormalizedActivitySchema, RegionSchema } from "@avalon/contracts";
+import { IdSchema, NormalizedActivitySchema, RegionSchema, WorkspaceIdSchema } from "@avalon/contracts";
 import { z } from "zod";
 
 export const WorkspaceConnectorEventSchema = z.object({
@@ -7,7 +7,7 @@ export const WorkspaceConnectorEventSchema = z.object({
 }).strict();
 
 export const WorkspaceConnectorEventIngestRequestSchema = z.object({
-  workspaceId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
   ingressEventId: IdSchema,
   payloadHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   event: WorkspaceConnectorEventSchema,
@@ -73,7 +73,7 @@ export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEven
 
 export const ConnectorEventWorkflowInputSchema = z.object({
   region: RegionSchema,
-  workspaceId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
   eventId: IdSchema,
   workflowInstanceId: z.string().min(1).max(100),
   attempt: z.number().int().min(0).max(5),

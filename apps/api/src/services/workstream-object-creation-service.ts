@@ -1,4 +1,4 @@
-import { CreateWorkstreamRequestSchema } from "@avalon/contracts";
+import { CreateWorkstreamRequestSchema, asWorkstreamId } from "@avalon/contracts";
 import type {
   ExecutionPrincipal,
   SlackOriginContext,
@@ -13,7 +13,9 @@ import type { AuthContext, Env } from "../env";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { provisionalWorkstreamTitle } from "./workstream-naming-service";
+import { logWarn } from "../observability/logger";
+import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
+import { withWorkstreamRuntimeDatabase } from "./workstream-runtime-database";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
@@ -49,7 +51,16 @@ interface CreateOptions {
 
 /** Regional creation coordinator; the new WorkstreamDO owns product state. */
 export class WorkstreamObjectCreationService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    /**
+     * HTTP callers hand in `waitUntil`-backed deferral so naming happens after
+     * the response, exactly as the legacy service documents; callers with no
+     * way to defer get the call awaited rather than dropped.
+     */
+    private readonly defer?: (task: Promise<unknown>) => void,
+  ) {}
 
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
     workstream: Workstream;
@@ -151,7 +162,7 @@ export class WorkstreamObjectCreationService {
 
     const created = await client.initialize({
       workspaceId: this.auth.workspaceId,
-      workstreamId: receipt.workstream_id,
+      workstreamId: asWorkstreamId(receipt.workstream_id),
       generation: control.generation,
       title,
       objective,
@@ -193,7 +204,7 @@ export class WorkstreamObjectCreationService {
       substreamAgentName(
         this.env.AVALON_REGION,
         this.auth.workspaceId,
-        receipt.workstream_id,
+        asWorkstreamId(receipt.workstream_id),
       ),
     );
     await substream.flushEffectsToWorkstreamDO();
@@ -204,7 +215,7 @@ export class WorkstreamObjectCreationService {
       workstreamDOName(
         this.env.AVALON_REGION,
         this.auth.workspaceId,
-        receipt.workstream_id,
+        asWorkstreamId(receipt.workstream_id),
       ),
     );
     await workstream.flushWorkspaceDirectoryEffects();
@@ -250,6 +261,32 @@ export class WorkstreamObjectCreationService {
       body.clientMessageId,
       requestHash,
     ).run();
+
+    // The first naming pass. The legacy creation path schedules this and the
+    // object path never did, so every post-cutover work stream kept its
+    // provisional title in `naming` forever — a permanent skeleton shimmer in
+    // the sidebar. The routed environment matters: `advanceTitle` writes
+    // `workstreams`, which post-cutover lives behind the runtime router.
+    if (body.title == null) {
+      const naming = nameWorkstream(
+        withWorkstreamRuntimeDatabase(this.env, this.auth.workspaceId, receipt.workstream_id),
+        {
+          workspaceId: this.auth.workspaceId,
+          workstreamId: receipt.workstream_id,
+          userId: this.auth.userId,
+          objective,
+          openingMessage: body.openingMessage,
+          provisionalTitle: title,
+        },
+      ).catch((error: unknown) => {
+        logWarn(this.env, "workstream_first_naming_failed", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: receipt.workstream_id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
+      if (this.defer) this.defer(naming); else await naming;
+    }
     return created;
   }
 

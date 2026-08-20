@@ -1,3 +1,4 @@
+import type { WorkspaceId, WorkstreamId } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
@@ -19,11 +20,11 @@ export type ActivitySuggestionSource = "contextual_routing" | "suggested_work";
 
 interface CreateActivitySuggestionInput {
   region: "global" | "eu";
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   activityId: string;
   activityTitle: string;
   activitySummary: string;
-  workstreamId: string;
+  workstreamId: WorkstreamId;
   confidence: number;
   reason: string;
   matchedEntities: string[];
@@ -33,8 +34,8 @@ interface CreateActivitySuggestionInput {
 export async function publishSubstreamAgentEvent(
   env: Env,
   region: "global" | "eu",
-  workspaceId: string,
-  workstreamId: string,
+  workspaceId: WorkspaceId,
+  workstreamId: WorkstreamId,
   event: unknown,
 ): Promise<void> {
   const agent = await durableObjectStubForWorkspace(

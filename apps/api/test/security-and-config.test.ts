@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ConnectorError,
@@ -465,7 +466,7 @@ describe("API security utilities", () => {
         { query: "from:example.com" },
         {
           connection: authorized,
-          principal: { type: "workspace", workspaceId: connection.workspaceId },
+          principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
           signal: new AbortController().signal,
         },
       ),
@@ -688,8 +689,8 @@ describe("environment guardrails", () => {
       env,
       {
         sessionId: "session",
-        userId: "00000000-0000-7000-8000-000000000001",
-        workspaceId: "00000000-0000-7000-8000-000000000002",
+        userId: asUserId("00000000-0000-7000-8000-000000000001"),
+        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000002"),
         region: "global",
         role: "owner",
       },
@@ -724,8 +725,8 @@ describe("environment guardrails", () => {
     });
     const auth = {
       sessionId: "session",
-      userId: "00000000-0000-7000-8000-000000000001",
-      workspaceId: "00000000-0000-7000-8000-000000000002",
+      userId: asUserId("00000000-0000-7000-8000-000000000001"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000002"),
       region: "eu" as const,
       role: "owner" as const,
     };

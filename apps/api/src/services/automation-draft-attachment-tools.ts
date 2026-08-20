@@ -1,5 +1,5 @@
 import type { HarnessTool } from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { asHarnessRunId, asWorkstreamId, type UserId, type WorkspaceId, type WorkstreamWorkflowInput } from "@avalon/contracts";
 
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
@@ -12,8 +12,8 @@ import type {
 const MAXIMUM_DRAFT_ATTACHMENTS = 10;
 
 export interface AutomationDraftAttachmentScope {
-  workspaceId: string;
-  userId: string;
+  workspaceId: WorkspaceId;
+  userId: UserId;
   scopeId: string;
   frozenResourceIds: readonly string[];
 }
@@ -28,11 +28,12 @@ export function createAutomationDraftAttachmentTools(
   scope: AutomationDraftAttachmentScope,
 ): HarnessTool[] {
   const frozenResourceIds = [...new Set(scope.frozenResourceIds)];
+  // The draft scope id stands in for workstream/run ids, which do not exist yet.
   const toolInput: WorkstreamWorkflowInput = {
     region: env.AVALON_REGION,
     workspaceId: scope.workspaceId,
-    workstreamId: scope.scopeId,
-    harnessRunId: scope.scopeId,
+    workstreamId: asWorkstreamId(scope.scopeId),
+    harnessRunId: asHarnessRunId(scope.scopeId),
     triggerMessageId: null,
     automationSubscriptionId: null,
     activityId: null,

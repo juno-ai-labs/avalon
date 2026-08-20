@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,7 +35,7 @@ function harnessLaunchLeftRunExecutingError(): Error {
 }
 const { recordActivityEventOrThrow } = await import("../src/services/activity-event-service");
 
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = "00000000-0000-7000-8000-000000000002";
 const OTHER = "00000000-0000-7000-8000-000000000003";
 const SCHEDULE = "00000000-0000-7000-8000-000000000005";

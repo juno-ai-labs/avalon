@@ -1,3 +1,5 @@
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asHarnessRunId, asUserId } from "@avalon/contracts";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -5,10 +7,10 @@ import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const W = "30000000-0000-4000-8000-000000000001";
-const S = "30000000-0000-4000-8000-000000000002";
-const R = "30000000-0000-4000-8000-000000000003";
-const U = "30000000-0000-4000-8000-000000000004";
+const W = asWorkspaceId("30000000-0000-4000-8000-000000000001");
+const S = asWorkstreamId("30000000-0000-4000-8000-000000000002");
+const R = asHarnessRunId("30000000-0000-4000-8000-000000000003");
+const U = asUserId("30000000-0000-4000-8000-000000000004");
 
 const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });

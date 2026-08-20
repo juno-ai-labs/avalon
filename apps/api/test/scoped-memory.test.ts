@@ -1,3 +1,5 @@
+import { asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,17 +21,17 @@ import {
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const OWNER_ID = "00000000-0000-4000-8000-000000000002";
-const MEMBER_ID = "00000000-0000-4000-8000-000000000003";
-const WORKSTREAM_ONE = "00000000-0000-4000-8000-000000000011";
-const WORKSTREAM_TWO = "00000000-0000-4000-8000-000000000012";
-const AUTOMATION_WORKSTREAM_ONE = "00000000-0000-4000-8000-000000000013";
-const AUTOMATION_WORKSTREAM_TWO = "00000000-0000-4000-8000-000000000014";
-const RUN_ONE = "00000000-0000-4000-8000-000000000021";
-const RUN_TWO = "00000000-0000-4000-8000-000000000022";
-const AUTOMATION_RUN_ONE = "00000000-0000-4000-8000-000000000023";
-const AUTOMATION_RUN_TWO = "00000000-0000-4000-8000-000000000024";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000002");
+const MEMBER_ID = asUserId("00000000-0000-4000-8000-000000000003");
+const WORKSTREAM_ONE = asWorkstreamId("00000000-0000-4000-8000-000000000011");
+const WORKSTREAM_TWO = asWorkstreamId("00000000-0000-4000-8000-000000000012");
+const AUTOMATION_WORKSTREAM_ONE = asWorkstreamId("00000000-0000-4000-8000-000000000013");
+const AUTOMATION_WORKSTREAM_TWO = asWorkstreamId("00000000-0000-4000-8000-000000000014");
+const RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000021");
+const RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000022");
+const AUTOMATION_RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000023");
+const AUTOMATION_RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000024");
 const AUTOMATION_SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000031";
 
 class SqliteD1Statement {

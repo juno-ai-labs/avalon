@@ -11,7 +11,7 @@ import {
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "workspace-naming";
+const workspaceId = "00000000-0000-7000-8000-0000000000b0";
 const userId = "user-owner";
 const workstreamId = "00000000-0000-7000-8000-0000000000a1";
 const at = "2026-08-11T09:00:00.000Z";

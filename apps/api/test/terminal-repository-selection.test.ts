@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import type { HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +15,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const W = "71000000-0000-4000-8000-000000000001";
 const S = "71000000-0000-4000-8000-000000000002";
-const U = "71000000-0000-4000-8000-000000000003";
+const U = asUserId("71000000-0000-4000-8000-000000000003");
 const R = "71000000-0000-4000-8000-000000000004";
 const PERSONAL = "71000000-0000-4000-8000-000000000005";
 const WORKSPACE = "71000000-0000-4000-8000-000000000006";

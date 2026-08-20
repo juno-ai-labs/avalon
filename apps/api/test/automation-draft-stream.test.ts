@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { AutomationDraftStreamEventSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,8 +39,8 @@ function testApp(): Hono<HonoAppEnv> {
     c.set("requestId", "request-stream-1");
     c.set("auth", {
       sessionId: "session-1",
-      userId: "00000000-0000-7000-8000-000000000001",
-      workspaceId: "00000000-0000-7000-8000-000000000002",
+      userId: asUserId("00000000-0000-7000-8000-000000000001"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000002"),
       region: "global",
       role: "owner",
     });

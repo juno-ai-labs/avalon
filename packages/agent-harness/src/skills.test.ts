@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_SKILLS,
@@ -419,7 +420,7 @@ function runInput(fetcher: typeof fetch) {
     workspaceId: "workspace-1",
     workstreamId: "workstream-1",
     harnessRunId: "run-1",
-    executionPrincipal: { type: "user" as const, userId: "user-1" },
+    executionPrincipal: { type: "user" as const, userId: asUserId("00000000-0000-4000-8000-000000000001") },
     systemPrompt: "Be useful.",
     messages: [{ role: "user" as const, content: "Do the work" }],
     corePlugins: [] as HarnessPlugin[],

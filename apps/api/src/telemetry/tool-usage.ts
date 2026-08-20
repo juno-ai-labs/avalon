@@ -1,4 +1,4 @@
-import type { ExecutionPrincipal } from '@avalon/contracts';
+import { asUserId, type ExecutionPrincipal, type WorkspaceId } from '@avalon/contracts';
 import type { Env, IdentityAuthContext } from '../env';
 import {
   apiTelemetryEnvelope,
@@ -12,7 +12,7 @@ import {
 } from './product-usage';
 
 export interface AgentToolStartedTelemetryInput {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   workstreamId: string;
   harnessRunId: string;
   invocationId: string;
@@ -126,7 +126,7 @@ function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['
 export async function emitAgentToolTerminalTelemetry(
   env: Env,
   input: {
-    workspaceId: string;
+    workspaceId: WorkspaceId;
     workstreamId: string;
     harnessRunId: string;
     invocationId: string;
@@ -166,7 +166,7 @@ export async function emitAgentToolTerminalTelemetry(
 
   const principal = objectJson(row.execution_principal_json);
   const userId = principal.type === 'user' && typeof principal.userId === 'string'
-    ? principal.userId
+    ? asUserId(principal.userId)
     : undefined;
   const started = row.started_at ? Date.parse(row.started_at) : Number.NaN;
   const completed = row.completed_at ? Date.parse(row.completed_at) : Number.NaN;

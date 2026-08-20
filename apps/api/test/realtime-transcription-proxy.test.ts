@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
@@ -125,8 +126,8 @@ class FakeResponse {
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "00000000-0000-7000-8000-000000000001",
-  workspaceId: "00000000-0000-7000-8000-000000000002",
+  userId: asUserId("00000000-0000-7000-8000-000000000001"),
+  workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000002"),
   region: "global",
   role: "owner",
 };

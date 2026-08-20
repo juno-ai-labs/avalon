@@ -1,4 +1,4 @@
-import { ExecutionPrincipalSchema } from "@avalon/contracts";
+import { ExecutionPrincipalSchema, asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
@@ -109,12 +109,12 @@ export async function fireDigestSchedule(
     return { started: false, reason: "unauthorized" };
   }
 
-  const latest = await latestActivityEventCursor(env, schedule.workspace_id);
+  const latest = await latestActivityEventCursor(env, asWorkspaceId(schedule.workspace_id));
   const from = await previousCursor(env, schedule.id);
   const notBefore = from ? null : new Date(Date.now() - FIRST_DIGEST_LOOKBACK_MS).toISOString();
 
   const events = await listActivityEventsForUser(env, {
-    workspaceId: schedule.workspace_id,
+    workspaceId: asWorkspaceId(schedule.workspace_id),
     userId: schedule.user_id,
     from,
     through: latest,
@@ -165,7 +165,7 @@ export async function fireDigestSchedule(
   if (!claimed) return { started: false, reason: "already_planned" };
   if (events.length === 0) return { started: false, reason: "empty" };
 
-  let workstreamId: string | null = null;
+  let workstreamId: WorkstreamId | null = null;
   let harnessRunId: string | null = null;
   try {
     workstreamId = await createDigestWorkstream(env, schedule, {
@@ -179,7 +179,7 @@ export async function fireDigestSchedule(
       brief: renderDigestBrief(schedule, events),
     });
     harnessRunId = await launchWorkstreamHarness(env, {
-      workspaceId: schedule.workspace_id,
+      workspaceId: asWorkspaceId(schedule.workspace_id),
       workstreamId,
       triggerMessageId: messageId,
       origin: "scheduled_digest",
@@ -323,8 +323,8 @@ async function createDigestWorkstream(
   env: Env,
   schedule: DigestScheduleRow,
   occurrence: { deliveryId: string; plannedFor: string },
-): Promise<string> {
-  const workstreamId = newId();
+): Promise<WorkstreamId> {
+  const workstreamId = asWorkstreamId(newId());
   const at = nowIso();
   const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
     env,

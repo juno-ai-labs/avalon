@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import { createXConnector, XCapabilities } from "./x";
 import type { FetchLike } from "./provider-utils";
@@ -247,29 +248,29 @@ describe("X connector", () => {
     const adapter = xAdapter(async () => jsonResponse({ tweets: [] }));
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: xConnection([]),
-      principal: { type: "workspace", workspaceId: "avalon-workspace" },
+      principal: { type: "workspace", workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/has not granted/u);
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: xConnection([XCapabilities.read]),
-      principal: { type: "workspace", workspaceId: "another-workspace" },
+      principal: { type: "workspace", workspaceId: asWorkspaceId("fbb0ea04-43a2-41f1-81a3-e8b1f2f30cc6") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/not available/u);
 
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: xConnection([XCapabilities.read]),
-      principal: { type: "workspace", workspaceId: "avalon-workspace" },
+      principal: { type: "workspace", workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ summary: "Read the X timeline for user 600" });
     await expect(adapter.executeTool("unknown_tool", {}, {
       connection: xConnection([XCapabilities.read]),
-      principal: { type: "workspace", workspaceId: "avalon-workspace" },
+      principal: { type: "workspace", workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/has not granted unknown_tool/u);
 
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: personalXConnection([XCapabilities.read]),
-      principal: { type: "user", userId: "avalon-user" },
+      principal: { type: "user", userId: asUserId("08b7a776-1e8e-4e35-8ecf-cf41dc2b1232") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/must belong to a workspace/u);
   });
@@ -291,7 +292,7 @@ async function execute(
 ) {
   return adapter.executeTool(name, args, {
     connection: xConnection([XCapabilities.read]),
-    principal: { type: "workspace", workspaceId: "avalon-workspace" },
+    principal: { type: "workspace", workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
     signal: AbortSignal.timeout(1_000),
   });
 }
@@ -301,7 +302,7 @@ function xConnection(
 ): AuthorizedConnectorConnection {
   return authorizedConnection({
     id: "x-connection",
-    workspaceId: "avalon-workspace",
+    workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a"),
     scope: "workspace",
     ownerUserId: null,
     grantedScopes,
@@ -315,7 +316,7 @@ function personalXConnection(grantedScopes: string[]): AuthorizedConnectorConnec
   return authorizedConnection({
     ...xConnection(grantedScopes),
     scope: "personal",
-    ownerUserId: "avalon-user",
+    ownerUserId: "08b7a776-1e8e-4e35-8ecf-cf41dc2b1232",
   });
 }
 

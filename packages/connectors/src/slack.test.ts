@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   createSlackConnector,
@@ -39,7 +40,7 @@ describe("Slack connector", () => {
 
     const refusal = await adapter.executeTool("create_canvas", { title: "Notes" }, {
       connection: slackWorkspaceToolConnection(),
-      principal: { type: "workspace", workspaceId: "workspace-avalon" },
+      principal: { type: "workspace", workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c") },
       signal: AbortSignal.timeout(1_000),
     }).then(
       () => { throw new Error("A tool the connection cannot call must be refused"); },
@@ -309,9 +310,9 @@ describe("Slack connector", () => {
     });
     const connection = authorizedConnection({
       id: "connection-slack-personal-legacy",
-      workspaceId: "workspace-avalon",
+      workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c"),
       scope: "personal",
-      ownerUserId: "user-avalon",
+      ownerUserId: "8046c3d3-4e9c-458b-8edb-653be8b809c9",
       grantedScopes: [SlackCapabilities.usersRead],
       credentials: { userAccessToken: "xoxp-legacy" },
       cursor: {},
@@ -324,7 +325,7 @@ describe("Slack connector", () => {
 
     await expect(adapter.executeTool("read_user_profile", { user_id: "UALEX" }, {
       connection,
-      principal: { type: "user", userId: "user-avalon" },
+      principal: { type: "user", userId: asUserId("8046c3d3-4e9c-458b-8edb-653be8b809c9") },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ output: { user: { id: "UALEX" } } });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -737,7 +738,7 @@ describe("Slack connector", () => {
       author_user_id: "UALEX",
     }, {
       connection,
-      principal: { type: "workspace", workspaceId: connection.workspaceId },
+      principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
       invocationAuthorization: { slackActionToken: "event-only-action-token" },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ output: { messages: [{ channel_id: "CIDEAS" }] } });
@@ -751,7 +752,7 @@ describe("Slack connector", () => {
 
     await expect(adapter.executeTool("search_messages", { query: "project gizmo" }, {
       connection,
-      principal: { type: "workspace", workspaceId: connection.workspaceId },
+      principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toMatchObject({ code: "unauthorized" });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -833,7 +834,7 @@ describe("Slack connector", () => {
     const connection = slackWorkspaceToolConnection();
     const context = {
       connection,
-      principal: { type: "workspace" as const, workspaceId: connection.workspaceId },
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
       signal: AbortSignal.timeout(2_000),
     };
 
@@ -884,7 +885,7 @@ describe("Slack connector", () => {
     const connection = slackWorkspaceToolConnection();
     const context = {
       connection,
-      principal: { type: "workspace" as const, workspaceId: connection.workspaceId },
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
       providerIdempotencyKey: "tool-receipt-send-message",
       signal: AbortSignal.timeout(1_000),
     };
@@ -933,7 +934,7 @@ describe("Slack connector", () => {
 
     await expect(adapter.refreshCredentials!({
       id: "connection",
-      workspaceId: "workspace",
+      workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062"),
       scope: "personal",
       ownerUserId: "user",
       grantedScopes: [SlackCapabilities.search],
@@ -964,7 +965,7 @@ describe("Slack connector", () => {
 
     await expect(adapter.revoke!(authorizedConnection({
       id: "connection",
-      workspaceId: "workspace",
+      workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062"),
       scope: "workspace",
       ownerUserId: null,
       grantedScopes: [SlackCapabilities.agent],
@@ -1310,7 +1311,7 @@ function json(value: unknown, headers: HeadersInit = {}, status = 200): Response
 function slackActivityConnection() {
   return {
     id: "connection-slack",
-    workspaceId: "workspace-avalon",
+    workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c"),
     scope: "workspace" as const,
     ownerUserId: null,
     grantedScopes: [],
@@ -1323,7 +1324,7 @@ function slackActivityConnection() {
 function slackWorkspaceConnection(): AuthorizedConnectorConnection {
   return authorizedConnection({
     id: "connection-slack",
-    workspaceId: "workspace-avalon",
+    workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c"),
     scope: "workspace",
     ownerUserId: null,
     grantedScopes: [SlackCapabilities.agent],

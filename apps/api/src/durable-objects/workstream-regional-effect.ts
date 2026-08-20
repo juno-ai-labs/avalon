@@ -1,4 +1,4 @@
-import { IdSchema, RegionSchema } from "@avalon/contracts";
+import { IdSchema, RegionSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@avalon/contracts";
 import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 
@@ -113,8 +113,8 @@ export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   kind: z.literal("workstream_regional_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
   messageId: z.string().min(1).max(500),
   partitionKey: z.string().min(1).max(300),
@@ -144,8 +144,8 @@ export const WorkstreamRegionalEffectQueueMessageSchema = z.object({
   kind: z.literal("workstream_regional_effect_wakeup"),
   contractVersion: z.literal(1),
   region: RegionSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
   messageId: z.string().min(1).max(500),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),

@@ -1,3 +1,4 @@
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -29,8 +30,8 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const USER_ID = "00000000-0000-7000-8000-0000000000d1";
 const AUTHOR_ID = "00000000-0000-7000-8000-0000000000d2";
-const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000d3";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000d4";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000d3");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000d4");
 const MESSAGE_ID = "00000000-0000-7000-8000-0000000000d5";
 const EVENT_ID = "00000000-0000-7000-8000-0000000000d6";
 const AT = "2026-08-17T01:00:00.000Z";

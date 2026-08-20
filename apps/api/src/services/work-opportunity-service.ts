@@ -8,7 +8,12 @@ import {
 import {
   AutomationPluginIconSchema,
   WorkOpportunityPageSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type UserId,
   type WorkOpportunity,
+  type WorkspaceId,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
@@ -431,7 +436,7 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T) =>
   return results;
 }
 
-async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): Promise<ModelSource | null> {
+async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventRow): Promise<ModelSource | null> {
   const authority = await readWorkstreamAuthorityControl(env);
   const workspace = authority.phase === "durable_object_open"
     ? await durableObjectStubForWorkspace(
@@ -704,7 +709,7 @@ function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }
   return batches;
 }
 
-async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Promise<void> {
+async function syncVerifiedIdentityDirectory(env: Env, workspaceId: WorkspaceId): Promise<void> {
   if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") {
     env = withWorkspaceRuntimeDatabase(env, workspaceId);
   }
@@ -783,14 +788,14 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Pro
 }
 
 async function loadAdmissionContext(env: Env, window: WindowRow) {
-  await syncVerifiedIdentityDirectory(env, window.workspace_id);
+  await syncVerifiedIdentityDirectory(env, asWorkspaceId(window.workspace_id));
   const authority = await readWorkstreamAuthorityControl(env);
   const workspacePromise = authority.phase === "durable_object_open"
     ? durableObjectStubForWorkspace(
       env,
       env.WORKSPACE_DOS,
       window.workspace_id,
-      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(window.workspace_id)),
     )
     : null;
   const workRowsPromise = workspacePromise
@@ -899,7 +904,7 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
  */
 async function markSuggestedWorkDue(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   userIds: string[],
   delayMs: number = DUE_DEBOUNCE_MS,
 ): Promise<void> {
@@ -945,7 +950,7 @@ async function markSuggestedWorkDue(
  */
 async function markWorkspaceSuggestedWorkDue(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   delayMs: number = DUE_DEBOUNCE_MS,
 ): Promise<void> {
   const authority = await readWorkstreamAuthorityControl(env);
@@ -1115,11 +1120,11 @@ async function routeExistingDecision(
   const reason = decision.displayPrompt.trim() || "Recent connected activity belongs in this existing work stream.";
   const routed = await Promise.all(activities.map((source) => createActivitySuggestion(env, {
     region: env.AVALON_REGION,
-    workspaceId: window.workspace_id,
+    workspaceId: asWorkspaceId(window.workspace_id),
     activityId: source.id,
     activityTitle: source.title,
     activitySummary: source.summary,
-    workstreamId: targetId,
+    workstreamId: asWorkstreamId(targetId),
     confidence: 1,
     reason,
     matchedEntities: source.entityKeys,
@@ -1232,7 +1237,7 @@ async function persistDecision(
       env,
       env.WORKSPACE_DOS,
       window.workspace_id,
-      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(window.workspace_id)),
     );
     const persisted = await workspace.persistOpportunity({
       workspaceId: window.workspace_id,
@@ -1431,9 +1436,9 @@ async function persistDecision(
     }
   }
   if (window.audience_scope === "personal") {
-    await markSuggestedWorkDue(env, window.workspace_id, window.audience_user_id ? [window.audience_user_id] : []);
+    await markSuggestedWorkDue(env, asWorkspaceId(window.workspace_id), window.audience_user_id ? [window.audience_user_id] : []);
   } else {
-    await markWorkspaceSuggestedWorkDue(env, window.workspace_id);
+    await markWorkspaceSuggestedWorkDue(env, asWorkspaceId(window.workspace_id));
   }
   return { opportunityId: id, eagerUserIds };
 }
@@ -1507,7 +1512,7 @@ async function mutateOpportunityEvents(
       env,
       env.WORKSPACE_DOS,
       window.workspace_id,
-      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(window.workspace_id)),
     );
     await workspace.mutateOpportunityBatchEvents({
       workspaceId: window.workspace_id,
@@ -1561,7 +1566,7 @@ async function processWindow(env: Env, window: WindowRow): Promise<string[]> {
      FROM opportunity_batch_events WHERE window_id = ? AND status IN ('pending', 'failed')
      ORDER BY occurred_at, id`,
   ).bind(window.id).all<BatchEventRow>();
-  const loaded = await Promise.all(events.results.map(async (event) => ({ event, source: await loadSource(env, window.workspace_id, event) })));
+  const loaded = await Promise.all(events.results.map(async (event) => ({ event, source: await loadSource(env, asWorkspaceId(window.workspace_id), event) })));
   const valid = loaded.filter((item): item is { event: BatchEventRow; source: ModelSource } => item.source !== null);
   if (valid.length !== loaded.length) {
     const missing = loaded.filter((item) => item.source === null);
@@ -1673,7 +1678,7 @@ export async function processDueOpportunityWindows(env: Env): Promise<void> {
         OR (status = 'processing' AND lease_expires_at < ?)
      ORDER BY process_after LIMIT 12`,
   ).bind(nowIso(), nowIso()).all<WindowRow>();
-  const eagerTargets = new Map<string, Set<string>>();
+  const eagerTargets = new Map<WorkspaceId, Set<string>>();
   for (const candidate of due.results) {
     const leaseId = newId();
     const claim = await env.DB.prepare(
@@ -1682,9 +1687,10 @@ export async function processDueOpportunityWindows(env: Env): Promise<void> {
     ).bind(leaseId, new Date(Date.now() + LEASE_MS).toISOString(), nowIso(), candidate.id, nowIso(), nowIso()).run();
     if (Number(claim.meta.changes ?? 0) !== 1) continue;
     const targets = await processWindow(env, candidate);
-    const set = eagerTargets.get(candidate.workspace_id) ?? new Set<string>();
+    const workspaceId = asWorkspaceId(candidate.workspace_id);
+    const set = eagerTargets.get(workspaceId) ?? new Set<string>();
     targets.forEach((target) => set.add(target));
-    eagerTargets.set(candidate.workspace_id, set);
+    eagerTargets.set(workspaceId, set);
   }
   // A member named by an opportunity that just landed skips the debounce: the
   // suggestion is about them, and the wait before it can be ranked is the only
@@ -1734,7 +1740,7 @@ async function loadBoundedProvenance(env: Env, opportunityId: string, userId: st
   }));
 }
 
-async function rankingCandidates(env: Env, workspaceId: string, userId: string) {
+async function rankingCandidates(env: Env, workspaceId: WorkspaceId, userId: UserId) {
   const authority = await readWorkstreamAuthorityControl(env);
   if (authority.phase === "durable_object_open") {
     const workspace = await durableObjectStubForWorkspace(
@@ -1806,8 +1812,8 @@ async function rankingCandidates(env: Env, workspaceId: string, userId: string) 
 
 async function rankBatch(
   env: Env,
-  workspaceId: string,
-  userId: string,
+  workspaceId: WorkspaceId,
+  userId: UserId,
   userName: string,
   candidates: Awaited<ReturnType<typeof rankingCandidates>>,
   roundNumber: number,
@@ -1891,8 +1897,8 @@ function rankingGroups(candidates: Awaited<ReturnType<typeof rankingCandidates>>
 
 export async function rankWorkOpportunitiesForUser(
   env: Env,
-  workspaceId: string,
-  userId: string,
+  workspaceId: WorkspaceId,
+  userId: UserId,
   force = false,
 ): Promise<WorkOpportunity[]> {
   const candidates = await rankingCandidates(env, workspaceId, userId);
@@ -2025,8 +2031,8 @@ export async function rankWorkOpportunitiesForUser(
 
 async function storeRankingSet(
   env: Env,
-  workspaceId: string,
-  userId: string,
+  workspaceId: WorkspaceId,
+  userId: UserId,
   fingerprint: string,
   ids: string[],
   reasoning: string,
@@ -2170,7 +2176,7 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
     ).run();
     if (Number(claimed.meta.changes ?? 0) !== 1) continue;
     try {
-      await rankWorkOpportunitiesForUser(env, row.workspace_id, row.user_id);
+      await rankWorkOpportunitiesForUser(env, asWorkspaceId(row.workspace_id), asUserId(row.user_id));
     } catch (error) {
       // The lease is released rather than left to expire, and the request is
       // pushed out instead of dropped: a member whose ranking fails should get

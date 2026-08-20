@@ -2,6 +2,10 @@ import {
   AgentCompactionStateSchema,
   ActiveStreamCheckpointsSchema,
   ServerSocketEventSchema,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
+  asWorkspaceId,
+  asWorkstreamId,
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
@@ -27,8 +31,8 @@ const REGIONAL_EFFECT_RETRY_BASE_MS = 5_000;
 const REGIONAL_EFFECT_RETRY_MAX_MS = 5 * 60_000;
 
 const RoomIdentitySchema = z.object({
-  workspaceId: z.string().uuid(),
-  workstreamId: z.string().uuid(),
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
 });
 
 const PendingBlockDashboardRefreshSchema = RoomIdentitySchema.extend({
@@ -530,7 +534,7 @@ export class WorkstreamObjectStore {
       `SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1`,
     ));
     if (!row) return null;
-    return { workstreamId: row.workstream_key, workspaceId: row.parent_workspace_key };
+    return { workstreamId: asWorkstreamId(row.workstream_key), workspaceId: asWorkspaceId(row.parent_workspace_key) };
   }
 
   databaseSize(): number {

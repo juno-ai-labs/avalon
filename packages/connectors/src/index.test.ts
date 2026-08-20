@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import { NormalizedActivitySchema } from "@avalon/contracts";
 import {
@@ -73,7 +74,7 @@ describe("connectors", () => {
       assertPrincipalAccess(
         {
           id: "connection",
-          workspaceId: "workspace",
+          workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062"),
           scope: "personal",
           ownerUserId: "alice",
           grantedScopes: [],
@@ -81,7 +82,7 @@ describe("connectors", () => {
           cursor: {},
           config: {}
         },
-        { type: "user", userId: "bob" }
+        { type: "user", userId: asUserId("9f9d51bc-70ef-41ca-8c14-f307980a29d8") }
       )
     ).toThrow(/personal connection/i);
   });
@@ -2215,7 +2216,7 @@ describe("connectors", () => {
   });
 });
 
-const TEST_USER_ID = "00000000-0000-7000-8000-000000000001";
+const TEST_USER_ID = asUserId("00000000-0000-7000-8000-000000000001");
 const TEST_WORKSPACE_ID = "00000000-0000-7000-8000-000000000002";
 const TEST_CONNECTION_ID = "00000000-0000-7000-8000-000000000003";
 

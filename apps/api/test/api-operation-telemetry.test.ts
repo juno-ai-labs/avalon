@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
+import { asUserId, asWorkspaceId } from '@avalon/contracts';
 import type { HonoAppEnv } from '../src/env';
 import { ApiError } from '../src/lib/api-error';
 import { apiOperationTelemetry } from '../src/middleware/api-operation-telemetry';
 import { createTestEnv } from './helpers/cloudflare-test';
 
 const auth = {
-  sessionId: 'session', userId: 'user', workspaceId: 'workspace', region: 'global' as const,
+  sessionId: 'session',
+  userId: asUserId('00000000-0000-4000-8000-000000000901'),
+  workspaceId: asWorkspaceId('00000000-0000-4000-8000-000000000902'),
+  region: 'global' as const,
   role: 'member' as const,
 };
 

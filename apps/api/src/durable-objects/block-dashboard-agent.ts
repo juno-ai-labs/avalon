@@ -3,9 +3,12 @@ import {
   BlockDashboardBlockSocketClientEventSchema,
   BlockDashboardBlockSocketEventSchema,
   BlockDashboardBlockRunSchema,
-  IdSchema,
+  BlockIdSchema,
   RegionSchema,
+  UserIdSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
   ServerSocketEventSchema,
   WorkstreamWorkflowInputSchema,
   type BlockDashboardBlockRun,
@@ -69,15 +72,15 @@ const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
 const DISPATCH_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 const BlockDashboardBlockIdentityInputSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  blockId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  blockId: BlockIdSchema,
   region: RegionSchema,
 }).strict();
 type BlockDashboardBlockIdentityInput = z.infer<typeof BlockDashboardBlockIdentityInputSchema>;
 
 const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchema.extend({
-  userId: IdSchema,
+  userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),

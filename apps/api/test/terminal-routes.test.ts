@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import {
   TerminalNetworkPolicyPreviewSchema,
   TerminalWorkspaceSettingsSchema,
@@ -13,9 +14,9 @@ import { workstreamRoutes } from "../src/routes/workstreams";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const W = "72000000-0000-4000-8000-000000000001";
+const W = asWorkspaceId("72000000-0000-4000-8000-000000000001");
 const S = "72000000-0000-4000-8000-000000000002";
-const U = "72000000-0000-4000-8000-000000000003";
+const U = asUserId("72000000-0000-4000-8000-000000000003");
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });

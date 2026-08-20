@@ -3,6 +3,7 @@ import { z } from "zod";
 import { substreamAgentName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";
@@ -217,9 +218,9 @@ class WorkstreamRuntimeDatabase implements D1Database {
       this.workspaceId,
       substreamAgentName(
         this.env.AVALON_REGION,
-        this.workspaceId,
-        this.workstreamId,
-        this.substreamId,
+        asWorkspaceId(this.workspaceId),
+        asWorkstreamId(this.workstreamId),
+        asSubstreamId(this.substreamId),
       ),
     );
     const response = await stub.executeRuntimeSql({
@@ -349,11 +350,11 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+    substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
   );
   const response = await stub.bootstrapRuntime({
-    workspaceId,
-    workstreamId,
+    workspaceId: asWorkspaceId(workspaceId),
+    workstreamId: asWorkstreamId(workstreamId),
     generation: authority.generation,
   });
   if (response.status < 200 || response.status >= 300) {

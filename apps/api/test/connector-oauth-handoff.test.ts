@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
@@ -7,9 +8,9 @@ import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const USER_ID = "00000000-0000-4000-8000-000000000001";
-const OTHER_USER_ID = "00000000-0000-4000-8000-000000000002";
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000003";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
+const OTHER_USER_ID = asUserId("00000000-0000-4000-8000-000000000002");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000003");
 
 class SqliteD1Statement {
   private values: unknown[] = [];

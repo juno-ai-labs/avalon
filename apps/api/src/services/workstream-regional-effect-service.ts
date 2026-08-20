@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
@@ -274,7 +275,7 @@ export async function processWorkstreamNotificationIntent(
     env,
     env.WORKSPACE_DOS,
     row.workspace_id,
-    workspaceDOName(env.AVALON_REGION, row.workspace_id),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
   );
   const rawDirectoryState = await workspace.notificationDirectoryState({
     workspaceId: row.workspace_id,

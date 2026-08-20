@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,8 +13,8 @@ import {
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000041";
-const WORKSPACE_ID = "00000000-0000-7000-8000-000000000042";
-const USER_ID = "00000000-0000-7000-8000-000000000043";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000042");
+const USER_ID = asUserId("00000000-0000-7000-8000-000000000043");
 const CREDENTIALS_KEY = "github-repository-policy-test-key";
 const databases: DatabaseSync[] = [];
 

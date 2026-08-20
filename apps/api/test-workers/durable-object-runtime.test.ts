@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
-import type { BlockDashboardBlockRun } from "@avalon/contracts";
+import { asBlockId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type BlockDashboardBlockRun } from "@avalon/contracts";
 import {
   evictDurableObject,
   listDurableObjectIds,
@@ -41,12 +41,12 @@ import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/w
 import type { WorkspaceOpportunityPersistRequest } from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-000000000101";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000102";
-const CHILD_SUBSTREAM_ID = "00000000-0000-7000-8000-000000000103";
-const USER_ID = "00000000-0000-7000-8000-000000000104";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
+const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
+const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
-const BLOCK_DASHBOARD_BLOCK_ID = "00000000-0000-7000-8000-000000000109";
+const BLOCK_DASHBOARD_BLOCK_ID = asBlockId("00000000-0000-7000-8000-000000000109");
 
 beforeEach(async () => {
   await reset();
@@ -264,7 +264,7 @@ describe("Durable Objects in the Workers runtime", () => {
       envelopes: [{
         ...common,
         messageId: "native-rpc-mismatch",
-        workstreamId: "00000000-0000-7000-8000-000000000199",
+        workstreamId: asWorkstreamId("00000000-0000-7000-8000-000000000199"),
       }],
     });
     expect(mismatched.status).toBe(409);
@@ -282,7 +282,7 @@ describe("Durable Objects in the Workers runtime", () => {
     // campaign moves an object's generation forward, and refusing these would
     // strand every effect already in flight — permanently, since the numbers
     // can never agree again.
-    const replayWorkstreamId = "00000000-0000-7000-8000-0000000001aa";
+    const replayWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000001aa");
     const replayParent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, replayWorkstreamId),
     ));
@@ -736,7 +736,7 @@ describe("Durable Objects in the Workers runtime", () => {
   });
 
   it("gives each stable HyperSight block an isolated SQLite dispatch ledger that survives eviction", async () => {
-    const secondBlockId = "00000000-0000-7000-8000-000000000110";
+    const secondBlockId = asBlockId("00000000-0000-7000-8000-000000000110");
     const first = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
       blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
     ));
@@ -1685,7 +1685,7 @@ describe("Durable Objects in the Workers runtime", () => {
         tiedCommon,
         `00000000-0000-7000-8000-${(0x210 + index).toString(16).padStart(12, "0")}`,
         1,
-        workstreamId,
+        asWorkstreamId(workstreamId),
       )),
     });
     const pagedIds: string[] = [];

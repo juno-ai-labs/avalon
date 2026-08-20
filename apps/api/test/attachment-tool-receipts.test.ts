@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,7 +19,7 @@ const SECOND_RESOURCE_ID = "00000000-0000-4000-8000-000000000003";
 const INVOCATION_ID = "00000000-0000-4000-8000-000000000002";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000004";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000005";
-const USER_ID = "00000000-0000-4000-8000-000000000006";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000006");
 const HASH = "a".repeat(64);
 
 class SqliteStatement {

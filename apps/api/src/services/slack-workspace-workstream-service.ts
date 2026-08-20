@@ -1,5 +1,8 @@
 import {
   ExternalActorSchema,
+  asWorkstreamId,
+  type UserId,
+  type WorkspaceId,
   type ExternalActor,
   type Scope,
   type SlackOriginContext,
@@ -51,7 +54,7 @@ type SlackExternalMessageInput = {
 export class SlackWorkspaceWorkstreamService {
   constructor(
     private readonly env: Env,
-    private readonly workspaceId: string,
+    private readonly workspaceId: WorkspaceId,
   ) {}
 
   /**
@@ -63,7 +66,7 @@ export class SlackWorkspaceWorkstreamService {
   async create(input: SlackExternalMessageInput & {
     title?: string;
     objective: string;
-    creatorUserId?: string | null;
+    creatorUserId?: UserId | null;
     originResource?: OriginResourceDescriptor;
     /**
      * The conversation's own audience, carried onto the work stream. A private
@@ -145,7 +148,7 @@ export class SlackWorkspaceWorkstreamService {
     }
     const harnessRunId = await launchWorkstreamHarness(this.env, {
       workspaceId: this.workspaceId,
-      workstreamId: created.workstream.id,
+      workstreamId: asWorkstreamId(created.workstream.id),
       triggerMessageId: created.messageId,
       origin: "slack_workspace_opening_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
@@ -194,7 +197,7 @@ export class SlackWorkspaceWorkstreamService {
     );
     const harnessRunId = await launchWorkstreamHarness(this.env, {
       workspaceId: this.workspaceId,
-      workstreamId,
+      workstreamId: asWorkstreamId(workstreamId),
       triggerMessageId: persisted.message.id,
       origin: "slack_workspace_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
@@ -309,7 +312,7 @@ export class SlackWorkspaceWorkstreamService {
     const harnessRunId = Number(remaining?.count ?? 0) === 0
       ? await launchWorkstreamHarness(this.env, {
           workspaceId: this.workspaceId,
-          workstreamId,
+          workstreamId: asWorkstreamId(workstreamId),
           triggerMessageId: responseMessageId,
           origin: "slack_workspace_elicitation_answer",
           executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },

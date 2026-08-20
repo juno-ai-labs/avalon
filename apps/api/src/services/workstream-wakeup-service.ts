@@ -13,7 +13,7 @@
  * neither of those has to import the other through here.
  */
 import type { ExecutionPrincipal } from "@avalon/contracts";
-import { ExecutionPrincipalSchema } from "@avalon/contracts";
+import { ExecutionPrincipalSchema, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -659,10 +659,14 @@ export async function refreshAgentTimerAlarm(
     workspaceId,
     substreamAgentName(
       env.AVALON_REGION,
-      workspaceId,
-      workstreamId,
-      substreamId,
+      asWorkspaceId(workspaceId),
+      asWorkstreamId(workstreamId),
+      asSubstreamId(substreamId),
     ),
   );
-  await agent.refreshTimerAlarm({ workspaceId, workstreamId, substreamId });
+  await agent.refreshTimerAlarm({
+    workspaceId: asWorkspaceId(workspaceId),
+    workstreamId: asWorkstreamId(workstreamId),
+    substreamId: asSubstreamId(substreamId),
+  });
 }

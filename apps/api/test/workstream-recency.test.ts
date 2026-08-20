@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { WorkstreamDetailSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
@@ -8,8 +9,8 @@ import { WorkstreamService } from "../src/services/workstream-service";
 import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const EMAIL_DOMAIN = "automation.with-avalon.com";
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const USER_ID = "00000000-0000-4000-8000-000000000002";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000002");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000003";
 const CONNECTION_ID = "00000000-0000-4000-8000-000000000004";
 

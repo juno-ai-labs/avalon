@@ -27,11 +27,12 @@ import {
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-0000000002a1";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000002a2";
-const BLOCK_ID = "00000000-0000-7000-8000-0000000002a3";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000002a1");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000002a2");
 const USER_ID = "00000000-0000-7000-8000-0000000002a4";
 
 interface DispatchRow extends Record<string, SqlStorageValue> {
@@ -52,13 +53,13 @@ let unique = 0;
  */
 function substreamStub(): DurableObjectStub {
   unique += 1;
-  const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, `s${unique}`);
+  const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`));
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 }
 
 function blockStub(): DurableObjectStub {
   unique += 1;
-  const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, `${BLOCK_ID}${unique}`);
+  const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asBlockId(`00000000-0000-7000-8000-${String(unique).padStart(11, "0")}1`));
   return env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
 }
 

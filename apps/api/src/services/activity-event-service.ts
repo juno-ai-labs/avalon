@@ -1,3 +1,4 @@
+import type { WorkspaceId } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
 import { workspaceDOName } from "../durable-objects/names";
@@ -37,7 +38,7 @@ export type ActivityEventAudience =
   | { kind: "workstream"; workstreamId: string };
 
 export interface ActivityEventInput {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   /** Stable producer identity when a durable upstream fact already owns one. */
   eventId?: string;
   /** Dotted past-tense verb, e.g. `workstream.message.posted`. */
@@ -219,7 +220,7 @@ export async function recordActivityEventOrThrow(
 export async function listActivityEventsForUser(
   env: Env,
   input: {
-    workspaceId: string;
+    workspaceId: WorkspaceId;
     userId: string;
     /** Exclusive lower bound. Omit for "from the beginning of the window". */
     from?: ActivityEventCursor | null;
@@ -391,7 +392,7 @@ export async function reapExpiredActivityEvents(env: Env): Promise<number> {
 /** The newest event in a workspace, which is what a run freezes as its window's top. */
 export async function latestActivityEventCursor(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
 ): Promise<ActivityEventCursor> {
   const authority = await readWorkstreamAuthorityControl(env);
   if (authority.phase === "durable_object_open") {

@@ -61,6 +61,42 @@ export {
 export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
 export const RegionSchema = z.enum(["global", "eu"]);
+
+/**
+ * Branded identifiers.
+ *
+ * Every id in this system is a UUID string, which means the type system sees a
+ * workspace id, a work-stream id, and a run id as interchangeable — and the
+ * places they meet are exactly the places a swap is catastrophic: a Durable
+ * Object *name* built from them addresses a different object, silently, with
+ * no error on either side. The brands make provenance part of the type: a
+ * value is a `WorkspaceId` because it was parsed from a schema that says so,
+ * or because a boundary explicitly cast it with `asWorkspaceId` where the
+ * database column or route parameter is the authority on what it is.
+ *
+ * The casts validate (they parse), so a brand is never a lie about shape —
+ * only the boundary's claim about meaning, made in one greppable place
+ * instead of implicitly everywhere.
+ */
+export const WorkspaceIdSchema = IdSchema.brand<"WorkspaceId">();
+export type WorkspaceId = z.infer<typeof WorkspaceIdSchema>;
+export const WorkstreamIdSchema = IdSchema.brand<"WorkstreamId">();
+export type WorkstreamId = z.infer<typeof WorkstreamIdSchema>;
+export const HarnessRunIdSchema = IdSchema.brand<"HarnessRunId">();
+export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
+export const UserIdSchema = IdSchema.brand<"UserId">();
+export type UserId = z.infer<typeof UserIdSchema>;
+export const SubstreamIdSchema = z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">();
+export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
+export const BlockIdSchema = IdSchema.brand<"BlockId">();
+export type BlockId = z.infer<typeof BlockIdSchema>;
+
+export const asWorkspaceId = (value: string): WorkspaceId => WorkspaceIdSchema.parse(value);
+export const asWorkstreamId = (value: string): WorkstreamId => WorkstreamIdSchema.parse(value);
+export const asHarnessRunId = (value: string): HarnessRunId => HarnessRunIdSchema.parse(value);
+export const asUserId = (value: string): UserId => UserIdSchema.parse(value);
+export const asSubstreamId = (value: string): SubstreamId => SubstreamIdSchema.parse(value);
+export const asBlockId = (value: string): BlockId => BlockIdSchema.parse(value);
 export const ScopeSchema = z.enum(["personal", "workspace"]);
 export const HarnessStatusSchema = z.enum([
   "scheduled",
@@ -1963,7 +1999,7 @@ export const NormalizedActivitySchema = z.object({
 
 export const ActivityQueueMessageSchema = z.object({
   region: RegionSchema,
-  workspaceId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
   activityId: IdSchema,
   attempt: z.number().int().min(0).max(5).default(0)
 });
@@ -1976,8 +2012,8 @@ export const SlackIngressQueueMessageSchema = z.object({
 });
 
 export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("user"), userId: IdSchema }),
-  z.object({ type: z.literal("workspace"), workspaceId: IdSchema })
+  z.object({ type: z.literal("user"), userId: UserIdSchema }),
+  z.object({ type: z.literal("workspace"), workspaceId: WorkspaceIdSchema })
 ]);
 
 export const SlackOriginAttachmentSchema = z.object({
@@ -2035,11 +2071,11 @@ export const WorkstreamCompactionFenceSchema = z.object({
 
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
   /** External child identity. Existing producers and the main feed use `0`. */
-  substreamId: z.union([z.literal("0"), IdSchema]).optional(),
-  harnessRunId: IdSchema,
+  substreamId: SubstreamIdSchema.optional(),
+  harnessRunId: HarnessRunIdSchema,
   triggerMessageId: IdSchema.nullable(),
   /**
    * The newest message this run may see, when that is not the trigger.

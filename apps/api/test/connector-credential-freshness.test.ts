@@ -1,3 +1,5 @@
+import { asWorkspaceId } from "@avalon/contracts";
+import { asHarnessRunId, asWorkstreamId } from "@avalon/contracts";
 import {
   ConnectorError,
   authorizedConnection,
@@ -271,9 +273,9 @@ describe("plugin revalidation verdicts", () => {
     connectorType: "granola",
   } satisfies PluginAuthorizationConnection;
   const input = {
-    workspaceId: frozen.workspaceId,
-    workstreamId: "00000000-0000-7000-8000-0000000000ws",
-    harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+    workspaceId: asWorkspaceId(frozen.workspaceId),
+    workstreamId: asWorkstreamId("2e9f476e-8502-4b18-81ac-b89a75a0708e"),
+    harnessRunId: asHarnessRunId("11c13ad0-a0c5-48ce-8479-061edb98e886"),
   } satisfies PluginAuthorizationInput;
 
   function recordingEnv() {
@@ -634,8 +636,8 @@ describe("revalidation between model turns", () => {
       { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1", TWITTER_API_IO_API_KEY: "k", fetch: fetcher } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "00000000-0000-7000-8000-0000000000ws",
-        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
       FROZEN as never,
@@ -691,8 +693,8 @@ describe("continuation revalidation respects its deadline", () => {
       { DB: database } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "00000000-0000-7000-8000-0000000000ws",
-        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
       FROZEN as never,
@@ -707,8 +709,8 @@ describe("continuation revalidation respects its deadline", () => {
       { DB: { prepare() { throw new Error("D1 must not be read after the deadline"); } } } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "00000000-0000-7000-8000-0000000000ws",
-        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
       FROZEN as never,

@@ -1,3 +1,5 @@
+import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkstreamId } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
@@ -12,8 +14,8 @@ import { rewriteWorkstreamRuntimeSql } from "../src/durable-objects/workstream-r
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000a2");
 const RUN_ID = "00000000-0000-7000-8000-0000000000a3";
 const MESSAGE_ID = "00000000-0000-7000-8000-0000000000a4";
 const RECIPIENT_ID = "00000000-0000-7000-8000-0000000000a6";
@@ -352,7 +354,7 @@ describe("the Workstream Durable Object relational schema", () => {
 
       expect(() => store.ensureIdentity({
         workspaceId: WORKSPACE_ID,
-        workstreamId: "00000000-0000-7000-8000-0000000000ff",
+        workstreamId: asWorkstreamId("00000000-0000-7000-8000-0000000000ff"),
       }, "global")).toThrow("workstream_object_identity_mismatch");
     } finally {
       database.close();

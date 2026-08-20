@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
@@ -10,8 +11,8 @@ import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const USER_ONE_ID = "00000000-0000-4000-8000-000000000002";
-const USER_TWO_ID = "00000000-0000-4000-8000-000000000003";
+const USER_ONE_ID = asUserId("00000000-0000-4000-8000-000000000002");
+const USER_TWO_ID = asUserId("00000000-0000-4000-8000-000000000003");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000004";
 
 class SqliteStatement {

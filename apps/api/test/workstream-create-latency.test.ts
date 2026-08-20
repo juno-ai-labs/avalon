@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 
@@ -28,8 +29,8 @@ import { WorkstreamService } from "../src/services/workstream-service";
 import { publishWorkstreamEvent, startWorkstreamWorkflow } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const authorId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const authorId = asUserId("00000000-0000-7000-8000-000000000002");
 const strangerId = "00000000-0000-7000-8000-00000000000f";
 const at = "2026-08-11T09:00:00.000Z";
 const databases: DatabaseSync[] = [];

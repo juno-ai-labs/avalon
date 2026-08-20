@@ -1,3 +1,4 @@
+import { asWorkspaceId, type WorkspaceId } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -9,7 +10,7 @@ const DEBOUNCE_MS = 10 * 60_000;
 const MAX_DELAY_MS = 60 * 60_000;
 
 interface EnqueueInput {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   partitionKey: string;
   audienceScope: "personal" | "workspace";
   audienceUserId: string | null;
@@ -117,7 +118,7 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
 export async function enqueueActivityOpportunity(
   env: Env,
   activityId: string,
-  knownWorkspaceId?: string,
+  knownWorkspaceId?: WorkspaceId,
 ): Promise<void> {
   const authority = await readWorkstreamAuthorityControl(env);
   const durableActivity = authority.phase === "durable_object_open" && knownWorkspaceId
@@ -151,7 +152,7 @@ export async function enqueueActivityOpportunity(
   const personal = activity.connection_scope === "personal";
   const ownerId = activity.connection_owner_user_id == null ? null : String(activity.connection_owner_user_id);
   if (personal && !ownerId) return;
-  const workspaceId = String(activity.workspace_id);
+  const workspaceId = asWorkspaceId(String(activity.workspace_id));
   const approximateCharacters = [activity.title, activity.summary, activity.text_snippet, activity.actor_json, activity.subject_json]
     .reduce<number>((sum, value) => sum + String(value ?? "").length, 0);
   let restrictedUserIds: string[] = [];
@@ -205,7 +206,7 @@ export async function enqueueActivityOpportunity(
 
 export async function enqueueMentionOpportunities(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   messageId: string,
   targetUserIds: string[],
 ): Promise<void> {
@@ -226,7 +227,7 @@ export async function enqueueMentionOpportunities(
 export async function enqueueMentionOpportunitySnapshot(
   env: Env,
   input: {
-    workspaceId: string;
+    workspaceId: WorkspaceId;
     messageId: string;
     targetUserIds: string[];
     occurredAt: string;

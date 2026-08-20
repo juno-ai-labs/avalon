@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,8 +26,8 @@ import { WorkstreamService } from "../src/services/workstream-service";
 import { publishWorkstreamEvent, startWorkstreamWorkflow } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const selectorId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const selectorId = asUserId("00000000-0000-7000-8000-000000000002");
 const opportunityId = "00000000-0000-7000-8000-00000000000a";
 const at = "2026-08-12T09:00:00.000Z";
 const displayPrompt = "Chase the failed release and prepare the fix";

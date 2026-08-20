@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
@@ -12,9 +13,9 @@ import { ResourceService } from "../src/services/resource-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
-const userId = "00000000-0000-4000-8000-000000000201";
-const otherUserId = "00000000-0000-4000-8000-000000000202";
-const workspaceId = "00000000-0000-4000-8000-000000000203";
+const userId = asUserId("00000000-0000-4000-8000-000000000201");
+const otherUserId = asUserId("00000000-0000-4000-8000-000000000202");
+const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000203");
 const noteId = "00000000-0000-4000-8000-000000000204";
 
 class SqliteD1Statement {

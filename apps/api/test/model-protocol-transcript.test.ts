@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { runHarness } from "@avalon/agent-harness";
 import type { Message } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -6,9 +7,9 @@ import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
-const USER_ID = "00000000-0000-4000-8000-000000000003";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000003");
 const PRIOR_RUN_ID = "00000000-0000-4000-8000-000000000004";
 
 type ToolRow = {

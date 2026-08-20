@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import type { HarnessToolContext } from "@avalon/agent-harness";
 import { describe, expect, it } from "vitest";
 
@@ -13,7 +14,7 @@ const context: HarnessToolContext = {
   workstreamId: "workstream-1",
   harnessRunId: "run-1",
   toolCallId: "call-1",
-  executionPrincipal: { type: "user", userId: "user-1" },
+  executionPrincipal: { type: "user", userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
   signal: new AbortController().signal,
 };
 

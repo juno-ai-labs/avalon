@@ -11,8 +11,11 @@ import {
   SlackIngressQueueMessageSchema,
   TriggerDefinitionSchema,
   WorkstreamWorkflowInputSchema,
+  asWorkspaceId,
+  asWorkstreamId,
   type ActivityQueueMessage,
   type Message as AvalonMessage,
+  type WorkspaceId,
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -446,7 +449,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       : null;
     if (connector) {
       await emitProductUsageTelemetry(env, {
-        workspaceId: activity.workspace_id,
+        workspaceId: asWorkspaceId(activity.workspace_id),
         name: "connector_activity_ingested",
         properties: {
           connector,
@@ -519,7 +522,7 @@ export async function processConnectorEvent(
     ? await routeContextually(env, activity, directWorkstreamIds)
     : false;
   if (directWorkstreamIds.size === 0 && !routedContextually) {
-    await enqueueActivityOpportunity(env, activity.id, activity.workspace_id);
+    await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   }
   await projectActivityEvent(env, activity);
 }
@@ -580,7 +583,7 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
   const digestible = activityIsDigestible(env, activity);
   const shared = {
     digestible,
-    workspaceId: activity.workspace_id,
+    workspaceId: asWorkspaceId(activity.workspace_id),
     eventType: `connector.${activity.provider}.${activity.event_type}`,
     subjectType: activity.resource_type ?? "connector_activity",
     subjectId: activity.provider_resource_id ?? activity.id,
@@ -712,7 +715,7 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
       activity.provider_resource_id,
       JSON.stringify(entityKeys),
     ).all<{ id: string }>();
-    const workspace = await workspaceDirectory(env, activity.workspace_id);
+    const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
     const resolvedWorkstreamIds = new Set<string>();
     for (const resource of resources.results ?? []) {
       const resolved = await workspace.workstreamsForResource({
@@ -751,7 +754,7 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
     if (restrictedUserIds != null) {
       let visible = false;
       for (const userId of restrictedUserIds) {
-        if (await isWorkstreamVisibleToUser(env, activity.workspace_id, workstreamId, userId)) {
+        if (await isWorkstreamVisibleToUser(env, asWorkspaceId(activity.workspace_id), workstreamId, userId)) {
           visible = true;
           break;
         }
@@ -850,7 +853,7 @@ async function injectActivityMessage(
     createdAt,
     editedAt: null
   };
-  await publishSubstreamAgentEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
+  await publishSubstreamAgentEvent(env, activity.workspace_region, asWorkspaceId(activity.workspace_id), asWorkstreamId(workstreamId), {
     type: "message_created",
     message: canonicalMessage
   });
@@ -1105,7 +1108,7 @@ async function startActivityAutomation(
       throw error;
     }
     await recordWorkstreamCreatedTelemetry(env, {
-      workspaceId: activity.workspace_id,
+      workspaceId: asWorkspaceId(activity.workspace_id),
       workstreamId,
       creationSource: "automation_activity",
       connectorTypes: [activity.connector_type],
@@ -1252,7 +1255,7 @@ async function routeContextually(
   if (!env.OPENROUTER_API_KEY) return false;
 
   const admission = await suggestionAdmission(env, {
-    workspaceId: activity.workspace_id,
+    workspaceId: asWorkspaceId(activity.workspace_id),
     provider: activity.provider,
     eventType: activity.event_type,
     declaredFloor: declaredConfidenceFloor(env, activity),
@@ -1280,7 +1283,7 @@ async function routeContextually(
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
   const authority = await readWorkstreamAuthorityControl(env);
   const candidates = authority.phase === "durable_object_open"
-    ? await (await workspaceDirectory(env, activity.workspace_id)).routingCandidates({
+    ? await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id))).routingCandidates({
       workspaceId: activity.workspace_id,
       restrictedUserIds,
       excludedWorkstreamIds: [...excludedWorkstreamIds],
@@ -1386,11 +1389,11 @@ async function routeContextually(
   if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
   await createActivitySuggestion(env, {
     region: activity.workspace_region,
-    workspaceId: activity.workspace_id,
+    workspaceId: asWorkspaceId(activity.workspace_id),
     activityId: activity.id,
     activityTitle: activity.title,
     activitySummary: activity.summary,
-    workstreamId: result.candidateWorkstreamId,
+    workstreamId: asWorkstreamId(result.candidateWorkstreamId),
     confidence: result.confidence,
     reason: result.reason,
     matchedEntities: result.matchedEntities,
@@ -1401,7 +1404,7 @@ async function routeContextually(
 
 async function isWorkstreamVisibleToUser(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   workstreamId: string,
   userId: string
 ): Promise<boolean> {
@@ -1426,7 +1429,7 @@ async function isWorkstreamVisibleToUser(
   return Boolean(visible);
 }
 
-function workspaceDirectory(env: Env, workspaceId: string) {
+function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
   return durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,

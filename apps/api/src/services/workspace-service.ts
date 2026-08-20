@@ -1,4 +1,7 @@
 import {
+  asUserId,
+  asWorkspaceId,
+  type UserId,
   type PendingWorkspaceInvitation,
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
@@ -43,7 +46,7 @@ async function emitInvitationTerminal(
   env: Env,
   invitation: InvitationRow,
   input: {
-    userId: string;
+    userId: UserId;
     action: "created" | "revoked" | "accepted" | "declined";
     deliveryResult: "success" | "failed" | "not_applicable";
     workspaceBound: boolean;
@@ -59,7 +62,7 @@ async function emitInvitationTerminal(
   const namespace = { created: 11, revoked: 12, accepted: 13, declined: 14 }[input.action];
   if (input.workspaceBound) {
     await emitProductUsageTelemetry(env, {
-      workspaceId: invitation.workspace_id,
+      workspaceId: asWorkspaceId(invitation.workspace_id),
       userId: input.userId,
       name: "workspace_invitation_terminal",
       properties,
@@ -233,7 +236,7 @@ export async function acceptInvitationForUser(
   if (transitioned) {
     await notifyInvitationResolution(env, invitation, user, "accepted");
     await emitInvitationTerminal(env, invitation, {
-      userId: user.id,
+      userId: asUserId(user.id),
       action: "accepted",
       deliveryResult: "not_applicable",
       workspaceBound: true,
@@ -294,7 +297,7 @@ export async function declineInvitationForUser(
   }
   await notifyInvitationResolution(env, invitation, user, "declined");
   await emitInvitationTerminal(env, invitation, {
-    userId: user.id,
+    userId: asUserId(user.id),
     action: "declined",
     deliveryResult: "not_applicable",
     workspaceBound: false,

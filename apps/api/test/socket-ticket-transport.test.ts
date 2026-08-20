@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@avalon/contracts/socket-tickets";
 import { ApiError } from "../src/lib/api-error";
@@ -64,8 +65,8 @@ function upgradeRequest(protocols?: string[]): Request {
 describe("socket ticket transport", () => {
   it("forwards the verified session identity, but not the bearer ticket, to the room", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000701";
-    const userId = "00000000-0000-7000-8000-000000000702";
-    const workspaceId = "00000000-0000-7000-8000-000000000703";
+    const userId = asUserId("00000000-0000-7000-8000-000000000702");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000703");
     const workstreamId = "00000000-0000-7000-8000-000000000704";
     const roomFetch = vi.fn(async (request: Request) => {
       expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
@@ -106,8 +107,8 @@ describe("socket ticket transport", () => {
 
   it("routes one workspace-scoped sync and command ticket to WorkspaceDO", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000711";
-    const userId = "00000000-0000-7000-8000-000000000712";
-    const workspaceId = "00000000-0000-7000-8000-000000000713";
+    const userId = asUserId("00000000-0000-7000-8000-000000000712");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000713");
     const workspaceFetch = vi.fn(async (request: Request) => {
       expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
       expect(request.headers.get("x-avalon-placement-affinity")).toBe("wnam");
@@ -154,8 +155,8 @@ describe("socket ticket transport", () => {
 
   it("routes a separately scoped metadata ticket to WorkstreamDO", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000721";
-    const userId = "00000000-0000-7000-8000-000000000722";
-    const workspaceId = "00000000-0000-7000-8000-000000000723";
+    const userId = asUserId("00000000-0000-7000-8000-000000000722");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
     const workstreamId = "00000000-0000-7000-8000-000000000724";
     const workstreamFetch = vi.fn(async (request: Request) => {
       expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
@@ -202,8 +203,8 @@ describe("socket ticket transport", () => {
 
   it("routes a purpose-scoped block ticket only to its BlockDashboardAgent", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000731";
-    const userId = "00000000-0000-7000-8000-000000000732";
-    const workspaceId = "00000000-0000-7000-8000-000000000733";
+    const userId = asUserId("00000000-0000-7000-8000-000000000732");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000733");
     const workstreamId = "00000000-0000-7000-8000-000000000734";
     const blockId = "00000000-0000-7000-8000-000000000735";
     const initializeBlock = vi.fn(async () => undefined);

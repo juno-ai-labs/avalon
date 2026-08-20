@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,8 +24,8 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
   },
 }));
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-000000000001";
-const USER_ID = "00000000-0000-7000-8000-000000000002";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const USER_ID = asUserId("00000000-0000-7000-8000-000000000002");
 const PINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000007";
 const UNPINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000008";
 const ACTIVITY_ID = "00000000-0000-7000-8000-00000000000a";

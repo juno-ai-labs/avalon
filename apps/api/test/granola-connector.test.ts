@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
@@ -5,8 +6,8 @@ import { decryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const USER_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000002");
 const API_KEY = `grn_${"a".repeat(32)}`;
 const CREDENTIAL_KEY = "granola-test-credential-key";
 

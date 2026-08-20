@@ -1,3 +1,5 @@
+import { asUserId, type UserId } from "@avalon/contracts";
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,9 +20,9 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
   },
 }));
 
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
-const OWNER = "00000000-0000-7000-8000-000000000002";
-const OTHER = "00000000-0000-7000-8000-000000000003";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
+const OTHER = asUserId("00000000-0000-7000-8000-000000000003");
 const ORDINARY = "00000000-0000-7000-8000-000000000004";
 const HIDDEN = "00000000-0000-7000-8000-000000000005";
 
@@ -30,7 +32,7 @@ afterEach(() => {
   backfilled.length = 0;
 });
 
-function serviceFor(database: DatabaseSync, userId: string): WorkstreamService {
+function serviceFor(database: DatabaseSync, userId: UserId): WorkstreamService {
   const auth: AuthContext = {
     sessionId: "session-1", userId, workspaceId: WORKSPACE, region: "global", role: "member",
   };
