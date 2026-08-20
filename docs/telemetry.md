@@ -612,8 +612,7 @@ always run after that lane. A build that has to be observed still needs
 `--quiet` dropped from the script, which captures and discards docker's output
 on success.
 
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+Shipped in the pull request for this change.
 
 ### 2026-08-13 — Connector telemetry negotiates one correlated contract version
 
