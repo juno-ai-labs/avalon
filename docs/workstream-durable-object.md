@@ -964,6 +964,45 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — A run whose executor is gone no longer wedges its substream
+
+**What changed:** Before a claimed dispatch starts, the drain terminalizes runs
+on its substream that hold the mutating slot with no dispatch behind them
+(`reapAbandonedSubstreamRuns`), logging `workstream_abandoned_runs_reaped`. An
+undecodable dispatch payload is now parsed inside the drain's guard and settled
+as `agent_run_dispatch_undecodable` instead of throwing out of the loop. Every
+run failure logs `agent_run_execution_failed`.
+
+**Why:** The dispatch-queue fix restored the alarm and still left the work
+stream spinning, because the run was never the thing that was stuck.
+`runs_mutating_substream_uq` permits one mutating run per substream, so a run
+imported mid-flight during the cutover — whose Workflow instance did not come
+with it — held that slot permanently. Every later run then failed inside
+`recordWorkflowStarted`, and the failure belonged to the *new* run, so the work
+stream read as busy while nothing executed. `reapStaleHarnessRuns` exists for
+this but runs inside `executeAgentRun`, which the wedge prevents from being
+reached: the only thing that clears a stuck run was a run. The drain's `catch`
+logged nothing at all, which is most of why hours of production telemetry showed
+a healthy object doing nothing.
+
+The poison pill was found by running the new suite against workerd rather than
+by reading the code: the payload was parsed before the `try`, so a dispatch this
+build could not validate threw out of the drain, settled nothing, and was
+reclaimed and rethrown on every alarm forever.
+
+**Considered and rejected:** Reaping on a timer, which guesses at a deadline the
+writer never declared; and widening the unique index, which is the constraint
+that keeps two runs from mutating one substream.
+
+**Consequences:** "Abandoned" is decided by the dispatch ledger — a mutating run
+with no queued or running dispatch cannot execute again, whatever its age — so
+the reap is safe while another run is legitimately in flight, because that run
+has a dispatch. A work stream wedged by an earlier build heals on its next
+message rather than needing an operator. `test-workers/agent-run-dispatch-reliability.test.ts`
+holds both cases against real alarms, real storage, and real eviction.
+
+
+
 ### 2026-08-20 — A leased dispatch, and an alarm derived only from the rows
 
 **What changed:** `agent_run_dispatches` gained `lease_token` and
