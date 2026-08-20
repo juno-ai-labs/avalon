@@ -604,8 +604,14 @@ lever on it is which builder its `docker build` resolves to.
 
 **Consequences:** `install: true` on `docker/setup-buildx-action` is now
 load-bearing in both workflows — without it the plain `docker build` that
-follows runs on a different builder and misses the warm cache entirely. The
-warm-up must stay a JavaScript action for the token to reach the cache backend.
+follows runs on a different builder and misses the warm cache entirely. So is
+`load: true` on the warm-up: a remote cache import is lazy and scoped to the
+solve that imported it, so only materializing the image leaves layers a later,
+separate build can reuse. The first version of this change used
+`type=cacheonly`, on the reasoning that the warm-up needs no image, and the
+second CI run measured what that costs — every vertex `CACHED` in 2.4s,
+followed by a full recompile in the lane that came next. The warm-up must stay
+a JavaScript action for the token to reach the cache backend.
 The `crash-symbolicator-container` lane owns the `crash-symbolicator` scope and
 is the only step that exports to it; the deploy job imports from it and has
 always run after that lane. A build that has to be observed still needs
