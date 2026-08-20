@@ -11,6 +11,16 @@ interface ImportShape {
   table: string;
   key: readonly string[];
   columns: readonly Column[];
+  /**
+   * Pairs of `[later, earlier]` object columns the target schema requires to be
+   * ordered. Legacy D1 rows carry no such constraint, and a handful written
+   * under clock skew or a same-millisecond update have `updated_at` behind
+   * `created_at`. The object's CHECK rejects those, `INSERT OR IGNORE` swallows
+   * the rejection, and the campaign quarantines on a row nobody can see — so
+   * the importer raises the later column to the earlier one instead. A creation
+   * time is the fact worth preserving; the update time is what gets corrected.
+   */
+  monotonic?: readonly (readonly [later: string, earlier: string])[];
 }
 
 const at = (name: string): Column => [name, name, "epoch"];
@@ -75,6 +85,12 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       integer("attempt", "attempt", 0), value("lease_id"), at("lease_expires_at"), at("created_at"),
       at("updated_at"), at("completed_at"),
     ],
+    monotonic: [
+      ["last_event_at", "first_event_at"],
+      ["process_after", "first_event_at"],
+      ["updated_at", "created_at"],
+      ["completed_at", "created_at"],
+    ],
   },
   opportunity_batch_events: {
     table: "opportunity_batch_events",
@@ -90,6 +106,7 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       ["attempt_count", "attempt_count", "attempt_cap3", 0],
       value("error_text"), at("created_at"), at("updated_at"),
     ],
+    monotonic: [["updated_at", "created_at"]],
   },
   work_opportunities: {
     table: "work_opportunities",
@@ -102,6 +119,7 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       value("created_workstream_id"), value("created_message_id"), value("started_by_user_id"),
       value("start_idempotency_key"), at("expires_at"), at("created_at"), at("updated_at"), at("started_at"),
     ],
+    monotonic: [["updated_at", "created_at"]],
   },
   opportunity_provenance_nodes: {
     table: "opportunity_provenance_nodes",
@@ -129,6 +147,7 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       value("link_id", "id"), value("opportunity_id"), value("user_id"), value("role"), value("resolution"),
       value("reasoning", "reasoning", ""), value("provenance_node_id"), at("created_at"), at("updated_at"),
     ],
+    monotonic: [["updated_at", "created_at"]],
   },
   work_opportunity_user_states: {
     table: "work_opportunity_user_states",
@@ -149,6 +168,7 @@ const IMPORT_SHAPES: Partial<Record<WorkspaceProductImportStage, ImportShape>> =
       ["status", "status", "suggested_status", "stale"], at("due_at"), integer("request_seq"),
       value("lease_id"), at("lease_expires_at"), at("last_ranked_at"), at("created_at"), at("updated_at"),
     ],
+    monotonic: [["updated_at", "created_at"]],
   },
   suggested_work_ranking_rounds: {
     table: "suggested_work_ranking_rounds",
@@ -358,8 +378,18 @@ export function importWorkspaceProductRows(
     // so reconciliation below must never paper over it. Only a key this page
     // has not already written may be reconciled.
     const written = new Set<string>();
+    const index = new Map(columns.map((column, position) => [column, position]));
     for (const row of rows) {
       const values = shape.columns.map((column) => converted(row, column));
+      for (const [later, earlier] of shape.monotonic ?? []) {
+        const laterAt = index.get(later);
+        const earlierAt = index.get(earlier);
+        if (laterAt === undefined || earlierAt === undefined) continue;
+        const laterValue = values[laterAt];
+        const earlierValue = values[earlierAt];
+        if (typeof laterValue !== "number" || typeof earlierValue !== "number") continue;
+        if (laterValue < earlierValue) values[laterAt] = earlierValue;
+      }
       storage.sql.exec(
         `INSERT OR IGNORE INTO ${shape.table} (${columns.join(", ")}) VALUES (${placeholders})`,
         ...values,
