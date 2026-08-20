@@ -1,11 +1,13 @@
+import { type UserId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const userId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const userId = asUserId("00000000-0000-7000-8000-000000000002");
 const firstResourceId = "00000000-0000-7000-8000-000000000011";
 const secondResourceId = "00000000-0000-7000-8000-000000000010";
 const thirdResourceId = "00000000-0000-7000-8000-000000000009";
@@ -150,11 +152,11 @@ describe("resource listing", () => {
         scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
       );
       INSERT INTO automation_subscriptions (id, scope, owner_user_id)
-        VALUES ('personal-subscription', 'personal', 'owner-user');
+        VALUES ('personal-subscription', 'personal', 'c0000000-0000-4000-8000-000000000c01');
       INSERT INTO workstreams (id, workspace_id, automation_subscription_id)
         VALUES ('private-workstream', '${workspaceId}', 'personal-subscription');
       INSERT INTO workstream_participants (workstream_id, user_id, removed_at)
-        VALUES ('private-workstream', 'participant-user', NULL);
+        VALUES ('private-workstream', 'c0000000-0000-4000-8000-000000000c03', NULL);
       INSERT INTO resources
         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
          title, mime_type, canonical_url, content_ref, last_hydrated_at, created_at, updated_at)
@@ -176,7 +178,7 @@ describe("resource listing", () => {
 
     // Provider identity keeps the email private even before the attachment
     // transaction has committed.
-    await expect(new ResourceService(environment, authFor("owner-user")).list({ limit: 10 }))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).list({ limit: 10 }))
       .resolves.toMatchObject({ items: [] });
 
     database.exec(`
@@ -184,25 +186,25 @@ describe("resource listing", () => {
         VALUES ('private-workstream', 'email-resource', 'inbound_email');
     `);
 
-    await expect(new ResourceService(environment, authFor("outsider-user")).list({ limit: 10 }))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).list({ limit: 10 }))
       .resolves.toMatchObject({ items: [] });
-    await expect(new ResourceService(environment, authFor("outsider-user")).get("email-resource"))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).get("email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
-    await expect(new ResourceService(environment, authFor("outsider-user")).content("email-resource"))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).content("email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
-    await expect(new ResourceService(environment, authFor("outsider-user")).preview("email-resource", new AbortController().signal))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).preview("email-resource", new AbortController().signal))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     expect(payloadReads).toHaveLength(0);
 
-    await expect(new ResourceService(environment, authFor("participant-user")).list({ limit: 10 }))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c03"))).list({ limit: 10 }))
       .resolves.toMatchObject({ items: [expect.objectContaining({ id: "email-resource" })] });
-    await expect(new ResourceService(environment, authFor("owner-user")).get("email-resource"))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("email-resource"))
       .resolves.toMatchObject({ id: "email-resource", provider: "resend" });
     database.close();
   });
 });
 
-function authFor(authUserId: string): AuthContext {
+function authFor(authUserId: UserId): AuthContext {
   return { ...auth, userId: authUserId };
 }
 

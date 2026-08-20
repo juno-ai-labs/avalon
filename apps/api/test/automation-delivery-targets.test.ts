@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -6,8 +7,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "user-1",
-  workspaceId: "workspace-1",
+  userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+  workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
   region: "global",
   role: "owner",
 };
@@ -63,7 +64,7 @@ describe("automation delivery targets", () => {
     // The insert path needs bindings this stub does not provide, so the run
     // fails after resolution; the resolved address is what this asserts.
     await expect(service.create(createInput("personal", [{ type: "email" }]))).rejects.toBeDefined();
-    expect(bind).toHaveBeenCalledWith("workspace-1", "user-1");
+    expect(bind).toHaveBeenCalledWith("668953d2-25f2-44fd-8d72-1e8cf024a277", "d6d77053-92bc-4af6-8332-8bea8c4c6904");
   });
 
   it("rejects email delivery when the account has no address", async () => {

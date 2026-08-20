@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 import { newId, nowIso } from "@avalon/db";
-import type { Region, Session } from "@avalon/contracts";
+import { asUserId, asWorkspaceId, type Region, type Session } from "@avalon/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
@@ -90,8 +90,8 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
     }
     return {
       sessionId: payload.sid,
-      userId: payload.sub,
-      workspaceId: typeof payload.wid === "string" ? payload.wid : null,
+      userId: asUserId(payload.sub),
+      workspaceId: typeof payload.wid === "string" ? asWorkspaceId(payload.wid) : null,
       region: payload.region,
     };
   } catch {
@@ -365,8 +365,8 @@ export class AuthService {
     const identity = await this.loadIdentity(row.user_id, row.workspace_id);
     const accessToken = await issueAccessToken(this.env, {
       sessionId: row.id,
-      userId: row.user_id,
-      workspaceId: row.workspace_id,
+      userId: asUserId(row.user_id),
+      workspaceId: row.workspace_id === null ? null : asWorkspaceId(row.workspace_id),
       region: this.env.AVALON_REGION,
     });
     return this.formatSession(identity, accessToken, newRefreshToken);
@@ -506,8 +506,8 @@ export class AuthService {
       .run();
     const accessToken = await issueAccessToken(this.env, {
       sessionId,
-      userId: identity.user_id,
-      workspaceId: identity.workspace_id,
+      userId: asUserId(identity.user_id),
+      workspaceId: identity.workspace_id === null ? null : asWorkspaceId(identity.workspace_id),
       region: this.env.AVALON_REGION,
     });
     return this.formatSession(identity, accessToken, refreshToken);

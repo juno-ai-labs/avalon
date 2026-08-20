@@ -3,6 +3,7 @@ import { z } from "zod";
 import { workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
+import { asWorkspaceId } from "@avalon/contracts";
 import type { Env } from "../env";
 import { referencesWorkstreamAuthorityTable } from "./workstream-runtime-database";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -229,7 +230,7 @@ class WorkspaceRuntimeDatabase implements D1Database {
       this.env,
       this.env.WORKSPACE_DOS,
       this.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.workspaceId)),
     );
     const response = await stub.executeRuntimeSql({
       workspaceId: this.workspaceId,

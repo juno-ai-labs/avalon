@@ -4,6 +4,12 @@ import {
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
+  SubstreamIdSchema,
+  UserIdSchema,
+  type SubstreamId,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
+  asSubstreamId,
   ServerSocketEventSchema,
   SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
@@ -101,10 +107,10 @@ export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } fro
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  substreamId: z.union([z.literal("0"), IdSchema]),
-  userId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  substreamId: SubstreamIdSchema,
+  userId: UserIdSchema,
   // Absent only on a socket accepted by a pre-command-gateway deployment. A
   // command on that socket triggers a normal reconnect for a fresh ticket.
   sessionId: z.string().min(1).max(200).optional(),
@@ -130,8 +136,8 @@ const RuntimeSuggestionRequestSchema = z.object({
   input: WorkstreamObjectCreateSuggestionInputSchema,
 }).strict();
 const RuntimeBootstrapRequestSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
 }).strict();
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
@@ -144,14 +150,14 @@ const AgentTerminalOutcomeSchema = z.object({
 }).strict();
 type AgentTerminalOutcome = z.infer<typeof AgentTerminalOutcomeSchema>;
 const AgentTimerRefreshRequestSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  substreamId: z.union([z.literal("0"), IdSchema]),
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  substreamId: SubstreamIdSchema,
 }).strict();
 const ProductAuthSchema = z.object({
   sessionId: z.string().min(1).max(200),
-  userId: IdSchema,
-  workspaceId: IdSchema,
+  userId: UserIdSchema,
+  workspaceId: WorkspaceIdSchema,
   region: z.enum(["global", "eu"]),
   role: z.enum(["owner", "admin", "member"]),
 }).strict();
@@ -189,7 +195,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     context.addIssue({ code: "custom", message: "Use only one transcript cursor" });
   }
 });
-const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
+const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
 export type SubstreamRuntimeSuggestionRequest = z.infer<typeof RuntimeSuggestionRequestSchema>;
@@ -456,10 +462,10 @@ export class SubstreamAgent extends DurableObject<Env> {
     );
   }
 
-  private externalSubstreamId(): string {
-    return this.state.storage.sql.exec<{ external_substream_id: string }>(
+  private externalSubstreamId(): SubstreamId {
+    return asSubstreamId(this.state.storage.sql.exec<{ external_substream_id: string }>(
       `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
-    ).toArray()[0]?.external_substream_id ?? "0";
+    ).toArray()[0]?.external_substream_id ?? "0");
   }
 
   /**
@@ -766,7 +772,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       || identity.workstreamId !== parsed.data.workstreamId) {
       return jsonResponse({ error: "substream_run_identity_mismatch" }, 409);
     }
-    const substreamId = parsed.data.substreamId ?? "0";
+    const substreamId = parsed.data.substreamId ?? asSubstreamId("0");
     try {
       this.ensureSubstreamIdentity(substreamId);
       await this.enqueueAgentRun(parsed.data.harnessRunId, {
@@ -785,15 +791,9 @@ export class SubstreamAgent extends DurableObject<Env> {
     const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
     const current = await this.socketAuth({
-      connectionId: uuidV7(),
       workspaceId: parsed.data.auth.workspaceId,
-      workstreamId: this.objectStore.identity()?.workstreamId ?? "",
-      substreamId: this.externalSubstreamId(),
       userId: parsed.data.auth.userId,
       sessionId: parsed.data.auth.sessionId,
-      connectedAt: new Date().toISOString(),
-      afterSequence: 0,
-      subscribed: false,
     });
     if (!current || current.role !== parsed.data.auth.role || current.region !== parsed.data.auth.region) {
       return jsonResponse({ error: "session_revoked" }, 401);
@@ -1827,7 +1827,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (!response.ok) throw new Error("workstream_local_event_publish_failed");
   }
 
-  private async socketAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
+  private async socketAuth(attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
       && this.env.AVALON_DEV_AUTH === "true"
       && attachment.sessionId === "development"
@@ -2054,10 +2054,10 @@ export class SubstreamAgent extends DurableObject<Env> {
 
     const identity = z
       .object({
-        workspaceId: IdSchema,
-        workstreamId: IdSchema,
-        substreamId: z.union([z.literal("0"), IdSchema]),
-        userId: IdSchema,
+        workspaceId: WorkspaceIdSchema,
+        workstreamId: WorkstreamIdSchema,
+        substreamId: SubstreamIdSchema,
+        userId: UserIdSchema,
         sessionId: z.string().min(1).max(200),
         ticketId: z.string().uuid(),
         ticketExpiresAt: z.coerce.number().int().positive(),

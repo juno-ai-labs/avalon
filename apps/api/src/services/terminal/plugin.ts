@@ -1,5 +1,5 @@
 import type { HarnessPlugin } from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { asWorkspaceId, type WorkstreamWorkflowInput } from "@avalon/contracts";
 import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
@@ -59,7 +59,7 @@ export async function createAvalonTerminalPlugin(
     (workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId),
     configuration.emergencyDisabled,
     async (context, observation) => emitProductUsageTelemetry(env, {
-      workspaceId: context.workspaceId,
+      workspaceId: asWorkspaceId(context.workspaceId),
       ...(context.executionPrincipal.type === "user" ? { userId: context.executionPrincipal.userId } : {}),
       name: "terminal_workspace_terminal",
       properties: {

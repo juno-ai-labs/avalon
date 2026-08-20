@@ -1,3 +1,4 @@
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -8,9 +9,9 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const { loadRunPromptContext, projectModelProtocolTranscript } = __integrationTesting;
 
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = "00000000-0000-7000-8000-000000000002";
-const WORKSTREAM = "00000000-0000-7000-8000-000000000003";
+const WORKSTREAM = asWorkstreamId("00000000-0000-7000-8000-000000000003");
 const RUN = "00000000-0000-7000-8000-000000000004";
 const DELIVERY = "00000000-0000-7000-8000-000000000005";
 const SCHEDULE = "00000000-0000-7000-8000-000000000006";

@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { HarnessEvent } from "@avalon/agent-harness";
 import { authorizedConnection } from "@avalon/connectors";
 import { describe, expect, it } from "vitest";
@@ -56,7 +57,7 @@ describe("Bind tool failure persistence", () => {
   it("passes the provider idempotency key into connector execution context", () => {
     const connection = authorizedConnection({
       id: "connection-1",
-      workspaceId: "workspace-1",
+      workspaceId: "668953d2-25f2-44fd-8d72-1e8cf024a277",
       scope: "workspace",
       ownerUserId: null,
       grantedScopes: ["records.write"],
@@ -68,23 +69,23 @@ describe("Bind tool failure persistence", () => {
 
     expect(__integrationTesting.createConnectorToolContext(
       connection,
-      { type: "workspace", workspaceId: "workspace-1" },
+      { type: "workspace", workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277") },
       signal,
       "run-1:turn:1:tool:0",
     )).toEqual({
       connection,
-      principal: { type: "workspace", workspaceId: "workspace-1" },
+      principal: { type: "workspace", workspaceId: "668953d2-25f2-44fd-8d72-1e8cf024a277" },
       providerIdempotencyKey: "run-1:turn:1:tool:0",
       signal,
     });
     expect(__integrationTesting.createConnectorToolContext(
       connection,
-      { type: "workspace", workspaceId: "workspace-1" },
+      { type: "workspace", workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277") },
       signal,
     )).not.toHaveProperty("providerIdempotencyKey");
     expect(__integrationTesting.createConnectorToolContext(
       connection,
-      { type: "workspace", workspaceId: "workspace-1" },
+      { type: "workspace", workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277") },
       signal,
       undefined,
       { slackActionToken: "event-only-token" },

@@ -1,3 +1,5 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
+
 import type { Env } from "../env";
 import { newId, nowIso } from "@avalon/db";
 import { deliverDigest } from "./digest-delivery-service";
@@ -73,8 +75,8 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
     ).bind(delivery.id).first<{ count: number }>(),
   ]);
   await emitProductUsageTelemetry(env, {
-    workspaceId: delivery.workspace_id,
-    userId: delivery.user_id,
+    workspaceId: asWorkspaceId(delivery.workspace_id),
+    userId: asUserId(delivery.user_id),
     name: "digest_delivery_terminal",
     properties: {
       deliveryId: delivery.id,

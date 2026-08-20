@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { linkAnonymousTelemetry } from '../src/telemetry/identity-link';
@@ -9,7 +10,7 @@ const anonymousEpochId = '018f22f2-4c22-7abc-8def-0123456789ab';
 function seedUser(database: ReturnType<typeof migratedSqliteDatabase>): void {
   database.prepare(`INSERT INTO users
     (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
-    VALUES ('user-1', 'google-1', 'user@example.com', 'Ada User', ?, ?, 1)`)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'google-1', 'user@example.com', 'Ada User', ?, ?, 1)`)
     .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
 }
 
@@ -28,7 +29,7 @@ describe('anonymous telemetry identity linking', () => {
     });
     const bootstrapService = new TelemetryBootstrapService(env);
     const capability = (await bootstrapService.bootstrap(anonymousEpochId, 'US')).capability;
-    const auth = { userId: 'user-1', workspaceId: null, region: 'global' as const };
+    const auth = { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' as const };
     await expect(linkAnonymousTelemetry(env, auth, capability)).resolves.toMatchObject({ result: 'linked' });
     await expect(linkAnonymousTelemetry(env, auth, capability)).resolves.toMatchObject({ result: 'duplicate' });
     await expect(bootstrapService.bootstrap(anonymousEpochId, 'US')).rejects.toThrow('telemetry_journey_closed');
@@ -64,7 +65,7 @@ describe('anonymous telemetry identity linking', () => {
       },
     });
     await expect(linkAnonymousTelemetry(euEnv, {
-      userId: 'user-1', workspaceId: null, region: 'eu',
+      userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'eu',
     }, capability)).resolves.toMatchObject({ result: 'linked' });
     expect(euDatabase.prepare('SELECT route FROM telemetry_identity_links').get()).toEqual({ route: 'eu' });
     expect(euDatabase.prepare('SELECT COUNT(*) AS count FROM telemetry_profile_jobs').get()).toEqual({ count: 0 });

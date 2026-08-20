@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createGranolaConnector,
@@ -300,7 +301,7 @@ describe("Granola connector", () => {
             accountInfo: {
               emailAddress: "person@example.test",
               activeWorkspace: {
-                workspaceId: "granola-workspace-1",
+                workspaceId: asWorkspaceId("8a5b9362-e54c-4a39-8159-199e266e5f91"),
                 workspaceName: "Example workspace",
               },
             },
@@ -402,7 +403,7 @@ const workspaceApiKey = `grn_${"a".repeat(32)}`;
 function workspaceConnection(): AuthorizedConnectorConnection {
   return authorizedConnection({
     id: "granola-workspace-connection",
-    workspaceId: "avalon-workspace",
+    workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a"),
     scope: "workspace",
     ownerUserId: null,
     grantedScopes: [GranolaCapabilities.workspaceRead],
@@ -415,7 +416,7 @@ function workspaceConnection(): AuthorizedConnectorConnection {
 function workspaceToolContext() {
   return {
     connection: workspaceConnection(),
-    principal: { type: "workspace" as const, workspaceId: "avalon-workspace" },
+    principal: { type: "workspace" as const, workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
     signal: AbortSignal.timeout(1_000),
   };
 }

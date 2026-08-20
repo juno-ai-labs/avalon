@@ -1,4 +1,4 @@
-import { IdSchema, RegionSchema } from "@avalon/contracts";
+import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@avalon/contracts";
 import { z } from "zod";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";
@@ -32,7 +32,7 @@ export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kin
   z.object({
     kind: z.literal("admission"),
     region: RegionSchema,
-    workspaceId: IdSchema,
+    workspaceId: WorkspaceIdSchema,
     windowId: IdSchema,
     leaseId: IdSchema,
     attempt: z.number().int().min(0).max(5),
@@ -40,8 +40,8 @@ export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kin
   z.object({
     kind: z.literal("ranking"),
     region: RegionSchema,
-    workspaceId: IdSchema,
-    userId: IdSchema,
+    workspaceId: WorkspaceIdSchema,
+    userId: UserIdSchema,
     requestSeq: z.number().int().nonnegative(),
     leaseId: IdSchema,
   }).strict(),

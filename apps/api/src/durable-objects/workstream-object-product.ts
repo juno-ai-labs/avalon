@@ -15,6 +15,15 @@ import {
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
+  asHarnessRunId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type HarnessRunId,
+  type WorkspaceId,
+  type WorkstreamId,
 } from "@avalon/contracts";
 import type { AddressingContextMessage } from "@avalon/agent-harness";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
@@ -80,8 +89,8 @@ export type WorkstreamObjectCreateSuggestionInput = z.infer<
 >;
 
 export const InitializeWorkstreamObjectInputSchema = z.object({
-  workspaceId: z.string().uuid(),
-  workstreamId: z.string().uuid(),
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
   title: z.string().min(1).max(180),
   objective: z.string().max(4_000),
@@ -210,7 +219,7 @@ interface LocalMessageWrite {
   sequenceNumber: number;
   attentionOrdinal: number;
   inserted: boolean;
-  runId: string | null;
+  runId: HarnessRunId | null;
 }
 
 function first<T extends SqlRow>(cursor: SqlStorageCursor<T>): T | null {
@@ -285,8 +294,8 @@ export class WorkstreamObjectProductService {
   }
 
   bootstrapRuntimeAuthority(input: {
-    workspaceId: string;
-    workstreamId: string;
+    workspaceId: WorkspaceId;
+    workstreamId: WorkstreamId;
     generation: number;
   }): void {
     this.objectStore.ensureIdentity({
@@ -384,12 +393,12 @@ export class WorkstreamObjectProductService {
         workstream: await this.summary(existingRoot, auth.userId),
         messageId: part.id,
         harnessRunId: run.run_id,
-        workflowInput: this.workflowInput(input, run.run_id, part.id),
+        workflowInput: this.workflowInput(input, asHarnessRunId(run.run_id), part.id),
       };
     }
     const now = Date.now();
     const messageId = uuidV7(now);
-    const runId = uuidV7(now);
+    const runId = asHarnessRunId(uuidV7(now));
     const model = input.modelOverride
       ? pinnedModelRouting(input.modelOverride).model
       : (await resolveAgentModelRouting(this.env, "workstream", {
@@ -532,7 +541,7 @@ export class WorkstreamObjectProductService {
 
   private workflowInput(
     input: InitializeWorkstreamObjectInput,
-    runId: string,
+    runId: HarnessRunId,
     messageId: string,
   ): WorkstreamWorkflowInput {
     return {
@@ -929,8 +938,8 @@ export class WorkstreamObjectProductService {
     const root = this.root();
     const auth: AuthContext = {
       sessionId: "substream-agent-runtime",
-      userId: root.created_by_user_id ?? root.workstream_key,
-      workspaceId: root.parent_workspace_key,
+      userId: asUserId(root.created_by_user_id ?? root.workstream_key),
+      workspaceId: asWorkspaceId(root.parent_workspace_key),
       region: this.env.AVALON_REGION,
       role: "owner",
     };
@@ -1944,7 +1953,7 @@ export class WorkstreamObjectProductService {
     const model = shouldInvoke ? await this.model(root) : null;
     const now = Date.now();
     const messageId = uuidV7(now);
-    const runId = shouldInvoke ? uuidV7(now) : null;
+    const runId = shouldInvoke ? asHarnessRunId(uuidV7(now)) : null;
     const affectedUsers = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
@@ -2203,7 +2212,7 @@ export class WorkstreamObjectProductService {
     const workflowInput: WorkstreamWorkflowInput | null = committed.result.runId ? {
       region: this.env.AVALON_REGION,
       workspaceId: auth.workspaceId,
-      workstreamId: root.workstream_key,
+      workstreamId: asWorkstreamId(root.workstream_key),
       harnessRunId: committed.result.runId,
       triggerMessageId: message.id,
       automationSubscriptionId: null,
@@ -2258,9 +2267,9 @@ export class WorkstreamObjectProductService {
     if (!skipped) this.validateElicitationAnswer(row, input.answer, input.customResponse);
     const now = Date.now();
     const responsePartId = uuidV7(now);
-    const runId = uuidV7(now);
+    const runId = asHarnessRunId(uuidV7(now));
     const model = await this.model(root);
-    let admittedRunId: string | null = null;
+    let admittedRunId: HarnessRunId | null = null;
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
@@ -2371,7 +2380,7 @@ export class WorkstreamObjectProductService {
     const workflowInput: WorkstreamWorkflowInput | null = admittedRunId ? {
       region: this.env.AVALON_REGION,
       workspaceId: auth.workspaceId,
-      workstreamId: root.workstream_key,
+      workstreamId: asWorkstreamId(root.workstream_key),
       harnessRunId: admittedRunId,
       triggerMessageId: responsePartId,
       automationSubscriptionId: null,
@@ -2456,7 +2465,7 @@ export class WorkstreamObjectProductService {
         ORDER BY sequence_number DESC LIMIT 1`,
     ));
     const now = Date.now();
-    const runId = uuidV7(now);
+    const runId = asHarnessRunId(uuidV7(now));
     const model = await this.model(root);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -2493,7 +2502,7 @@ export class WorkstreamObjectProductService {
       workflowInput: {
         region: this.env.AVALON_REGION,
         workspaceId: auth.workspaceId,
-        workstreamId: root.workstream_key,
+        workstreamId: asWorkstreamId(root.workstream_key),
         harnessRunId: runId,
         triggerMessageId: latest.trigger_part_id,
         automationSubscriptionId: null,

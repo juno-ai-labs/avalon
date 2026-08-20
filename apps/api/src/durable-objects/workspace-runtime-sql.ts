@@ -46,10 +46,24 @@ export function executeWorkspaceRuntimeSql(
   }
 
   return storage.transactionSync(() => request.statements.map((statement) => {
-    const cursor = storage.sql.exec<Record<string, SqlStorageValue>>(
-      statement.sql,
-      ...statement.params,
-    );
+    let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
+    try {
+      cursor = storage.sql.exec<Record<string, SqlStorageValue>>(
+        statement.sql,
+        ...statement.params,
+      );
+    } catch (error) {
+      // The statement is the diagnosis: a SQLite limit or schema defect
+      // surfaces here as a bare error with no way to tell whose SQL — the
+      // workstream-side executor learned this during the transcript-routing
+      // incident, and this one produced an anonymous "too many terms in
+      // compound SELECT" the same week.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `workspace_runtime_statement_failed: ${reason} :: ${statement.sql.slice(0, 300)}`,
+        { cause: error },
+      );
+    }
     const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
     return {
       columns: rows.length === 0 ? [] : Object.keys(rows[0]!),

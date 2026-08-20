@@ -1,3 +1,4 @@
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { ToolInvocation } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -74,8 +75,8 @@ class ToolTranscriptStatement {
   }
 }
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const workstreamId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000002");
 const harnessRunId = "00000000-0000-7000-8000-000000000003";
 const invocationId = "00000000-0000-7000-8000-000000000004";
 

@@ -1,3 +1,5 @@
+import { asWorkspaceId } from "@avalon/contracts";
+import { asUserId } from "@avalon/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env, IdentityAuthContext } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
@@ -107,8 +109,8 @@ const invitationRow = {
 
 const ownerAuth: AuthContext = {
   sessionId: "session-1",
-  userId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2",
-  workspaceId: invitationRow.workspace_id,
+  userId: asUserId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2"),
+  workspaceId: asWorkspaceId(invitationRow.workspace_id),
   region: "global",
   role: "owner",
 };

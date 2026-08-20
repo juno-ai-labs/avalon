@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -13,12 +14,12 @@ class AdoptionDatabase {
   readonly executed: ExecutedStatement[] = [];
   readonly subscription: Record<string, unknown> = {
     id: "subscription-1",
-    workspace_id: "workspace-1",
+    workspace_id: "668953d2-25f2-44fd-8d72-1e8cf024a277",
     template_id: "template-1",
     template_version_id: "version-1",
     status: "active",
     scope: "personal",
-    owner_user_id: "user-1",
+    owner_user_id: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
     connector_bindings_json: "{}",
     overrides_json: JSON.stringify({ tone: "concise" }),
   };
@@ -103,8 +104,8 @@ describe("automation template version adoption", () => {
     });
     const auth: AuthContext = {
       sessionId: "session-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
+      userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+      workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
       region: "global",
       role: "member",
     };
@@ -124,19 +125,19 @@ describe("automation template version adoption", () => {
         "2026-08-01T01:00:00.000Z",
         "2026-08-01T00:00:00.000Z",
         "subscription-1",
-        "workspace-1",
+        "668953d2-25f2-44fd-8d72-1e8cf024a277",
       ],
     });
     expect(database.executed[0]!.sql).not.toContain("overrides_json");
     expect(database.executed[1]).toEqual({
       sql: "DELETE FROM schedules WHERE automation_subscription_id = ? AND workspace_id = ?",
-      values: ["subscription-1", "workspace-1"],
+      values: ["subscription-1", "668953d2-25f2-44fd-8d72-1e8cf024a277"],
     });
     expect(database.executed[2]).toMatchObject({
       sql: expect.stringContaining("INSERT INTO schedules"),
       values: [
         expect.any(String),
-        "workspace-1",
+        "668953d2-25f2-44fd-8d72-1e8cf024a277",
         "subscription-1",
         "interval",
         null,
@@ -148,8 +149,8 @@ describe("automation template version adoption", () => {
         "2026-08-01T00:00:00.000Z",
       ],
     });
-    expect(schedulerId).toHaveBeenCalledWith("global:workspace-1");
-    expect(schedulerRefresh).toHaveBeenCalledWith("workspace-1");
+    expect(schedulerId).toHaveBeenCalledWith("global:668953d2-25f2-44fd-8d72-1e8cf024a277");
+    expect(schedulerRefresh).toHaveBeenCalledWith("668953d2-25f2-44fd-8d72-1e8cf024a277");
     expect(get).toHaveBeenCalledWith("subscription-1");
   });
 });

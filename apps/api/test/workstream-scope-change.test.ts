@@ -1,3 +1,5 @@
+import { asUserId, type UserId } from "@avalon/contracts";
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,10 +29,10 @@ vi.mock("../src/services/integrations", async (importOriginal) => ({
   },
 }));
 
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
-const OWNER = "00000000-0000-7000-8000-000000000002";
-const COLLEAGUE = "00000000-0000-7000-8000-000000000003";
-const BYSTANDER = "00000000-0000-7000-8000-000000000004";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
+const COLLEAGUE = asUserId("00000000-0000-7000-8000-000000000003");
+const BYSTANDER = asUserId("00000000-0000-7000-8000-000000000004");
 const SHARED = "00000000-0000-7000-8000-000000000010";
 const GENERATED = "00000000-0000-7000-8000-000000000011";
 const MACHINERY = "00000000-0000-7000-8000-000000000012";
@@ -44,7 +46,7 @@ afterEach(() => {
 });
 beforeEach(() => published.splice(0));
 
-function serviceFor(database: DatabaseSync, userId: string): WorkstreamService {
+function serviceFor(database: DatabaseSync, userId: UserId): WorkstreamService {
   const auth: AuthContext = {
     sessionId: "session-1", userId, workspaceId: WORKSPACE, region: "global", role: "member",
   };

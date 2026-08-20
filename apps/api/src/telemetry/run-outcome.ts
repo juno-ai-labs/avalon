@@ -1,3 +1,4 @@
+import { asUserId, type UserId, type WorkspaceId } from '@avalon/contracts';
 import type { Env, IdentityAuthContext } from '../env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';
 import {
@@ -9,7 +10,7 @@ import {
 } from './product-usage';
 
 interface CorrelatedRunInput {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   workstreamId: string;
   harnessRunId: string;
   telemetryOperationId?: string | undefined;
@@ -84,11 +85,11 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   return 'system';
 }
 
-function userIdForRun(row: RunRow, explicitUserId?: string): string | undefined {
-  if (explicitUserId) return explicitUserId;
+function userIdForRun(row: RunRow, explicitUserId?: string): UserId | undefined {
+  if (explicitUserId) return asUserId(explicitUserId);
   const principal = parseJson(row.execution_principal_json);
   return principal.type === 'user' && typeof principal.userId === 'string'
-    ? principal.userId
+    ? asUserId(principal.userId)
     : undefined;
 }
 

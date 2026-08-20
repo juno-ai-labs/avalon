@@ -2,6 +2,8 @@ import {
   BlockDashboardBlockRunSchema,
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
+  asWorkstreamId,
+  type WorkspaceId,
   type BlockDashboard,
   type BlockDashboardBlockRun,
   type BlockDashboardPreference,
@@ -35,7 +37,7 @@ const BlockDashboardRunsResponseSchema = z.object({
 
 async function blockDashboardControl(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   workstreamId: string,
   body: z.input<typeof BlockDashboardControlRequestSchema>,
 ): Promise<unknown> {
@@ -43,7 +45,7 @@ async function blockDashboardControl(
     env,
     env.WORKSTREAM_DOS,
     workspaceId,
-    workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
+    workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(workstreamId)),
   );
   const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse(body));
   const payload = rpcResultBody(response) as { error?: unknown } | null;
@@ -62,7 +64,7 @@ async function blockDashboardControl(
 
 export async function loadBlockDashboard(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   workstreamId: string,
 ): Promise<BlockDashboard> {
   const payload = await blockDashboardControl(env, workspaceId, workstreamId, {
@@ -168,7 +170,7 @@ export class BlockDashboardService {
 
 export async function launchBlockDashboardRefresh(
   env: Env,
-  workspaceId: string,
+  workspaceId: WorkspaceId,
   workstreamId: string,
   triggerSequence: number,
   contextFence: BlockDashboardContextFence,

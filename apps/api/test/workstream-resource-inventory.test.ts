@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceRow,
@@ -27,7 +28,7 @@ function resource(
 ): VisibleWorkstreamResourceRow {
   return {
     id,
-    workspace_id: "workspace",
+    workspace_id: "1629dee4-8cc4-4531-81f9-b2be8614e062",
     resource_type: "file",
     provider: "avalon_upload",
     title,
@@ -122,7 +123,7 @@ describe("work-stream compaction resource inventory", () => {
               messages_json: JSON.stringify([{ role: "user", content: "stale principal inventory" }]),
               summary: "# Request\nContinue the exact work.",
               checkpoint_template_version: 1,
-              execution_principal_key: "user:viewer",
+              execution_principal_key: "user:4b2a1529-867b-4d69-8685-b1722ccd0149",
               resource_visibility_fingerprint: storedFingerprint,
             } as T;
           },
@@ -144,9 +145,9 @@ describe("work-stream compaction resource inventory", () => {
 
     const checkpoint = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "user", userId: "viewer" },
+      { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       AS_OF,
     );
 
@@ -163,9 +164,9 @@ describe("work-stream compaction resource inventory", () => {
     revision = 2;
     const replayAfterRemoval = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "user", userId: "viewer" },
+      { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       "2026-08-12T18:31:00.000Z",
     );
     expect(replayAfterRemoval).toBeNull();
@@ -199,9 +200,9 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "user", userId: "different-viewer" },
+      { type: "user", userId: asUserId("df345be8-2f51-49ed-873d-bd48ada54749") },
       AS_OF,
     )).resolves.toBeNull();
   });
@@ -240,10 +241,10 @@ describe("work-stream compaction resource inventory", () => {
     await __integrationTesting.persistWorkstreamContextCompaction(
       database,
       {
-        workspaceId: "workspace",
+        workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
         workstreamId: "workstream",
         harnessRunId: "run",
-        executionPrincipal: { type: "user", userId: "viewer" },
+        executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
       } as WorkstreamWorkflowInput,
       42,
       checkpoint,
@@ -253,7 +254,7 @@ describe("work-stream compaction resource inventory", () => {
     expect(sql).toContain("checkpoint_template_version");
     expect(bindings[5]).toBe(checkpoint.summary);
     expect(bindings[6]).toBe(CHECKPOINT_TEMPLATE_VERSION);
-    expect(bindings[7]).toBe("user:viewer");
+    expect(bindings[7]).toBe("user:4b2a1529-867b-4d69-8685-b1722ccd0149");
     expect(bindings[8]).toBe("inventory:0");
     expect(String(bindings[4])).toContain("# Request");
     expect(String(bindings[4])).not.toContain("Authoritative work-stream resource inventory");
@@ -276,9 +277,9 @@ describe("work-stream compaction resource inventory", () => {
     });
 
     await expect(loadVisibleWorkstreamResourceInventory(database, {
-      workspaceId: "workspace",
+      workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
       workstreamId: "workstream",
-      principal: { type: "user", userId: "viewer" },
+      principal: { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       expectedFingerprint: "inventory:1",
     })).rejects.toThrow("resource inventory changed");
   });
@@ -317,10 +318,10 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.persistWorkstreamContextCompaction(
       database,
       {
-        workspaceId: "workspace",
+        workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
         workstreamId: "workstream",
         harnessRunId: "run",
-        executionPrincipal: { type: "user", userId: "viewer" },
+        executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
       } as WorkstreamWorkflowInput,
       42,
       checkpoint,
@@ -341,7 +342,7 @@ describe("work-stream compaction resource inventory", () => {
               messages_json: JSON.stringify([{ role: "user", content: "future-version base checkpoint" }]),
               summary: "raw future summary",
               checkpoint_template_version: 99,
-              execution_principal_key: "workspace:workspace",
+              execution_principal_key: "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
               resource_visibility_fingerprint: "inventory:0",
             } as T;
           },
@@ -352,9 +353,9 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "workspace", workspaceId: "workspace" },
+      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
       AS_OF,
     )).resolves.toEqual({
       compactedThroughSequence: 7,
@@ -365,7 +366,7 @@ describe("work-stream compaction resource inventory", () => {
   it("loads only the exact frozen compaction and detects changed checkpoint content", async () => {
     const checkpointRunId = "00000000-0000-4000-8000-0000000000a1";
     const stored = {
-      executionPrincipalKey: "workspace:workspace",
+      executionPrincipalKey: "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
       resourceVisibilityFingerprint: "inventory:0",
       checkpointTemplateVersion: 1,
       checkpointRunId,
@@ -407,25 +408,25 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "workspace", workspaceId: "workspace" },
+      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
       AS_OF,
       fence,
     )).resolves.toMatchObject({ compactedThroughSequence: 12 });
     expect(compactionBindings).toEqual([
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      "workspace:workspace",
+      "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
       checkpointRunId,
       12,
     ]);
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "workspace",
+      "1629dee4-8cc4-4531-81f9-b2be8614e062",
       "workstream",
-      { type: "workspace", workspaceId: "workspace" },
+      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
       AS_OF,
       { ...fence, checkpointHash: "fnv1a64:0000000000000000" },
     )).rejects.toMatchObject({ code: "compaction_fence_changed" });

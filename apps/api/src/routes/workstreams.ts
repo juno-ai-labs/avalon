@@ -152,7 +152,7 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
   // only one that can claim an objective was authored rather than derived.
   const authority = await readWorkstreamAuthorityControl(c.env);
   const created = CreatedWorkstreamSchema.parse(authority.phase === "durable_object_open"
-    ? await new WorkstreamObjectCreationService(c.env, auth).create({
+    ? await new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
         ...body,
         descriptionSource: body.objective ? "authored" : "derived",
       })

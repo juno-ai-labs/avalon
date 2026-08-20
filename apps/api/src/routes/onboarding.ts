@@ -6,6 +6,8 @@ import {
   OnboardingRegionRequestSchema,
   SessionSchema,
   WorkspaceOnboardingStateSchema,
+  asUserId,
+  asWorkspaceId,
   type Session,
 } from "@avalon/contracts";
 import { Hono, type Context } from "hono";
@@ -44,8 +46,8 @@ function deferOnboardingOutcome(
   const outcomeAuth: IdentityAuthContext = workspaceIdentity && session
     ? {
         sessionId: auth.sessionId,
-        userId: session.user.id,
-        workspaceId: workspaceIdentity.id,
+        userId: asUserId(session.user.id),
+        workspaceId: asWorkspaceId(workspaceIdentity.id),
         region: selectedRegion,
         role: workspaceIdentity.role,
       }

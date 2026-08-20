@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,8 +9,8 @@ import {
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const userId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1";
-const workspaceId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2";
+const userId = asUserId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1");
+const workspaceId = asWorkspaceId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2");
 const workstreamId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3";
 const opportunityId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4";
 

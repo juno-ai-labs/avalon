@@ -1,3 +1,4 @@
+import type { UserId, WorkspaceId } from "@avalon/contracts";
 import {
   TELEMETRY_CONNECTOR_TYPES,
   TELEMETRY_WORKSTREAM_CREATION_SOURCES,
@@ -17,11 +18,11 @@ export const WORKSTREAM_CREATION_SOURCES = TELEMETRY_WORKSTREAM_CREATION_SOURCES
 export type WorkstreamCreationSource = TelemetryWorkstreamCreationSource;
 
 type WorkstreamCreationPrincipal =
-  | { type: "user"; userId: string }
+  | { type: "user"; userId: UserId }
   | { type: "workspace" };
 
 interface WorkstreamCreationTelemetryInput {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   workstreamId: string;
   creationSource: WorkstreamCreationSource;
   connectorTypes?: readonly string[];

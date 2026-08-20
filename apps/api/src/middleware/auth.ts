@@ -1,3 +1,4 @@
+import { UserIdSchema, WorkspaceIdSchema } from "@avalon/contracts";
 import type { MiddlewareHandler } from "hono";
 import type { AuthContext, Env, HonoAppEnv, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -57,8 +58,11 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
 
 async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (c.env.APP_ENV === "development" && c.env.AVALON_DEV_AUTH === "true") {
-    const userId = c.req.header("x-avalon-dev-user-id");
-    const workspaceId = c.req.header("x-avalon-dev-workspace-id");
+    // Parsed, not cast: a malformed development header is a request that
+    // simply is not using dev auth, and must fall through to ordinary
+    // authentication rather than 500 on the brand's validation.
+    const userId = UserIdSchema.safeParse(c.req.header("x-avalon-dev-user-id")).data;
+    const workspaceId = WorkspaceIdSchema.safeParse(c.req.header("x-avalon-dev-workspace-id")).data;
     if (userId && workspaceId) {
       const member = await c.env.DB.prepare(
         `SELECT m.role FROM workspace_members m

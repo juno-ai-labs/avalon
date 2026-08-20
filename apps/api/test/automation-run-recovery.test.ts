@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -52,13 +53,13 @@ interface StoredOpeningMessage {
 class ManualRunDatabase {
   readonly subscription: Record<string, unknown> = {
     id: "subscription-1",
-    workspace_id: "workspace-1",
+    workspace_id: "668953d2-25f2-44fd-8d72-1e8cf024a277",
     status: "active",
     scope: "personal",
-    owner_user_id: "user-1",
+    owner_user_id: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
     name: "Daily brief",
     description: "Build the daily brief",
-    execution_principal_json: JSON.stringify({ type: "user", userId: "user-1" }),
+    execution_principal_json: JSON.stringify({ type: "user", userId: "d6d77053-92bc-4af6-8332-8bea8c4c6904" }),
   };
 
   run: StoredRun | null = null;
@@ -283,12 +284,12 @@ describe("manual automation run recovery", () => {
       Object.assign(database.subscription, {
         scope: "workspace",
         owner_user_id: null,
-        execution_principal_json: JSON.stringify({ type: "workspace", workspaceId: "workspace-1" }),
+        execution_principal_json: JSON.stringify({ type: "workspace", workspaceId: "668953d2-25f2-44fd-8d72-1e8cf024a277" }),
       });
       database.automationResource = {
         id: "note-resource-1",
         scope,
-        ownerUserId: "user-1",
+        ownerUserId: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
         archived,
       };
       const service = new AutomationService(createTestEnv({
@@ -300,8 +301,8 @@ describe("manual automation run recovery", () => {
         WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
       }), {
         sessionId: "session-1",
-        userId: "user-1",
-        workspaceId: "workspace-1",
+        userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+        workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
         region: "global",
         role: "member",
       });
@@ -330,8 +331,8 @@ describe("manual automation run recovery", () => {
     });
     const auth: AuthContext = {
       sessionId: "session-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
+      userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+      workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
       region: "global",
       role: "member",
     };
@@ -394,8 +395,8 @@ describe("manual automation run recovery", () => {
     });
     const service = new AutomationService(env, {
       sessionId: "system-inbound-email",
-      userId: "user-1",
-      workspaceId: "workspace-1",
+      userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+      workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
       region: "global",
       role: "member",
     });

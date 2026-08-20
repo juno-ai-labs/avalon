@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -269,7 +270,7 @@ describe("Slack account linking", () => {
     await seedChallenge(database, "used-token", { expiresAt: "2099-01-01T00:00:00.000Z", consumedAt: "2026-01-01T00:00:00.000Z" });
 
     await expect(new SlackAgentService(environment(database)).previewLink(
-      { ...auth(), workspaceId: "workspace-other" },
+      { ...auth(), workspaceId: asWorkspaceId("46211570-12bb-4b6d-844d-d6bf36d06f4f") },
       "used-token",
     )).rejects.toMatchObject({ code: "slack_link_workspace_mismatch", status: 409 });
   });

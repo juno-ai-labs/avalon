@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +37,7 @@ describe("Slack work stream creator attribution", () => {
     threadTs: "123.456",
     invocationType: "app_mention" as const,
     channelType: "public" as const,
-    matchedAvalonUserId: "user-taylor",
+    matchedAvalonUserId: "a0000000-0000-4000-8000-000000000a10",
     nearbyMessagesStatus: "available" as const,
     nearbyMessages: [],
     attachments: [],
@@ -53,24 +54,24 @@ describe("Slack work stream creator attribution", () => {
     const database = seededDatabase();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
-    const created = await new SlackWorkspaceWorkstreamService(env, "workspace-slack").create({
+    const created = await new SlackWorkspaceWorkstreamService(env, asWorkspaceId("b0000000-0000-4000-8000-000000000b10")).create({
       actor,
       title: "Investigate the alert",
       objective: "Investigate the alert",
       text: "Investigate the alert",
       clientMessageId: "event:opening",
-      creatorUserId: "user-taylor",
+      creatorUserId: asUserId("a0000000-0000-4000-8000-000000000a10"),
       slackOrigin,
     });
 
-    expect(created.workstream.createdByUserId).toBe("user-taylor");
+    expect(created.workstream.createdByUserId).toBe("a0000000-0000-4000-8000-000000000a10");
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = ?",
-    ).get(created.workstream.id)).toEqual({ created_by_user_id: "user-taylor" });
+    ).get(created.workstream.id)).toEqual({ created_by_user_id: "a0000000-0000-4000-8000-000000000a10" });
     expect(database.prepare(
       "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = ?",
     ).get(created.workstream.id)).toEqual({
-      user_id: "user-taylor",
+      user_id: "a0000000-0000-4000-8000-000000000a10",
       participation_reason: "creator",
     });
     // Attribution never rewrites authorship: the opening message stays the
@@ -99,7 +100,7 @@ describe("Slack work stream creator attribution", () => {
     const database = seededDatabase();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
-    const created = await new SlackWorkspaceWorkstreamService(env, "workspace-slack").create({
+    const created = await new SlackWorkspaceWorkstreamService(env, asWorkspaceId("b0000000-0000-4000-8000-000000000b10")).create({
       actor,
       title: "Investigate the alert",
       objective: "Investigate the alert",
@@ -129,15 +130,15 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES
       ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-      ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      ('a0000000-0000-4000-8000-000000000a10', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
     INSERT INTO workspaces
       (id, name, slug, region, created_by_user_id, created_at, updated_at)
-    VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global', 'user-owner',
+    VALUES ('b0000000-0000-4000-8000-000000000b10', 'Slack Workspace', 'slack-workspace', 'global', 'user-owner',
             '2026-01-01', '2026-01-01');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES
-      ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-      ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01');
+      ('b0000000-0000-4000-8000-000000000b10', 'user-owner', 'owner', 'active', '2026-01-01'),
+      ('b0000000-0000-4000-8000-000000000b10', 'a0000000-0000-4000-8000-000000000a10', 'member', 'active', '2026-01-01');
   `);
   return database;
 }

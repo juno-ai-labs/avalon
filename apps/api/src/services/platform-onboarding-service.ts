@@ -2,8 +2,11 @@ import {
   IanaTimezoneSchema,
   PendingWorkspaceInvitationSchema,
   SessionSchema,
+  WorkspaceIdSchema,
+  asWorkspaceId,
   WorkspaceSchema,
   type Region,
+  type WorkspaceId,
   type Session,
   type WorkspaceOnboardingState,
 } from "@avalon/contracts";
@@ -55,7 +58,7 @@ const regionalDiscoverySchema = z.object({
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
   operationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  workspaceId: WorkspaceIdSchema,
   placementAffinity: WorkspacePlacementAffinitySchema,
   preference: PreferenceProjectionSchema,
 });
@@ -532,7 +535,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   private async initializeWorkspaceObject(
-    workspaceId: string,
+    workspaceId: WorkspaceId,
     placementAffinity: WorkspacePlacementAffinity,
   ): Promise<void> {
     const workspaceObject = await durableObjectStubForWorkspace(
@@ -748,7 +751,7 @@ export class PlatformOnboardingService {
       (operationId, preference) => this.gateways[region].activate({
         identity,
         operationId,
-        workspaceId,
+        workspaceId: asWorkspaceId(workspaceId),
         placementAffinity: workspace.placementAffinity,
         preference,
       }),
@@ -775,7 +778,7 @@ export class PlatformOnboardingService {
       (operationId, preference) => this.gateways[region].create({
         identity,
         operationId,
-        workspaceId,
+        workspaceId: asWorkspaceId(workspaceId),
         name,
         placementAffinity: placement.affinity,
         preference,
@@ -802,7 +805,7 @@ export class PlatformOnboardingService {
       (operationId, preference) => this.gateways[region].accept({
         identity,
         operationId,
-        workspaceId: invitation.workspaceId,
+        workspaceId: asWorkspaceId(invitation.workspaceId),
         invitationId,
         placementAffinity: invitation.placementAffinity,
         preference,
@@ -1004,7 +1007,7 @@ export class PlatformOnboardingService {
     const session = await this.gateways[region].activate({
       identity,
       operationId,
-      workspaceId,
+      workspaceId: asWorkspaceId(workspaceId),
       placementAffinity,
       preference,
     });
@@ -1029,7 +1032,7 @@ export class PlatformOnboardingService {
         return this.gateways[region].activate({
           identity,
           operationId,
-          workspaceId,
+          workspaceId: asWorkspaceId(workspaceId),
           placementAffinity,
           preference,
         });

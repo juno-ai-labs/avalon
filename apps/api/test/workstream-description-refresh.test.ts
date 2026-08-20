@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -19,8 +20,8 @@ import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-const USER_ID = "00000000-0000-4000-8000-000000000000";
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
 const NOW = new Date("2026-08-11T12:00:00.000Z");
 

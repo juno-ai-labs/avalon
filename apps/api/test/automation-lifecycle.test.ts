@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -21,8 +22,8 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "00000000-0000-7000-8000-000000000002",
-  workspaceId: "00000000-0000-7000-8000-000000000001",
+  userId: asUserId("00000000-0000-7000-8000-000000000002"),
+  workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000001"),
   region: "global",
   role: "member",
 };

@@ -3,8 +3,11 @@ import {
   ExecutionPrincipalSchema,
   IdSchema,
   RegionSchema,
+  WorkspaceIdSchema,
   WorkstreamWorkflowInputSchema,
+  asWorkspaceId,
   type ConnectorPollWorkflowInput,
+  type WorkspaceId,
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -291,7 +294,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
   /** RPC-friendly refresh used after every canonical schedule mutation. */
   async refresh(workspaceId: string): Promise<{ alarmAt: string | null }> {
     await this.initialized;
-    const parsedWorkspaceId = IdSchema.parse(workspaceId);
+    const parsedWorkspaceId = WorkspaceIdSchema.parse(workspaceId);
     const existing = this.workspaceId();
     if (existing && existing !== parsedWorkspaceId) {
       throw new Error("scheduler_workspace_mismatch");
@@ -733,10 +736,11 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     });
   }
 
-  private workspaceId(): string | null {
-    return this.state.storage.sql.exec<{ workspace_id: string }>(
+  private workspaceId(): WorkspaceId | null {
+    const stored = this.state.storage.sql.exec<{ workspace_id: string }>(
       `SELECT workspace_id FROM workspace_scheduler_state WHERE id = 1`,
     ).toArray()[0]?.workspace_id ?? null;
+    return stored === null ? null : asWorkspaceId(stored);
   }
 
   private async runSchedule(schedule: ScheduleRow, now: Date): Promise<void> {
@@ -840,7 +844,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
 
     if (!run) {
       const planned = authority.phase === "durable_object_open"
-        ? await (await this.workspaceDirectory(schedule.workspace_id)).plannedWorkstream({
+        ? await (await this.workspaceDirectory(asWorkspaceId(schedule.workspace_id))).plannedWorkstream({
           workspaceId: schedule.workspace_id,
           userId: null,
           automationSubscriptionId: subscriptionId,
@@ -950,7 +954,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
           .run();
         if (createdWorkstreamId) {
           await recordWorkstreamCreatedTelemetry(this.env, {
-            workspaceId: schedule.workspace_id,
+            workspaceId: asWorkspaceId(schedule.workspace_id),
             workstreamId: createdWorkstreamId,
             creationSource: "automation_scheduled",
             principal: principal.type === "user"
@@ -1133,7 +1137,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
       .run();
   }
 
-  private workspaceDirectory(workspaceId: string) {
+  private workspaceDirectory(workspaceId: WorkspaceId) {
     return durableObjectStubForWorkspace(
       this.env,
       this.env.WORKSPACE_DOS,

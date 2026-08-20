@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import type { HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,7 +21,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const W = "00000000-0000-4000-8000-000000000011";
 const S = "00000000-0000-4000-8000-000000000012";
 const R = "00000000-0000-4000-8000-000000000013";
-const U = "00000000-0000-4000-8000-000000000014";
+const U = asUserId("00000000-0000-4000-8000-000000000014");
 const I = "00000000-0000-4000-8000-000000000015";
 
 const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];

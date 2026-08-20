@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@avalon/contracts";
 import { CONTROL_TOWER_REFRESH_SECONDS } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
@@ -7,9 +8,9 @@ import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
-const staffUserId = "00000000-0000-4000-8000-0000000000a1";
-const customerUserId = "00000000-0000-4000-8000-0000000000a2";
-const workspaceId = "00000000-0000-4000-8000-0000000000a3";
+const staffUserId = asUserId("00000000-0000-4000-8000-0000000000a1");
+const customerUserId = asUserId("00000000-0000-4000-8000-0000000000a2");
+const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000a3");
 const staffPlatformUserId = "00000000-0000-4000-8000-0000000000b1";
 const createdAt = "2026-01-02T03:04:05.000Z";
 
@@ -64,7 +65,7 @@ function envWithAccounts(
   });
 }
 
-function auth(userId: string, workspace: string | null = workspaceId): IdentityAuthContext {
+function auth(userId: UserId, workspace: WorkspaceId | null = workspaceId): IdentityAuthContext {
   return {
     sessionId: "session-1",
     userId,
@@ -211,7 +212,7 @@ describe("client feature flags", () => {
     const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
     const env = envWithAccounts(staffOnly);
 
-    await expect(developerSettings(env, auth("00000000-0000-4000-8000-0000000000ff")))
+    await expect(developerSettings(env, auth(asUserId("00000000-0000-4000-8000-0000000000ff"))))
       .resolves.toBe(false);
     expect(contextOf(staffOnly)).not.toHaveProperty("userEmailDomain");
   });

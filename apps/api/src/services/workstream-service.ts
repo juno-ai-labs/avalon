@@ -1,6 +1,6 @@
 import { buildMessageAttachmentStatements, buildParticipantUpsertStatement, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
-import { HarnessFailureCodeSchema, WorkstreamDetailSchema, workstreamCanonicalUrl } from "@avalon/contracts";
+import { HarnessFailureCodeSchema, WorkstreamDetailSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, workstreamCanonicalUrl, type WorkspaceId, type WorkstreamId } from "@avalon/contracts";
 import type {
   AnswerElicitationRequestSchema,
   Connection,
@@ -241,8 +241,8 @@ const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
 export async function launchWorkstreamHarness(
   env: Env,
   input: {
-    workspaceId: string;
-    workstreamId: string;
+    workspaceId: WorkspaceId;
+    workstreamId: WorkstreamId;
     triggerMessageId: string | null;
     /**
      * The newest message the run may see, when that is not the trigger. Only
@@ -269,7 +269,7 @@ export async function launchWorkstreamHarness(
     input.workspaceId,
     input.workstreamId,
   );
-  const id = newId();
+  const id = asHarnessRunId(newId());
   const at = nowIso();
   const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
@@ -375,7 +375,7 @@ export async function launchWorkstreamHarness(
           input.workstreamId,
         ),
       );
-      const response = await agent.dispatchRun({ ...workflowInput, substreamId: "0" });
+      const response = await agent.dispatchRun({ ...workflowInput, substreamId: asSubstreamId("0") });
       if (response.status < 200 || response.status >= 300) {
         const body = rpcResultBody(response) as { error?: unknown } | null;
         throw new Error(typeof body?.error === "string" ? body.error : "substream_agent_unavailable");
@@ -473,8 +473,8 @@ export async function fireWorkstreamWakeup(
     await appendWakeupSystemMessage(env, row);
 
     const harnessRunId = await launchWorkstreamHarness(env, {
-      workspaceId: row.workspace_id,
-      workstreamId: row.workstream_id,
+      workspaceId: asWorkspaceId(row.workspace_id),
+      workstreamId: asWorkstreamId(row.workstream_id),
       triggerMessageId: null,
       origin: "scheduled_wakeup",
       executionPrincipal: principal,
@@ -2284,7 +2284,7 @@ export class WorkstreamService {
     // Slack arguments is a call nobody can read.
     const harnessRunId = await launchWorkstreamHarness(this.env, {
         workspaceId: this.auth.workspaceId,
-        workstreamId: id,
+        workstreamId: asWorkstreamId(id),
         triggerMessageId: latest.trigger_message_id,
         origin: "manual_retry",
         executionPrincipal: { type: "user", userId: this.auth.userId },
@@ -2515,7 +2515,7 @@ export class WorkstreamService {
   ): Promise<string> {
     return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
-      workstreamId,
+      workstreamId: asWorkstreamId(workstreamId),
       triggerMessageId,
       origin,
       executionPrincipal: { type: "user", userId: this.auth.userId },

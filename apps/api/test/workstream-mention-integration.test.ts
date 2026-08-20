@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 
@@ -29,8 +30,8 @@ import { sendWorkstreamMentionSlack } from "../src/services/slack-mention-servic
 import { classifyWorkstreamMessage, startWorkstreamWorkflow } from "../src/services/integrations";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const authorId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const authorId = asUserId("00000000-0000-7000-8000-000000000002");
 const personId = "00000000-0000-7000-8000-000000000003";
 const workstreamId = "00000000-0000-7000-8000-000000000004";
 const at = "2026-08-02T20:00:00.000Z";

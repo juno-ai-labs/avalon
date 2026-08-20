@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthContext } from '../src/env';
@@ -7,8 +8,8 @@ import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from '../src/services/attachment-de
 import { sha256Hex } from '../src/lib/crypto';
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = '00000000-0000-7000-8000-000000000001';
-const userId = '00000000-0000-7000-8000-000000000002';
+const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
+const userId = asUserId('00000000-0000-7000-8000-000000000002');
 const draftId = '019fcc00-0000-7000-8000-000000000003';
 
 const auth: AuthContext = {
@@ -79,7 +80,7 @@ describe('uploaded attachment drafts', () => {
     });
     await new ResourceService(environment, auth).upload(new File(['private'], 'private.txt'), undefined, draftId);
 
-    const other = new ResourceService(environment, { ...auth, userId: '00000000-0000-7000-8000-000000000004' });
+    const other = new ResourceService(environment, { ...auth, userId: asUserId('00000000-0000-7000-8000-000000000004') });
     await expect(other.deleteDraft(draftId)).rejects.toMatchObject({ status: 404, code: 'attachment_draft_not_found' });
     expect(stored).toHaveLength(1);
     database.close();

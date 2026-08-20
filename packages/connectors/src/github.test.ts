@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { NormalizedActivitySchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -136,7 +137,7 @@ describe("GitHub connector", () => {
     };
     const context = {
       connection,
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
 
@@ -196,7 +197,7 @@ describe("GitHub connector", () => {
       title: "Must stay read-only",
     }, {
       connection,
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toMatchObject({
       code: "unauthorized",
@@ -398,7 +399,7 @@ describe("GitHub connector", () => {
     const connection = personalConnection([GitHubCapabilities.contentsRead, GitHubCapabilities.pullRequestsRead]);
     const context = {
       connection,
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
     const content = await adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
@@ -410,7 +411,7 @@ describe("GitHub connector", () => {
       .rejects.toMatchObject({ code: "unsupported_capability" });
     await expect(adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, {
       ...context,
-      principal: { type: "user", userId: "user-2" },
+      principal: { type: "user", userId: asUserId("3d58ce20-fe80-4793-80b2-21905baa60b3") },
     })).rejects.toMatchObject({ code: "unauthorized" });
   });
 
@@ -465,7 +466,7 @@ describe("GitHub connector", () => {
     connection.config.account = { login: "acme", type: "Organization" };
     const context = {
       connection,
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
 
@@ -517,7 +518,7 @@ describe("GitHub connector", () => {
     const adapter = githubAdapter(fetcher);
     const context = {
       connection: personalConnection([GitHubCapabilities.metadataRead]),
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
 
@@ -572,7 +573,7 @@ describe("GitHub connector", () => {
     const adapter = githubAdapter(fetcher);
     const context = {
       connection: personalConnection([GitHubCapabilities.contentsRead]),
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
 
@@ -631,7 +632,7 @@ describe("GitHub connector", () => {
     const adapter = githubAdapter(fetcher);
     const context = {
       connection: personalConnection([GitHubCapabilities.contentsRead]),
-      principal: { type: "user" as const, userId: "user-1" },
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     };
 
@@ -684,7 +685,7 @@ describe("GitHub connector", () => {
     const connection = personalConnection([GitHubCapabilities.metadataRead]);
     const result = await adapter.executeTool("repositories.list", {}, {
       connection,
-      principal: { type: "user", userId: "user-1" },
+      principal: { type: "user", userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: AbortSignal.timeout(1_000),
     });
     expect(result.output).toMatchObject({ repositories: [{ id: 1, full_name: "acme/widget" }] });
@@ -1198,9 +1199,9 @@ function githubConfig(fetcher: FetchLike, privateKey = dummyPrivateKey()): GitHu
 function personalConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
   return authorizedConnection({
     id: "connection-github-personal",
-    workspaceId: "workspace-1",
+    workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
     scope: "personal",
-    ownerUserId: "user-1",
+    ownerUserId: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
     grantedScopes,
     credentials: {
       accessToken: "old-access",
@@ -1217,7 +1218,7 @@ function personalConnection(grantedScopes: string[]): AuthorizedConnectorConnect
 function workspaceConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
   return authorizedConnection({
     id: "00000000-0000-4000-8000-000000000002",
-    workspaceId: "00000000-0000-4000-8000-000000000001",
+    workspaceId: asWorkspaceId("00000000-0000-4000-8000-000000000001"),
     scope: "workspace",
     ownerUserId: null,
     grantedScopes,

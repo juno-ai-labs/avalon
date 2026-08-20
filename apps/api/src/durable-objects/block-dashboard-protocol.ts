@@ -1,15 +1,20 @@
 import {
   BlockDashboardBlockRunSchema,
+  BlockIdSchema,
+  HarnessRunIdSchema,
   IdSchema,
   RegionSchema,
+  UserIdSchema,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
   UpdateBlockDashboardRequestSchema,
   WorkstreamCompactionFenceSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 
 const CoordinatesSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
 }).strict();
 
 export const BlockDashboardSourceRefreshRequestSchema = CoordinatesSchema.extend({
@@ -90,11 +95,11 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
 
 export const BlockDashboardBlockDispatchSchema = z.object({
   region: RegionSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  blockId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  blockId: BlockIdSchema,
   blockRunId: IdSchema,
-  harnessRunId: IdSchema,
+  harnessRunId: HarnessRunIdSchema,
   configurationVersionId: IdSchema,
   configurationVersionNumber: z.number().int().positive(),
   prompt: z.string().min(1).max(12_000),
@@ -104,14 +109,14 @@ export const BlockDashboardBlockDispatchSchema = z.object({
 }).strict();
 
 export const BlockDashboardViewerAuthorizationRequestSchema = CoordinatesSchema.extend({
-  blockId: IdSchema,
-  userId: IdSchema,
+  blockId: BlockIdSchema,
+  userId: UserIdSchema,
 }).strict();
 
 export const BlockDashboardSocketRetractionRequestSchema = CoordinatesSchema.extend({
-  blockId: IdSchema,
+  blockId: BlockIdSchema,
   region: RegionSchema,
-  userId: IdSchema.optional(),
+  userId: UserIdSchema.optional(),
 }).strict();
 
 export type BlockDashboardBlockDispatch = z.infer<typeof BlockDashboardBlockDispatchSchema>;

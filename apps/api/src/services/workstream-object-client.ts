@@ -9,6 +9,9 @@ import {
   WorkstreamSchema,
   type Elicitation,
   type Message,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
   type Resource,
   type Workstream,
   type WorkstreamContext,
@@ -76,7 +79,7 @@ async function objectStub(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, substreamId),
+    substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
   );
 }
 

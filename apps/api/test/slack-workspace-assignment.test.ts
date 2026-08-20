@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -32,35 +33,35 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES
         ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+        ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
       INSERT INTO workspaces
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+      VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
               'user-owner', '2026-01-01', '2026-01-01');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES
-        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-02-01');
       INSERT INTO connector_connections
         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
          display_name, encrypted_credentials, credential_iv, credential_key_version,
          granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
          model_plugin_id)
-      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
               'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
               '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
               'plugin_slack_workspace');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-ownerless', 'workspace-slack', 'Investigate', 'Investigate',
+      VALUES ('workstream-ownerless', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', NULL, 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
          opening_client_message_id, workstream_id, invocation_kind, channel_type,
          context_json, created_at, updated_at)
-      VALUES ('session-ownerless', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+      VALUES ('session-ownerless', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
               'T123', 'U456', 'C123', '1.0', 'event:ownerless', 'workstream-ownerless',
               'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
     `);
@@ -90,8 +91,8 @@ describe("Slack workspace workstream assignment", () => {
     });
 
     await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
-      "workspace-slack",
-      "user-taylor",
+      "3f88f9ca-d7b3-4714-828e-b22187914524",
+      "a352221e-2577-4ad0-8889-5b24421f63fb",
       "taylor@example.com",
     )).resolves.toBe(1);
 
@@ -99,7 +100,7 @@ describe("Slack workspace workstream assignment", () => {
       `SELECT assigned_user_id, assignment_method, execution_scope, linked_user_id
        FROM slack_agent_sessions WHERE id = 'session-ownerless'`,
     ).get()).toEqual({
-      assigned_user_id: "user-taylor",
+      assigned_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb",
       assignment_method: "verified_email",
       execution_scope: "workspace",
       linked_user_id: null,
@@ -107,10 +108,10 @@ describe("Slack workspace workstream assignment", () => {
     expect(database.prepare(
       `SELECT user_id, participation_reason FROM workstream_participants
        WHERE workstream_id = 'workstream-ownerless'`,
-    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "creator" });
+    ).get()).toEqual({ user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" });
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-ownerless'",
-    ).get()).toEqual({ created_by_user_id: "user-taylor" });
+    ).get()).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
   });
 
   it("keeps an existing creator when a later Slack assignment resolves the same session", async () => {
@@ -125,35 +126,35 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES
         ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+        ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
       INSERT INTO workspaces
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+      VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
               'user-owner', '2026-01-01', '2026-01-01');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES
-        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-02-01');
       INSERT INTO connector_connections
         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
          display_name, encrypted_credentials, credential_iv, credential_key_version,
          granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
          model_plugin_id)
-      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
               'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
               '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
               'plugin_slack_workspace');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-owned', 'workspace-slack', 'Investigate', 'Investigate',
+      VALUES ('workstream-owned', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', 'user-owner', 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
          opening_client_message_id, workstream_id, invocation_kind, channel_type,
          context_json, created_at, updated_at)
-      VALUES ('session-owned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+      VALUES ('session-owned', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
               'T123', 'U456', 'C123', '1.0', 'event:owned', 'workstream-owned',
               'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
     `);
@@ -179,8 +180,8 @@ describe("Slack workspace workstream assignment", () => {
     });
 
     await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
-      "workspace-slack",
-      "user-taylor",
+      "3f88f9ca-d7b3-4714-828e-b22187914524",
+      "a352221e-2577-4ad0-8889-5b24421f63fb",
       "taylor@example.com",
     )).resolves.toBe(1);
 
@@ -200,7 +201,7 @@ describe("Slack workspace workstream assignment", () => {
     }));
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
-    await expect(new SlackWorkspaceWorkstreamService(env, "workspace-slack").answerOpenElicitation(
+    await expect(new SlackWorkspaceWorkstreamService(env, asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524")).answerOpenElicitation(
       "workstream-retry",
       {
         actor: {
@@ -237,12 +238,12 @@ describe("Slack workspace workstream assignment", () => {
 
   it("does not answer another user elicitation when a client response is retried", async () => {
     const database = migratedDatabase();
-    seedElicitationRetry(database, "human", "user-taylor", null);
+    seedElicitationRetry(database, "human", "a352221e-2577-4ad0-8889-5b24421f63fb", null);
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
     const service = new WorkstreamService(env, {
       sessionId: "slack:T123:U456",
-      userId: "user-taylor",
-      workspaceId: "workspace-slack",
+      userId: asUserId("a352221e-2577-4ad0-8889-5b24421f63fb"),
+      workspaceId: asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524"),
       region: "global",
       role: "member",
     });
@@ -274,23 +275,23 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES
         ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01'),
+        ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01'),
         ('user-jordan', 'google-jordan', 'jordan@example.com', 'Jordan', '2026-01-01', '2026-01-01');
       INSERT INTO workspaces
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+      VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
               'user-owner', '2026-01-01', '2026-01-01');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES
-        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-jordan', 'member', 'active', '2026-01-01');
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-jordan', 'member', 'active', '2026-01-01');
       INSERT INTO connector_connections
         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
          display_name, encrypted_credentials, credential_iv, credential_key_version,
          granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
          model_plugin_id)
-      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
               'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
               '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
               'plugin_slack_workspace');
@@ -298,9 +299,9 @@ describe("Slack workspace workstream assignment", () => {
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
       VALUES
-        ('workstream-guessed', 'workspace-slack', 'Guessed', 'Slack task', 'ad_hoc', 'user-jordan',
+        ('workstream-guessed', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Guessed', 'Slack task', 'ad_hoc', 'user-jordan',
          'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01'),
-        ('workstream-elsewhere', 'workspace-slack', 'Elsewhere', 'Slack task', 'ad_hoc', 'user-owner',
+        ('workstream-elsewhere', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Elsewhere', 'Slack task', 'ad_hoc', 'user-owner',
          'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO workstream_participants
         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
@@ -311,11 +312,11 @@ describe("Slack workspace workstream assignment", () => {
          opening_client_message_id, workstream_id, invocation_kind, channel_type,
          assigned_user_id, assigned_at, assignment_method, context_json, created_at, updated_at)
       VALUES
-        ('session-guessed', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+        ('session-guessed', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
          'T123', 'U456', 'C123', '1.0', 'event:guessed', 'workstream-guessed',
          'app_mention', 'public', 'user-jordan', '2026-01-01', 'verified_email', '{}',
          '2026-01-01', '2026-01-01'),
-        ('session-elsewhere', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+        ('session-elsewhere', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
          'T123', 'U456', 'C123', '2.0', 'event:elsewhere', 'workstream-elsewhere',
          'app_mention', 'public', 'user-owner', '2026-01-01', 'explicit_link', '{}',
          '2026-01-01', '2026-01-01');
@@ -342,8 +343,8 @@ describe("Slack workspace workstream assignment", () => {
 
     await expect(new SlackAgentService(env).linkUser({
       sessionId: "session-taylor",
-      userId: "user-taylor",
-      workspaceId: "workspace-slack",
+      userId: asUserId("a352221e-2577-4ad0-8889-5b24421f63fb"),
+      workspaceId: asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524"),
       region: "global",
       role: "member",
     }, "link-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });
@@ -352,13 +353,13 @@ describe("Slack workspace workstream assignment", () => {
     // address its own earlier assignment matched on.
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-guessed'",
-    ).get()).toEqual({ created_by_user_id: "user-taylor" });
+    ).get()).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
     expect(database.prepare(
       `SELECT user_id, participation_reason FROM workstream_participants
        WHERE workstream_id = 'workstream-guessed' ORDER BY user_id`,
     ).all()).toEqual([
+      { user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" },
       { user_id: "user-jordan", participation_reason: "explicit" },
-      { user_id: "user-taylor", participation_reason: "creator" },
     ]);
     // A creator recorded by anything other than that guess still stands.
     expect(database.prepare(
@@ -1001,34 +1002,34 @@ function seedElicitationRetry(
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES
       ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-      ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
     INSERT INTO workspaces
       (id, name, slug, region, created_by_user_id, created_at, updated_at)
-    VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+    VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
             'user-owner', '2026-01-01', '2026-01-01');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES
-      ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-      ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01');
+      ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+      ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-01-01');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
        harness_status, next_sequence_number, email_address, email_route_status,
        last_activity_at, created_at, updated_at)
-    VALUES ('workstream-retry', 'workspace-slack', 'Retry', 'Retry', 'ad_hoc', NULL,
+    VALUES ('workstream-retry', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Retry', 'Retry', 'ad_hoc', NULL,
             'needs_input', 2, 'retry@automation.with-avalon.com', 'active',
             '2026-01-01', '2026-01-01', '2026-01-01');
     INSERT INTO harness_runs
       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
     VALUES
-      ('run-a', 'workspace-slack', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-01'),
-      ('run-b', 'workspace-slack', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-02');
+      ('run-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-01'),
+      ('run-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-02');
     INSERT INTO elicitations
       (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
        options_json, minimum_selections, maximum_selections, status, created_at)
     VALUES
-      ('elicitation-a', 'workspace-slack', 'workstream-retry', 'run-a', 'First?', 'text',
+      ('elicitation-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'run-a', 'First?', 'text',
        '[]', 0, NULL, 'open', '2026-01-01'),
-      ('elicitation-b', 'workspace-slack', 'workstream-retry', 'run-b', 'Second?', 'text',
+      ('elicitation-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'run-b', 'Second?', 'text',
        '[]', 0, NULL, 'open', '2026-01-02');
   `);
   database.prepare(
@@ -1036,7 +1037,7 @@ function seedElicitationRetry(
      (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
       message_type, text_content, structured_content_json, sequence_number, created_at,
       external_actor_json)
-     VALUES ('message-retry', 'event:retry', 'workspace-slack', 'workstream-retry', ?, ?,
+     VALUES ('message-retry', 'event:retry', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', ?, ?,
              'elicitation', '', NULL, 1, '2026-01-01', ?)`,
   ).run(authorType, authorUserId, externalActorJson);
 }

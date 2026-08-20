@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceSchema, type Region, type Session, type Workspace } from "@avalon/contracts";
 import { readFileSync } from "node:fs";
@@ -21,7 +22,7 @@ import {
 } from "../src/services/platform-onboarding-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const platformUserId = "00000000-0000-7000-8000-000000000001";
+const platformUserId = asUserId("00000000-0000-7000-8000-000000000001");
 const euWorkspaceId = "00000000-0000-7000-8000-000000000002";
 const globalWorkspaceId = "00000000-0000-7000-8000-000000000003";
 const invitationId = "00000000-0000-7000-8000-000000000004";

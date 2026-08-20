@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -35,8 +36,8 @@ vi.mock("../src/services/agent-model-flags", async (importOriginal) => ({
   scheduledWorkstreamModel: vi.fn(async () => "test-model"),
 }));
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-000000000001";
-const USER_ID = "00000000-0000-7000-8000-000000000002";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const USER_ID = asUserId("00000000-0000-7000-8000-000000000002");
 const SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000007";
 const CONNECTION_ID = "00000000-0000-7000-8000-00000000000c";
 const ACTIVITY_ID = "00000000-0000-7000-8000-00000000000d";
