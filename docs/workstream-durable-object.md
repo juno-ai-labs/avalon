@@ -964,6 +964,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The messages trigger absorbs replayed durable writes
+
+**What changed:** Schema v5 rebuilds `_runtime_messages_insert` with a second
+upsert arm: a write whose `client_message_id` already exists under a different
+message id is a replay and is ignored; same-id tool updates keep updating in
+place. Derived from the frozen v1 body with v3's rounding applied.
+
+**Why:** SQLite ignores an `ON CONFLICT` clause aimed at a view — conflict
+handling belongs to the INSTEAD OF trigger. The harness's durable writers rely
+on `ON CONFLICT(workstream_id, client_message_id) DO NOTHING` for replay
+safety: a retried attempt writes its final message again under the same
+`harness:<runId>` client id with a fresh message id. Against the object, that
+clause was silently dropped and the trigger's bare INSERT hit
+`parts_client_message_uq` — an uncaught crash in the run's settlement, found
+within minutes of pointing the local end-to-end campaign's stop/retry lane at
+the post-cutover stack. Every runtime view that accepts writes shares this
+contract: replay-safety promised by a caller's ON CONFLICT must be
+re-expressed inside the trigger, because SQLite will not carry it through.
+
+**Considered and rejected:** Rewriting the callers to probe-before-insert —
+races under exactly the concurrency that produces replays; and mapping the
+outer conflict clause in the SQL rewriter — the rewriter cannot know which
+conflict target survives the view-to-table column mapping.
+
+**Consequences:** Retried runs settle instead of crashing. The pattern is now
+load-bearing and documented: an INSTEAD OF trigger owns every conflict its
+table can raise. `runtime-compat-views.test.ts` replays a durable write
+through the real trigger and fails against the bare-INSERT body.
+
+
+
 ### 2026-08-20 — Work-stream authority outranks the workspace router, and the resources view becomes selectable
 
 **What changed:** The workspace runtime router defers any statement that
