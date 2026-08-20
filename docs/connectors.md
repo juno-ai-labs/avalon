@@ -745,6 +745,27 @@ region unable to run the service's own queries, converting a loud import
 failure into a silent runtime one. Editing schema version 1 in place was never
 an option: its statements are hashed, and changing them strands every object
 that already applied it.
+### 2026-08-19 — Audience admission runs under the work stream's authority
+
+**What changed:** `admitConnectorAudience` routes its participant reads and
+upserts through `workstreamExecutionEnvironment`, so after the cutover they
+execute in the work stream's Durable Object instead of regional D1. The roster
+read that used to join `users` inside one statement is split: participant rows
+come from the object, user profiles from the regional `users` table, merged in
+code. A regression test drives the phase machine to `durable_object_open` with
+the D1 fences armed and asserts the admission lands in the object.
+
+**Why:** The function still wrote `workstream_participants` through the
+workspace-wrapped `env.DB`, whose router does not claim work-stream tables, so
+post-cutover the upsert fell through to fenced D1 and aborted — refusing every
+linked member speaking in a connector conversation. The fence did its job: it
+turned a silent dual-authority write into a loud failure; this change moves the
+write to the authority the fence was pointing at.
+
+**Considered and rejected:** Adding `workstream_participants` to the workspace
+router's allowlist (wrong object — participant rows live with the work stream,
+not the workspace), and relaxing the fence for this one writer (re-opens the
+dual-authority hole the cutover closed).
 
 ### 2026-08-18 — Connector ingress routing is migration-tested and repairable
 
