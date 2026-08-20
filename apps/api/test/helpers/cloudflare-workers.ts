@@ -8,3 +8,89 @@ export class DurableObject<Env = unknown> {
     this.env = env;
   }
 }
+
+/**
+ * Node-test stand-in for the runtime's custom-span API.
+ *
+ * The real one nests by async context and hands the span to the OTLP exporter;
+ * neither exists off workerd. This keeps the *contract* a call site depends on
+ * — the callback runs, its result is returned, a throw propagates, and the
+ * attributes a caller sets are recorded — so a Node test can assert on what a
+ * path names its spans and what it puts on them. Anything that depends on
+ * real nesting or on export belongs in `apps/api/test-workers/` instead, per
+ * `docs/testing.md`.
+ */
+export interface RecordedSpan {
+  name: string;
+  attributes: Record<string, string | number | boolean>;
+  ended: boolean;
+}
+
+const recorded: RecordedSpan[] = [];
+
+/** The spans opened since the last `resetRecordedSpans()`, in start order. */
+export function recordedSpans(): readonly RecordedSpan[] {
+  return recorded;
+}
+
+export function resetRecordedSpans(): void {
+  recorded.length = 0;
+}
+
+function makeSpan(name: string): { span: RecordedSpan; handle: SpanHandle } {
+  const span: RecordedSpan = { name, attributes: {}, ended: false };
+  recorded.push(span);
+  return {
+    span,
+    handle: {
+      setAttribute(key: string, value: string | number | boolean | undefined): void {
+        if (value === undefined) return;
+        span.attributes[key] = value;
+      },
+      end(): void {
+        span.ended = true;
+      },
+      isTraced: true,
+    },
+  };
+}
+
+interface SpanHandle {
+  setAttribute(key: string, value: string | number | boolean | undefined): void;
+  end(): void;
+  readonly isTraced: boolean;
+}
+
+export const tracing = {
+  enterSpan<T, A extends unknown[]>(
+    name: string,
+    callback: (span: SpanHandle, ...args: A) => T,
+    ...args: A
+  ): T {
+    const { span, handle } = makeSpan(name);
+    const finish = (): void => { span.ended = true; };
+    let result: T;
+    try {
+      result = callback(handle, ...args);
+    } catch (error) {
+      finish();
+      throw error;
+    }
+    // The runtime ends the span when an async callback settles, not when it
+    // returns the promise; a stand-in that ended it early would let a test pass
+    // over a span the runtime would still have open.
+    if (result instanceof Promise) {
+      return result.finally(finish) as T;
+    }
+    finish();
+    return result;
+  },
+  startActiveSpan<T, A extends unknown[]>(
+    name: string,
+    callback: (span: SpanHandle, ...args: A) => T,
+    ...args: A
+  ): T {
+    const { handle } = makeSpan(name);
+    return callback(handle, ...args);
+  },
+};

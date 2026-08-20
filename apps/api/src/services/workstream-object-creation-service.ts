@@ -14,6 +14,7 @@ import { workstreamImportHash } from "../durable-objects/workstream-import-hash"
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
+import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { withWorkstreamRuntimeDatabase } from "./workstream-runtime-database";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
@@ -47,6 +48,13 @@ interface CreateOptions {
   slackSearchAuthorization?: SlackSearchAuthorization;
   reason?: string;
   telemetryOperationId?: string;
+  /**
+   * The caller's open `workstream_create` span. Creation is the slowest thing
+   * a person waits on in Avalon, and every step below is an awaited round trip
+   * to D1, a Durable Object, or the email router — so the span names here are
+   * the whole diagnosis. See `docs/performance-tracing.md`.
+   */
+  span?: FlowSpan;
 }
 
 /** Regional creation coordinator; the new WorkstreamDO owns product state. */
@@ -67,8 +75,14 @@ export class WorkstreamObjectCreationService {
     messageId: string;
     harnessRunId: string;
   }> {
+    const span = options.span ?? noFlowSpan;
     const body = CreateWorkstreamRequestSchema.parse(input);
-    const control = await readWorkstreamAuthorityControl(this.env);
+    // Named for the second read it is: `POST /workstreams` already resolved the
+    // authority control row before choosing this service, and a span of its own
+    // is where that duplicated round trip becomes visible instead of hiding
+    // inside one aggregate number.
+    const control = await span.step("workstream.create.authority.read_recheck", () =>
+      readWorkstreamAuthorityControl(this.env));
     if (control.phase !== "durable_object_open") {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
     }
@@ -78,7 +92,7 @@ export class WorkstreamObjectCreationService {
     });
     const at = new Date().toISOString();
     const proposedId = newId();
-    await this.env.DB.prepare(
+    await span.step("workstream.create.receipt.reserve", () => this.env.DB.prepare(
       `INSERT OR IGNORE INTO workstream_create_receipts
          (workspace_id, creator_user_id, client_message_id, workstream_id,
           generation, request_hash, state, created_at, updated_at)
@@ -92,22 +106,40 @@ export class WorkstreamObjectCreationService {
       requestHash,
       at,
       at,
-    ).run();
-    const receipt = await this.receipt(body.clientMessageId);
+    ).run());
+    const receipt = await span.step("workstream.create.receipt.read", () => this.receipt(body.clientMessageId));
     if (!receipt || receipt.request_hash !== requestHash) {
       throw new ApiError(409, "workstream_create_idempotency_conflict", "This create key was already used");
     }
     if (receipt.generation !== control.generation) {
       throw new ApiError(409, "workstream_create_generation_stale", "Retry the create against the current authority generation");
     }
-    const client = new WorkstreamObjectClient(this.env, this.auth, receipt.workstream_id);
+    span.setAttributes({
+      "avalon.workstream.id": receipt.workstream_id,
+      "avalon.create.receipt_state": receipt.state,
+    });
+    // The object's own spans nest under this one automatically: a Durable
+    // Object call is a traced binding call, and everything it runs happens in
+    // this span's async context.
+    const client = new WorkstreamObjectClient(
+      this.env,
+      this.auth,
+      receipt.workstream_id,
+      "0",
+      options.span !== undefined,
+    );
     if (receipt.state === "completed" && receipt.message_id && receipt.harness_run_id) {
+      // A replayed create is a different latency question from a first one, so
+      // it is labelled rather than folded into the same distribution.
+      span.setAttributes({ "avalon.create.path": "replayed_receipt" });
+      const workstream = await span.step("workstream.create.replayed_detail.read", () => client.get());
       return {
-        workstream: await client.get(),
+        workstream,
         messageId: receipt.message_id,
         harnessRunId: receipt.harness_run_id,
       };
     }
+    span.setAttributes({ "avalon.create.path": "fresh" });
 
     const objective = body.objective ?? (body.openingMessage.trim() || "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -117,9 +149,9 @@ export class WorkstreamObjectCreationService {
       workstreamId: receipt.workstream_id,
     } as const;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
-    const email = await emailRouting.reserve(routeInput);
+    const email = await span.step("workstream.create.email_address.reserve", () => emailRouting.reserve(routeInput));
 
-    await this.env.DB.batch([
+    await span.step("workstream.create.d1_rows.write", () => this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT OR IGNORE INTO workstreams
            (id, workspace_id, title, objective, origin_type, created_by_user_id,
@@ -158,9 +190,9 @@ export class WorkstreamObjectCreationService {
         at,
         at,
       ),
-    ]);
+    ]));
 
-    const created = await client.initialize({
+    const created = await span.step("workstream.create.object.initialize", () => client.initialize({
       workspaceId: this.auth.workspaceId,
       workstreamId: asWorkstreamId(receipt.workstream_id),
       generation: control.generation,
@@ -196,7 +228,8 @@ export class WorkstreamObjectCreationService {
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
       reason: options.reason ?? "opening_message",
-    });
+    }));
+    span.setAttributes({ "avalon.harness_run.id": created.harnessRunId });
     const substream = await durableObjectStubForWorkspace(
       this.env,
       this.env.SUBSTREAM_AGENTS,
@@ -207,7 +240,7 @@ export class WorkstreamObjectCreationService {
         asWorkstreamId(receipt.workstream_id),
       ),
     );
-    await substream.flushEffectsToWorkstreamDO();
+    await span.step("workstream.create.substream.flush_effects", () => substream.flushEffectsToWorkstreamDO());
     const workstream = await durableObjectStubForWorkspace(
       this.env,
       this.env.WORKSTREAM_DOS,
@@ -218,19 +251,19 @@ export class WorkstreamObjectCreationService {
         asWorkstreamId(receipt.workstream_id),
       ),
     );
-    await workstream.flushWorkspaceDirectoryEffects();
+    await span.step("workstream.create.workstream.flush_directory", () => workstream.flushWorkspaceDirectoryEffects());
     const workspace = await durableObjectStubForWorkspace(
       this.env,
       this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    if (!await workspace.hasWorkstreamDirectory({
+    if (!await span.step("workstream.create.workspace.directory_probe", () => workspace.hasWorkstreamDirectory({
       workspaceId: this.auth.workspaceId,
       workstreamId: receipt.workstream_id,
-    })) throw new Error("workspace_directory_creation_snapshot_missing");
+    }))) throw new Error("workspace_directory_creation_snapshot_missing");
     const activatedAt = new Date().toISOString();
-    const activated = await this.env.DB.prepare(
+    const activated = await span.step("workstream.create.route.activate", () => this.env.DB.prepare(
       `UPDATE workstream_authority_routes
           SET state = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ?
         WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
@@ -241,12 +274,13 @@ export class WorkstreamObjectCreationService {
       this.auth.workspaceId,
       receipt.workstream_id,
       control.generation,
-    ).run();
+    ).run());
     if (Number(activated.meta.changes ?? 0) !== 1) {
       throw new Error("workstream_create_route_activation_failed");
     }
-    await emailRouting.setStatus({ ...routeInput, status: "active" });
-    await this.env.DB.prepare(
+    await span.step("workstream.create.email_route.activate", () =>
+      emailRouting.setStatus({ ...routeInput, status: "active" }));
+    await span.step("workstream.create.receipt.complete", () => this.env.DB.prepare(
       `UPDATE workstream_create_receipts
           SET state = 'completed', message_id = ?, harness_run_id = ?,
               error_code = NULL, updated_at = ?
@@ -260,7 +294,7 @@ export class WorkstreamObjectCreationService {
       this.auth.userId,
       body.clientMessageId,
       requestHash,
-    ).run();
+    ).run());
 
     // The first naming pass. The legacy creation path schedules this and the
     // object path never did, so every post-cutover work stream kept its
@@ -285,7 +319,11 @@ export class WorkstreamObjectCreationService {
           reason: error instanceof Error ? error.message : "unknown",
         });
       });
-      if (this.defer) this.defer(naming); else await naming;
+      // Deferred naming is off the caller's clock by design, so the trace
+      // records which of the two happened rather than a duration that would
+      // mean opposite things in the two cases.
+      span.setAttributes({ "avalon.create.first_naming": this.defer ? "deferred" : "awaited" });
+      if (this.defer) this.defer(naming); else await span.step("workstream.create.naming.first_pass", () => naming);
     }
     return created;
   }

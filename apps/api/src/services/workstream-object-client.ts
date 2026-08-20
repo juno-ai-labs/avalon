@@ -170,6 +170,14 @@ export class WorkstreamObjectClient {
     private readonly auth: AuthContext,
     private readonly workstreamId: string,
     private readonly substreamId = "0",
+    /**
+     * Whether the caller is tracing one of the three work-stream flows. The
+     * object's own spans nest under the caller's automatically — a Durable
+     * Object call is a traced binding call — so nothing is propagated by hand;
+     * this only tells the object whether to name its steps at all, so a
+     * background path does not pay for spans nobody will read.
+     */
+    private readonly traced = false,
   ) {}
 
   private async request(body: Record<string, unknown>): Promise<unknown> {
@@ -178,7 +186,10 @@ export class WorkstreamObjectClient {
       this.auth.workspaceId,
       this.workstreamId,
       this.substreamId,
-    )).handleProductRequest({ ...body, auth: this.auth } as SubstreamProductRequest);
+    )).handleProductRequest(
+      { ...body, auth: this.auth } as SubstreamProductRequest,
+      this.traced,
+    );
     return decode(response);
   }
 
