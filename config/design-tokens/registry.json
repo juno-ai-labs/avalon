@@ -1,0 +1,640 @@
+{
+  "$schema": "./registry.schema.json",
+  "description": "Every token an Avalon theme may set. A theme file supplies values for these paths and no others.",
+  "groups": {
+    "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
+    "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
+    "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg \u2026>\"}` for artwork drawn in the theme file and `{\"url\": \"https://\u2026\"}` for one fetched over the network, and an array for layers.",
+    "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
+    "sys.color.text": "Text tones, strongest to faintest.",
+    "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
+    "sys.color.brand": "Avalon's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
+    "sys.color.accent": "The hue for links, focus and selection.",
+    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
+    "sys.color.warning": "Attention short of failure.",
+    "sys.color.danger": "Failure and destructive action.",
+    "sys.color.scrim": "What sits between a layer and what it covers.",
+    "sys.color.focus": "The colour of a focus indicator.",
+    "sys.color.selection": "Selected text.",
+    "sys.color.scrollbar": "The scrollbar thumb.",
+    "sys.color.shimmer": "The sweep across a loading skeleton.",
+    "sys.color.syntax": "Syntax highlighting. `prism-react-renderer` takes a JavaScript object rather than a class, so these reach it as `var()` inside an inline style.",
+    "sys.color.person": "One per participant, chosen by a hash of their id. Six is enough that a repeat is rare in a room and few enough that each stays distinguishable.",
+    "sys.elevation.shadow": "Depth. A theme that lifts nothing sets these to `none`.",
+    "sys.focus.ring": "Whole box-shadow values for a focus ring, so a theme controls its spread as well as its colour.",
+    "sys.size.radius": "The corner scale.",
+    "sys.size.border": "Border widths.",
+    "sys.size.control": "The height of a control.",
+    "sys.space.pane": "Padding around a pane of content.",
+    "sys.space.stack": "Between message blocks in the feed.",
+    "sys.space.row": "Between rows in a list.",
+    "sys.space.group": "Between one group of rows and the next.",
+    "sys.space.block": "Between events in the feed.",
+    "sys.space.prose": "Between paragraphs.",
+    "sys.font.family": "The families. `ui` is named but not bundled, so weight resolves against whatever the platform substitutes.",
+    "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
+    "sys.font.leading": "Line height.",
+    "sys.font.weight": "Weights. Only meaningful to the degree the resolved family supports them.",
+    "sys.label": "The four properties that decide whether a label is sentence case or letterspaced small capitals. They apply to the label over a turn in the feed as well as the one over a group of navigation rows.",
+    "cmp.pane": "The content pane. `background` is the fill drawn over the backdrop, so a theme that wants its backdrop to show through the feed sets it to `transparent` rather than to a colour that happens to match.",
+    "cmp.sidebar": "The navigation. `background` is a translucent tint, so `background-solid` exists for the narrow-width drawer, which sits over the content and cannot be see-through.",
+    "cmp.row": "Inside a navigation row. `height-dense` is the floor under the rows whose height comes from their content; `height` is the floor for a single-line row.",
+    "cmp.group-label": "The band a group's label sits in.",
+    "cmp.bubble": "The fill behind a person's turn. A theme with one continuous ground can set all three to nothing and let the message sit on the page as plain text.",
+    "cmp.turn": "Where a person's own turn sits. The three move together: a turn left-aligned but still capped reads as text that wraps early for no reason.",
+    "cmp.feed": "The reading column, and the label over a turn in it.",
+    "cmp.tooltip": "A surface that deliberately opposes the theme: light on a dark theme and dark on a light one, so it cannot be a ramp step in either.",
+    "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
+    "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind."
+  },
+  "tokens": {
+    "ref.color.neutral.1": {
+      "$type": "color"
+    },
+    "ref.color.neutral.2": {
+      "$type": "color"
+    },
+    "ref.color.neutral.3": {
+      "$type": "color"
+    },
+    "ref.color.neutral.4": {
+      "$type": "color"
+    },
+    "ref.color.neutral.5": {
+      "$type": "color"
+    },
+    "ref.color.neutral.6": {
+      "$type": "color"
+    },
+    "ref.color.neutral.7": {
+      "$type": "color"
+    },
+    "ref.color.neutral.8": {
+      "$type": "color"
+    },
+    "ref.color.neutral.9": {
+      "$type": "color"
+    },
+    "ref.color.neutral.10": {
+      "$type": "color"
+    },
+    "ref.color.neutral.11": {
+      "$type": "color"
+    },
+    "ref.color.neutral.12": {
+      "$type": "color"
+    },
+    "ref.color.neutral.13": {
+      "$type": "color"
+    },
+    "ref.color.neutral.14": {
+      "$type": "color"
+    },
+    "ref.color.line.1": {
+      "$type": "color"
+    },
+    "ref.color.line.2": {
+      "$type": "color"
+    },
+    "ref.color.line.3": {
+      "$type": "color"
+    },
+    "ref.color.line.4": {
+      "$type": "color"
+    },
+    "ref.color.line.5": {
+      "$type": "color"
+    },
+    "ref.color.line.6": {
+      "$type": "color"
+    },
+    "sys.backdrop.color": {
+      "$type": "color"
+    },
+    "sys.backdrop.image": {
+      "$type": "gradient"
+    },
+    "sys.backdrop.position": {
+      "$type": "string"
+    },
+    "sys.backdrop.size": {
+      "$type": "string"
+    },
+    "sys.backdrop.repeat": {
+      "$type": "string"
+    },
+    "sys.backdrop.attachment": {
+      "$type": "string"
+    },
+    "sys.backdrop.blend-mode": {
+      "$type": "string"
+    },
+    "sys.color.surface.canvas": {
+      "$type": "color"
+    },
+    "sys.color.surface.default": {
+      "$type": "color"
+    },
+    "sys.color.surface.subtle": {
+      "$type": "color"
+    },
+    "sys.color.surface.sunken": {
+      "$type": "color"
+    },
+    "sys.color.surface.raised": {
+      "$type": "color"
+    },
+    "sys.color.surface.raised-hover": {
+      "$type": "color"
+    },
+    "sys.color.surface.elevated": {
+      "$type": "color"
+    },
+    "sys.color.surface.elevated-hover": {
+      "$type": "color"
+    },
+    "sys.color.surface.inverse-hover": {
+      "$type": "color"
+    },
+    "sys.color.text.on-inverse": {
+      "$type": "color"
+    },
+    "sys.color.text.default": {
+      "$type": "color"
+    },
+    "sys.color.text.subtle": {
+      "$type": "color"
+    },
+    "sys.color.text.muted": {
+      "$type": "color"
+    },
+    "sys.color.text.disabled": {
+      "$type": "color"
+    },
+    "sys.color.border.highlight": {
+      "$type": "color"
+    },
+    "sys.color.border.default": {
+      "$type": "color"
+    },
+    "sys.color.border.subtle": {
+      "$type": "color"
+    },
+    "sys.color.border.strong": {
+      "$type": "color"
+    },
+    "sys.color.brand.base": {
+      "$type": "color"
+    },
+    "sys.color.brand.strong": {
+      "$type": "color"
+    },
+    "sys.color.brand.soft": {
+      "$type": "color"
+    },
+    "sys.color.brand.ink": {
+      "$type": "color"
+    },
+    "sys.color.brand.wash": {
+      "$type": "color"
+    },
+    "sys.color.brand.edge": {
+      "$type": "color"
+    },
+    "sys.color.brand.on": {
+      "$type": "color"
+    },
+    "sys.color.brand.tint": {
+      "$type": "color"
+    },
+    "sys.color.brand.tint-strong": {
+      "$type": "color"
+    },
+    "sys.color.brand.glow": {
+      "$type": "color"
+    },
+    "sys.color.brand.hover": {
+      "$type": "color"
+    },
+    "sys.color.accent.base": {
+      "$type": "color"
+    },
+    "sys.color.accent.strong": {
+      "$type": "color"
+    },
+    "sys.color.accent.soft": {
+      "$type": "color"
+    },
+    "sys.color.accent.wash": {
+      "$type": "color"
+    },
+    "sys.color.accent.edge": {
+      "$type": "color"
+    },
+    "sys.color.accent.on": {
+      "$type": "color"
+    },
+    "sys.color.accent.tint": {
+      "$type": "color"
+    },
+    "sys.color.success.base": {
+      "$type": "color"
+    },
+    "sys.color.success.strong": {
+      "$type": "color"
+    },
+    "sys.color.success.fill": {
+      "$type": "color"
+    },
+    "sys.color.success.fill-edge": {
+      "$type": "color"
+    },
+    "sys.color.success.soft": {
+      "$type": "color"
+    },
+    "sys.color.success.wash": {
+      "$type": "color"
+    },
+    "sys.color.success.edge": {
+      "$type": "color"
+    },
+    "sys.color.success.on": {
+      "$type": "color"
+    },
+    "sys.color.warning.base": {
+      "$type": "color"
+    },
+    "sys.color.warning.strong": {
+      "$type": "color"
+    },
+    "sys.color.warning.soft": {
+      "$type": "color"
+    },
+    "sys.color.warning.wash": {
+      "$type": "color"
+    },
+    "sys.color.warning.edge": {
+      "$type": "color"
+    },
+    "sys.color.warning.on": {
+      "$type": "color"
+    },
+    "sys.color.danger.base": {
+      "$type": "color"
+    },
+    "sys.color.danger.strong": {
+      "$type": "color"
+    },
+    "sys.color.danger.soft": {
+      "$type": "color"
+    },
+    "sys.color.danger.wash": {
+      "$type": "color"
+    },
+    "sys.color.danger.edge": {
+      "$type": "color"
+    },
+    "sys.color.danger.on": {
+      "$type": "color"
+    },
+    "sys.color.danger.tint": {
+      "$type": "color"
+    },
+    "sys.color.danger.tint-strong": {
+      "$type": "color"
+    },
+    "sys.color.scrim.default": {
+      "$type": "color"
+    },
+    "sys.color.scrim.subtle": {
+      "$type": "color"
+    },
+    "sys.color.scrim.solid": {
+      "$type": "color"
+    },
+    "sys.color.focus.default": {
+      "$type": "color"
+    },
+    "sys.color.focus.quiet": {
+      "$type": "color"
+    },
+    "sys.color.selection.background": {
+      "$type": "color"
+    },
+    "sys.color.scrollbar.thumb": {
+      "$type": "color"
+    },
+    "sys.color.shimmer.default": {
+      "$type": "color"
+    },
+    "sys.color.syntax.plain": {
+      "$type": "color"
+    },
+    "sys.color.syntax.comment": {
+      "$type": "color"
+    },
+    "sys.color.syntax.punctuation": {
+      "$type": "color"
+    },
+    "sys.color.syntax.tag": {
+      "$type": "color"
+    },
+    "sys.color.syntax.number": {
+      "$type": "color"
+    },
+    "sys.color.syntax.string": {
+      "$type": "color"
+    },
+    "sys.color.syntax.operator": {
+      "$type": "color"
+    },
+    "sys.color.syntax.keyword": {
+      "$type": "color"
+    },
+    "sys.color.syntax.function": {
+      "$type": "color"
+    },
+    "sys.color.syntax.variable": {
+      "$type": "color"
+    },
+    "sys.color.person.1": {
+      "$type": "color"
+    },
+    "sys.color.person.2": {
+      "$type": "color"
+    },
+    "sys.color.person.3": {
+      "$type": "color"
+    },
+    "sys.color.person.4": {
+      "$type": "color"
+    },
+    "sys.color.person.5": {
+      "$type": "color"
+    },
+    "sys.color.person.6": {
+      "$type": "color"
+    },
+    "sys.elevation.shadow.sm": {
+      "$type": "shadow"
+    },
+    "sys.elevation.shadow.md": {
+      "$type": "shadow"
+    },
+    "sys.elevation.shadow.lg": {
+      "$type": "shadow"
+    },
+    "sys.elevation.shadow.rail": {
+      "$type": "shadow"
+    },
+    "sys.elevation.shadow.rail-strong": {
+      "$type": "shadow"
+    },
+    "sys.elevation.shadow.drawer": {
+      "$type": "shadow"
+    },
+    "sys.focus.ring.default": {
+      "$type": "shadow"
+    },
+    "sys.focus.ring.quiet": {
+      "$type": "shadow"
+    },
+    "sys.focus.ring.brand": {
+      "$type": "shadow"
+    },
+    "sys.size.radius.xs": {
+      "$type": "dimension"
+    },
+    "sys.size.radius.sm": {
+      "$type": "dimension"
+    },
+    "sys.size.radius.md": {
+      "$type": "dimension"
+    },
+    "sys.size.radius.lg": {
+      "$type": "dimension"
+    },
+    "sys.size.radius.xl": {
+      "$type": "dimension"
+    },
+    "sys.size.radius.pill": {
+      "$type": "dimension"
+    },
+    "sys.size.border.hairline": {
+      "$type": "dimension"
+    },
+    "sys.size.control.height": {
+      "$type": "dimension"
+    },
+    "sys.space.pane.padding": {
+      "$type": "dimension"
+    },
+    "sys.space.stack.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.row.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.group.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.block.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.prose.gap": {
+      "$type": "dimension"
+    },
+    "sys.font.family.ui": {
+      "$type": "fontFamily"
+    },
+    "sys.font.family.display": {
+      "$type": "fontFamily"
+    },
+    "sys.font.family.mono": {
+      "$type": "fontFamily"
+    },
+    "sys.font.size.base": {
+      "$type": "dimension"
+    },
+    "sys.font.size.prose": {
+      "$type": "dimension"
+    },
+    "sys.font.size.row": {
+      "$type": "dimension"
+    },
+    "sys.font.size.hint": {
+      "$type": "dimension"
+    },
+    "sys.font.size.action": {
+      "$type": "dimension"
+    },
+    "sys.font.size.meta": {
+      "$type": "dimension"
+    },
+    "sys.font.size.author": {
+      "$type": "dimension"
+    },
+    "sys.font.size.title": {
+      "$type": "dimension"
+    },
+    "sys.font.leading.prose": {
+      "$type": "number"
+    },
+    "sys.font.leading.base": {
+      "$type": "number"
+    },
+    "sys.font.weight.strong": {
+      "$type": "fontWeight"
+    },
+    "sys.font.weight.heading": {
+      "$type": "fontWeight"
+    },
+    "sys.font.weight.emphasis": {
+      "$type": "fontWeight"
+    },
+    "sys.label.font-size": {
+      "$type": "dimension"
+    },
+    "sys.label.tracking": {
+      "$type": "dimension"
+    },
+    "sys.label.transform": {
+      "$type": "string"
+    },
+    "sys.label.weight": {
+      "$type": "fontWeight"
+    },
+    "cmp.pane.background": {
+      "$type": "color"
+    },
+    "cmp.sidebar.background": {
+      "$type": "color"
+    },
+    "cmp.sidebar.background-solid": {
+      "$type": "color"
+    },
+    "cmp.sidebar.border": {
+      "$type": "color"
+    },
+    "cmp.sidebar.width": {
+      "$type": "dimension"
+    },
+    "cmp.row.height": {
+      "$type": "dimension"
+    },
+    "cmp.row.padding": {
+      "$type": "dimension"
+    },
+    "cmp.row.leading": {
+      "$type": "number"
+    },
+    "cmp.row.hint-gap": {
+      "$type": "dimension"
+    },
+    "cmp.row.height-dense": {
+      "$type": "dimension"
+    },
+    "cmp.group-label.height": {
+      "$type": "dimension"
+    },
+    "cmp.group-label.gap": {
+      "$type": "dimension"
+    },
+    "cmp.bubble.background": {
+      "$type": "color"
+    },
+    "cmp.bubble.border": {
+      "$type": "color"
+    },
+    "cmp.bubble.padding": {
+      "$type": "dimension"
+    },
+    "cmp.turn.align": {
+      "$type": "string"
+    },
+    "cmp.turn.margin": {
+      "$type": "string"
+    },
+    "cmp.turn.width": {
+      "$type": "dimension"
+    },
+    "cmp.feed.width": {
+      "$type": "dimension"
+    },
+    "cmp.feed.width-wide": {
+      "$type": "dimension"
+    },
+    "cmp.feed.padding-y": {
+      "$type": "dimension"
+    },
+    "cmp.feed.padding-x": {
+      "$type": "dimension"
+    },
+    "cmp.feed.author.font-size": {
+      "$type": "dimension"
+    },
+    "cmp.feed.author.font-weight": {
+      "$type": "fontWeight"
+    },
+    "cmp.tooltip.background": {
+      "$type": "color"
+    },
+    "cmp.tooltip.foreground": {
+      "$type": "color"
+    },
+    "cmp.toggle.track": {
+      "$type": "color"
+    },
+    "cmp.toggle.knob-off": {
+      "$type": "color"
+    },
+    "cmp.connector.github.background": {
+      "$type": "color"
+    },
+    "cmp.connector.github.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.google.background": {
+      "$type": "color"
+    },
+    "cmp.connector.google.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.drive.background": {
+      "$type": "color"
+    },
+    "cmp.connector.drive.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.slack.background": {
+      "$type": "color"
+    },
+    "cmp.connector.slack.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.linear.background": {
+      "$type": "color"
+    },
+    "cmp.connector.linear.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.webhook.background": {
+      "$type": "color"
+    },
+    "cmp.connector.webhook.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.search.background": {
+      "$type": "color"
+    },
+    "cmp.connector.search.foreground": {
+      "$type": "color"
+    },
+    "cmp.connector.plug.background": {
+      "$type": "color"
+    },
+    "cmp.connector.plug.foreground": {
+      "$type": "color"
+    }
+  }
+}

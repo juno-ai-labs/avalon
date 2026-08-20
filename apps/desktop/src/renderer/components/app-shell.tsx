@@ -183,7 +183,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${slotHolder === 'block-dashboard' ? blockDashboardWidth : railWidth}px`,
-    '--sidebar-width': `${sidebarWidth}px`,
+    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
   return (
