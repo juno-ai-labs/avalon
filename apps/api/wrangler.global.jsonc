@@ -83,9 +83,13 @@
     { "pattern": "notion.with-avalon.com", "custom_domain": true },
     { "pattern": "slack.with-avalon.com", "custom_domain": true }
   ],
-  // Every minute is temporary throughput for the generation-4 authority import
-  // campaign; restore "*/5 * * * *" once this region reports durable_object_open.
-  "triggers": { "crons": ["* * * * *"] },
+  // Back to the steady cadence. The every-minute schedule was temporary
+  // throughput for the authority import campaign, and it outlived its welcome:
+  // once the campaign reached the activation scrub, a tick's cost rose from a
+  // handful of D1 queries to several hundred, and running that every sixty
+  // seconds kept the database shedding requests with 7429 — including the ones
+  // the deployment pipeline itself needs.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
     {
       "binding": "EU_IDENTITY_BRIDGE",
