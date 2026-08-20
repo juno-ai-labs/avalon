@@ -958,6 +958,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — D1 overload is transient, and the scrub deletes the one RESTRICT child it was blocked by
+
+**What changed:** Four repairs from an adversarial review of the chunked
+scrub. `TRANSIENT_CAMPAIGN_ERROR` now recognizes D1's overload shed
+(`7429` / "requests queued for too long"). The budget check moved above the
+presence probe. `workstream_terminal_repositories` joined the scrub targets,
+immediately before `connector_connections`. And the campaign distinguishes a
+scrub pass that finished a route from one that merely spent its budget:
+progress continues the tick, a stall ends it.
+
+**Why:** D1 answered `7429` to an unrelated read while this scrub was running,
+and that string matched nothing in the transient list — so the next one during
+activation would have quarantined a healthy campaign mid-outage, which is
+precisely the generation-4 cascade. The RESTRICT reference is the only foreign
+key into the scrub from a table the scrub deliberately leaves behind: work
+streams survive, so their terminal-repository rows survive, and deleting the
+connector connection they point at raises a foreign-key error that is also not
+transient. Neither had fired yet; both were waiting for the first workspace
+with a terminal repository, or the first overloaded moment.
+
+**What a future change has to respect:** the budget counts statements, not
+rows — `budget -= WORKSPACE_SCRUB_CHUNK` is unconditional, so 20,000 with a
+500-row chunk means forty deletes per route per tick, and the last chunk of
+every target is charged in full. Reading it as a row count overestimates what
+one tick achieves for a workspace whose rows are spread thinly across targets.
+
+**Considered and rejected:** returning after every scrub pass regardless of
+outcome, which was the first attempt — it serialized the fleet to one batch of
+routes per tick and, because `maintenance_verified` refuses new work, turned
+internal scheduling into user-visible downtime.
+
 ### 2026-08-20 — The scrub asks whether rows remain instead of trusting a delete's row count
 
 **What changed:** Each chunk loop now issues a `SELECT 1 ... LIMIT 1` against
