@@ -227,11 +227,55 @@ describe("a work stream wedged by an earlier build", () => {
     });
   });
 
+  // A crash between a run's commit and its dispatch insert leaves an admitted
+  // run nothing will ever execute. It does not hold the mutating slot, but the
+  // member sees it "Scheduled" forever — so once its grace lapses it is reaped
+  // like any other abandoned run.
+  it("reaps an admitted run whose dispatch never landed, after its grace", async () => {
+    const stub = await readyAgent();
+    const ORPHAN = "00000000-0000-7000-8000-0000000004d1";
+    await runInDurableObject(stub, (_instance, state) => {
+      seedRun(state, ORPHAN);
+      state.storage.sql.exec(
+        `UPDATE runs SET updated_at = ? WHERE run_id = ?`,
+        Date.now() - 5 * 60_000,
+        ORPHAN,
+      );
+      seedRun(state, RUN_A);
+    });
+    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
+    await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(Date.now() + 600_000));
+
+    await runDurableObjectAlarm(stub);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(runStatus(state, ORPHAN)).toBe("failed");
+    });
+  });
+
+  it("leaves a freshly admitted run alone while its dispatch is still being written", async () => {
+    const stub = await readyAgent();
+    const FRESH = "00000000-0000-7000-8000-0000000004d2";
+    await runInDurableObject(stub, (_instance, state) => {
+      seedRun(state, FRESH, "admitted", Date.now());
+      seedRun(state, RUN_A, "admitted", Date.now());
+    });
+    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
+
+    await runInDurableObject(stub, (instance, state) => {
+      const product = (instance as unknown as {
+        product: { reapAbandonedSubstreamRuns(substreamId: string, now: number): string[] };
+      }).product;
+      expect(product.reapAbandonedSubstreamRuns("0", Date.now())).toEqual([]);
+      expect(runStatus(state, FRESH)).toBe("admitted");
+    });
+  });
+
   it("does not disturb a run that still has a dispatch behind it", async () => {
     const stub = await readyAgent();
     await runInDurableObject(stub, (_instance, state) => {
       seedRun(state, RUN_B, "running");
-      seedRun(state, RUN_A);
+      seedRun(state, RUN_A, "admitted", Date.now());
     });
     // RUN_B is mid-flight with work still prepared for it, so it is not
     // abandoned however long it has held the slot.

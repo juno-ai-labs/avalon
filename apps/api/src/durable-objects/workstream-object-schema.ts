@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 2;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 3;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1103,7 +1103,47 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // races a run still genuinely in flight.
     ],
   },
+  {
+    version: 3,
+    description: "round trigger timestamp conversion so ISO round-trips are exact",
+    statements: roundedCompatTriggerRebuilds(),
+  },
 ];
+
+/**
+ * Rebuilds every compat trigger that converts an ISO timestamp to epoch
+ * milliseconds, rounding instead of truncating.
+ *
+ * `CAST((julianday(x) - 2440587.5) * 86400000 AS INTEGER)` truncates, and the
+ * float product sits up to ~0.03 ms off the true integer, so half of all
+ * timestamps came back one millisecond early when the view reformatted them.
+ * That broke every read that compares a stored timestamp to the string it was
+ * written from — most visibly `terminalizeHarnessAttempt`'s `terminalized_at =
+ * ?` guard, which is what decides whether the member-facing work stream state
+ * follows the run out of `running`. A measured 49.7% of runs lost that guard
+ * and left the member watching a spinner over a finished run. Adding 0.5
+ * before the cast rounds to nearest; the float error is two orders of
+ * magnitude below half a millisecond, so the round trip is exact for every
+ * input.
+ *
+ * Derived from the v1 statements rather than restated because the v1 array is
+ * already frozen by its own migration hash — any edit to it breaks v1 before
+ * it could silently change what this migration builds.
+ */
+function roundedCompatTriggerRebuilds(): string[] {
+  return WORKSTREAM_RUNTIME_COMPAT_SCHEMA
+    .filter((statement) =>
+      statement.includes("CREATE TRIGGER IF NOT EXISTS")
+      && statement.includes("* 86400000 AS INTEGER"))
+    .flatMap((statement) => {
+      const name = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+      if (!name) throw new Error("compat trigger statement without a name");
+      return [
+        `DROP TRIGGER IF EXISTS ${name}`,
+        statement.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"),
+      ];
+    });
+}
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */
 export function workstreamObjectSchemaImplementationHash(

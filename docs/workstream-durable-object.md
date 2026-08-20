@@ -964,6 +964,55 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — Timestamps round-trip exactly, and the pipeline is tested end to end
+
+**What changed:** Schema v3 rebuilds every runtime-compat trigger that converts
+an ISO timestamp to epoch milliseconds to round instead of truncate. The
+product endpoint sequences `startProductWorkflow` before the socket broadcast
+in `initialize`, `create_message`, and `answer_elicitation`, and its catch-all
+now logs `workstream_product_request_failed` with the real reason.
+`reapAbandonedSubstreamRuns` additionally reaps `admitted` runs with no
+dispatch behind them after a one-minute grace.
+`test-workers/message-to-output-pipeline.test.ts` drives the whole path —
+real D1 session auth, the real product endpoint, the real alarm — and holds
+the invariant that a run either reaches the provider boundary or fails
+loudly, with the member-visible state following it.
+
+**Why:** `CAST((julianday(x) - 2440587.5) * 86400000 AS INTEGER)` truncates,
+and the float product sits up to ~0.03 ms below the true integer, so a
+measured 49.7% of timestamps came back one millisecond early through the
+view. Every guard comparing a stored timestamp to the string it was written
+from then failed — most visibly `terminalizeHarnessAttempt`'s
+`terminalized_at = ?` guard, which is what moves the member-facing work
+stream out of `running` when a run ends. Half of all settled runs left the
+member watching a spinner over a finished run; which half was a coin flip,
+which is why it read as intermittent for hours. The pipeline test found it in
+its first full pass; no unit suite could, because the truncation happens in a
+trigger and the equality in a different layer's SQL.
+
+The broadcast reorder closes a second orphaning found the same way: a refused
+broadcast aborted the handler after the run was committed, leaving an
+admitted run with no executor and no alarm, and the member a 500 over a work
+stream that exists. A broadcast is a courtesy to connected sockets; it must
+never gate durable state progression.
+
+**Considered and rejected:** Rewriting the seven `= ?` timestamp guards to
+lossless conditions — treating the symptom in one consumer while every other
+comparison against these columns stays wrong; and comparing through a
+matching round-trip expression, which inverts the breakage on plain D1.
+Editing the v1 trigger statements in place is impossible: v1's hash is
+immutable. v3 derives the rebuilt triggers from the frozen v1 array, which
+cannot drift because any edit to that array breaks v1's own hash first.
+
+**Consequences:** Stored millisecond values are exact from v3 onward;
+historical rows may sit one millisecond early, which no surviving comparison
+depends on. Work streams already stuck `running` over a finished run heal on
+their next run's settlement. The dense round-trip sweep in
+`agent-run-dispatch-queue.test.ts` fails deterministically against
+truncation (248 of 500 timestamps), so the defect cannot return quietly.
+
+
+
 ### 2026-08-20 — A run whose executor is gone no longer wedges its substream
 
 **What changed:** Before a claimed dispatch starts, the drain terminalizes runs

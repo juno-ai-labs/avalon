@@ -2522,6 +2522,12 @@ export class WorkstreamObjectProductService {
    * dispatch.
    */
   reapAbandonedSubstreamRuns(substreamId: string, now: number): string[] {
+    // `admitted` is included behind a grace period: the run row and its
+    // dispatch commit in the same invocation but not the same transaction, so
+    // a crash between them leaves an admitted run nothing will ever execute.
+    // The grace keeps this from racing a sibling invocation that has committed
+    // its run and not yet inserted its dispatch — that gap is milliseconds,
+    // the grace is a minute.
     return this.storage.sql.exec<{ run_id: string }>(
       `UPDATE runs
           SET status = 'failed', terminal_reason = 'failed',
@@ -2529,7 +2535,10 @@ export class WorkstreamObjectProductService {
               completed_at = COALESCE(completed_at, ?), terminalized_at = ?, updated_at = ?
         WHERE substream_id = ?
           AND terminalized_at IS NULL
-          AND status IN ('running', 'waiting', 'steering')
+          AND (
+            status IN ('running', 'waiting', 'steering')
+            OR (status = 'admitted' AND updated_at < ? - 60000)
+          )
           AND run_id NOT IN (
             SELECT run_id FROM agent_run_dispatches
              WHERE state IN ('queued', 'running')
@@ -2539,7 +2548,7 @@ export class WorkstreamObjectProductService {
         code: "workstream_run_abandoned",
         message: "This run's executor did not survive; it was ended so the work stream could continue",
       }),
-      now, now, now, substreamId,
+      now, now, now, substreamId, now,
     ).toArray().map((row) => row.run_id);
   }
 
