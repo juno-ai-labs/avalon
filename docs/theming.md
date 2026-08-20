@@ -475,6 +475,11 @@ reads a stylesheet.
   `--av-sys-elevation-shadow-sm` lift, and the state is also conveyed by its position and by the
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
+- **A theme whose backdrop is a document previews as its floor.** The Settings
+  miniature draws `sys.backdrop.*`, and Airy's blooms live in the document rather
+  than in those tokens, so the Airy swatch is a flat ground. Mounting a live
+  frame per swatch would put four animation loops behind a preference pane to
+  show a 92px thumbnail of one.
 - **Themes are not animated.** Switching repaints immediately, and the reported
   window background applies to the *next* window rather than the current one.
 
