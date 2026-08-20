@@ -603,7 +603,7 @@ that a trace now carries both a product id and its surrogate together, so the
 separation this document maintains holds only as far as the trace destination:
 exporting traces to a third party hands that party the mapping.
 
-Shipped in #TBD.
+Shipped in #203.
 
 ### 2026-08-20 — One warmed builder serves every symbolicator build
 

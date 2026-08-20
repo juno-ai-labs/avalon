@@ -332,4 +332,4 @@ without deciding it deliberately, so
 [the section on it](#what-automatic-tracing-captures-that-we-would-never-log) is
 the gate on configuring an export destination.
 
-Shipped in #TBD.
+Shipped in #203.
