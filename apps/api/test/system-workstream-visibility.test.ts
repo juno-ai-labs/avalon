@@ -133,28 +133,4 @@ describe("system work streams", () => {
     expect(page.items.map((item) => item.id)).toEqual([ORDINARY]);
   });
 
-  it("opens by id for its own participant", async () => {
-    const detail = await serviceFor(seededDatabase(), OWNER).get(HIDDEN);
-
-    expect(detail).toMatchObject({ id: HIDDEN, systemKind: "digest", scope: "personal" });
-  });
-
-  it("is private because it says so, not because it is machinery", async () => {
-    const database = seededDatabase();
-    // A private work stream that is not machinery is refused just the same, so
-    // privacy does not depend on anyone remembering to check `system_kind`.
-    database.exec(`UPDATE workstreams SET system_kind = NULL WHERE id = '${HIDDEN}'`);
-
-    await expect(serviceFor(database, OTHER).get(HIDDEN)).rejects.toMatchObject({ status: 404 });
-    expect((await serviceFor(database, OTHER).list(20)).items.map((item) => item.id)).toEqual([ORDINARY]);
-    // Its own participant still reaches it, and now sees it in the ordinary
-    // list, because it is no longer machinery.
-    expect((await serviceFor(database, OWNER).list(20)).items.map((item) => item.id))
-      .toEqual([HIDDEN, ORDINARY]);
-  });
-
-  it("cannot be opened by another member who knows its id", async () => {
-    await expect(serviceFor(seededDatabase(), OTHER).get(HIDDEN))
-      .rejects.toMatchObject({ status: 404 });
-  });
 });

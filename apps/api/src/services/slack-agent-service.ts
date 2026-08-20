@@ -1841,9 +1841,6 @@ export class SlackAgentService {
             connection.workspace_id,
             session.workstream_id,
             requestedPrompt,
-            clientMessageId.slice(0, 120),
-            slackOrigin,
-            slackSearchAuthorization,
           )) {
             await service.createMessage(session.workstream_id, {
               text: requestedPrompt,
@@ -2391,9 +2388,6 @@ export class SlackAgentService {
     workspaceId: string,
     workstreamId: string,
     response: string,
-    clientMessageId: string,
-    slackOrigin: SlackOriginContext,
-    slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<boolean> {
     const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
     const elicitation = await executionEnv.DB.prepare(
@@ -2409,9 +2403,6 @@ export class SlackAgentService {
       workstreamId,
       elicitation.id,
       slackElicitationRequest(elicitation, response),
-      clientMessageId,
-      slackOrigin,
-      slackSearchAuthorization,
     );
     return true;
   }

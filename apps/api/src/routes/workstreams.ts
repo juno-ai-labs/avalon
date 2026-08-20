@@ -32,7 +32,7 @@ import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
 import { WorkstreamObjectCreationService } from "../services/workstream-object-creation-service";
-import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
+import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
@@ -46,8 +46,9 @@ const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
-  // Legacy authority emits timestamps; WorkspaceDO emits an opaque
-  // `(last_activity_at, workstream_id)` cursor so tied timestamps cannot skip.
+  // Timestamps are still accepted for clients holding pre-cutover cursors;
+  // WorkspaceDO emits an opaque `(last_activity_at, workstream_id)` cursor so
+  // tied timestamps cannot skip.
   before: z.union([
     z.string().datetime({ offset: true }),
     WorkspaceWorkstreamCursorSchema,
@@ -124,22 +125,23 @@ function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamSe
   );
 }
 
+/**
+ * The Durable-Object client for one work stream. The object is the only
+ * execution arm: a stack that never opened the authority gets the 503 refusal
+ * from `requireOpenWorkstreamAuthority` rather than legacy code.
+ */
 async function authoritativeWorkstreamClient(
   c: Context<HonoAppEnv>,
   workstreamId: string,
-): Promise<WorkstreamObjectClient | null> {
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  return authority.phase === "durable_object_open"
-    ? new WorkstreamObjectClient(c.env, getAuth(c), workstreamId)
-    : null;
+): Promise<WorkstreamObjectClient> {
+  await requireOpenWorkstreamAuthority(c.env);
+  return new WorkstreamObjectClient(c.env, getAuth(c), workstreamId);
 }
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  const service = authority.phase === "durable_object_open"
-    ? new WorkstreamDirectoryService(c.env, getAuth(c))
-    : new WorkstreamService(c.env, getAuth(c));
+  await requireOpenWorkstreamAuthority(c.env);
+  const service = new WorkstreamDirectoryService(c.env, getAuth(c));
   return c.json(WorkstreamPageSchema.parse(await service.list(
     query.limit, query.before, query.includeSystem === "true",
   )));
@@ -148,19 +150,14 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  await requireOpenWorkstreamAuthority(c.env);
   // This is the one create path where a person is at a keyboard, so it is the
   // only one that can claim an objective was authored rather than derived.
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  const created = CreatedWorkstreamSchema.parse(authority.phase === "durable_object_open"
-    ? await new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
-        ...body,
-        descriptionSource: body.objective ? "authored" : "derived",
-      })
-    : await new WorkstreamService(c.env, auth, requestDeferral(c)).create({
-        ...body,
-        descriptionSource: body.objective ? "authored" : "derived",
-        ...(operationId ? { telemetryOperationId: operationId } : {}),
-      }));
+  const created = CreatedWorkstreamSchema.parse(
+    await new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
+      ...body,
+      descriptionSource: body.objective ? "authored" : "derived",
+    }));
   if (operationId) {
     const event = apiTelemetryEnvelope(
       c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
@@ -173,32 +170,23 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
 workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) => {
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  const result = authority.phase === "durable_object_open"
-    ? await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds)
-    : await new WorkstreamService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds);
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 workstreamRoutes.put("/:id/pin", zValidator("param", idParam), async (c) => {
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  const result = authority.phase === "durable_object_open"
-    ? await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id)
-    : await new WorkstreamService(c.env, getAuth(c)).pin(c.req.valid("param").id);
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
-  const authority = await readWorkstreamAuthorityControl(c.env);
-  const result = authority.phase === "durable_object_open"
-    ? await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id)
-    : await new WorkstreamService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(WorkstreamContextSchema.parse(client
-    ? await client.context()
-    : await new WorkstreamService(c.env, getAuth(c)).context(id)));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(WorkstreamContextSchema.parse(await client.context()));
 });
 workstreamRoutes.get("/:id/block-dashboard", zValidator("param", idParam), async (c) =>
   c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).get(c.req.valid("param").id))),
@@ -236,121 +224,78 @@ workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam),
   )),
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  const detail = client
-    ? await client.get()
-    : await new WorkstreamService(c.env, getAuth(c)).get(id);
-  return c.json(WorkstreamDetailSchema.parse(detail));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(WorkstreamDetailSchema.parse(await client.get()));
 });
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(WorkstreamSchema.parse(client
-    ? await client.update(c.req.valid("json"))
-    : await new WorkstreamService(c.env, getAuth(c)).update(id, c.req.valid("json"))));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(WorkstreamSchema.parse(await client.update(c.req.valid("json"))));
 });
 workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(WorkstreamSchema.parse(client
-    ? await client.acknowledgeRead(c.req.valid("json"))
-    : await new WorkstreamService(c.env, getAuth(c)).acknowledgeRead(id, c.req.valid("json"))));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
 });
 workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(WorkstreamSchema.parse(client
-    ? await client.markUnread()
-    : await new WorkstreamService(c.env, getAuth(c)).markUnread(id)));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(WorkstreamSchema.parse(await client.markUnread()));
 });
 workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("query", messageQuery), async (c) => {
   const query = c.req.valid("query");
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(MessagePageSchema.parse(client
-    ? await client.messages(query.limit, query.before, query.after, query.around)
-    : await new WorkstreamService(c.env, getAuth(c)).messages(
-      id, query.limit, query.before, query.after, query.around,
-    )));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(MessagePageSchema.parse(
+    await client.messages(query.limit, query.before, query.after, query.around),
+  ));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
-  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  const result = client
-    ? await client.createMessage(c.req.valid("json"))
-    : await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).createMessage(id, {
-        ...c.req.valid("json"),
-        ...(operationId ? { telemetryOperationId: operationId } : {}),
-      });
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  const result = await client.createMessage(c.req.valid("json"));
   return c.json(CreatedMessageSchema.parse(result), 201);
 });
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(ParticipantSchema.parse(client
-    ? await client.addParticipant(c.req.valid("json").userId)
-    : await new WorkstreamService(c.env, getAuth(c)).addParticipant(id, c.req.valid("json").userId)), 201);
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(ParticipantSchema.parse(await client.addParticipant(c.req.valid("json").userId)), 201);
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");
   const client = await authoritativeWorkstreamClient(c, param.id);
-  await (client
-    ? client.removeParticipant(param.userId)
-    : new WorkstreamService(c.env, getAuth(c)).removeParticipant(param.id, param.userId));
+  await client.removeParticipant(param.userId);
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/resources", zValidator("param", idParam), zValidator("json", resourceBody), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(ResourceSchema.parse(client
-    ? await client.attachResource(c.req.valid("json").resourceId)
-    : await new WorkstreamService(c.env, getAuth(c)).attachResource(id, c.req.valid("json").resourceId)), 201);
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(ResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
 });
 workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
   const param = c.req.valid("param");
   const client = await authoritativeWorkstreamClient(c, param.id);
-  await (client
-    ? client.detachResource(param.resourceId)
-    : new WorkstreamService(c.env, getAuth(c)).detachResource(param.id, param.resourceId));
+  await client.detachResource(param.resourceId);
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/elicitations/:elicitationId/answer", zValidator("param", elicitationParam), zValidator("json", AnswerElicitationRequestSchema), async (c) => {
   const param = c.req.valid("param");
   const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(AnsweredElicitationSchema.parse(client
-    ? await client.answerElicitation(param.elicitationId, c.req.valid("json"))
-    : await new WorkstreamService(c.env, getAuth(c)).answerElicitation(param.id, param.elicitationId, c.req.valid("json"))));
+  return c.json(AnsweredElicitationSchema.parse(
+    await client.answerElicitation(param.elicitationId, c.req.valid("json")),
+  ));
 });
 workstreamRoutes.post("/:id/activities/:suggestionId/accept", zValidator("param", suggestionParam), async (c) => {
   const param = c.req.valid("param");
   const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(ResolvedSuggestionSchema.parse(
-    client
-      ? await client.resolveSuggestion(param.suggestionId, "accepted")
-      : await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "accepted")));
+  return c.json(ResolvedSuggestionSchema.parse(await client.resolveSuggestion(param.suggestionId, "accepted")));
 });
 workstreamRoutes.post("/:id/activities/:suggestionId/dismiss", zValidator("param", suggestionParam), async (c) => {
   const param = c.req.valid("param");
   const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(ResolvedSuggestionSchema.parse(
-    client
-      ? await client.resolveSuggestion(param.suggestionId, "dismissed")
-      : await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "dismissed")));
+  return c.json(ResolvedSuggestionSchema.parse(await client.resolveSuggestion(param.suggestionId, "dismissed")));
 });
 workstreamRoutes.post("/:id/stop", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  await (client ? client.stop() : new WorkstreamService(c.env, getAuth(c)).stop(id));
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  await client.stop();
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const client = await authoritativeWorkstreamClient(c, id);
-  return c.json(RetriedRunSchema.parse(client
-    ? await client.retry()
-    : await new WorkstreamService(c.env, getAuth(c)).retry(id)), 202);
+  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+  return c.json(RetriedRunSchema.parse(await client.retry()), 202);
 });
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id, "0"))),

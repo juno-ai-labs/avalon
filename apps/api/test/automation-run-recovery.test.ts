@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 interface StoredRun {
   id: string;
@@ -142,6 +142,61 @@ class ManualRunStatement {
         archived_at: owner.archived_at,
       } as T;
     }
+    if (normalized.includes("SELECT id AS run_id, workstream_id, status AS run_status")
+      && normalized.includes("FROM automation_runs")) {
+      const run = this.database.run;
+      if (!run || run.workspaceId !== this.values[0] || run.subscriptionId !== this.values[1] || run.idempotencyKey !== this.values[2]) {
+        return null;
+      }
+      return {
+        run_id: run.id,
+        workstream_id: run.workstreamId,
+        run_status: run.status,
+        run_workflow_instance_id: run.workflowInstanceId,
+      } as T;
+    }
+    if (normalized.includes("SELECT id, status, workflow_instance_id FROM harness_runs")) {
+      const harness = this.database.harnessRun;
+      if (!harness || harness.workspaceId !== this.values[0] || harness.workstreamId !== this.values[1]) {
+        return null;
+      }
+      return {
+        id: harness.id,
+        status: harness.status,
+        workflow_instance_id: harness.workflowInstanceId,
+      } as T;
+    }
+    if (normalized.includes("SELECT id FROM messages")) {
+      const message = this.database.openingMessage;
+      if (!message || message.workspaceId !== this.values[0] || message.workstreamId !== this.values[1]
+        || message.clientMessageId !== this.values[2]) {
+        return null;
+      }
+      return { id: message.id } as T;
+    }
+    if (normalized.includes("FROM automation_resources ar JOIN notes n")) {
+      // The open-phase copy reads eligible rows here and attaches each through
+      // the object's runtime port; the visibility rule rides on this SELECT.
+      const resource = this.database.automationResource;
+      const principalUserId = this.values[2] == null ? null : String(this.values[2]);
+      if (!resource || resource.archived) return null;
+      if (resource.scope !== "workspace" && resource.ownerUserId !== principalUserId) return null;
+      return {
+        resource_id: resource.id,
+        attached_by_user_id: null,
+        relationship_type: "context",
+      } as T;
+    }
+    if (normalized.includes("FROM workstream_authority_control")) {
+      // Legacy execution arms are retired; every launch requires the open
+      // Durable-Object authority, which this deployment models as reached.
+      return {
+        phase: "durable_object_open",
+        generation: 1,
+        required_serving_contract_version: 1,
+        serving_contract_version: 1,
+      } as T;
+    }
     if (normalized.includes("FROM workstream_email_routes") && normalized.includes("WHERE region = ?")) {
       const route = this.database.emailRoute;
       if (!route || route.region !== this.values[0] || route.workspace_id !== this.values[1] || route.workstream_id !== this.values[2]) {
@@ -152,9 +207,25 @@ class ManualRunStatement {
     throw new Error(`Unexpected first() query: ${normalized}`);
   }
 
+  // The runtime database port reads and writes through `.all()` alike, so the
+  // shim routes reads through the pattern table and writes through `run()`.
+  async all<T>(): Promise<D1Result<T>> {
+    if (!/^\s*(?:SELECT|WITH)/iu.test(this.sql)) return this.run<T>();
+    const row = await this.first<T>();
+    return createTestD1Result<T>({
+      success: true,
+      results: row == null ? [] : [row],
+      meta: { changes: 0 },
+    });
+  }
+
   async run<T>(): Promise<D1Result<T>> {
     const normalized = this.normalizedSql();
-    if (normalized.startsWith("INSERT INTO workstreams")) {
+    if (normalized.startsWith("INSERT OR IGNORE INTO workstreams")
+      || normalized.startsWith("INSERT OR IGNORE INTO workstream_authority_routes")) {
+      // The regional identity anchor and route the runtime bootstrap reserves;
+      // product state lives behind the object port below.
+    } else if (normalized.startsWith("INSERT INTO workstreams")) {
       this.database.workstreamInsertCount += 1;
       this.database.workstreamStatus = String(this.values[8]);
       this.database.workstreamEmailOwner = {
@@ -277,6 +348,47 @@ class ManualRunStatement {
   }
 }
 
+/**
+ * The SubstreamAgent boundary the retired Workflow binding used to play: the
+ * runtime SQL port forwards object-owned statements back into the manual
+ * database, and `dispatchRun` is the recorded launch edge.
+ */
+function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
+  const dispatchRun = vi.fn(async () => {
+    const failure = failures.shift();
+    if (failure) throw failure;
+    return { status: 200, bodyJson: "{}" };
+  });
+  const stub = {
+    dispatchRun,
+    bootstrapRuntime: vi.fn(async () => ({ status: 200, bodyJson: "{}" })),
+    attachRuntimeResource: vi.fn(async (input: { resourceId: string }) => {
+      database.attachedResourceId = input.resourceId;
+      return { status: 200, bodyJson: "{}" };
+    }),
+    executeRuntimeSql: async (input: { statements: Array<{ sql: string; params: unknown[] }> }) => {
+      const results = [];
+      for (const { sql, params } of input.statements) {
+        const statement = database.binding.prepare(sql).bind(...params as never[]);
+        if (/^\s*(?:SELECT|WITH)/iu.test(sql)) {
+          const row = await statement.first<Record<string, string | number | null>>();
+          results.push({ columns: row ? Object.keys(row) : [], rows: row ? [row] : [], changes: 0 });
+        } else {
+          const run = await statement.run();
+          results.push({ columns: [], rows: [], changes: Number(run.meta?.changes ?? 1) });
+        }
+      }
+      return { status: 200, bodyJson: JSON.stringify({ results }) };
+    },
+  };
+  const namespace = {
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => stub,
+    jurisdiction: () => namespace,
+  };
+  return { binding: namespace, dispatchRun };
+}
+
 describe("manual automation run recovery", () => {
   it("rechecks note visibility before copying resources into each automation run", async () => {
     const runWithNote = async (scope: "personal" | "workspace", archived = false) => {
@@ -294,7 +406,7 @@ describe("manual automation run recovery", () => {
       };
       const service = new AutomationService(createTestEnv({
         DB: database.binding,
-        WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
+        SUBSTREAM_AGENTS: agentsBinding(database).binding,
         AVALON_REGION: "global",
         OPENROUTER_PRIMARY_MODEL: "test-model",
         WORKSTREAM_EMAIL_ADDRESS_KEY: `note-visibility-${scope}-address-key-v1`,
@@ -318,12 +430,10 @@ describe("manual automation run recovery", () => {
 
   it("retries a launch-pending idempotent run after a transient workflow failure", async () => {
     const database = new ManualRunDatabase();
-    const createWorkflow = vi.fn()
-      .mockRejectedValueOnce(new Error("temporary workflow service outage"))
-      .mockResolvedValueOnce({});
+    const agents = agentsBinding(database, [new Error("temporary substream agent outage")]);
     const env = createTestEnv({
       DB: database.binding,
-      WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
+      SUBSTREAM_AGENTS: agents.binding,
       AVALON_REGION: "global",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       WORKSTREAM_EMAIL_ADDRESS_KEY: "manual-run-recovery-address-key-v1",
@@ -360,8 +470,8 @@ describe("manual automation run recovery", () => {
       harnessRunId: originalHarnessRunId,
       reused: true,
     });
-    expect(createWorkflow).toHaveBeenCalledTimes(2);
-    const expectedWorkflowId = `workstream-${originalHarnessRunId}`;
+    expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
+    const expectedWorkflowId = `substream-agent:0:${originalHarnessRunId}`;
     expect(database.run).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
     expect(database.harnessRun).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
     expect(database.workstreamStatus).toBe("running");
@@ -379,15 +489,15 @@ describe("manual automation run recovery", () => {
       runId: originalRunId,
       reused: true,
     });
-    expect(createWorkflow).toHaveBeenCalledTimes(2);
+    expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
   });
 
   it("creates exactly one work stream and run for duplicate inbound email delivery", async () => {
     const database = new ManualRunDatabase();
-    const createWorkflow = vi.fn().mockResolvedValue({});
+    const agents = agentsBinding(database);
     const env = createTestEnv({
       DB: database.binding,
-      WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
+      SUBSTREAM_AGENTS: agents.binding,
       AVALON_REGION: "global",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       WORKSTREAM_EMAIL_ADDRESS_KEY: "inbound-email-automation-address-key-v1",
@@ -431,14 +541,11 @@ describe("manual automation run recovery", () => {
       textContent: opening.textContent,
       structuredContent: opening.structuredContent,
     });
-    expect(createWorkflow).toHaveBeenCalledTimes(1);
-    expect(createWorkflow).toHaveBeenCalledWith({
-      id: `workstream-${first.harnessRunId}`,
-      params: expect.objectContaining({
-        workstreamId: first.workstreamId,
-        triggerMessageId: database.openingMessage?.id,
-        automationSubscriptionId: "subscription-1",
-      }),
-    });
+    expect(agents.dispatchRun).toHaveBeenCalledTimes(1);
+    expect(agents.dispatchRun).toHaveBeenCalledWith(expect.objectContaining({
+      workstreamId: first.workstreamId,
+      triggerMessageId: database.openingMessage?.id,
+      automationSubscriptionId: "subscription-1",
+    }));
   });
 });

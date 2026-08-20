@@ -17,8 +17,8 @@ stream forever.
 | --- | --- |
 | `apps/api/src/services/workstream-description-service.ts` | The whole loop: the window, every gate, the claim, the guards, and every exported constant. |
 | `packages/agent-harness/src/prompts/workstream-description.ts` | The prompt and its judgment. Byte-stable and golden-hashed. |
-| `apps/api/src/workflows/` — `WorkstreamLoopWorkflow`'s last step | Where an evaluation is triggered from. |
-| `WorkstreamService.update` | The authored-edit path that resets the clock in the same batch as the text. |
+| `apps/api/src/durable-objects/substream-agent.ts` — run settlement | Where an evaluation is triggered from. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` — `update` | The authored-edit path that marks a person's description `authored`. |
 | `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |
 
@@ -46,7 +46,7 @@ work that finished.
 ### The loop
 
 The service runs after every terminal run in a work stream, as the last step of
-`WorkstreamLoopWorkflow`. It is not on an alarm of its own: a work stream's purpose
+the SubstreamAgent's run settlement. It is not on an alarm of its own: a work stream's purpose
 only moves when something happens in it, and a finished run is the moment after
 something did. The step never throws — a description that could not be re-evaluated
 is the description the work stream already had.

@@ -212,7 +212,7 @@ import {
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { readWorkstreamAuthorityControl, requireOpenWorkstreamAuthority } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -1663,39 +1663,28 @@ async function assertAutomationCreatorConnectionAuthorized(
 }
 
 export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
-  const authority = await readWorkstreamAuthorityControl(env);
+  // Durable-Object dispatch is the only execution arm; a stack that has not
+  // opened the authority is refused rather than routed to retired legacy code.
+  await requireOpenWorkstreamAuthority(env);
   const substreamId = input.substreamId ?? asSubstreamId("0");
-  const instanceId = authority.phase === "durable_object_open"
-    ? `substream-agent:${substreamId}:${input.harnessRunId}`
-    : `workstream-${input.harnessRunId}`;
-  if (authority.phase === "durable_object_open") {
-    const agent = await durableObjectStubForWorkspace(
-      env,
-      env.SUBSTREAM_AGENTS,
+  const instanceId = `substream-agent:${substreamId}:${input.harnessRunId}`;
+  const agent = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    input.workspaceId,
+    substreamAgentName(
+      input.region,
       input.workspaceId,
-      substreamAgentName(
-        input.region,
-        input.workspaceId,
-        input.workstreamId,
-        substreamId,
-      ),
-    );
-    const response = await agent.dispatchRun({ ...input, substreamId });
-    if (response.status < 200 || response.status >= 300) {
-      const body = rpcResultBody(response) as { error?: unknown } | null;
-      throw new Error(typeof body?.error === "string"
-        ? body.error
-        : `substream_agent_dispatch_failed:${response.status}`);
-    }
-  } else {
-    try {
-      await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: input });
-    } catch (error) {
-      // Workflow IDs are deterministic, so a duplicate means an earlier attempt
-      // reached Cloudflare but failed before Avalon could persist the launch.
-      // Either way an instance now exists, which is what the marker below reports.
-      if (!workflowAlreadyExists(error)) throw error;
-    }
+      input.workstreamId,
+      substreamId,
+    ),
+  );
+  const response = await agent.dispatchRun({ ...input, substreamId });
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
+    throw new Error(typeof body?.error === "string"
+      ? body.error
+      : `substream_agent_dispatch_failed:${response.status}`);
   }
   const launchedAt = nowIso();
   try {
@@ -1751,10 +1740,6 @@ async function recordWorkflowLaunch(
        AND ? != 'block_dashboard_block'`,
   ).bind(instanceId, launchedAt, input.workstreamId, input.workspaceId, input.reason).run();
   return instanceId;
-}
-
-function workflowAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
 }
 
 interface SequencedStreamDeltaBatcher {
