@@ -28,6 +28,8 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
+import { ApiError } from "../lib/api-error";
+import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
 import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
@@ -109,7 +111,17 @@ const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
  * whichever of the three it made.
  */
 const PinnedWorkstreamsSchema = z.object({ items: z.array(WorkstreamSchema) });
-const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
+/**
+ * `ticketId` is part of the response so the desktop can print the id the room
+ * will report consuming — a socket upgrade carries no request id of its own, so
+ * it is the only thing that joins a slow room back to the client that asked for
+ * it. It identifies a one-minute credential, not the credential.
+ */
+const SocketTicketSchema = z.object({
+  url: z.string().min(1),
+  ticket: z.string().min(1),
+  ticketId: IdSchema.optional(),
+});
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
 
@@ -126,16 +138,50 @@ function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamSe
 }
 
 /**
+ * Marks the span failed with the API error's own code before the throw
+ * continues. The runtime records that a span threw, but not *what* — and the
+ * code is the difference between a 409 idempotency conflict, which is a fast
+ * and correct outcome, and a Durable Object that refused, which is not.
+ */
+async function recordFailure<T>(
+  span: FlowSpan,
+  fallbackCode: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    span.setError(error instanceof ApiError ? error.code : fallbackCode);
+    throw error;
+  }
+}
+
+/**
  * The Durable-Object client for one work stream. The object is the only
  * execution arm: a stack that never opened the authority gets the 503 refusal
  * from `requireOpenWorkstreamAuthority` rather than legacy code.
+ *
+ * The authority read is a D1 round trip on the front of every one of these
+ * routes, so a traced caller names it as a step rather than letting it fall
+ * into whatever runs next.
  */
 async function authoritativeWorkstreamClient(
   c: Context<HonoAppEnv>,
   workstreamId: string,
+  traced?: { span: FlowSpan; flow: PerfFlow },
 ): Promise<WorkstreamObjectClient> {
-  await requireOpenWorkstreamAuthority(c.env);
-  return new WorkstreamObjectClient(c.env, getAuth(c), workstreamId);
+  if (traced) await traced.span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
+  else await requireOpenWorkstreamAuthority(c.env);
+  return new WorkstreamObjectClient(
+    c.env,
+    getAuth(c),
+    workstreamId,
+    "0",
+    // The object's spans nest under this one automatically: a Durable Object
+    // call is a traced binding call, and everything inside it runs in this
+    // span's async context.
+    traced !== undefined,
+  );
 }
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
@@ -150,22 +196,39 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
-  await requireOpenWorkstreamAuthority(c.env);
-  // This is the one create path where a person is at a keyboard, so it is the
-  // only one that can claim an objective was authored rather than derived.
-  const created = CreatedWorkstreamSchema.parse(
-    await new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
-      ...body,
-      descriptionSource: body.objective ? "authored" : "derived",
-    }));
-  if (operationId) {
-    const event = apiTelemetryEnvelope(
-      c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
-      c.env.AVALON_REGION, operationId,
+  return requestFlowSpan(c, "workstream.create", { flow: "workstream_create" }, async (span) => {
+    // This is the one create path where a person is at a keyboard, so it is the
+    // only one that can claim an objective was authored rather than derived.
+    //
+    // The authority read is a step rather than an untimed await: it is a D1
+    // round trip on the front of the create, and an unstepped one would be
+    // charged to whichever step closed next.
+    await span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
+    span.setAttributes({
+      "avalon.workstream.attachment_count": body.attachmentIds?.length ?? 0,
+      "avalon.workstream.participant_count": body.participantUserIds?.length ?? 0,
+      ...(operationId ? { "avalon.operation.id": operationId } : {}),
+    });
+    const created = CreatedWorkstreamSchema.parse(
+      await recordFailure(span, "workstream_create_failed", () =>
+        new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
+          ...body,
+          descriptionSource: body.objective ? "authored" : "derived",
+        }, { span }))
     );
-    requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
-  }
-  return c.json(CreatedWorkstreamSchema.parse(created), 201);
+    span.setAttributes({
+      "avalon.workstream.id": created.workstream.id,
+      "avalon.harness_run.id": created.harnessRunId,
+    });
+    if (operationId) {
+      const event = apiTelemetryEnvelope(
+        c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
+        c.env.AVALON_REGION, operationId,
+      );
+      requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
+    }
+    return c.json(CreatedWorkstreamSchema.parse(created), 201);
+  });
 });
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
@@ -224,8 +287,20 @@ workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam),
   )),
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(WorkstreamDetailSchema.parse(await client.get()));
+  const id = c.req.valid("param").id;
+  return requestFlowSpan(c, "workstream.detail.read", {
+    flow: "workstream_open",
+    identity: { workstreamId: id },
+  }, async (span) => {
+    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
+    const detail = await span.step("workstream.detail.load", () => client.get());
+    span.setAttributes({
+      "avalon.workstream.participant_count": detail.participants.length,
+      "avalon.workstream.resource_count": detail.resources.length,
+      "avalon.workstream.harness_status": detail.harnessStatus,
+    });
+    return c.json(WorkstreamDetailSchema.parse(detail));
+  });
 });
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
@@ -241,15 +316,44 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
 });
 workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("query", messageQuery), async (c) => {
   const query = c.req.valid("query");
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(MessagePageSchema.parse(
-    await client.messages(query.limit, query.before, query.after, query.around),
-  ));
+  const id = c.req.valid("param").id;
+  return requestFlowSpan(c, "workstream.transcript.read", {
+    flow: "workstream_open",
+    identity: { workstreamId: id },
+  }, async (span) => {
+    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
+    const page = await span.step("workstream.transcript.load", () =>
+      client.messages(query.limit, query.before, query.after, query.around));
+    span.setAttributes({
+      "avalon.transcript.requested_limit": query.limit,
+      "avalon.transcript.message_count": page.items.length,
+      "avalon.transcript.cursor": query.before !== undefined ? "before" : query.after !== undefined ? "after" : query.around !== undefined ? "around" : "latest",
+    });
+    return c.json(MessagePageSchema.parse(page));
+  });
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  const result = await client.createMessage(c.req.valid("json"));
-  return c.json(CreatedMessageSchema.parse(result), 201);
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const id = c.req.valid("param").id;
+  const body = c.req.valid("json");
+  return requestFlowSpan(c, "workstream.message.send", {
+    flow: "workstream_message_send",
+    identity: { workstreamId: id },
+    attributes: {
+      "avalon.transport": "http",
+      "avalon.message.client_id": body.clientMessageId,
+      "avalon.message.attachment_count": body.attachmentIds?.length ?? 0,
+      ...(operationId ? { "avalon.operation.id": operationId } : {}),
+    },
+  }, async (span) => {
+    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_message_send" });
+    const result = await span.step("workstream.message.write", () => client.createMessage(body));
+    span.setAttributes({
+      "avalon.agent.invoked": result.agentInvoked,
+      "avalon.harness_run.id": result.harnessRunId,
+    });
+    return c.json(CreatedMessageSchema.parse(result), 201);
+  });
 });
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
@@ -297,15 +401,37 @@ workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(RetriedRunSchema.parse(await client.retry()), 202);
 });
-workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
-  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id, "0"))),
-);
-workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", substreamSocketParam), async (c) =>
-  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(
-    c.req.valid("param").id,
-    c.req.valid("param").substreamId,
-  ))),
-);
+workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) => {
+  const id = c.req.valid("param").id;
+  return requestFlowSpan(c, "workstream.socket.ticket", {
+    flow: "workstream_open",
+    identity: { workstreamId: id, substreamId: "0" },
+  }, async (span) => {
+    const issued = await span.step("workstream.socket.ticket.issue", () =>
+      new WorkstreamService(c.env, getAuth(c)).socketTicket(id, "0"));
+    // The upgrade this authorizes is a new connection, which the platform
+    // traces as its own invocation with its own trace id. The ticket id is the
+    // attribute both traces carry, and the only thing that joins them.
+    span.setAttributes({
+      "avalon.socket.ticket_id": issued.ticketId,
+    });
+    return c.json(SocketTicketSchema.parse(issued));
+  });
+});
+workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", substreamSocketParam), async (c) => {
+  const param = c.req.valid("param");
+  return requestFlowSpan(c, "workstream.socket.ticket", {
+    flow: "workstream_open",
+    identity: { workstreamId: param.id, substreamId: param.substreamId },
+  }, async (span) => {
+    const issued = await span.step("workstream.socket.ticket.issue", () =>
+      new WorkstreamService(c.env, getAuth(c)).socketTicket(param.id, param.substreamId));
+    span.setAttributes({
+      "avalon.socket.ticket_id": issued.ticketId,
+    });
+    return c.json(SocketTicketSchema.parse(issued));
+  });
+});
 workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
     .workstreamControlSocketTicket(c.req.valid("param").id))),

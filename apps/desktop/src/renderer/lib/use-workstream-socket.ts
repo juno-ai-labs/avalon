@@ -26,6 +26,7 @@ import {
   type MentionIdentity,
 } from './api';
 import { elicitationMessageId } from './elicitation';
+import { startPerfTrace, type PerfTrace } from './perf-trace';
 import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import {
   createElicitationMessage,
@@ -593,36 +594,56 @@ export function useWorkstreamSocket(
     }>();
     const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
+    /** The open in flight, so a superseded attempt still prints its line. */
+    let openTrace: PerfTrace | null = null;
 
     createMessageRef.current = async (input): Promise<Message> => {
-      const mentions = await api.messageMentionPayload(
+      // Keyed by the client message id, which WorkspaceDO records on its own
+      // span as `avalon.message.client_id`: the command travels over an
+      // already-open socket the platform traces as its own invocation, so this
+      // is the only value the renderer and the server both hold.
+      const trace = startPerfTrace('workstream_message_send', {
+        traceId: input.clientId,
         workstreamId,
-        input.text,
-        input.mentions,
-      );
-      if (closedByEffect || accessRevoked) {
-        throw new ApiError(
-          'The work stream is no longer available.',
-          409,
-          'workstream_socket_unavailable',
-        );
+      });
+      trace.annotate({
+        clientMessageId: input.clientId,
+        textLength: input.text.length,
+        attachmentCount: input.attachmentIds?.length ?? 0,
+        mentionCount: input.mentions?.length ?? 0,
+      });
+      try {
+        const mentions = await trace.step('resolve_mentions', () => api.messageMentionPayload(
+          workstreamId,
+          input.text,
+          input.mentions,
+        ));
+        if (closedByEffect || accessRevoked) {
+          throw new ApiError(
+            'The work stream is no longer available.',
+            409,
+            'workstream_socket_unavailable',
+          );
+        }
+        const operationId = uuidV7();
+        reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
+        const command: CreateMessageSocketCommand = {
+          type: 'create_message',
+          workstreamId,
+          substreamId: '0',
+          operationId,
+          payload: {
+            text: input.text,
+            clientMessageId: input.clientId,
+            mentions,
+            confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
+            attachmentIds: input.attachmentIds ?? [],
+          },
+        };
+        return await trace.step('command_round_trip', () => createWorkspaceMessage(command));
+      } finally {
+        trace.end();
       }
-      const operationId = uuidV7();
-      reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
-      const command: CreateMessageSocketCommand = {
-        type: 'create_message',
-        workstreamId,
-        substreamId: '0',
-        operationId,
-        payload: {
-          text: input.text,
-          clientMessageId: input.clientId,
-          mentions,
-          confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
-          attachmentIds: input.attachmentIds ?? [],
-        },
-      };
-      return createWorkspaceMessage(command);
     };
 
     const rejectPendingMessagePages = (error: Error): void => {
@@ -1091,10 +1112,33 @@ export function useWorkstreamSocket(
       }
       ticketRequestInFlight = true;
       setState(attempts.current === 0 ? 'connecting' : 'reconnecting');
+      // Opening a work stream is a ticket, a handshake, a subscribe, and a
+      // snapshot, and only the last of those puts the transcript on screen. The
+      // trace ends on the frame that answers the subscribe, so its total is what
+      // the person waited for. `ticketId` is what the server's upgrade and room
+      // spans carry as `avalon.socket.ticket_id`, and the request id joins the
+      // ticket call itself. Replaced per attempt: a reconnect is a new open.
+      const trace = startPerfTrace('workstream_open', { workstreamId });
+      openTrace?.end({ outcome: 'superseded' });
+      openTrace = trace;
+      trace.annotate({
+        attempt: attempts.current,
+        afterSequence: resumeState.lastSequence,
+      });
       try {
-        const socketTicket = await api.getSocketTicket(workstreamId);
-        if (closedByEffect) return;
+        // Called directly rather than through `trace.step`: the socket-ticket
+        // lint rule recognizes a ticket only when the awaited call is the
+        // declarator's own initializer, and a `mark` on the next line closes
+        // exactly the same span.
+        const socketTicket = await api.getSocketTicket(workstreamId, '0', trace.traceId);
+        trace.mark('socket_ticket');
+        trace.annotate({ ticketId: socketTicket.ticketId ?? null });
+        if (closedByEffect) {
+          trace.end({ outcome: 'cancelled' });
+          return;
+        }
         if (isOffline()) {
+          trace.end({ outcome: 'offline' });
           scheduleReconnect();
           return;
         }
@@ -1104,6 +1148,7 @@ export function useWorkstreamSocket(
           if (closedByEffect || socket !== nextSocket) return;
           const isReconnect = attempts.current > 0 || resumeState.lastSequence > 0;
           setState('connected');
+          trace.mark('handshake');
           nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: resumeState.lastSequence }));
           if (isReconnect) void reconcileCanonicalState();
           scheduleStabilityReset(nextSocket);
@@ -1140,6 +1185,20 @@ export function useWorkstreamSocket(
             }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
+              if (openTrace === trace) {
+                // The first server frame after `subscribe` is the one that
+                // fills the screen — a snapshot, a replayed event, or the
+                // resync that sends the client to HTTP instead. Which of the
+                // three arrived is most of the diagnosis.
+                trace.mark('first_frame');
+                trace.end({
+                  outcome: event.data.type,
+                  ...(event.data.type === 'snapshot'
+                    ? { messageCount: event.data.messageFeed.items.length }
+                    : {}),
+                });
+                openTrace = null;
+              }
               applyEvent(event.data);
               return;
             }
@@ -1155,6 +1214,10 @@ export function useWorkstreamSocket(
         });
         nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
+          if (openTrace === trace) {
+            trace.end({ outcome: 'closed', closeCode: closeEvent.code });
+            openTrace = null;
+          }
           clearHeartbeat();
           clearStabilityTimer();
           rejectPendingMessagePages(new ApiError(
@@ -1180,6 +1243,8 @@ export function useWorkstreamSocket(
           }
         });
       } catch {
+        trace.end({ outcome: 'failed' });
+        if (openTrace === trace) openTrace = null;
         scheduleReconnect();
       } finally {
         ticketRequestInFlight = false;
@@ -1206,6 +1271,8 @@ export function useWorkstreamSocket(
     void connect();
     return () => {
       closedByEffect = true;
+      openTrace?.end({ outcome: 'unmounted' });
+      openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
         'The work stream is no longer available.',
         409,

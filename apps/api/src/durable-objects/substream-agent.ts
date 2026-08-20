@@ -53,6 +53,13 @@ import {
 } from "../services/block-dashboard-service";
 import { logError, logInfo, logWarn } from "../observability/logger";
 import {
+  identityAttributes,
+  inFlowSpan,
+  noFlowSpan,
+  type FlowSpan,
+  type PerfFlow,
+} from "../observability/tracing";
+import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
   terminalizeHarnessAttempt,
@@ -195,6 +202,30 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     context.addIssue({ code: "custom", message: "Use only one transcript cursor" });
   }
 });
+/**
+ * The flow a product operation belongs to. An operation outside the three
+ * traced flows returns null and opens no spans, rather than being counted under
+ * a flow it is not part of.
+ */
+function productRequestFlow(operation: SubstreamProductRequest["operation"]): PerfFlow | null {
+  switch (operation) {
+    case "initialize": return "workstream_create";
+    case "create_message": return "workstream_message_send";
+    case "get": case "messages": case "context": return "workstream_open";
+    default: return null;
+  }
+}
+
+/**
+ * What a socket's authorization query answers with. The analytics column is
+ * absent on the development path, which selects only the role — optional here
+ * rather than nullable so that shape stays legal.
+ */
+interface AuthRoleRow {
+  role: AuthContext["role"];
+  analytics_workspace_id?: string | null;
+}
+
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
@@ -587,9 +618,18 @@ export class SubstreamAgent extends DurableObject<Env> {
     return jsonResponse({ error: "not_found" }, 404);
   }
 
-  async handleProductRequest(input: SubstreamProductRequest): Promise<DurableObjectRpcResult> {
+  /**
+   * `traced` says whether the caller is inside one of the three work-stream
+   * flows. Nothing about the trace itself is passed: a Durable Object call is a
+   * traced binding call, so the spans this opens are already children of the
+   * caller's by async context. The flag only decides whether to open them.
+   */
+  async handleProductRequest(
+    input: SubstreamProductRequest,
+    traced = false,
+  ): Promise<DurableObjectRpcResult> {
     await this.initialized;
-    return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input)));
+    return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input), traced));
   }
 
   async executeRuntimeSql(
@@ -787,32 +827,70 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
-  private async acceptProductRequest(request: Request): Promise<Response> {
+  private async acceptProductRequest(request: Request, traced = false): Promise<Response> {
     const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
-    const current = await this.socketAuth({
-      workspaceId: parsed.data.auth.workspaceId,
-      userId: parsed.data.auth.userId,
-      sessionId: parsed.data.auth.sessionId,
-    });
-    if (!current || current.role !== parsed.data.auth.role || current.region !== parsed.data.auth.region) {
+    const flow = traced ? productRequestFlow(parsed.data.operation) : null;
+    if (flow === null) return this.runProductRequest(parsed.data, noFlowSpan);
+    const workstreamId = parsed.data.operation === "initialize"
+      ? parsed.data.input.workstreamId
+      : this.objectStore.identity()?.workstreamId;
+    return inFlowSpan(this.env, `workstream.room.${parsed.data.operation}`, {
+      flow,
+      component: "substream_do",
+      identity: {
+        workspaceId: parsed.data.auth.workspaceId,
+        userId: parsed.data.auth.userId,
+        sessionId: parsed.data.auth.sessionId,
+        substreamId: this.externalSubstreamId(),
+        ...(workstreamId === undefined ? {} : { workstreamId }),
+      },
+      attributes: { "avalon.room.operation": parsed.data.operation },
+    }, (span) => this.runProductRequest(parsed.data, span));
+  }
+
+  private async runProductRequest(
+    request: SubstreamProductRequest,
+    span: FlowSpan,
+  ): Promise<Response> {
+    const current = await span.step("workstream.room.session_auth", () => this.socketAuth({
+      workspaceId: request.auth.workspaceId,
+      userId: request.auth.userId,
+      sessionId: request.auth.sessionId,
+    }));
+    if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
+      span.setError("session_revoked");
       return jsonResponse({ error: "session_revoked" }, 401);
     }
+    // Set once the object's own session query has answered, rather than taken
+    // from the caller: a correlation value that arrives from outside is one the
+    // object would have to decide whether to trust, for something it resolves
+    // anyway. Only the workspace surrogate — see `socketAuth` for why the
+    // person surrogate stays on the Worker's side of the boundary.
+    span.setAttributes(identityAttributes({
+      analyticsWorkspaceId: current.analyticsWorkspaceId,
+    }));
     try {
-      if (parsed.data.operation === "initialize") {
-        const result = await this.product.initialize(current, parsed.data.input);
-        const identity = { workspaceId: parsed.data.input.workspaceId, workstreamId: parsed.data.input.workstreamId };
+      if (request.operation === "initialize") {
+        const input = request.input;
+        const result = await span.step("workstream.room.product.initialize", () =>
+          this.product.initialize(current, input));
+        const identity = { workspaceId: request.input.workspaceId, workstreamId: request.input.workstreamId };
         // The dispatch is durable state and must land before anything that can
         // fail for cosmetic reasons: a refused broadcast used to abort this
         // handler after the run was committed, leaving a run with no executor,
         // no alarm, and a member-facing 500 over a work stream that exists.
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
-        const messages = await this.product.messages(current, 1);
+        await span.step("workstream.room.run.dispatch", () =>
+          this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput));
+        const messages = await span.step("workstream.room.opening_message.read", () =>
+          this.product.messages(current, 1));
         if (messages.items[0]) {
-          await this.publishLocalProductEvent(identity, {
-            type: "message_created",
-            message: messages.items[0],
-          });
+          const opening = messages.items[0];
+          await span.step("workstream.room.event.publish_message_created", () =>
+            this.publishLocalProductEvent(identity, {
+              type: "message_created",
+              message: opening,
+            }));
         }
         return jsonResponse({
           workstream: result.workstream,
@@ -820,73 +898,85 @@ export class SubstreamAgent extends DurableObject<Env> {
           harnessRunId: result.harnessRunId,
         });
       }
-      if (parsed.data.operation === "get") {
-        return jsonResponse(await this.product.get(current));
+      if (request.operation === "get") {
+        return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
-      if (parsed.data.operation === "context") {
+      if (request.operation === "context") {
         return jsonResponse(await this.product.context(current));
       }
-      if (parsed.data.operation === "messages") {
-        return jsonResponse(await this.product.messages(
+      if (request.operation === "messages") {
+        const query = request;
+        const page = await span.step("workstream.room.product.messages", () => this.product.messages(
           current,
-          parsed.data.limit,
-          parsed.data.before,
-          parsed.data.after,
-          parsed.data.around,
+          query.limit,
+          query.before,
+          query.after,
+          query.around,
         ));
+        span.setAttributes({ "avalon.transcript.message_count": page.items.length });
+        return jsonResponse(page);
       }
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
-      if (parsed.data.operation === "update") {
-        const result = await this.product.update(current, parsed.data.input);
+      if (request.operation === "update") {
+        const result = await this.product.update(current, request.input);
         for (const event of result.events) await this.publishLocalProductEvent(identity, event);
         return jsonResponse(result.workstream);
       }
-      if (parsed.data.operation === "acknowledge_read") {
-        return jsonResponse(await this.product.acknowledgeRead(current, parsed.data.input));
+      if (request.operation === "acknowledge_read") {
+        return jsonResponse(await this.product.acknowledgeRead(current, request.input));
       }
-      if (parsed.data.operation === "mark_unread") {
+      if (request.operation === "mark_unread") {
         return jsonResponse(await this.product.markUnread(current));
       }
-      if (parsed.data.operation === "create_message") {
-        const result = await this.product.createMessage(current, parsed.data.input);
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+      if (request.operation === "create_message") {
+        const input = request.input;
+        const result = await span.step("workstream.room.product.create_message", () =>
+          this.product.createMessage(current, input));
+        await span.step("workstream.room.run.dispatch", () =>
+          this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput));
         if (result.inserted) {
-          await this.publishLocalProductEvent(identity, { type: "message_created", message: result.message });
+          await span.step("workstream.room.event.publish_message_created", () =>
+            this.publishLocalProductEvent(identity, { type: "message_created", message: result.message }));
         }
+        span.setAttributes({
+          "avalon.agent.invoked": result.agentInvoked,
+          "avalon.harness_run.id": result.harnessRunId,
+          "avalon.message.deduplicated": !result.inserted,
+        });
         return jsonResponse({
           message: result.message,
           agentInvoked: result.agentInvoked,
           harnessRunId: result.harnessRunId,
         });
       }
-      if (parsed.data.operation === "add_participant") {
-        const participant = await this.product.addParticipant(current, parsed.data.userId);
+      if (request.operation === "add_participant") {
+        const participant = await this.product.addParticipant(current, request.userId);
         await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
         return jsonResponse(participant);
       }
-      if (parsed.data.operation === "remove_participant") {
-        await this.product.removeParticipant(current, parsed.data.userId);
+      if (request.operation === "remove_participant") {
+        await this.product.removeParticipant(current, request.userId);
         await this.publishLocalProductEvent(identity, {
           type: "participant_removed",
-          userId: parsed.data.userId,
+          userId: request.userId,
         });
         return jsonResponse({ ok: true });
       }
-      if (parsed.data.operation === "attach_resource") {
-        const resource = await this.product.attachResource(current, parsed.data.resourceId);
+      if (request.operation === "attach_resource") {
+        const resource = await this.product.attachResource(current, request.resourceId);
         await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
         return jsonResponse(resource);
       }
-      if (parsed.data.operation === "detach_resource") {
-        await this.product.detachResource(current, parsed.data.resourceId);
+      if (request.operation === "detach_resource") {
+        await this.product.detachResource(current, request.resourceId);
         return jsonResponse({ ok: true });
       }
-      if (parsed.data.operation === "resolve_suggestion") {
+      if (request.operation === "resolve_suggestion") {
         const result = await this.product.resolveSuggestion(
           current,
-          parsed.data.suggestionId,
-          parsed.data.action,
+          request.suggestionId,
+          request.action,
         );
         if (result.changed && result.suggestion) {
           await this.publishLocalProductEvent(identity, {
@@ -896,11 +986,11 @@ export class SubstreamAgent extends DurableObject<Env> {
         }
         return jsonResponse({ suggestion: result.suggestion, resourceId: result.resourceId });
       }
-      if (parsed.data.operation === "answer_elicitation") {
+      if (request.operation === "answer_elicitation") {
         const result = await this.product.answerElicitation(
           current,
-          parsed.data.elicitationId,
-          parsed.data.input,
+          request.elicitationId,
+          request.input,
         );
         await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         if (result.elicitation) {
@@ -911,7 +1001,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         }
         return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
       }
-      if (parsed.data.operation === "stop") {
+      if (request.operation === "stop") {
         await this.product.stop(current);
         return jsonResponse({ ok: true });
       }
@@ -933,6 +1023,8 @@ export class SubstreamAgent extends DurableObject<Env> {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }
+      span.setError(safe.code, safe.message);
+      span.setAttributes({ "http.response.status_code": safe.status });
       return jsonResponse({ error: safe.code, message: safe.message, details: safe.details }, safe.status);
     }
   }
@@ -1703,13 +1795,34 @@ export class SubstreamAgent extends DurableObject<Env> {
         disconnect(socket, 1012, "Work stream maintenance");
         return;
       }
-      await this.fulfillSubscription(
-        socket,
-        attachment.workspaceId,
-        attachment.workstreamId,
-        parsed.data.afterSequence,
-      );
-      await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId);
+      // The subscription is the half of opening a work stream that a person
+      // actually waits on, and it arrives on its own invocation — hence its own
+      // trace, joined to the upgrade's by `avalon.socket.connection_id`.
+      const afterSequence = parsed.data.afterSequence;
+      await inFlowSpan(this.env, "workstream.room.socket.subscribe", {
+        flow: "workstream_open",
+        component: "substream_do",
+        identity: {
+          workspaceId: attachment.workspaceId,
+          workstreamId: attachment.workstreamId,
+          userId: attachment.userId,
+          substreamId: attachment.substreamId,
+        },
+        attributes: {
+          "avalon.socket.connection_id": attachment.connectionId,
+          "avalon.socket.after_sequence": afterSequence,
+        },
+      }, async (span) => {
+        await this.fulfillSubscription(
+          socket,
+          attachment.workspaceId,
+          attachment.workstreamId,
+          afterSequence,
+          span,
+        );
+        await span.step("workstream.room.socket.broadcast_presence", () =>
+          this.broadcastPresence(attachment.workspaceId, attachment.workstreamId));
+      });
       return;
     }
 
@@ -1841,9 +1954,15 @@ export class SubstreamAgent extends DurableObject<Env> {
         attachment.workspaceId,
         attachment.userId,
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>()
+      ).first<AuthRoleRow>()
       : await this.env.DB.prepare(
-        `SELECT member.role
+        // The workspace surrogate rides this query because `workspaces` is
+        // already joined — a socket that authorizes itself also learns what
+        // PostHog knows the workspace as, at no extra round trip. The *person*
+        // surrogate is deliberately not fetched here: it would mean joining
+        // `users` from a Durable Object, and no diagnostic is worth widening
+        // what a socket's authorization depends on.
+        `SELECT member.role, workspace.analytics_workspace_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -1860,7 +1979,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         this.env.AVALON_REGION,
         new Date().toISOString(),
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>();
+      ).first<AuthRoleRow>();
     if (!role) return null;
     return {
       sessionId: attachment.sessionId!,
@@ -1868,6 +1987,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       workspaceId: attachment.workspaceId,
       region: this.env.AVALON_REGION,
       role: role.role,
+      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     };
   }
 
@@ -2039,15 +2159,28 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
+  /**
+   * The upgrade and the `subscribe` that follows it are separate invocations —
+   * `subscribe` arrives over an already-open socket, possibly on a woken
+   * isolate — so the platform traces them as two traces. `avalon.socket.*`
+   * attributes are what join them: the ticket id back to the route that issued
+   * it, and the connection id forward to the subscription.
+   */
   private async acceptSocket(request: Request, url: URL): Promise<Response> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (!acceptsNewWorkstreamWork(authority)) {
-      return jsonResponse({
-        error: "workstream_maintenance",
-        phase: authority.phase,
-        generation: authority.generation,
-      }, 503);
-    }
+    return inFlowSpan(this.env, "workstream.room.socket.accept", {
+      flow: "workstream_open",
+      component: "substream_do",
+    }, (span) => this.acceptSocketInSpan(request, url, span));
+  }
+
+  private async acceptSocketInSpan(request: Request, url: URL, span: FlowSpan): Promise<Response> {
+    // The authority control is read once, below, after the identity is parsed.
+    // It used to be read here as well, to refuse a socket during maintenance
+    // before parsing anything — but the read is an uncached D1 round trip and
+    // the second one repeats the same check milliseconds later, so the pair
+    // cost every socket accept an extra round trip to save header parsing on
+    // the rare maintenance path. It also charged that first wait to whichever
+    // step closed next, which is how it was found.
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return jsonResponse({ error: "websocket_upgrade_required" }, 426);
     }
@@ -2079,8 +2212,19 @@ export class SubstreamAgent extends DurableObject<Env> {
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
 
-    const currentAuthority = await readWorkstreamAuthorityControl(this.env);
+    span.setAttributes({
+      "avalon.workspace.id": identity.data.workspaceId,
+      "avalon.workstream.id": identity.data.workstreamId,
+      "user.id": identity.data.userId,
+      "avalon.substream.id": identity.data.substreamId,
+      "avalon.socket.ticket_id": identity.data.ticketId,
+      "avalon.socket.after_sequence": identity.data.afterSequence,
+    });
+
+    const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
+      readWorkstreamAuthorityControl(this.env));
     if (!acceptsNewWorkstreamWork(currentAuthority)) {
+      span.setError("workstream_maintenance");
       return jsonResponse({
         error: "workstream_maintenance",
         phase: currentAuthority.phase,
@@ -2096,17 +2240,19 @@ export class SubstreamAgent extends DurableObject<Env> {
       }, this.env.AVALON_REGION);
     } catch (error) {
       if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
+        span.setError("room_identity_mismatch");
         return jsonResponse({ error: "room_identity_mismatch" }, 409);
       }
+      span.setError("socket_identity_failed");
       throw error;
     }
     const authorized = currentAuthority.phase === "durable_object_open"
-      ? Boolean(await this.env.DB.prepare(
+      ? Boolean(await span.step("workstream.room.socket.member_authorize", () => this.env.DB.prepare(
         `SELECT 1 AS one FROM workspace_members
           WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-      ).bind(identity.data.workspaceId, identity.data.userId).first<{ one: number }>())
+      ).bind(identity.data.workspaceId, identity.data.userId).first<{ one: number }>()))
         && this.product.canRead(identity.data.userId)
-      : Boolean(await this.env.DB.prepare(
+      : Boolean(await span.step("workstream.room.socket.member_authorize", () => this.env.DB.prepare(
         `SELECT 1
            FROM workstreams w
            JOIN workspace_members member ON member.workspace_id = w.workspace_id
@@ -2119,11 +2265,13 @@ export class SubstreamAgent extends DurableObject<Env> {
         identity.data.workstreamId,
         identity.data.workspaceId,
         identity.data.userId,
-      ).first());
+      ).first()));
     if (!authorized) {
+      span.setError("forbidden");
       return jsonResponse({ error: "forbidden" }, 403);
     }
     if (!this.objectStore.isRealtimeWritable()) {
+      span.setError("workstream_maintenance");
       return jsonResponse({
         error: "workstream_maintenance",
         phase: currentAuthority.phase,
@@ -2135,13 +2283,17 @@ export class SubstreamAgent extends DurableObject<Env> {
       identity.data.ticketId,
       identity.data.ticketExpiresAt,
     )) {
+      span.setError("socket_ticket_replayed");
       return jsonResponse({ error: "socket_ticket_replayed" }, 401);
     }
 
     const pair = Object.values(new WebSocketPair());
     const client = pair[0];
     const server = pair[1];
-    if (!client || !server) return jsonResponse({ error: "websocket_unavailable" }, 500);
+    if (!client || !server) {
+      span.setError("websocket_unavailable");
+      return jsonResponse({ error: "websocket_unavailable" }, 500);
+    }
 
     const attachment: SocketAttachment = {
       connectionId: uuidV7(),
@@ -2162,6 +2314,11 @@ export class SubstreamAgent extends DurableObject<Env> {
     // validate each attachment at the point of use.
     server.serializeAttachment(attachment);
 
+    span.mark("workstream.room.socket.accept_connection");
+    span.setAttributes({
+      "avalon.socket.outcome": "accepted",
+      "avalon.socket.connection_id": attachment.connectionId,
+    });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -2528,21 +2685,35 @@ export class SubstreamAgent extends DurableObject<Env> {
     workspaceId: string,
     workstreamId: string,
     afterSequence: number,
+    span: FlowSpan = noFlowSpan,
   ): Promise<void> {
-    let deliveredThrough = await this.currentSequence(workstreamId);
-    await this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, planSocketReplay(
+    let deliveredThrough = await span.step("workstream.room.subscribe.current_sequence", () =>
+      this.currentSequence(workstreamId));
+    const plan = planSocketReplay(
       afterSequence,
       deliveredThrough,
       this.replayFloorSequence,
       this.recentEvents,
-    ));
+    );
+    // Which of the three plans a subscription takes is the first question
+    // asked of a slow open: a snapshot reads the whole transcript, a replay
+    // sends what is already in memory, and a resync makes the client fetch
+    // canonical state over HTTP instead.
+    span.setAttributes({
+      "avalon.subscribe.replay_plan": plan.type,
+      ...(plan.type === "replay" ? { "avalon.subscribe.replay_event_count": plan.events.length } : {}),
+    });
+    await span.step("workstream.room.subscribe.deliver", () =>
+      this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, plan, span));
 
     // Loading an initial snapshot awaits D1 and can yield to a concurrently
     // published event. Keep this socket out of broadcasts until a second,
     // in-memory catch-up closes that bootstrap race.
-    const catchUpSequence = await this.currentSequence(workstreamId);
+    const catchUpSequence = await span.step("workstream.room.subscribe.catch_up_sequence", () =>
+      this.currentSequence(workstreamId));
     if (catchUpSequence > deliveredThrough) {
-      await this.deliverReplayPlan(
+      span.setAttributes({ "avalon.subscribe.catch_up_events": catchUpSequence - deliveredThrough });
+      await span.step("workstream.room.subscribe.deliver_catch_up", () => this.deliverReplayPlan(
         socket,
         workspaceId,
         workstreamId,
@@ -2554,7 +2725,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           this.recentEvents,
           false,
         ),
-      );
+      ));
       deliveredThrough = catchUpSequence;
     }
 
@@ -2573,9 +2744,10 @@ export class SubstreamAgent extends DurableObject<Env> {
     workstreamId: string,
     currentSequence: number,
     plan: SocketReplayPlan,
+    span: FlowSpan = noFlowSpan,
   ): Promise<void> {
     if (plan.type === "snapshot") {
-      await this.sendSnapshot(socket, workspaceId, workstreamId, currentSequence);
+      await this.sendSnapshot(socket, workspaceId, workstreamId, currentSequence, span);
       return;
     }
     if (plan.type === "replay") {
@@ -2601,14 +2773,22 @@ export class SubstreamAgent extends DurableObject<Env> {
     workspaceId: string,
     workstreamId: string,
     knownSequence?: number,
+    span: FlowSpan = noFlowSpan,
   ): Promise<void> {
     try {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
-      const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
-      const auth = await this.socketAuth(attachment);
+      const workstream = await span.step("workstream.room.snapshot.detail", () =>
+        this.loadSnapshot(workspaceId, workstreamId, attachment.userId));
+      // Its own step: this is an awaited D1 round trip, and a step's duration is
+      // measured from the end of the previous one, so leaving it unstepped
+      // charged the authorization wait to the transcript read below and made
+      // `slowest_step` name the wrong thing.
+      const auth = await span.step("workstream.room.snapshot.session_auth", () =>
+        this.socketAuth(attachment));
       if (!auth) throw new Error("Snapshot viewer is no longer authorized");
-      const canonicalFeed = await this.product.messages(auth, 250);
+      const canonicalFeed = await span.step("workstream.room.snapshot.transcript", () =>
+        this.product.messages(auth, 250));
       const messageFeed = { ...canonicalFeed, items: [...canonicalFeed.items] };
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
@@ -2632,18 +2812,36 @@ export class SubstreamAgent extends DurableObject<Env> {
         });
       let event = buildEvent();
       let encoded = JSON.stringify(event);
-      while (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES
-        && messageFeed.items.length > 1) {
+      // Carried rather than recomputed: the cap, the trim loop, and the
+      // reported size are all about UTF-8 bytes, and encoding once per
+      // iteration replaces the two full encodes the loop used to do per trim.
+      let encodedBytes = textEncoder.encode(encoded).byteLength;
+      let trims = 0;
+      while (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES && messageFeed.items.length > 1) {
         messageFeed.items.shift();
         messageFeed.nextCursor = String(messageFeed.items[0]!.sequenceNumber);
         event = buildEvent();
         encoded = JSON.stringify(event);
+        encodedBytes = textEncoder.encode(encoded).byteLength;
+        trims += 1;
       }
-      if (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES) {
+      if (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES) {
         throw new Error("substream_snapshot_frame_too_large");
       }
+      span.mark("workstream.room.snapshot.encode");
+      // The trim loop re-serializes the whole frame per dropped message, so a
+      // transcript that overshoots the cap is a cost that only shows up as this
+      // count beside the byte size.
+      span.setAttributes({
+        // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
+        // non-ASCII transcript under-reported against a cap measured in UTF-8.
+        "avalon.snapshot.bytes": encodedBytes,
+        "avalon.snapshot.message_count": messageFeed.items.length,
+        "avalon.snapshot.trims": trims,
+      });
       socket.send(encoded);
     } catch {
+      span.setError("snapshot_unavailable");
       this.sendError(socket, "snapshot_unavailable", "Canonical work-stream state is unavailable.");
     }
   }

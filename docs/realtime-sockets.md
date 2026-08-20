@@ -55,7 +55,12 @@ admission is split in two.
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
-   and the current regional session ID.
+   and the current regional session ID. The two work-stream feed routes also
+   return that `jti` as `ticketId` beside the ticket — the id of the credential,
+   never the credential — because the upgrade it authorizes opens a new
+   connection carrying no request id, and it is the only value the issuing
+   route, the edge, and the room all hold. See
+   [`performance-tracing.md`](performance-tracing.md).
 2. **Present.** The client opens the socket with the ticket as the second
    `WebSocket` constructor argument: `[avalon.ticket.v1, <ticket>]`. The browser
    sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
@@ -266,7 +271,9 @@ client sends one and no block-ticket bearer is ever issued in a URL.
   is a live credential in all of them. Break this and the credential is back in
   the invocation log, the 90-day Logpush export, and every trace span.
 - **Only the sentinel is echoed.** Returning the ticket would move it from a
-  request header to a response header and undo the change.
+  request header to a response header and undo the change. `ticketId` is not the
+  ticket: it is the `jti` a replay check already refuses a second use of, and it
+  authorizes nothing on its own.
 - **A client that offers the sentinel is held to it.** Falling back to the query
   when its offer is malformed would let a stale URL credential stand in for the
   one the client meant to present.
@@ -372,6 +379,49 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-20 — The feed ticket's id is returned, and joins the traces of a socket open
+
+**What changed:** `GET /workstreams/:id/socket` and
+`GET /workstreams/:id/substreams/:substreamId/socket` return `ticketId`, the
+ticket's `jti`, alongside the ticket. `WorkstreamService.socketTicket` now mints
+that id and hands it to `issueSocketTicket` rather than letting the issuer
+generate one. The issuing route, the edge upgrade, and the room all record it as
+the `avalon.socket.ticket_id` span attribute.
+
+**Why:** Opening a work stream was reported slow with no way to say which part
+was slow, and the socket half was the invisible half. A WebSocket upgrade is a
+separate invocation that Cloudflare's automatic tracing traces on its own, and a
+browser can attach no header to a handshake — so nothing tied a room taking two
+seconds to assemble a snapshot back to the client that asked for the ticket a
+moment earlier. The `jti` was already the one value the issuing route, the edge,
+and the room all hold — the room consumes it — so it needed to be returned
+rather than invented.
+
+**Considered and rejected:** *Putting a trace id in the handshake.* The ticket
+subprotocol offer is the one thing a browser lets a client set on a handshake,
+and it is spent on the credential; adding a second protocol element would change
+the negotiation this document's whole design is built around. *Using the ticket
+id as the trace id on the far side* — it is a UUID, and a UUID without its dashes
+is a valid W3C trace id. This was built and removed: the platform owns trace
+identity, and a hand-made id forks the trace graph so that the room's spans stop
+appearing under the calls that produced them. It is a correlation attribute
+instead. *Correlating by timestamp and workspace.* It fails exactly when it is
+needed — several sockets open at once during a reconnect storm. *Returning the
+whole ticket to the client for correlation.* It already has the ticket; the point
+was to record an identifier without recording a credential, which is why
+`ticketId` is recorded and the ticket never is.
+
+**Consequences:** Anything that changes how a ticket id is produced must keep
+the value the route records identical to the one the room reports consuming, or
+the socket seam of `workstream_open` silently stops joining — nothing fails, the
+traces just no longer meet. `ticketId` is now part of the two feed routes'
+response contract and the desktop's `SocketTicket`; it is optional on the client
+so a Worker that predates it still parses. The other ticket audiences —
+workspace, control, block, dictation — deliberately do not return one, because
+nothing traces them yet.
+
+Shipped in #203.
 
 ### 2026-08-18 — Dictation admission serializes in the owning WorkspaceDO
 

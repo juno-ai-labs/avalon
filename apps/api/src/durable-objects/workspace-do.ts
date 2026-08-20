@@ -28,6 +28,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
+import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
@@ -752,6 +753,16 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
  * state; regional D1 retains only identity, routing, migration, and the
  * workspace modules that have not yet moved behind a Durable Object boundary.
  */
+/**
+ * What the command socket's authorization query answers with. The analytics
+ * column is absent on the development path, which selects only the role —
+ * optional rather than nullable so that shape stays legal.
+ */
+interface WorkspaceAuthRoleRow {
+  role: AuthContext["role"];
+  analytics_workspace_id?: string | null;
+}
+
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -2249,57 +2260,91 @@ export class WorkspaceDO extends DurableObject<Env> {
     attachment: WorkspaceSocketAttachment,
     command: CreateMessageCommand,
   ): Promise<void> {
-    try {
-      const authority = await readWorkstreamAuthorityControl(this.env);
-      if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
-        throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
-      }
-      const auth = await this.sessionAuth(attachment);
-      if (!auth) {
-        socket.close(1008, "Session no longer active");
-        return;
-      }
-      const result = await new WorkstreamObjectClient(
-        this.env,
-        auth,
-        command.workstreamId,
-        command.substreamId,
-      ).createMessage({
-        ...command.payload,
-        telemetryOperationId: command.operationId,
-      });
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_succeeded",
-        command: "create_message",
-        clientMessageId: command.payload.clientMessageId,
-        ...result,
-      })));
-    } catch (error) {
-      const safe = error instanceof ApiError
-        ? error
-        : new ApiError(500, "message_write_failed", "The message could not be sent");
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_failed",
-        command: "create_message",
-        clientMessageId: command.payload.clientMessageId,
-        error: {
-          status: safe.status,
-          code: safe.code,
-          message: safe.message,
-          ...(safe.details ? { details: safe.details } : {}),
-        },
-      })));
-      if (!(error instanceof ApiError)) {
-        logWarn(this.env, "workspace_socket_create_message_failed", {
-          workspace_id: attachment.workspaceId,
-          workstream_id: command.workstreamId,
-          substream_id: command.substreamId,
-          user_id: attachment.userId,
-          client_message_id: command.payload.clientMessageId,
-          reason: error instanceof Error ? error.message : "unknown",
+    // A command arrives over an already-open socket, which the platform traces
+    // as its own invocation with no relationship to the HTTP request the
+    // desktop made to open it. `avalon.message.client_id` is what joins this
+    // trace to the composer that sent it: the desktop prints the same id, and
+    // the command result comes back keyed by it.
+    return inFlowSpan(this.env, "workstream.message.send", {
+      flow: "workstream_message_send",
+      component: "workspace_do",
+      identity: {
+        workspaceId: attachment.workspaceId,
+        workstreamId: command.workstreamId,
+        userId: attachment.userId,
+        substreamId: command.substreamId,
+      },
+      attributes: {
+        "avalon.transport": "workspace_socket",
+        "avalon.message.client_id": command.payload.clientMessageId,
+        "avalon.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
+      },
+    }, async (span) => {
+      try {
+        const authority = await span.step("workstream.message.authority_read", () =>
+          readWorkstreamAuthorityControl(this.env));
+        if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
+          throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+        }
+        const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
+        if (auth) span.setAttributes(identityAttributes({
+          analyticsWorkspaceId: auth.analyticsWorkspaceId,
+        }));
+        if (!auth) {
+          span.setError("session_inactive");
+          socket.close(1008, "Session no longer active");
+          return;
+        }
+        const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
+          this.env,
+          auth,
+          command.workstreamId,
+          command.substreamId,
+          true,
+        ).createMessage({
+          ...command.payload,
+          telemetryOperationId: command.operationId,
+        }));
+        span.setAttributes({
+          "avalon.agent.invoked": result.agentInvoked,
+          "avalon.harness_run.id": result.harnessRunId,
         });
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_succeeded",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          ...result,
+        })));
+        span.mark("workstream.message.respond");
+      } catch (error) {
+        const safe = error instanceof ApiError
+          ? error
+          : new ApiError(500, "message_write_failed", "The message could not be sent");
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_failed",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          error: {
+            status: safe.status,
+            code: safe.code,
+            message: safe.message,
+            ...(safe.details ? { details: safe.details } : {}),
+          },
+        })));
+        if (!(error instanceof ApiError)) {
+          logWarn(this.env, "workspace_socket_create_message_failed", {
+            workspace_id: attachment.workspaceId,
+            workstream_id: command.workstreamId,
+            substream_id: command.substreamId,
+            user_id: attachment.userId,
+            client_message_id: command.payload.clientMessageId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+        span.setError(safe.code, safe.message);
+        span.setAttributes({ "http.response.status_code": safe.status });
       }
-    }
+    });
   }
 
   private applyDirectoryEnvelope(
@@ -2908,9 +2953,13 @@ export class WorkspaceDO extends DurableObject<Env> {
           WHERE member.workspace_id = ? AND member.user_id = ?
             AND member.status = 'active' AND workspace.region = ?`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION)
-        .first<{ role: AuthContext["role"] }>()
+        .first<WorkspaceAuthRoleRow>()
       : await this.env.DB.prepare(
-        `SELECT member.role
+        // The workspace surrogate rides this query rather than being looked
+        // up: a command socket authorizes itself on every frame anyway, and
+        // `workspaces` is already joined. The person surrogate is not fetched
+        // here — see `docs/performance-tracing.md` for where it comes from.
+        `SELECT member.role, workspace.analytics_workspace_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -2927,13 +2976,14 @@ export class WorkspaceDO extends DurableObject<Env> {
         this.env.AVALON_REGION,
         new Date().toISOString(),
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>();
+      ).first<WorkspaceAuthRoleRow>();
     return role ? {
       sessionId: identity.sessionId,
       userId: identity.userId,
       workspaceId: identity.workspaceId,
       region: this.env.AVALON_REGION,
       role: role.role,
+      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     } : null;
   }
 }
