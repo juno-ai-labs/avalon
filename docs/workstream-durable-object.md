@@ -958,6 +958,26 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — A tick stops when it meets a large workspace
+
+**What changed:** The scrub tick ends after any sweep in which a route ran out
+of its row budget, rather than only after the sweep cap.
+
+**Why:** The cap bounds how many sweeps run, not what a sweep costs, and those
+differ by an order of magnitude — a route that empties its targets probes and
+leaves at roughly ten round trips, while one that exhausts its budget spends
+forty probe-and-delete pairs first, near a hundred and thirty. Measured, three
+sweeps of budget-exhausting routes issue about 1,700 subrequests against an
+invocation ceiling of a thousand. The overrun degrades rather than breaks —
+"too many subrequests" is transient, so the tick ends and the partial scrub
+resumes — but it means every tick against a large workspace ends in an error,
+which is exactly the signal the drain is being watched through.
+
+**What a future change has to respect:** a route returning `false` is not
+merely "not finished", it is the tick's only evidence that the work it just met
+is large. Cheap fleets keep the full sweep cap; the expensive case stops early
+on its own.
+
 ### 2026-08-20 — The scrub gets a rate limit of its own
 
 **What changed:** A tick performs at most `WORKSPACE_SCRUB_PASSES_PER_TICK`

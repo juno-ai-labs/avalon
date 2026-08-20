@@ -1502,11 +1502,13 @@ export async function processWorkstreamAuthorityMigration(
         // stacking scrub passes into one invocation — so a pass that activates
         // nothing ends the tick instead.
         let activated = 0;
+        let exhausted = 0;
         if (!await processWorkspaceProductRoutes(env, verifiedProducts, async (
           scrubEnv: Env,
           scrubRoute: WorkspaceProductRouteRow,
         ) => {
           if (await activateWorkspaceProductRoute(scrubEnv, scrubRoute)) activated += 1;
+          else exhausted += 1;
         })) return;
         operationsRemaining -= verifiedProducts.length;
         scrubPasses += 1;
@@ -1521,7 +1523,14 @@ export async function processWorkstreamAuthorityMigration(
           });
           return;
         }
-        if (scrubPasses >= WORKSPACE_SCRUB_PASSES_PER_TICK) return;
+        // The pass cap bounds how many sweeps run, not what a sweep costs, and
+        // those differ by an order of magnitude: a route that empties its
+        // targets probes and leaves, while one that exhausts its budget spends
+        // forty probe-and-delete pairs first. Three sweeps of the latter
+        // overruns the invocation's subrequest ceiling. A route that ran out of
+        // budget is the signal that this tick met a large workspace, so the
+        // tick ends there and the next one resumes it.
+        if (exhausted > 0 || scrubPasses >= WORKSPACE_SCRUB_PASSES_PER_TICK) return;
         continue;
       }
       const verified = await nextRoutes(env, "verified", batchSize);
