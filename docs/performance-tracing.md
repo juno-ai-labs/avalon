@@ -421,12 +421,19 @@ Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
 there are enough production rows to pick thresholds that are not guesses; they
 are deliberately not guessed here.
 
-**Before any of this is pointed at a third-party destination**, two things have
-to be decided rather than inherited.
+**This is now pointed at a third-party destination.** As of 2026-08-20 the
+Global Worker exports both its logs and its traces to the US PostHog project,
+via the `posthog-logs` and `posthog-traces` destinations named in
+`wrangler.global.jsonc`. The EU Worker does not, and its config says why.
 
-The first is not about this module at all and is the larger of the two: the
-platform's automatic Durable Object SQL spans carry
-`cloudflare.durable_object.query.bindings`, which for Avalon means message
+The two things below had to be decided rather than inherited before that
+happened. They are kept here in full because they are what a future reader needs
+in order to understand what was accepted, and because the first of them is not
+closed — it is a standing property of the export.
+
+The first is not about this module at all and is the larger of the two, and it
+was **accepted, not solved**: the platform's automatic Durable Object SQL spans
+carry `cloudflare.durable_object.query.bindings`, which for Avalon means message
 content, with no hook to redact it —
 [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md#what-automatic-tracing-captures-that-we-would-never-log)
 has the detail. An OTLP export moves that content out of the region's own trust
