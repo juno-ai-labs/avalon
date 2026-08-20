@@ -113,6 +113,13 @@ without noticing would route around that boundary rather than change it. Note
 too that `persist: false` makes this worse rather than better: it removes the
 Cloudflare copy and leaves the third party holding the only one.
 
+**This was decided on 2026-08-20, and only for Global.** That Worker now exports
+logs and traces to the US PostHog project, message content in the Durable Object
+SQL spans included, with the reasoning and the accepted cost recorded in
+[`telemetry.md`](telemetry.md#changelog). The EU Worker still names no
+destination. Read the section above as the standing description of what those
+traces carry, not as a warning about something that has not happened.
+
 The identity half of the same decision is in
 [`performance-tracing.md`](performance-tracing.md#operations) — PostHog is keyed
 on random surrogates, not on `users.id`, so a default identity mapping at the
@@ -231,8 +238,13 @@ Traces follow OpenTelemetry standards and export to any OTLP endpoint —
 Honeycomb, Grafana Cloud, Axiom, Sentry are the ones Cloudflare names. Logs
 export the same way and share the trace id, so a destination correlates them
 without configuration. `persist: false` exports without also storing the trace in
-Cloudflare's dashboard. The destination is account configuration, not repository
-configuration: nothing in this repository decides where telemetry is sent.
+Cloudflare's dashboard.
+
+A destination is account configuration and its credential lives there, but the
+**opt-in is per Worker**: `observability.logs.destinations` and
+`observability.traces.destinations` in each `wrangler.*.jsonc` decide which
+Worker sends to it. That distinction is load-bearing here — it is what lets the
+Global Worker export while the EU Worker does not, from one account.
 
 ## Invariants
 
@@ -290,6 +302,25 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 [`testing.md`](testing.md).
 
 ## Changelog
+
+### 2026-08-20 — The per-Worker opt-in is what makes a one-region export possible
+
+**What changed:** Recorded that an OTLP destination is account configuration but
+the opt-in is per Worker, through `observability.<signal>.destinations` in each
+`wrangler.*.jsonc`. The page previously said "nothing in this repository decides
+where telemetry is sent", which was wrong in the way that mattered.
+
+**Why:** Pointing Global at PostHog while leaving EU alone depends entirely on
+that distinction. Read the old sentence and the only conclusions available were
+that an export is all-or-nothing across regions, or that the repository has no
+say — either of which turns a per-region decision into an account-wide one.
+
+**Consequences:** The warnings on this page about an export crossing the EU
+boundary now describe a thing that has to be done deliberately in
+`wrangler.eu.jsonc`, rather than something that could happen as a side effect of
+account configuration.
+
+Shipped in #TBD.
 
 ### 2026-08-20 — Document created
 
