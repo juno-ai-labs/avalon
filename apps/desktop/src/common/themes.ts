@@ -1,55 +1,120 @@
 /**
  * The theme vocabulary both processes speak.
  *
+ * A choice has two axes, not one. A **family** is a design — Neu, Avalon's
+ * original palette, or Air — and a **mode** is which way round it runs. They
+ * are separate because they answer different questions: the family is a taste,
+ * and the mode is a lighting condition that may change during the day. Folding
+ * them into one flat list made `system` a peer of the designs, which meant
+ * choosing to follow the Mac silently also chose Neu, and a person on Air had
+ * no way to say "this design, but follow the room".
+ *
  * The renderer decides what a theme *looks* like — every value lives in
  * `src/renderer/styles/themes.css`. This module holds only what the main
- * process also has to know: which themes exist, and the one colour each paints
- * a window with before the renderer has drawn anything into it.
+ * process also has to know: which appearances exist, and the one colour each
+ * paints a window with before the renderer has drawn anything into it.
  */
 
-/** What a person chose. `system` is a rule, not an appearance. */
-export const themeChoices = ['system', 'light', 'dark', 'airy', 'airy-dark'] as const;
-export type ThemeChoice = (typeof themeChoices)[number];
+/** A design. Each brings a light appearance and a dark one. */
+export const themeFamilies = ['neu', 'air'] as const;
+export type ThemeFamily = (typeof themeFamilies)[number];
 
-/** What is actually drawn. `system` has been resolved away. */
-export const resolvedThemes = ['light', 'dark', 'airy', 'airy-dark'] as const;
+/** Which way round to run it. `system` is a rule, not an appearance. */
+export const appearanceModes = ['system', 'light', 'dark'] as const;
+export type AppearanceMode = (typeof appearanceModes)[number];
+
+/** What is actually drawn, once family and mode have been combined. */
+export const resolvedThemes = ['neu-light', 'neu', 'air', 'air-dark'] as const;
 export type ResolvedTheme = (typeof resolvedThemes)[number];
 
-export const defaultThemeChoice: ThemeChoice = 'system';
+export interface ThemeChoice {
+  family: ThemeFamily;
+  mode: AppearanceMode;
+}
 
-export interface ThemeDescription {
-  id: ThemeChoice;
+export const defaultThemeChoice: ThemeChoice = { family: 'neu', mode: 'system' };
+
+/**
+ * The two appearances each family brings.
+ *
+ * This table is the whole coupling between the axes: adding a family means
+ * adding a row and two theme files, and nothing else in either process learns a
+ * new name.
+ */
+export const familyAppearances: Record<ThemeFamily, Record<'light' | 'dark', ResolvedTheme>> = {
+  neu: { light: 'neu-light', dark: 'neu' },
+  air: { light: 'air', dark: 'air-dark' },
+};
+
+export interface Described<Id> {
+  id: Id;
   label: string;
   description: string;
 }
 
-export const themeDescriptions: readonly ThemeDescription[] = [
+export const themeFamilyDescriptions: readonly Described<ThemeFamily>[] = [
+  { id: 'neu', label: 'Neu', description: 'The original palette: dense rows and a composer that is a card.' },
+  { id: 'air', label: 'Air', description: 'Amber light on a moving field, with a great deal more room.' },
+];
+
+export const appearanceModeDescriptions: readonly Described<AppearanceMode>[] = [
   { id: 'system', label: 'System', description: 'Follow the appearance this Mac is set to.' },
-  { id: 'light', label: 'Light', description: 'A warm near-white page with hairline rules.' },
-  { id: 'dark', label: 'Dark', description: 'Avalon’s original low-light palette.' },
-  { id: 'airy', label: 'Airy', description: 'Warm paper, amber light, and a great deal of room.' },
-  { id: 'airy-dark', label: 'Airy Dark', description: 'The same room after dark: near-black and amber.' },
+  { id: 'light', label: 'Light', description: 'Stay light whatever this Mac is set to.' },
+  { id: 'dark', label: 'Dark', description: 'Stay dark whatever this Mac is set to.' },
 ];
 
 /**
  * The window's background before the first frame.
  *
- * These are each theme's `--canvas`, duplicated here because the main process
- * cannot read a stylesheet and Electron needs the colour at construction time.
- * They are the one place a token value is written twice; `docs/theming.md`
- * records why, and `themes.node.test.ts` fails if the two copies drift.
+ * These are each appearance's `--canvas`, duplicated here because the main
+ * process cannot read a stylesheet and Electron needs the colour at
+ * construction time. They are the one place a token value is written twice;
+ * `docs/theming.md` records why, and `themes.css.node.test.ts` fails if the two
+ * copies drift.
  */
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
-  light: '#ffffff',
-  dark: '#111210',
-  airy: '#f7f3ec',
-  'airy-dark': '#100e0c',
+  'neu-light': '#ffffff',
+  neu: '#111210',
+  air: '#f7f3ec',
+  'air-dark': '#100e0c',
+};
+
+export function parseThemeFamily(value: unknown): ThemeFamily | null {
+  return typeof value === 'string' && (themeFamilies as readonly string[]).includes(value)
+    ? (value as ThemeFamily)
+    : null;
+}
+
+export function parseAppearanceMode(value: unknown): AppearanceMode | null {
+  return typeof value === 'string' && (appearanceModes as readonly string[]).includes(value)
+    ? (value as AppearanceMode)
+    : null;
+}
+
+/**
+ * What a flat theme name used to mean, before the axes were separated.
+ *
+ * A stored preference outlives the shape it was written in, and a person who had
+ * chosen Airy should not be handed Neu by a refactor. Anything unrecognised
+ * falls through to `null` and the caller falls back to the default.
+ */
+const LEGACY_CHOICES: Record<string, ThemeChoice> = {
+  system: { family: 'neu', mode: 'system' },
+  light: { family: 'neu', mode: 'light' },
+  dark: { family: 'neu', mode: 'dark' },
+  // `airy` was the name before it was shortened; a stored preference should not
+  // be a reason to be handed a different design.
+  airy: { family: 'air', mode: 'light' },
+  'airy-dark': { family: 'air', mode: 'dark' },
 };
 
 export function parseThemeChoice(value: unknown): ThemeChoice | null {
-  return typeof value === 'string' && (themeChoices as readonly string[]).includes(value)
-    ? (value as ThemeChoice)
-    : null;
+  if (typeof value === 'string') return LEGACY_CHOICES[value] ?? null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const family = parseThemeFamily(candidate['family']);
+  const mode = parseAppearanceMode(candidate['mode']);
+  return family && mode ? { family, mode } : null;
 }
 
 export function parseResolvedTheme(value: unknown): ResolvedTheme | null {
@@ -59,11 +124,23 @@ export function parseResolvedTheme(value: unknown): ResolvedTheme | null {
 }
 
 /**
- * The appearance a choice produces. `system` is the only choice that consults
- * the operating system; every other choice is honoured whatever the Mac is set
- * to, which is the point of choosing one.
+ * The appearance a choice produces.
+ *
+ * `system` is the only mode that consults the operating system, and it consults
+ * it about the *lighting* only — the family a person chose is honoured whatever
+ * the Mac is set to, which is the point of choosing one.
  */
 export function resolveTheme(choice: ThemeChoice, systemPrefersDark: boolean): ResolvedTheme {
-  if (choice === 'system') return systemPrefersDark ? 'dark' : 'light';
-  return choice;
+  const appearance = choice.mode === 'system'
+    ? (systemPrefersDark ? 'dark' : 'light')
+    : choice.mode;
+  return familyAppearances[choice.family][appearance];
+}
+
+/** The family an appearance belongs to. */
+export function familyOf(theme: ResolvedTheme): ThemeFamily {
+  const found = themeFamilies.find((family) => (
+    familyAppearances[family].light === theme || familyAppearances[family].dark === theme
+  ));
+  return found ?? 'neu';
 }

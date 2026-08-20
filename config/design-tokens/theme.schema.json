@@ -150,6 +150,10 @@
         "dark"
       ]
     },
+    "default": {
+      "description": "The one theme also emitted as :root, so every other theme's omissions fall through to it. Exactly one theme sets it.",
+      "const": true
+    },
     "description": {
       "type": "string"
     },

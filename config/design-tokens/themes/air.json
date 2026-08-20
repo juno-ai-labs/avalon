@@ -1,7 +1,7 @@
 {
   "$schema": "../theme.schema.json",
-  "id": "airy",
-  "name": "Airy",
+  "id": "air",
+  "name": "Air",
   "appearance": "light",
   "description": "Warm paper, amber light, and a great deal of room.",
   "fonts": [

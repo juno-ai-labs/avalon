@@ -1,7 +1,7 @@
 {
   "$schema": "../theme.schema.json",
-  "id": "airy-dark",
-  "name": "Airy Dark",
+  "id": "air-dark",
+  "name": "Air Dark",
   "appearance": "dark",
   "description": "Near-black, amber, and a great deal of room.",
   "fonts": [

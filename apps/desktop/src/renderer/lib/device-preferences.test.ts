@@ -45,9 +45,10 @@ describe('device preferences', () => {
 
   it('keeps the chosen theme beside the other preferences', () => {
     setDeviceSelectedRegion('global');
-    setDeviceTheme('airy');
+    setDeviceTheme({ family: 'air', mode: 'dark' });
 
-    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'global', theme: 'airy' });
+    expect(readDevicePreferences())
+      .toEqual({ version: 1, selectedRegion: 'global', theme: { family: 'air', mode: 'dark' } });
   });
 
   /**

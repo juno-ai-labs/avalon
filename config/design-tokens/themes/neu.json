@@ -1,8 +1,9 @@
 {
   "$schema": "../theme.schema.json",
-  "id": "dark",
-  "name": "Dark",
+  "id": "neu",
+  "name": "Neu",
   "appearance": "dark",
+  "default": true,
   "description": "Avalon's original low-light palette.",
   "fonts": [
     {

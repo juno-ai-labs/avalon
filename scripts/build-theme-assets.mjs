@@ -51,9 +51,26 @@ export function customProperty(path) {
   return `--av-${path.replace(/\./gu, '-')}`;
 }
 
-/** The selector a theme's block is written under. `dark` is also the default. */
-export function selectorFor(id) {
-  return id === 'dark' ? `:root,\n[data-theme='${id}']` : `[data-theme='${id}']`;
+/**
+ * The selector a theme's block is written under.
+ *
+ * The default theme is emitted as `:root` as well, so it is what an element
+ * carrying no `data-theme` gets. Which theme that is comes from the JSON — a
+ * generator that knew one by name would have to be edited every time a theme is
+ * renamed, which is exactly what happened when `dark` became `neu`.
+ */
+export function selectorFor(id, themes = []) {
+  const isDefault = themes.some((theme) => theme.id === id && theme.default);
+  return isDefault ? `:root,\n[data-theme='${id}']` : `[data-theme='${id}']`;
+}
+
+/** The theme every other theme's omissions fall through to. */
+export function defaultTheme(themes) {
+  const found = themes.filter((theme) => theme.default);
+  if (found.length !== 1) {
+    throw new Error(`expected exactly one theme to set "default": true, found ${found.length}`);
+  }
+  return found[0];
 }
 
 function readJson(path) {
@@ -65,9 +82,9 @@ export function readTokenSources() {
   const themes = readdirSync(themesDirectory)
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => readJson(join(themesDirectory, entry)));
-  // `dark` first: it is emitted as `:root` as well, so it has to be the block
-  // every other theme's omissions fall through to.
-  themes.sort((a, b) => (a.id === 'dark' ? -1 : b.id === 'dark' ? 1 : a.id.localeCompare(b.id)));
+  // The default theme first: it is emitted as `:root` as well, so it has to be
+  // the block every other theme's omissions fall through to.
+  themes.sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
   return { registry, themes };
 }
 
@@ -356,14 +373,14 @@ export function generate({ registry, themes }) {
         // Only the default theme carries the prose. Repeating it under every
         // theme would triple the file and put three copies of one explanation
         // where a reader has to check whether they still agree.
-        if (theme.id === 'dark') lines.push(wrapComment(registry.groups[group]));
+        if (theme.default) lines.push(wrapComment(registry.groups[group]));
         lastGroup = group;
       }
       lines.push(`  ${customProperty(path)}: ${resolveValue(values[path], registry, theme, path)};`);
     }
     return [
       `/* ${theme.name} — ${theme.description} */`,
-      `${selectorFor(theme.id)} {`,
+      `${selectorFor(theme.id, themes)} {`,
       `  color-scheme: ${theme.appearance};`,
       '',
       ...lines,
@@ -400,7 +417,7 @@ export function generate({ registry, themes }) {
  * Settings miniature and every backdrop document are exactly that element.
  */
 export function resolvedTokens(theme, themes) {
-  const inherited = themes.find((candidate) => candidate.id === 'dark')?.tokens ?? {};
+  const inherited = defaultTheme(themes).tokens;
   return { ...inherited, ...theme.tokens };
 }
 
