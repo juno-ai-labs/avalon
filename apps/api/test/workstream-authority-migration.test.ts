@@ -537,6 +537,84 @@ describe("the D1 to WorkspaceDO authority source", () => {
     }
   });
 
+  it("resumes a scrub across ticks and activates only once every target is empty", async () => {
+    // The resume path: a route whose remaining rows exceed one tick's budget
+    // must stay `verified` and finish on a later pass. Nothing covered this
+    // before, because reaching the budget needs more rows than a fixture
+    // usually carries and the budget was not reachable from a test.
+    const database = migratedDatabase();
+    try {
+      const {
+        WORKSPACE_SCRUB_CHUNK,
+        WORKSPACE_SCRUB_ROW_BUDGET,
+        activateWorkspaceProductRoute,
+      } = __workstreamAuthorityMigrationTesting;
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('resume-user', 'resume-subject', 'resume@example.com', 'Resume', '${AT}', '${AT}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('resume-workspace', 'Resume', 'resume-workspace', 'global', 'resume-user', '${AT}', '${AT}');
+      `);
+      // One row beyond what a single tick may delete.
+      const rows = WORKSPACE_SCRUB_ROW_BUDGET + 1;
+      for (let start = 0; start < rows; start += 500) {
+        const values = Array.from(
+          { length: Math.min(500, rows - start) },
+          (_, index) => `('event-${start + index}', 'resume-workspace', 'workstream.message.posted', 'workstream', 'user', 'Imported', 'workspace', 0, '${AT}', '${AT}', 'workstream_message', 'dedupe-${start + index}', '{}')`,
+        ).join(",");
+        database.exec(`
+          INSERT INTO activity_events
+            (id, workspace_id, event_type, subject_type, actor_type, title,
+             audience_kind, digestible, occurred_at, created_at, source_kind,
+             dedupe_key, metadata_json)
+          VALUES ${values};
+        `);
+      }
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1, updated_at = '${AT}' WHERE id = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '${AT}' WHERE id = 1;
+        UPDATE workstream_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workspace_product_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_verified', updated_at = '${AT}' WHERE id = 1;
+      `);
+      const env = { DB: sqliteD1(database) } as never;
+      const route = {
+        workspace_id: "resume-workspace",
+        generation: 1,
+        state: "verified",
+        stage_index: 65,
+        source_cursor: 0,
+        row_counts_json: "{}",
+      } as never;
+
+      // First tick: budget runs out, so the route is left for the next one.
+      expect(await activateWorkspaceProductRoute(env, route)).toBe(false);
+      expect(database.prepare(
+        `SELECT state FROM workspace_product_authority_routes WHERE workspace_id = 'resume-workspace'`,
+      ).get()).toEqual({ state: "verified" });
+      const left = (database.prepare(
+        `SELECT COUNT(*) AS count FROM activity_events WHERE workspace_id = 'resume-workspace'`,
+      ).get() as { count: number }).count;
+      expect(left).toBeGreaterThan(0);
+      expect(left).toBeLessThan(rows);
+
+      // Second tick: the remainder goes and the route activates.
+      expect(await activateWorkspaceProductRoute(env, route)).toBe(true);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM activity_events WHERE workspace_id = 'resume-workspace'`,
+      ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT state FROM workspace_product_authority_routes WHERE workspace_id = 'resume-workspace'`,
+      ).get()).toEqual({ state: "active" });
+      expect(WORKSPACE_SCRUB_CHUNK).toBeLessThan(WORKSPACE_SCRUB_ROW_BUDGET);
+    } finally {
+      database.close();
+    }
+  });
+
   it("classifies infrastructure blips as retryable and import errors as terminal", () => {
     // A transient rejection must pause the tick, not quarantine the campaign:
     // generation 4 died when one platform blip quarantined the phase and the
