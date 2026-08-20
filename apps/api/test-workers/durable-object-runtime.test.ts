@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { BlockDashboardAgent } from "../src/durable-objects/block-dashboard-agent";
-import { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
@@ -385,6 +385,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.SUBSTREAM_AGENTS,
         name: substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: SubstreamAgent,
+        migrations: 1,
         tables: [
           "_sql_schema_migrations",
           "parts",
@@ -401,6 +402,7 @@ describe("Durable Objects in the Workers runtime", () => {
           BLOCK_DASHBOARD_BLOCK_ID,
         ),
         constructor: BlockDashboardAgent,
+        migrations: 1,
         tables: [
           "_sql_schema_migrations",
           "block_dashboard_block_identity",
@@ -412,6 +414,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.WORKSTREAM_DOS,
         name: workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: WorkstreamDO,
+        migrations: 1,
         tables: [
           "_sql_schema_migrations",
           "substream_directory",
@@ -426,6 +429,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.WORKSPACE_DOS,
         name: workspaceDOName("global", WORKSPACE_ID),
         constructor: WorkspaceDO,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
           "workspace_directory_state",
@@ -460,6 +464,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.WORKSPACE_SCHEDULERS,
         name: workspaceDOName("global", WORKSPACE_ID),
         constructor: WorkspaceScheduler,
+        migrations: 1,
         tables: ["_sql_schema_migrations", "workspace_scheduler_state", "scheduler_retry_states"],
       },
     ] as const;
@@ -470,9 +475,13 @@ describe("Durable Objects in the Workers runtime", () => {
       await runInDurableObject(stub, (instance, state) => {
         expect(instance).toBeInstanceOf(entry.constructor);
         expect(tableNames(state)).toEqual(expect.arrayContaining([...entry.tables]));
+        // A fresh object applies its object's whole published ledger, and each
+        // version lands exactly once. Objects created before a version was
+        // published apply only the new tail, which is why the ledger is
+        // append-only and never edited in place.
         expect(state.storage.sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM _sql_schema_migrations`,
-        ).one().count).toBe(1);
+        ).one().count).toBe(entry.migrations);
         const nonStrict = state.storage.sql.exec<{ name: string; type: string; strict: number }>(
           `PRAGMA table_list`,
         ).toArray().filter((table) => (
@@ -2427,6 +2436,160 @@ describe("Durable Objects in the Workers runtime", () => {
         stage: "opportunity_batch_windows",
         rows: [{ ...window, first_event_at: "not-a-timestamp" }],
       })).rejects.toThrow("workspace_product_import_timestamp_invalid:first_event_at");
+    });
+  });
+
+  it("raises timestamps the object requires ordered and legacy rows do not", async () => {
+    // D1 never constrained `updated_at` against `created_at`; a handful of
+    // rows written under clock skew have it behind. The object's CHECK rejects
+    // those, INSERT OR IGNORE swallows the rejection, and the campaign
+    // quarantines on a row that never arrived — the generation-6 failure.
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      ),
+      env.DB.prepare(`CREATE TABLE workspace_product_authority_routes (
+        workspace_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workspace_product_authority_routes
+        (workspace_id, generation, state) VALUES (?, 1, 'importing')`).bind(WORKSPACE_ID),
+    ]);
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const opportunityId = "00000000-0000-7000-8000-000000000451";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "work_opportunities",
+      rows: [{
+        id: opportunityId,
+        audience_scope: "workspace",
+        audience_user_id: null,
+        display_prompt: "Skewed opportunity",
+        execution_prompt: "Do the work",
+        admission_reasoning: "Because",
+        provider_icon: "plug",
+        source_label: "Connected activity",
+        source_fingerprint: "f".repeat(64),
+        version: 1,
+        display_prompt_hash: "a".repeat(64),
+        execution_prompt_hash: "b".repeat(64),
+        status: "active",
+        created_workstream_id: null,
+        created_message_id: null,
+        started_by_user_id: null,
+        start_idempotency_key: null,
+        expires_at: "2098-08-19T00:00:00.000Z",
+        created_at: "2098-08-18T20:00:05.000Z",
+        // Behind its own creation by five seconds.
+        updated_at: "2098-08-18T20:00:00.000Z",
+        started_at: null,
+      }],
+    })).resolves.toBe(1);
+    const linkId = "00000000-0000-7000-8000-000000000452";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "work_opportunity_user_links",
+      rows: [{
+        id: linkId,
+        opportunity_id: opportunityId,
+        user_id: USER_ID,
+        role: "assignee",
+        resolution: "inferred",
+        reasoning: "Named in the thread",
+        provenance_node_id: null,
+        created_at: "2098-08-18T20:00:05.000Z",
+        updated_at: "2098-08-18T20:00:00.000Z",
+      }],
+    })).resolves.toBe(1);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      // Raised to the creation time, which is the fact worth preserving.
+      expect(state.storage.sql.exec<{ created_at: number; updated_at: number }>(
+        `SELECT created_at, updated_at FROM work_opportunities WHERE opportunity_id = ?`,
+        opportunityId,
+      ).one()).toEqual({
+        created_at: Date.parse("2098-08-18T20:00:05.000Z"),
+        updated_at: Date.parse("2098-08-18T20:00:05.000Z"),
+      });
+      expect(state.storage.sql.exec<{ created_at: number; updated_at: number }>(
+        `SELECT created_at, updated_at FROM work_opportunity_user_links WHERE link_id = ?`,
+        linkId,
+      ).one()).toEqual({
+        created_at: Date.parse("2098-08-18T20:00:05.000Z"),
+        updated_at: Date.parse("2098-08-18T20:00:05.000Z"),
+      });
+    });
+  });
+
+  it("imports connector OAuth attempts with the telemetry columns the service reads", async () => {
+    // Version 1 of this object's table stopped at `telemetry_operation_id`
+    // while `connection-service.ts` reads and writes four more columns
+    // alongside it. Every statement naming them fails against an object
+    // serving this table, and the import — which passes each D1 column through
+    // by name — cannot land the rows at all.
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      ),
+      env.DB.prepare(`CREATE TABLE workspace_product_authority_routes (
+        workspace_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workspace_product_authority_routes
+        (workspace_id, generation, state) VALUES (?, 1, 'importing')`).bind(WORKSPACE_ID),
+    ]);
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const attemptId = "00000000-0000-7000-8000-000000000461";
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "connector_oauth_attempts",
+      rows: [{
+        id: attemptId,
+        region: "global",
+        provider: "slack",
+        user_id: USER_ID,
+        workspace_id: WORKSPACE_ID,
+        status: "succeeded",
+        connection_id: null,
+        error_code: null,
+        expires_at: "2098-08-18T21:00:00.000Z",
+        completed_at: "2098-08-18T20:00:10.000Z",
+        created_at: "2098-08-18T20:00:00.000Z",
+        updated_at: "2098-08-18T20:00:10.000Z",
+        telemetry_operation_id: "00000000-0000-7000-8000-000000000462",
+        telemetry_event_version: 2,
+        telemetry_scope: "workspace",
+        telemetry_capability_count: 3,
+        telemetry_reconnect: 1,
+      }],
+    })).resolves.toBe(1);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{
+        telemetry_event_version: number;
+        telemetry_scope: string | null;
+        telemetry_capability_count: number | null;
+        telemetry_reconnect: number;
+      }>(
+        `SELECT telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+           FROM connector_oauth_attempts WHERE id = ?`,
+        attemptId,
+      ).one()).toEqual({
+        telemetry_event_version: 2,
+        telemetry_scope: "workspace",
+        telemetry_capability_count: 3,
+        telemetry_reconnect: 1,
+      });
     });
   });
 
