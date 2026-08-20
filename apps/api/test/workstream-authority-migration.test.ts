@@ -456,6 +456,66 @@ describe("the D1 to WorkspaceDO authority source", () => {
     }
   });
 
+  it("scrubs a workspace in resumable chunks and activates only when it is empty", async () => {
+    // A whole workspace at once exceeds D1's per-batch CPU limit, so the scrub
+    // spends a bounded row budget and returns; the route stays `verified` and
+    // the next tick resumes. What must never happen is a route going `active`
+    // over rows that are still there.
+    const database = migratedDatabase();
+    try {
+      const { WORKSPACE_SCRUB_CHUNK, activateWorkspaceProductRoute } = __workstreamAuthorityMigrationTesting;
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('scrub-user', 'scrub-subject', 'scrub@example.com', 'Scrub', '${AT}', '${AT}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('scrub-workspace', 'Scrub', 'scrub-workspace', 'global', 'scrub-user', '${AT}', '${AT}');
+        CREATE TABLE IF NOT EXISTS workspace_product_authority_routes_shim (unused INTEGER);
+      `);
+      // More rows than a single chunk, so the loop has to iterate.
+      const rows = WORKSPACE_SCRUB_CHUNK + 25;
+      const values = Array.from({ length: rows }, (_, index) => (
+        `('event-${index}', 'scrub-workspace', 'workstream.message.posted', 'workstream', 'user', 'Imported', 'workspace', 0, '${AT}', '${AT}', 'workstream_message', 'dedupe-${index}', '{}')`
+      )).join(",\n");
+      database.exec(`
+        INSERT INTO activity_events
+          (id, workspace_id, event_type, subject_type, actor_type, title,
+           audience_kind, digestible, occurred_at, created_at, source_kind,
+           dedupe_key, metadata_json)
+        VALUES ${values};
+      `);
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1, updated_at = '${AT}' WHERE id = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '${AT}' WHERE id = 1;
+        UPDATE workstream_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workspace_product_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_verified', updated_at = '${AT}' WHERE id = 1;
+      `);
+
+      const env = { DB: sqliteD1(database) } as never;
+      const route = {
+        workspace_id: "scrub-workspace",
+        generation: 1,
+        state: "verified",
+        stage_index: 65,
+        source_cursor: 0,
+        row_counts_json: "{}",
+      };
+      await activateWorkspaceProductRoute(env, route as never);
+
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM activity_events WHERE workspace_id = 'scrub-workspace'`,
+      ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT state FROM workspace_product_authority_routes WHERE workspace_id = 'scrub-workspace'`,
+      ).get()).toEqual({ state: "active" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("classifies infrastructure blips as retryable and import errors as terminal", () => {
     // A transient rejection must pause the tick, not quarantine the campaign:
     // generation 4 died when one platform blip quarantined the phase and the
