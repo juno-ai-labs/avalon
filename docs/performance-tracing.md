@@ -318,15 +318,35 @@ content, with no hook to redact it —
 has the detail. An OTLP export moves that content out of the region's own trust
 boundary.
 
-The second is identity. Spans carry raw `avalon.workspace.id` and `user.id`, which is
-what every other diagnostic in Workers Logs already carries. PostHog identity in
-this repository is deliberately *pseudonymous*: the product pipeline sends
-`analyticsSubjectId` and `workspaceAnalyticsId`, never the raw ids — see
-[`telemetry.md`](telemetry.md). An exporter that forwarded these attributes into
-`distinct_id` or `$groups` unchanged would not merely widen what PostHog holds;
-it would make the same human two different people there, one under each id.
-Either map through the analytics identities at the exporter, or keep the
-attributes as opaque correlation values and do not promote them to identity.
+The second is identity, and it is a correctness problem before it is a privacy
+one.
+
+Spans carry raw `user.id` and `avalon.workspace.id` — the same ids every other
+diagnostic in Workers Logs already carries. PostHog is keyed on neither.
+`users.analytics_person_id` and `workspaces.analytics_workspace_id` are random
+UUIDv7 surrogates, minted lazily by `ensurePersonAnalyticsId` and
+`ensureWorkspaceAnalyticsId` in `apps/api/src/telemetry/authenticated.ts`, and
+they are what the adapter sends as `distinct_id` and `$groups.workspace`. The
+mapping between a product id and its analytics id exists only in that region's
+D1; nothing derives one from the other.
+
+So an exporter that promoted `user.id` to `distinct_id` would not merely widen
+what PostHog holds — **it would make one human two people there**, one under
+`analytics_person_id` from the product pipeline and one under `users.id` from
+traces, and one workspace two groups. Un-merging that afterwards means
+reconstructing the D1 mapping.
+
+Two ways out, and either is fine: map through the analytics ids at the exporter,
+or keep the attributes as opaque correlation values and never promote them to
+identity. What is not fine is letting a destination's default identity mapping
+decide.
+
+Note also that an OTLP destination is account configuration and covers **both**
+regional Workers. Today no EU telemetry reaches PostHog at all — `POSTHOG_HOST`
+is set only in `wrangler.global.jsonc`, the EU Worker holds no destination
+credential, and [`telemetry.md`](telemetry.md) records that an EU PostHog
+project would require a new recorded decision. A trace export configured without
+noticing would route around that boundary rather than change it.
 
 ## Changelog
 
