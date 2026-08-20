@@ -958,6 +958,38 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — Legacy bookkeeping triggers stand down once D1 stops being the authority
+
+**What changed:** Migration 0089 confines eight legacy triggers to
+`legacy_open` and `maintenance_draining`: the three that bump
+`workstream_resource_inventory_revisions` when a note, attachment, or
+work-stream resource link is deleted, and the five that enqueue R2 object
+cleanup into `resource_object_deletion_outbox` and
+`note_resource_deletion_outbox` when a resource is deleted or retargeted.
+
+**Why:** The verified scrub deletes exactly the rows these triggers watch, so
+each fired mid-scrub and wrote into a fenced table, aborting activation with
+`workspace_do_authoritative` — the third distinct cause behind that one error,
+after the cascade deletes (0087) and the `SET NULL` updates (0088). The scrub
+already empties those outboxes first; that cannot help, because the deletes
+themselves refill them.
+
+**What a future change has to respect:** a fence stops a writer it can see. It
+does not stop a *trigger* that writes on that writer's behalf, and this is the
+third repair aimed at the same abort because each earlier pass reasoned about
+one mechanism — direct statements, then foreign keys — without enumerating the
+rest. A trigger that writes into a table whose authority has moved needs a
+phase guard, not a relaxed fence at the destination: WorkspaceDO owns object
+lifecycle and resource inventory after the cutover, and a D1 row written here
+would schedule the deletion of an R2 object the object store still considers
+live.
+
+**Considered and rejected:** admitting `maintenance_verified` at the three
+destination fences, which would have unblocked activation while letting the
+scrub enqueue real R2 deletions against objects WorkspaceDO now owns; and
+dropping the triggers outright, which would break the pre-cutover behaviour
+they still provide to any region that has not yet migrated.
+
 ### 2026-08-20 — The scrub's SET NULL cascades are admitted too
 
 **What changed:** Migration 0088 adds `maintenance_verified` to the update
