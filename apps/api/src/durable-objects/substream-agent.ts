@@ -1066,6 +1066,16 @@ export class SubstreamAgent extends DurableObject<Env> {
   }> {
     const authority = await readWorkstreamAuthorityControl(this.env);
     if (!acceptsNewWorkstreamWork(authority)) {
+      // Say so. A run that backs off here does it every few minutes for as long
+      // as the phase holds, and the member sees only a spinner — during the
+      // Global cutover that was eighteen hours of silence.
+      logWarn(this.env, "agent_run_deferred_for_maintenance", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        harness_run_id: input.harnessRunId,
+        phase: authority.phase,
+        generation: authority.generation,
+      });
       return { status: "failed", errorCode: null, retryAt: Date.now() + MAINTENANCE_RECHECK_MS };
     }
     const executionEnv = this.localRuntimeEnvironment(
@@ -1108,6 +1118,14 @@ export class SubstreamAgent extends DurableObject<Env> {
     });
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
+      // A lease nobody will release leaves the run "running" forever, and this
+      // branch is the only place that knows it.
+      logWarn(this.env, "agent_run_attempt_busy", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        harness_run_id: input.harnessRunId,
+        lease_expires_at: claim.leaseExpiresAt ?? null,
+      });
       return {
         status: "failed",
         errorCode: null,
