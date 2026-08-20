@@ -79,15 +79,13 @@ export async function readWorkstreamAuthorityControl(
 }
 
 export function acceptsNewWorkstreamWork(control: WorkstreamAuthorityControl): boolean {
-  return control.phase === "legacy_open" || (
-    control.phase === "durable_object_open"
+  return control.phase === "durable_object_open"
     && control.servingContractVersion >= control.requiredServingContractVersion
-    && WORKSTREAM_DO_SERVING_CONTRACT_VERSION >= control.requiredServingContractVersion
-  );
+    && WORKSTREAM_DO_SERVING_CONTRACT_VERSION >= control.requiredServingContractVersion;
 }
 
 export function permitsLegacyRuntimeDrain(control: WorkstreamAuthorityControl): boolean {
-  return control.phase === "legacy_open" || control.phase === "maintenance_draining";
+  return control.phase === "maintenance_draining";
 }
 
 /**

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   recordConnectorActorIdentity,
   resolveConnectorActorIdentity,
@@ -229,7 +229,7 @@ function storeIdentity(
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)

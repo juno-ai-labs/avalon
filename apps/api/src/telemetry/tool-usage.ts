@@ -1,5 +1,6 @@
 import { asUserId, type ExecutionPrincipal, type WorkspaceId } from '@avalon/contracts';
 import type { Env, IdentityAuthContext } from '../env';
+import { withWorkspaceRuntimeDatabase } from '../services/workspace-runtime-database';
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
@@ -84,6 +85,7 @@ interface ToolTerminalRow {
   parent_tool_call_id: string | null;
   execution_principal_json: string;
   automation_id: string | null;
+  automation_run_id: string | null;
 }
 
 function objectJson(value: string | null): Record<string, unknown> {
@@ -138,15 +140,11 @@ export async function emitAgentToolTerminalTelemetry(
             ti.status, ti.started_at, ti.completed_at, ti.error_json,
             ti.execution_plan_json, hr.origin, hr.parent_tool_call_id,
             hr.execution_principal_json,
-            ar.automation_subscription_id AS automation_id
+            w.automation_run_id
        FROM tool_invocations ti
        JOIN harness_runs hr ON hr.id = ti.harness_run_id
        JOIN workstreams w
          ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
-       LEFT JOIN automation_runs ar
-         ON ar.id = w.automation_run_id
-        AND ar.workspace_id = hr.workspace_id
-        AND hr.origin IN ('automation', 'automation_run')
       WHERE ti.id = ? AND ti.workspace_id = ? AND ti.workstream_id = ?
         AND ti.harness_run_id = ?`,
   ).bind(
@@ -156,6 +154,15 @@ export async function emitAgentToolTerminalTelemetry(
     input.harnessRunId,
   ).first<ToolTerminalRow>();
   if (!row || !['completed', 'failed', 'ambiguous'].includes(row.status)) return;
+  // The automation lookup is workspace authority (the WorkspaceDO); the rows
+  // above are work-stream authority, and no database holds both sides of the
+  // old JOIN — which the swallowed telemetry errors hid.
+  row.automation_id = row.automation_run_id && ["automation", "automation_run"].includes(row.origin)
+    ? (await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
+      `SELECT automation_subscription_id FROM automation_runs WHERE id = ? AND workspace_id = ?`,
+    ).bind(row.automation_run_id, input.workspaceId)
+      .first<{ automation_subscription_id: string | null }>())?.automation_subscription_id ?? null
+    : null;
 
   const plan = objectJson(row.execution_plan_json);
   const toolName = typeof plan.canonicalToolName === 'string' ? plan.canonicalToolName : '';

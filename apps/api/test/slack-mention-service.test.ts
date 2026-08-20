@@ -390,6 +390,7 @@ function migratedDatabase(): DatabaseSync {
   database.exec("PRAGMA foreign_keys = ON");
   const migrations = new URL("../../../packages/db/migrations/", import.meta.url);
   for (const fileName of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(new URL(fileName, migrations), "utf8"));
   }
   return database;

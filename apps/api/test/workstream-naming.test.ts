@@ -8,8 +8,16 @@ import {
   provisionalWorkstreamTitle,
   refreshWorkstreamName,
 } from "../src/services/workstream-naming-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const workspaceId = "00000000-0000-7000-8000-0000000000b0";
 const userId = "user-owner";
@@ -19,6 +27,20 @@ const provisionalTitle = "Create an email **draft** to Danny from Mucker that sh
 const objective = `${provisionalTitle} and asks him to add Alex and Katherine to the recurring Tuesday call.`;
 
 const databases: DatabaseSync[] = [];
+
+/**
+ * The work stream's own object database, by the regional database it was
+ * seeded next to. Since migration 0090 the transcript and the product
+ * `workstreams` row live only in the object; the naming service reaches them
+ * through the routed environment, and the tests reach them through this map.
+ */
+const objectStores = new WeakMap<DatabaseSync, DatabaseSync>();
+
+function objectStoreOf(database: DatabaseSync): DatabaseSync {
+  const store = objectStores.get(database);
+  if (!store) throw new Error("seededDatabase() did not create this database");
+  return store;
+}
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
@@ -92,8 +114,12 @@ describe("work-stream naming", () => {
       // The rename lands between the model answering and the title being
       // written — exactly the window the conditional update exists to lose.
       // Naming a work stream settles it, which is what makes it untouchable.
-      database.prepare("UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?")
-        .run("Mucker intro thread", workstreamId);
+      workstreamObjectRun(
+        objectStoreOf(database),
+        "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
+        "Mucker intro thread",
+        workstreamId,
+      );
     });
     const env = environment(database, published);
 
@@ -162,8 +188,12 @@ describe("work-stream naming", () => {
 
   it("names the work stream again from the conversation once it has five messages", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?")
-      .run("Draft email to Danny", workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
+      "Draft email to Danny",
+      workstreamId,
+    );
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
     const published: Array<Record<string, unknown>> = [];
@@ -215,8 +245,12 @@ describe("work-stream naming", () => {
 
   it("keeps its one retry when the model cannot be reached at the five-message mark", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?")
-      .run("Invoice export totals", workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
+      "Invoice export totals",
+      workstreamId,
+    );
     seedMessages(database, 5);
     const published: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connection reset"); }));
@@ -267,24 +301,29 @@ describe("work-stream naming", () => {
 
   it("counts what the work stream said, not what the harness wrote down", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title_status = 'automatic' WHERE id = ?").run(workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
+      workstreamId,
+    );
     // An opening request, one reply, and three tool calls. A run ends where
     // tool rows accumulate, and that is one of the two places the second pass
     // is called from — counting them would name this from what the first pass
     // already saw.
     seedMessages(database, 2);
     for (const [index, kind] of (["tool", "tool", "tool"] as const).entries()) {
-      database.prepare(
+      workstreamObjectRun(
+        objectStoreOf(database),
         `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-          text_content, sequence_number, created_at)
-         VALUES (?, ?, ?, ?, 'agent', ?, '', ?, ?)`,
-      ).run(
+          text_content, structured_content_json, sequence_number, created_at)
+         VALUES (?, ?, ?, ?, 'agent', ?, '', ?, ?, ?)`,
         `00000000-0000-7000-8000-00000000d0${String(index).padStart(2, "0")}`,
         `tool-${index}`,
         workspaceId,
         workstreamId,
         kind,
+        JSON.stringify({ invocation: { toolName: "terminal_run_command", status: "completed" } }),
         20 + index,
         at,
       );
@@ -301,7 +340,11 @@ describe("work-stream naming", () => {
 
   it("names a work stream again only once, however often the transcript grows", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title_status = 'automatic' WHERE id = ?").run(workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
+      workstreamId,
+    );
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
     stubOpenRouter(requests, "Mucker download link for founder@example.com");
@@ -315,7 +358,11 @@ describe("work-stream naming", () => {
 
   it("leaves a short work stream and a title a person chose alone", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title_status = 'automatic' WHERE id = ?").run(workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
+      workstreamId,
+    );
     seedMessages(database, 4);
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
@@ -325,8 +372,12 @@ describe("work-stream naming", () => {
     expect(fetcher).not.toHaveBeenCalled();
 
     seedMessages(database, 6);
-    database.prepare("UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?")
-      .run("Mucker intro thread", workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
+      "Mucker intro thread",
+      workstreamId,
+    );
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
@@ -361,7 +412,11 @@ describe("work-stream naming", () => {
 
   it("reads no more of a transcript than it takes to know the work stream is due", async () => {
     const database = seededDatabase();
-    database.prepare("UPDATE workstreams SET title_status = 'settled' WHERE id = ?").run(workstreamId);
+    workstreamObjectRun(
+      objectStoreOf(database),
+      "UPDATE workstreams SET title_status = 'settled' WHERE id = ?",
+      workstreamId,
+    );
     seedMessages(database, 40);
     const counted: string[] = [];
     const env = environment(database, []);
@@ -414,7 +469,11 @@ describe("work-stream naming", () => {
 
 /** Replaces the transcript with `count` alternating messages. */
 function seedMessages(database: DatabaseSync, count: number): void {
-  database.prepare("DELETE FROM messages WHERE workstream_id = ?").run(workstreamId);
+  const objectStore = objectStoreOf(database);
+  // The messages compat view has no DELETE trigger — production never deletes
+  // transcript rows — so replacing the transcript clears the normalized parts
+  // rows directly, as test scaffolding.
+  objectStore.prepare("DELETE FROM parts WHERE substream_id = '0'").run();
   const texts = [
     objective,
     "Danny bounced — the address on file is his old Mucker one.",
@@ -423,12 +482,12 @@ function seedMessages(database: DatabaseSync, count: number): void {
     "Yes, and include the download link for Mucker.",
   ];
   for (let index = 0; index < count; index += 1) {
-    database.prepare(
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO messages
        (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
         message_type, text_content, sequence_number, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
-    ).run(
       `00000000-0000-7000-8000-00000000c0${String(index).padStart(2, "0")}`,
       `seed-${index}`,
       workspaceId,
@@ -443,9 +502,11 @@ function seedMessages(database: DatabaseSync, count: number): void {
 }
 
 function workstreamRow(database: DatabaseSync): { title: string; title_status: string } {
-  return database.prepare(
+  return workstreamObjectGet(
+    objectStoreOf(database),
     "SELECT title, title_status FROM workstreams WHERE id = ?",
-  ).get(workstreamId) as { title: string; title_status: string };
+    workstreamId,
+  ) as { title: string; title_status: string };
 }
 
 function title(database: DatabaseSync): string {
@@ -479,21 +540,31 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
       },
     }),
   };
-  return createTestEnv({
-    DB: sqliteD1(database),
-    APP_ENV: "test",
-    AVALON_REGION: "global",
-    LOG_LEVEL: "error",
-    OPENROUTER_API_KEY: "test-key",
-    OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-    OPENROUTER_FALLBACK_MODELS: "",
-    PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
-    SUBSTREAM_AGENTS: rooms,
-  });
+  const objectStore = objectStoreOf(database);
+  // Production hands the naming service a routed environment (the substream
+  // agent's local runtime environment, or the creation service's explicit
+  // wrap); the local executor is that agent-side port over the object store.
+  return withWorkstreamRuntimeDatabase(
+    createTestEnv({
+      DB: sqliteD1(database),
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      LOG_LEVEL: "error",
+      OPENROUTER_API_KEY: "test-key",
+      OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+      OPENROUTER_FALLBACK_MODELS: "",
+      PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
+      SUBSTREAM_AGENTS: rooms,
+    }),
+    workspaceId,
+    workstreamId,
+    "0",
+    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+  );
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -502,13 +573,22 @@ function seededDatabase(): DatabaseSync {
     VALUES ('${workspaceId}', 'Avalon', 'avalon', 'global', '${userId}', '${at}', '${at}');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${workspaceId}', '${userId}', 'owner', 'active', '${at}');
+    INSERT INTO workstreams
+      (id, workspace_id, title, objective, origin_type, created_by_user_id,
+       harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+    VALUES ('${workstreamId}', '${workspaceId}', 'directory copy', 'directory copy', 'ad_hoc',
+            '${userId}', 'running', 2, '${at}', '${at}', '${at}');
   `);
-  database.prepare(
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  objectStores.set(database, objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
+  workstreamObjectRun(
+    objectStore,
     `INSERT INTO workstreams
      (id, workspace_id, title, title_status, objective, email_address, email_route_status, origin_type,
       created_by_user_id, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
      VALUES (?, ?, ?, 'naming', ?, ?, 'active', 'ad_hoc', ?, 'running', 2, ?, ?, ?)`,
-  ).run(
     workstreamId,
     workspaceId,
     provisionalTitle,

@@ -750,8 +750,8 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
  * The Electron app keeps one hibernating socket here for workspace-wide query
  * invalidations, directory pages, and user writes. Message commands name their
  * target branch. WorkspaceDO SQL is authoritative for cross-workstream serving
- * state; regional D1 retains only identity, routing, migration, and the
- * workspace modules that have not yet moved behind a Durable Object boundary.
+ * state; regional D1 retains only identity, membership, routing,
+ * migration/control, and operational audit/telemetry.
  */
 /**
  * What the command socket's authorization query answers with. The analytics

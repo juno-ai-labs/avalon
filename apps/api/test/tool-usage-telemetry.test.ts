@@ -4,8 +4,15 @@ import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
 } from '../src/telemetry/tool-usage';
+import { withWorkstreamRuntimeDatabase } from '../src/services/workstream-runtime-database';
 import { createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from './helpers/durable-authority';
 
 const userId = asUserId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1');
 const workspaceId = asWorkspaceId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2');
@@ -15,7 +22,7 @@ const userInvocationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d5';
 const workspaceInvocationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d6';
 
 function fixture() {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${userId}', 'subject', 'member@example.com', 'Member',
@@ -156,30 +163,66 @@ describe('agent tool usage telemetry', () => {
               '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workstreamId}', 'scheduled',
               '2026-08-12T19:00:00.000Z', '2026-08-12T19:10:00.000Z', 'completed',
               '2026-08-12T19:00:00.000Z');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json,
-         status, started_at, created_at)
-      VALUES ('${harnessRunId}', '${workspaceId}', '${workstreamId}', 'human_message',
-              '{"type":"user","userId":"${userId}"}', 'running',
-              '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-         input_hash, input_json, status, started_at, completed_at, error_json,
-         execution_plan_json)
-      VALUES ('${userInvocationId}', '${workspaceId}', '${workstreamId}', '${harnessRunId}',
-              'call-1', 'create_issue', 'hash', '{"title":"secret"}', 'failed',
-              '2026-08-12T20:00:01.000Z', '2026-08-12T20:00:07.000Z',
-              '{"code":"provider_timeout","message":"secret provider response"}',
-              '{"pluginId":"linear","canonicalToolName":"create_issue","capability":"linear.issue.create","mode":"write"}');
     `);
+    // The run, its invocation receipts, and the product work-stream row live
+    // in the work stream's object since migration 0090; the emitter is handed
+    // a routed environment the way the harness hands it one.
+    const objectStore = testWorkstreamObjectStore();
+    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO workstreams
+         (id, workspace_id, title, objective, origin_type, created_by_user_id,
+          automation_subscription_id, automation_run_id, created_at, updated_at, last_activity_at)
+       VALUES (?, ?, 'Run', '', 'automation', ?, '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
+               '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '2026-08-12T20:00:00.000Z',
+               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z')`,
+      workstreamId,
+      workspaceId,
+      userId,
+    );
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+         (id, workspace_id, workstream_id, origin, execution_principal_json,
+          status, started_at, created_at)
+       VALUES (?, ?, ?, 'human_message', ?, 'running',
+               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z')`,
+      harnessRunId,
+      workspaceId,
+      workstreamId,
+      JSON.stringify({ type: 'user', userId }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO tool_invocations
+         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+          input_hash, input_json, status, started_at, completed_at, error_json,
+          execution_plan_json)
+       VALUES (?, ?, ?, ?, 'call-1', 'create_issue', 'hash', '{"title":"secret"}', 'failed',
+               '2026-08-12T20:00:01.000Z', '2026-08-12T20:00:07.000Z',
+               '{"code":"provider_timeout","message":"secret provider response"}',
+               '{"pluginId":"linear","canonicalToolName":"create_issue","capability":"linear.issue.create","mode":"write"}')`,
+      userInvocationId,
+      workspaceId,
+      workstreamId,
+      harnessRunId,
+    );
+    const routedEnv = withWorkstreamRuntimeDatabase(
+      env,
+      workspaceId,
+      workstreamId,
+      '0',
+      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+    );
 
-    await emitAgentToolTerminalTelemetry(env, {
+    await emitAgentToolTerminalTelemetry(routedEnv, {
       workspaceId,
       workstreamId,
       harnessRunId,
       invocationId: userInvocationId,
     });
-    await emitAgentToolTerminalTelemetry(env, {
+    await emitAgentToolTerminalTelemetry(routedEnv, {
       workspaceId,
       workstreamId,
       harnessRunId,

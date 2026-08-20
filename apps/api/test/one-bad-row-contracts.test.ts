@@ -1,7 +1,6 @@
 import { MessageAttachmentSchema, ResourceSchema, WorkstreamSchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
-import { toWorkstream } from "../src/mappers/workstream";
 import { StartedWorkOpportunityResponseSchema } from "../src/routes/work-opportunities";
 
 /**
@@ -16,57 +15,40 @@ import { StartedWorkOpportunityResponseSchema } from "../src/routes/work-opportu
  */
 const AT = "2026-08-10T16:10:55.531Z";
 
-function workstreamRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function workstream(overrides: Record<string, unknown> = {}) {
   return {
     id: "00000000-0000-7000-8000-000000000001",
-    workspace_id: "00000000-0000-7000-8000-000000000002",
+    workspaceId: "00000000-0000-7000-8000-000000000002",
     title: "Avalon UX",
+    titleStatus: "settled",
     objective: "",
-    origin_type: "automation",
-    origin_label: "Weekly digest",
-    created_by_user_id: "00000000-0000-7000-8000-000000000003",
-    harness_status: "completed",
-    title_status: "settled",
+    emailAddress: null,
+    originType: "automation",
+    originLabel: "Weekly digest",
+    createdByUserId: "00000000-0000-7000-8000-000000000003",
+    automationSubscriptionId: null,
+    automationRunId: null,
+    plannedFor: null,
+    harnessStatus: "completed",
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    youAreMentioned: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: AT,
+    createdAt: AT,
+    updatedAt: AT,
+    archivedAt: null,
     scope: "workspace",
-    system_kind: null,
-    last_activity_at: AT,
-    created_at: AT,
-    updated_at: AT,
-    next_pending_wakeup_at: null,
-    next_pending_wakeup_prompt_prefix: null,
+    systemKind: null,
+    modelOverride: null,
+    nextPendingWakeup: null,
+    pinPosition: null,
     ...overrides,
   };
 }
-
-describe("one over-long value degrades a field, not a list", () => {
-  it("truncates an automation name the label contract does not allow", () => {
-    // `automation_templates.name` allows 140 characters and `originLabel`
-    // allows 120, so an automation named in that gap made every work stream it
-    // created fail `GET /workstreams` — the sidebar — for the whole workspace.
-    const row = workstreamRow({ origin_label: "N".repeat(140) });
-
-    const workstream = WorkstreamSchema.parse(toWorkstream(row));
-
-    expect(workstream.originLabel).toHaveLength(120);
-  });
-
-  it("truncates a title and objective past their contract bounds", () => {
-    const row = workstreamRow({ title: "T".repeat(400), objective: "O".repeat(5_000) });
-
-    const workstream = WorkstreamSchema.parse(toWorkstream(row));
-
-    expect(workstream.title).toHaveLength(180);
-    expect(workstream.objective).toHaveLength(4_000);
-  });
-
-  it("still fails, naming the column, when a row leaves the state its table allows", () => {
-    // The bound is for columns with no constraint of their own. An enum that
-    // mirrors a real CHECK stays strict: a value outside it is drift, not a
-    // long string, and silently coercing it is what produced the anonymous 500.
-    expect(() => toWorkstream(workstreamRow({ harness_status: "paused" })))
-      .toThrow(/harness_status/u);
-  });
-});
 
 describe("the contracts the read boundary has to satisfy", () => {
   it("bounds an upload title and mime type to what the response schema allows", () => {
@@ -110,7 +92,7 @@ describe("starting a work opportunity", () => {
     // route and its harness run have all committed — and the retry is refused
     // as already claimed, so the user loses work that did happen.
     const started = {
-      workstream: WorkstreamSchema.parse(toWorkstream(workstreamRow())),
+      workstream: WorkstreamSchema.parse(workstream()),
       messageId: "00000000-0000-7000-8000-000000000004",
       harnessRunId: null,
     };

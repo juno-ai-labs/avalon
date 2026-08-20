@@ -277,11 +277,11 @@ The pending card is authoritative in the selected SubstreamAgent's
 `suggested_actions`. When resolved, WorkstreamDO sends the stable action/activity
 IDs, source, label, resolver, and time into
 `WorkspaceDO.workspace_workstream_suggestion_feedback`. That workspace-local
-index is the post-cutover training data for both feedback reads; D1
-`activity_suggestions` is frozen migration input only. D1 `activities` remains
-the authority for provider/event identity, so `suggestionAdmission` batches only
-the feedback's referenced activity IDs into that relational lookup rather than
-copying connector activity metadata into WorkspaceDO.
+index is the post-cutover training data for both feedback reads. Provider/event
+identity is in the same object's `workspace_connector_events`, so
+`suggestionAdmission` joins referenced activity IDs locally. The historical D1
+`activity_suggestions` and `activities` sources exist only through migration
+0089 and are removed by 0090.
 
 **The index is not this module's alone, and that is the trap in it.**
 The suggestion producer has two callers — `routeContextually` here, and
@@ -308,7 +308,7 @@ line — suppression is evaluated once per ingested activity, and logging it at
 `info` would write thousands of identical lines a day for a suppressed
 high-volume type, so `contextual_routing_event_type_suppressed` is at `debug`.
 After cutover inspect `WorkspaceDO.workspace_workstream_suggestion_feedback`;
-the following D1 query is only for legacy/pre-cutover diagnosis:
+the following query applies only to an exported through-0089 legacy snapshot:
 
 ```sql
 SELECT a.provider,

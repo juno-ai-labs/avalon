@@ -18,7 +18,6 @@ import type { TerminalSandboxProvider } from "./daytona-provider";
 import { withAuthorizedConnection } from "../connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "../connector-credential-envelope";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
-import { readWorkstreamAuthorityControl } from "../workstream-authority";
 import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 
 export interface TerminalCatalogRepository {
@@ -221,23 +220,7 @@ export class TerminalWorkstreamService {
   }
 
   private async requireVisible(workstreamId: string): Promise<void> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    const visible = authority.phase === "durable_object_open"
-      ? await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId)
-      : Boolean(await this.env.DB.prepare(
-        `SELECT 1 FROM workstreams workstream
-          WHERE workstream.id = ? AND workstream.workspace_id = ?
-            AND workstream.archived_at IS NULL
-            AND (workstream.scope = 'workspace' OR workstream.created_by_user_id = ?
-              OR EXISTS (SELECT 1 FROM workstream_participants participant
-                  WHERE participant.workstream_id = workstream.id
-                    AND participant.user_id = ? AND participant.removed_at IS NULL))`,
-      ).bind(
-        workstreamId,
-        this.auth.workspaceId,
-        this.auth.userId,
-        this.auth.userId,
-      ).first());
+    const visible = await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId);
     if (!visible) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }

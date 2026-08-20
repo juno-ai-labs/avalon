@@ -6,8 +6,12 @@ import type { AuthContext, Env } from "../src/env";
 import { startWorkstreamWorkflow } from "../src/services/integrations";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const memberId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -54,17 +58,27 @@ function seed(database: DatabaseSync): void {
  * authority in both regions and a local stack reaches the same state with
  * `pnpm db:open-authority`; a stack that skipped that step is unsupported, and
  * the product surface has to refuse loudly rather than run code that no longer
- * exists. Directory reads over the regional `workstreams` index are the
- * deliberate exception — they are control-plane, not product state.
+ * exists.
  */
 describe("a stack that never opened the durable-object authority", () => {
   const refusal = { status: 503, code: "workstream_authority_not_open" };
 
-  function legacyEnv(): { database: DatabaseSync; env: Env } {
-    const database = migratedSqliteDatabase();
+  function legacyEnv(): {
+    database: DatabaseSync;
+    env: Env;
+    /** Objects the runtime SQL port opened — none, if the refusal held. */
+    objectStores: Map<string, DatabaseSync>;
+  } {
+    const database = preRetirementProductSqliteDatabase();
     databases.push(database);
     seed(database);
-    return { database, env: createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" }) };
+    const objectStores = new Map<string, DatabaseSync>();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    });
+    return { database, env, objectStores };
   }
 
   it("refuses every product call with the same 503, naming the fix", async () => {
@@ -119,7 +133,10 @@ describe("a stack that never opened the durable-object authority", () => {
   });
 
   it("refuses a run launch before writing any admission row", async () => {
-    const { database, env } = legacyEnv();
+    // The admission row lives in the work-stream object since migration 0090
+    // dropped the D1 copy; an untouched store map is the proof no object was
+    // ever opened, let alone written.
+    const { env, objectStores } = legacyEnv();
 
     await expect(launchWorkstreamHarness(env, {
       workspaceId,
@@ -140,31 +157,23 @@ describe("a stack that never opened the durable-object authority", () => {
       reason: "test",
     })).rejects.toMatchObject(refusal);
 
-    expect(database.prepare("SELECT COUNT(*) AS count FROM harness_runs").get())
-      .toEqual({ count: 0 });
-  });
-
-  it("still serves the regional directory index", async () => {
-    const { env } = legacyEnv();
-    const service = new WorkstreamService(env, auth);
-
-    const page = await service.list(10);
-
-    expect(page.items.map((item) => item.id)).toEqual([workstreamId]);
+    expect(objectStores.size).toBe(0);
   });
 });
 
 describe("launching a run against the open authority", () => {
   it("persists static member-safe copy while logging launch diagnostics", async () => {
-    const database = migratedSqliteDatabase();
+    const database = preRetirementProductSqliteDatabase();
     databases.push(database);
     openWorkstreamAuthorityForTest(database);
     seed(database);
     const diagnostic = "provider response included a private upstream detail";
+    const objectStores = new Map<string, DatabaseSync>();
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+        objectStores,
         failDispatch: () => {
           throw new Error(diagnostic);
         },
@@ -184,9 +193,14 @@ describe("launching a run against the open authority", () => {
       message: "The Avalon harness could not be started",
     });
 
-    const row = database.prepare(
+    const objectStore = objectStores.get(workstreamId);
+    if (!objectStore) throw new Error("expected the launch to open the work-stream object");
+    databases.push(objectStore);
+    const row = workstreamObjectGet(
+      objectStore,
       "SELECT id, status, error_json FROM harness_runs WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1",
-    ).get(workstreamId) as { id: string; status: string; error_json: string };
+      workstreamId,
+    ) as { id: string; status: string; error_json: string };
     expect(row.status).toBe("failed");
     expect(JSON.parse(row.error_json)).toEqual({
       code: "workflow_unavailable",

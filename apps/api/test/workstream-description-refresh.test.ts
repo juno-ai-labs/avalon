@@ -16,8 +16,16 @@ import {
   refreshWorkstreamDescription,
   restUntil,
 } from "../src/services/workstream-description-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -41,6 +49,8 @@ interface Proposal {
 
 interface Fixture {
   database: DatabaseSync;
+  /** The work stream's own object database — transcript, product row, refresh state. */
+  objectStore: DatabaseSync;
   env: Env;
   /** Every prompt the loop actually sent, so a test can assert on the window it built. */
   prompts: Array<{ system: string; user: string }>;
@@ -53,7 +63,7 @@ function fixture(options: {
   originType?: "ad_hoc" | "automation";
   archived?: boolean;
 } = {}): Fixture {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -61,14 +71,32 @@ function fixture(options: {
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${WORKSPACE_ID}', 'Descriptions', 'descriptions', 'global', '${USER_ID}', '2026-01-01', '2026-01-01');
     INSERT INTO workstreams
+      (id, workspace_id, title, objective, origin_type, created_by_user_id,
+       harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+    VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Checkout', 'directory copy',
+            '${options.originType ?? "ad_hoc"}', '${USER_ID}',
+            'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01');
+  `);
+  // Since migration 0090 the transcript, the product `workstreams` row, and
+  // the refresh state live only in the work stream's object; the service
+  // reads and writes them through the routed environment below.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
       (id, workspace_id, title, objective, description_source, origin_type, created_by_user_id,
        harness_status, next_sequence_number, last_activity_at, created_at, updated_at, archived_at)
-    VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Checkout',
-            '${options.objective ?? "Look into the payment error Morgan reported on Monday."}',
-            '${options.descriptionSource ?? "derived"}', '${options.originType ?? "ad_hoc"}', '${USER_ID}',
-            'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01',
-            ${options.archived ? "'2026-08-01'" : "NULL"});
-  `);
+     VALUES (?, ?, 'Checkout', ?, ?, ?, ?, 'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01', ?)`,
+    WORKSTREAM_ID,
+    WORKSPACE_ID,
+    options.objective ?? "Look into the payment error Morgan reported on Monday.",
+    options.descriptionSource ?? "derived",
+    options.originType ?? "ad_hoc",
+    USER_ID,
+    options.archived ? "2026-08-01" : null,
+  );
 
   const prompts: Array<{ system: string; user: string }> = [];
   const proposal = options.proposal ?? {
@@ -94,17 +122,26 @@ function fixture(options: {
   };
   vi.stubGlobal("fetch", fetcher);
 
-  const env = createTestEnv({
-    DB: sqliteD1(database),
-    AVALON_REGION: "global",
-    APP_ENV: "test",
-    LOG_LEVEL: "error",
-    OPENROUTER_API_KEY: "test-key",
-    OPENROUTER_STRUCTURED_MODEL: "test/structured",
-    OPENROUTER_FALLBACK_MODELS: "",
-    PUBLIC_API_BASE_URL: "https://api.example.com",
-  });
-  return { database, env, prompts };
+  // Production hands the refresh loop a routed environment — the substream
+  // agent's local runtime environment; the local executor is that agent-side
+  // port over the object store.
+  const env = withWorkstreamRuntimeDatabase(
+    createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      LOG_LEVEL: "error",
+      OPENROUTER_API_KEY: "test-key",
+      OPENROUTER_STRUCTURED_MODEL: "test/structured",
+      OPENROUTER_FALLBACK_MODELS: "",
+      PUBLIC_API_BASE_URL: "https://api.example.com",
+    }),
+    WORKSPACE_ID,
+    WORKSTREAM_ID,
+    "0",
+    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+  );
+  return { database, objectStore, env, prompts };
 }
 
 /**
@@ -124,30 +161,31 @@ const ON_TOPIC_MESSAGE =
   + "reported on Monday is still the payment error we are looking into.";
 
 function addMessages(
-  database: DatabaseSync,
+  objectStore: DatabaseSync,
   count: number,
   options: {
     createdAt?: string;
     startSequence?: number;
     text?: string;
     /**
-     * `external` mirrors how `createExternalMessage` actually stores a Slack
-     * participant: `author_type = 'system'` with an external actor alongside.
+     * A Slack participant is stored as `author_type = 'external'` with the
+     * actor alongside — the object's parts schema enforces that pairing, where
+     * the dropped D1 table stored `system` next to the actor JSON.
      */
     authorType?: "human" | "external" | "agent" | "system";
   } = {},
 ): void {
   const startSequence = options.startSequence ?? 1;
   const authorType = options.authorType ?? "human";
-  const storedAuthorType = authorType === "external" ? "system" : authorType;
+  const storedAuthorType = authorType;
   for (let index = 0; index < count; index += 1) {
     const sequence = startSequence + index;
-    database.prepare(
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, sequence_number, created_at, external_actor_json)
        VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?, ?)`,
-    ).run(
       `message-${sequence}`,
       `client-${sequence}`,
       WORKSPACE_ID,
@@ -172,10 +210,10 @@ function addMessages(
 
 /** The smallest transcript that clears every admission gate. */
 function addQualifyingConversation(
-  database: DatabaseSync,
+  objectStore: DatabaseSync,
   options: { createdAt?: string; startSequence?: number } = {},
 ): void {
-  addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, options);
+  addMessages(objectStore, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, options);
 }
 
 /**
@@ -188,16 +226,20 @@ function transcriptOf(user: string): unknown[] {
   return JSON.parse(line ?? "[]") as unknown[];
 }
 
-function objective(database: DatabaseSync): string {
-  return (database.prepare(
+function objective(objectStore: DatabaseSync): string {
+  return (workstreamObjectGet(
+    objectStore,
     "SELECT objective FROM workstreams WHERE id = ?",
-  ).get(WORKSTREAM_ID) as { objective: string }).objective;
+    WORKSTREAM_ID,
+  ) as { objective: string }).objective;
 }
 
-function refreshRow(database: DatabaseSync): Record<string, unknown> | undefined {
-  return database.prepare(
+function refreshRow(objectStore: DatabaseSync): Record<string, unknown> | undefined {
+  return workstreamObjectGet(
+    objectStore,
     "SELECT * FROM workstream_description_refreshes WHERE workstream_id = ?",
-  ).get(WORKSTREAM_ID) as Record<string, unknown> | undefined;
+    WORKSTREAM_ID,
+  ) ?? undefined;
 }
 
 describe("description proposal guards", () => {
@@ -254,12 +296,12 @@ describe("work-stream description refresh", () => {
   const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
 
   it("records a keep without touching the description", async () => {
-    const { database, env } = fixture();
-    addQualifyingConversation(database);
+    const { objectStore, env } = fixture();
+    addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
-    expect(objective(database)).toBe("Look into the payment error Morgan reported on Monday.");
-    expect(refreshRow(database)).toMatchObject({
+    expect(objective(objectStore)).toBe("Look into the payment error Morgan reported on Monday.");
+    expect(refreshRow(objectStore)).toMatchObject({
       decision: "kept",
       rejection_code: null,
       consecutive_keeps: 1,
@@ -268,7 +310,7 @@ describe("work-stream description refresh", () => {
   });
 
   it("rewrites a description the work stream has outgrown and marks it derived", async () => {
-    const { database, env } = fixture({
+    const { objectStore, env } = fixture({
       descriptionSource: "authored",
       proposal: {
         decision: "rewrite",
@@ -277,17 +319,19 @@ describe("work-stream description refresh", () => {
         reasoning: "The work stream now runs the migration, not the original bug.",
       },
     });
-    addQualifyingConversation(database);
+    addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({
       status: "rewritten",
       description: "Track the 3-D Secure migration for EU card issuers.",
     });
-    expect(objective(database)).toBe("Track the 3-D Secure migration for EU card issuers.");
-    expect(database.prepare(
+    expect(objective(objectStore)).toBe("Track the 3-D Secure migration for EU card issuers.");
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT description_source FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toMatchObject({ description_source: "derived" });
-    expect(refreshRow(database)).toMatchObject({
+      WORKSTREAM_ID,
+    )).toMatchObject({ description_source: "derived" });
+    expect(refreshRow(objectStore)).toMatchObject({
       decision: "rewritten",
       previous_description: "Look into the payment error Morgan reported on Monday.",
       description: "Track the 3-D Secure migration for EU card issuers.",
@@ -295,8 +339,8 @@ describe("work-stream description refresh", () => {
   });
 
   it("tells the model how the description in force was written", async () => {
-    const { database, env, prompts } = fixture({ descriptionSource: "authored" });
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture({ descriptionSource: "authored" });
+    addQualifyingConversation(objectStore);
 
     await refreshWorkstreamDescription(env, { ...input, now: NOW });
     expect(prompts[0]!.user).toContain('"descriptionSource":"authored"');
@@ -304,10 +348,14 @@ describe("work-stream description refresh", () => {
   });
 
   it("refuses to overwrite a description a person changed mid-evaluation", async () => {
-    const { database, env } = fixture({
+    const { objectStore, env } = fixture({
       proposal: () => {
-        database.prepare("UPDATE workstreams SET objective = ? WHERE id = ?")
-          .run("Run the EU payments incident review.", WORKSTREAM_ID);
+        workstreamObjectRun(
+          objectStore,
+          "UPDATE workstreams SET objective = ? WHERE id = ?",
+          "Run the EU payments incident review.",
+          WORKSTREAM_ID,
+        );
         return {
           decision: "rewrite",
           description: "Track the 3-D Secure migration for EU card issuers.",
@@ -316,12 +364,12 @@ describe("work-stream description refresh", () => {
         };
       },
     });
-    addQualifyingConversation(database);
+    addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "rejected", code: "description_changed_during_evaluation" });
-    expect(objective(database)).toBe("Run the EU payments incident review.");
-    expect(refreshRow(database)).toMatchObject({
+    expect(objective(objectStore)).toBe("Run the EU payments incident review.");
+    expect(refreshRow(objectStore)).toMatchObject({
       decision: "rejected",
       rejection_code: "description_changed_during_evaluation",
       previous_description: "Look into the payment error Morgan reported on Monday.",
@@ -332,10 +380,10 @@ describe("work-stream description refresh", () => {
   });
 
   it("reads the last 200 messages when the last 72 hours holds fewer", async () => {
-    const { database, env, prompts } = fixture();
+    const { objectStore, env, prompts } = fixture();
     const old = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1_000).toISOString();
-    addMessages(database, 250, { createdAt: old });
-    addQualifyingConversation(database, { startSequence: 251 });
+    addMessages(objectStore, 250, { createdAt: old });
+    addQualifyingConversation(objectStore, { startSequence: 251 });
 
     await refreshWorkstreamDescription(env, { ...input, now: NOW });
     const transcript = transcriptOf(prompts[0]!.user);
@@ -345,8 +393,8 @@ describe("work-stream description refresh", () => {
   });
 
   it("reads every message of a busy 72 hours, up to the ceiling, and says when it capped", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES + 40);
+    const { objectStore, env, prompts } = fixture();
+    addMessages(objectStore, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES + 40);
 
     await refreshWorkstreamDescription(env, { ...input, now: NOW });
     const transcript = transcriptOf(prompts[0]!.user);
@@ -355,11 +403,11 @@ describe("work-stream description refresh", () => {
   });
 
   it("bounds the window by characters as well as rows, keeping the newest", async () => {
-    const { database, env, prompts } = fixture();
+    const { objectStore, env, prompts } = fixture();
     // Every message renders at the per-message cap, so the character budget
     // binds well before the row cap does.
     const long = `${DRIFTING_MESSAGE} ${"padding ".repeat(200)}`;
-    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES, { text: long });
+    addMessages(objectStore, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES, { text: long });
 
     await refreshWorkstreamDescription(env, { ...input, now: NOW });
     const transcript = transcriptOf(prompts[0]!.user) as Array<{ text: string }>;
@@ -369,14 +417,14 @@ describe("work-stream description refresh", () => {
     expect(characters).toBeLessThanOrEqual(MAXIMUM_DESCRIPTION_WINDOW_CHARACTERS + transcript.length);
     expect(prompts[0]!.user).toContain("older messages in this window were omitted");
     // The newest message survives; the budget is spent from the oldest end.
-    expect(refreshRow(database)).toMatchObject({
+    expect(refreshRow(objectStore)).toMatchObject({
       evaluated_through_sequence: MAXIMUM_DESCRIPTION_WINDOW_MESSAGES,
     });
   });
 
   it("leaves an automation's work stream to its automation", async () => {
-    const { database, env, prompts } = fixture({ originType: "automation" });
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture({ originType: "automation" });
+    addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "skipped", reason: "automation_origin" });
@@ -384,8 +432,8 @@ describe("work-stream description refresh", () => {
   });
 
   it("leaves an archived work stream alone", async () => {
-    const { database, env, prompts } = fixture({ archived: true });
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture({ archived: true });
+    addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "skipped", reason: "archived" });
@@ -393,8 +441,8 @@ describe("work-stream description refresh", () => {
   });
 
   it("spends the window rather than retrying a model that failed", async () => {
-    const { database, env } = fixture();
-    addQualifyingConversation(database);
+    const { objectStore, env } = fixture();
+    addQualifyingConversation(objectStore);
     vi.stubGlobal("fetch", async () => new Response(
       JSON.stringify({ error: { message: "model unavailable" } }),
       { status: 503, headers: { "Content-Type": "application/json" } },
@@ -402,7 +450,7 @@ describe("work-stream description refresh", () => {
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "failed", code: "model_unavailable" });
-    expect(refreshRow(database)).toMatchObject({
+    expect(refreshRow(objectStore)).toMatchObject({
       decision: "failed",
       rejection_code: "model_unavailable",
       consecutive_keeps: 0,
@@ -418,12 +466,12 @@ describe("what it takes to spend a model call", () => {
   const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
 
   it("will not look at a work stream that has not rested, however much was said", async () => {
-    const { database, env, prompts } = fixture();
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture();
+    addQualifyingConversation(objectStore);
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
 
     const soon = new Date(NOW.getTime() + 60 * 1_000);
-    addQualifyingConversation(database, {
+    addQualifyingConversation(objectStore, {
       startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
       createdAt: soon.toISOString(),
     });
@@ -434,8 +482,8 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("will not look at a rested work stream that has not changed", async () => {
-    const { database, env, prompts } = fixture();
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture();
+    addQualifyingConversation(objectStore);
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
 
     expect(await refreshWorkstreamDescription(env, {
@@ -446,12 +494,12 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("looks once the work stream has both rested and changed", async () => {
-    const { database, env, prompts } = fixture();
-    addQualifyingConversation(database);
+    const { objectStore, env, prompts } = fixture();
+    addQualifyingConversation(objectStore);
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
 
     const later = new Date(NOW.getTime() + 20 * 60 * 60 * 1_000);
-    addQualifyingConversation(database, {
+    addQualifyingConversation(objectStore, {
       startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
       createdAt: later.toISOString(),
     });
@@ -461,8 +509,8 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("counts a Slack participant as a person, and names them to the model", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, { authorType: "external" });
+    const { objectStore, env, prompts } = fixture();
+    addMessages(objectStore, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, { authorType: "external" });
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
     const transcript = transcriptOf(prompts[0]!.user) as Array<{ authorType: string; authorName: string }>;
@@ -470,10 +518,10 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("does not count an agent's own turns as the work stream changing", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, 1);
-    addMessages(database, 40, { startSequence: 2, authorType: "agent" });
-    addMessages(database, 10, { startSequence: 42, authorType: "system" });
+    const { objectStore, env, prompts } = fixture();
+    addMessages(objectStore, 1);
+    addMessages(objectStore, 40, { startSequence: 2, authorType: "agent" });
+    addMessages(objectStore, 10, { startSequence: 42, authorType: "system" });
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
@@ -481,8 +529,8 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("does not count a row of acknowledgements as a conversation", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 2, { text: "ack" });
+    const { objectStore, env, prompts } = fixture();
+    addMessages(objectStore, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 2, { text: "ack" });
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
@@ -490,8 +538,8 @@ describe("what it takes to spend a model call", () => {
   });
 
   it("does not pay a model to confirm a description the conversation keeps restating", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 3, { text: ON_TOPIC_MESSAGE });
+    const { objectStore, env, prompts } = fixture();
+    addMessages(objectStore, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 3, { text: ON_TOPIC_MESSAGE });
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "skipped", reason: "nothing_new_discussed" });
@@ -517,18 +565,22 @@ describe("what it takes to spend a model call", () => {
       confidence: 0.9,
       reasoning: "Still the same work.",
     };
-    const { database, env } = fixture({ proposal: () => proposal });
+    const { objectStore, env } = fixture({ proposal: () => proposal });
 
     let sequence = 1;
     let now = NOW;
+    // Each confirmation walks the ratchet 1, 2, 3, extending the rest toward
+    // the 48-hour cap. Object schema v6 rebuilt the claim trigger so a claim
+    // that names no keeps value preserves the standing count instead of
+    // zeroing it — the same semantics the D1 claim update always had.
     for (const expectedKeeps of [1, 2, 3]) {
-      addQualifyingConversation(database, {
+      addQualifyingConversation(objectStore, {
         startSequence: sequence,
         createdAt: now.toISOString(),
       });
       sequence += DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES;
       expect(await refreshWorkstreamDescription(env, { ...input, now })).toEqual({ status: "kept" });
-      expect(refreshRow(database)).toMatchObject({ consecutive_keeps: expectedKeeps });
+      expect(refreshRow(objectStore)).toMatchObject({ consecutive_keeps: expectedKeeps });
       // Two days clears every rest the backoff can produce.
       now = new Date(now.getTime() + 49 * 60 * 60 * 1_000);
     }
@@ -539,10 +591,10 @@ describe("what it takes to spend a model call", () => {
       confidence: 0.95,
       reasoning: "The work moved.",
     };
-    addQualifyingConversation(database, { startSequence: sequence, createdAt: now.toISOString() });
+    addQualifyingConversation(objectStore, { startSequence: sequence, createdAt: now.toISOString() });
     await refreshWorkstreamDescription(env, { ...input, now });
-    expect(refreshRow(database)).toMatchObject({ decision: "rewritten", consecutive_keeps: 0 });
-    expect(refreshRow(database)!.rest_until).toBe(restUntil(now, 0));
+    expect(refreshRow(objectStore)).toMatchObject({ decision: "rewritten", consecutive_keeps: 0 });
+    expect(refreshRow(objectStore)!.rest_until).toBe(restUntil(now, 0));
   });
 });
 

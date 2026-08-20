@@ -21,6 +21,80 @@ function migrateFreshDatabase(): DatabaseSync {
   return migrateDatabaseThrough();
 }
 
+const FINAL_D1_TABLES = [
+  "agent_inference_payload_logs",
+  "audit_events",
+  "connector_ingress_routes",
+  "desktop_login_tickets",
+  "digest_reconciliation_control",
+  "github_ingress_pending_deliveries",
+  "github_installation_routes",
+  "linear_organization_routes",
+  "notion_webhook_setup_nonces",
+  "notion_workspace_routes",
+  "oauth_states",
+  "platform_workspace_bindings",
+  "provider_webhook_challenges",
+  "provider_webhook_receipts",
+  "regional_onboarding_operations",
+  "resend_webhook_receipts",
+  "sessions",
+  "slack_installation_routes",
+  "telemetry_accepted_events",
+  "telemetry_crash_access_audit",
+  "telemetry_crash_reports",
+  "telemetry_delivery_receipts",
+  "telemetry_destination_state",
+  "telemetry_eu_crash_contributions",
+  "telemetry_eu_events",
+  "telemetry_identity_links",
+  "telemetry_ingest_rate_buckets",
+  "telemetry_maintenance_state",
+  "telemetry_onboarding_journeys",
+  "telemetry_profile_jobs",
+  "telemetry_rejection_buckets",
+  "telemetry_replay_audit",
+  "users",
+  "workspace_invitations",
+  "workspace_members",
+  "workspace_product_authority_routes",
+  "workspaces",
+  "workstream_authority_control",
+  "workstream_authority_routes",
+  "workstream_create_receipts",
+  "workstream_email_routes",
+  "workstreams",
+] as const;
+
+const FINAL_D1_TRIGGERS = [
+  "platform_workspace_binding_placement_default",
+  "platform_workspace_binding_placement_immutable",
+  "telemetry_accepted_event_deadline_immutable",
+  "telemetry_crash_access_audit_deadline_immutable",
+  "telemetry_crash_report_deadline_immutable",
+  "telemetry_delivery_receipt_deadline_immutable",
+  "telemetry_eu_crash_contribution_deadline_immutable",
+  "telemetry_eu_event_deadline_immutable",
+  "telemetry_identity_link_deadline_immutable",
+  "telemetry_ingest_rate_bucket_deadline_immutable",
+  "telemetry_onboarding_journey_deadline_immutable",
+  "telemetry_profile_job_deadline_immutable",
+  "telemetry_rejection_bucket_deadline_immutable",
+  "telemetry_replay_audit_deadline_immutable",
+  "users_platform_identity_immutable",
+  "workspace_placement_default",
+  "workspace_placement_immutable",
+  "workspaces_region_immutable",
+  "workstream_authority_open_guard",
+  "workstream_authority_phase_transition_guard",
+  "workstream_authority_verified_guard",
+  "workstream_email_routes_identity_immutable",
+  "workstream_email_routes_no_delete",
+  "workstreams_reject_post_cutover_delete",
+  "workstreams_reject_post_cutover_insert",
+  "workstreams_reject_post_cutover_update",
+] as const;
+
 describe("database migrations", () => {
   it("keeps the deployed HyperSight filename and renames its tables forward", () => {
     const migrationFiles = readdirSync(migrationsDirectory)
@@ -196,7 +270,7 @@ describe("database migrations", () => {
   });
 
   it("blocks import while any workspace-domain handoff remains drainable", () => {
-    const database = migrateFreshDatabase();
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     try {
       database.exec(`
         INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -279,7 +353,7 @@ describe("database migrations", () => {
     // `activity_suggestions`, whose fence predates the scrub and once admitted
     // no phase past draining — which aborted activation after every route had
     // already imported and verified.
-    const database = migrateFreshDatabase();
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     try {
       database.exec(`
         INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -395,8 +469,8 @@ describe("database migrations", () => {
     }
   });
 
-  it("fences the maintenance cutover and leaves the workspace directory out of D1", () => {
-    const database = migrateFreshDatabase();
+  it("fences the maintenance cutover and retires product state after the authority opens", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     try {
       database.exec(`
         INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -434,21 +508,11 @@ describe("database migrations", () => {
            SET phase = 'maintenance_draining', generation = 1,
                started_at = '2026-08-16T01:00:00.000Z', updated_at = '2026-08-16T01:00:00.000Z'
          WHERE id = 1;
-        INSERT INTO harness_runs
-          (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-        VALUES ('authority-run', 'authority-workspace', 'authority-workstream', 'opening_message',
-                '{}', 'scheduled', '2026-08-16T01:00:00.000Z');
       `);
-      expect(() => database.exec(`
-        UPDATE workstream_authority_control
-           SET phase = 'maintenance_importing', updated_at = '2026-08-16T01:01:00.000Z'
-         WHERE id = 1;
-      `)).toThrow(/workstream_authority_runs_not_drained/u);
+      // This historical cutover fixture has no live harness rows, so the 0079
+      // drain guard admits the transition. Migration 0090 later removes both
+      // the source table and the now-vacuous guard.
       database.exec(`
-        UPDATE harness_runs
-           SET status = 'completed', completed_at = '2026-08-16T01:01:00.000Z',
-               terminalized_at = '2026-08-16T01:01:00.000Z'
-         WHERE id = 'authority-run';
         UPDATE workstream_authority_control
            SET phase = 'maintenance_importing', updated_at = '2026-08-16T01:01:00.000Z'
          WHERE id = 1;
@@ -529,6 +593,8 @@ describe("database migrations", () => {
       expect(() => database.exec(
         `UPDATE work_opportunities SET display_prompt = 'Forbidden' WHERE id = 'migrated-opportunity'`,
       )).toThrow(/workspace_do_authoritative/u);
+      // The final pre-retirement schema still fences product statements while
+      // the Durable Objects are authoritative.
       expect(() => database.exec(`
         INSERT INTO messages
           (id, workspace_id, workstream_id, author_type, message_type, text_content,
@@ -583,15 +649,40 @@ describe("database migrations", () => {
         VALUES ('forbidden-session', 'forbidden-ticket', 'authority-workspace',
                 'authority-user', 1, 2);
       `)).toThrow(/workspace_do_authoritative/u);
+
+      // This is the deployed shape 0090 runs over: both route families are
+      // active, the authority ledger is open, and residual product rows may
+      // still exist if a scrub underreported progress. The migration must
+      // remove the fences before dropping their tables and preserve every
+      // control-plane row.
+      database.exec(readFileSync(
+        new URL("../migrations/0090_drop_legacy_product_tables.sql", import.meta.url),
+        "utf8",
+      ));
+      expect(database.prepare(
+        "SELECT phase, generation FROM workstream_authority_control WHERE id = 1",
+      ).get()).toEqual({ phase: "durable_object_open", generation: 1 });
+      expect(database.prepare(
+        "SELECT state FROM workstream_authority_routes WHERE workstream_id = 'authority-workstream'",
+      ).get()).toEqual({ state: "active" });
+      expect(database.prepare(
+        "SELECT state FROM workspace_product_authority_routes WHERE workspace_id = 'authority-workspace'",
+      ).get()).toEqual({ state: "active" });
+      expect(() => database.exec(`
+        INSERT INTO workstream_read_states
+          (workstream_id, user_id, read_through_sequence_number, updated_at)
+        VALUES ('authority-workstream', 'authority-user', 0, '2026-08-16T01:07:00.000Z');
+      `)).toThrow(/no such table/u);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       database.close();
     }
   });
 
-  it("carries deployed data through the cutover migrations and drops only dead tables", () => {
+  it("retires every product table without changing retained routing and identity rows", () => {
     // The deployed boundary is 0077; everything after it ships with this
     // branch and must apply over a database that already holds rows shaped by
-    // the old Worker — including rows in the tables 0085 drops.
+    // the old Worker — including rows in the tables 0085 and 0090 drop.
     const database = migrateDatabaseThrough("0077_connector_oauth_telemetry_shape.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -634,28 +725,99 @@ describe("database migrations", () => {
       database.exec(readFileSync(new URL(`../migrations/${fileName}`, import.meta.url), "utf8"));
     }
     try {
+      const finalTables = database.prepare(
+        `SELECT name FROM sqlite_schema
+          WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      ).all() as Array<{ name: string }>;
+      expect(finalTables.map((row) => row.name)).toEqual(FINAL_D1_TABLES);
+
+      const finalTriggers = database.prepare(
+        `SELECT name FROM sqlite_schema WHERE type = 'trigger' ORDER BY name`,
+      ).all() as Array<{ name: string }>;
+      expect(finalTriggers.map((row) => row.name)).toEqual(FINAL_D1_TRIGGERS);
+
       expect(database.prepare(
-        `SELECT name FROM sqlite_master
-          WHERE type = 'table' AND name IN ('web_usage_log', 'workspace_opportunity_versions')`,
+        `SELECT name FROM sqlite_schema WHERE type = 'view' ORDER BY name`,
       ).all()).toEqual([]);
-      // Maintenance-import input survives the forward migrations untouched.
+      const finalIndexes = database.prepare(
+        `SELECT name, tbl_name FROM sqlite_schema
+          WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      ).all() as Array<{ name: string; tbl_name: string }>;
+      const finalTableNames = new Set<string>(FINAL_D1_TABLES);
+      expect(finalIndexes.every((row) => finalTableNames.has(row.tbl_name))).toBe(true);
+      for (const table of FINAL_D1_TABLES) {
+        const foreignKeys = database.prepare(`PRAGMA foreign_key_list("${table}")`)
+          .all() as Array<{ table: string }>;
+        expect(
+          foreignKeys.every((foreignKey) => finalTableNames.has(foreignKey.table)),
+          `${table} must not reference a retired table`,
+        ).toBe(true);
+      }
+      expect(database.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+
+      // Product rows are intentionally retired, even when a region failed to
+      // scrub them. The identity/routing anchors survive byte-for-byte at the
+      // fields the migration does not deliberately remove.
       expect(database.prepare(
-        `SELECT svix_id FROM workstream_email_receipts WHERE resend_email_id = 'carried-email'`,
-      ).get()).toEqual({ svix_id: "carried-svix" });
+        `SELECT google_subject, email, name FROM users WHERE id = 'carried-user'`,
+      ).get()).toEqual({
+        google_subject: "google-carried",
+        email: "carried@example.com",
+        name: "Carried",
+      });
       expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM realtime_transcription_sessions`,
-      ).get()).toEqual({ count: 1 });
-      // The old Worker keeps writing in legacy_open; fences arm only when the
-      // maintenance campaign advances the phase.
-      database.exec(`
-        INSERT INTO workstream_email_receipts
-          (resend_email_id, workstream_id, workspace_id, svix_id, received_at)
-        VALUES ('carried-email-2', 'carried-workstream', 'carried-workspace',
-                'carried-svix-2', '2026-01-02T00:00:00.000Z');
-      `);
+        `SELECT name, slug, region FROM workspaces WHERE id = 'carried-workspace'`,
+      ).get()).toEqual({ name: "Carried", slug: "carried", region: "global" });
+      expect(database.prepare(
+        `SELECT id, workspace_id, do_identity_anchor
+           FROM workstreams WHERE id = 'carried-workstream'`,
+      ).get()).toEqual({
+        id: "carried-workstream",
+        workspace_id: "carried-workspace",
+        do_identity_anchor: 0,
+      });
+      const workstreamColumns = database.prepare(
+        `PRAGMA table_info(workstreams)`,
+      ).all() as Array<{ name: string }>;
+      expect(workstreamColumns.map((column) => column.name)).toEqual([
+        "id",
+        "workspace_id",
+        "do_identity_anchor",
+      ]);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       database.close();
     }
+  });
+
+  it("leaves every retained table and index except the work-stream anchor structurally unchanged", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
+    const retainedTables = FINAL_D1_TABLES.filter((table) => table !== "workstreams");
+    const schemaFor = (type: "table" | "index") => database.prepare(
+      `SELECT name, tbl_name, sql FROM sqlite_schema
+        WHERE type = ? AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+    ).all(type) as Array<{ name: string; tbl_name: string; sql: string }>;
+    const beforeTables = schemaFor("table")
+      .filter((row) => retainedTables.includes(row.name as typeof retainedTables[number]));
+    const beforeIndexes = schemaFor("index")
+      .filter((row) => retainedTables.includes(row.tbl_name as typeof retainedTables[number]));
+
+    database.exec(readFileSync(
+      new URL("../migrations/0090_drop_legacy_product_tables.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(schemaFor("table")
+      .filter((row) => retainedTables.includes(row.name as typeof retainedTables[number])))
+      .toEqual(beforeTables);
+    expect(schemaFor("index")
+      .filter((row) => retainedTables.includes(row.tbl_name as typeof retainedTables[number])))
+      .toEqual(beforeIndexes);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'index' AND tbl_name = 'workstreams' AND name NOT LIKE 'sqlite_%'`,
+    ).all()).toEqual([]);
+    database.close();
   });
 
   it("anchors regional telemetry identity, preference, delivery, and retention in D1", () => {
@@ -669,9 +831,10 @@ describe("database migrations", () => {
       "preference_subject_handle",
     ]));
     expect(workspaceColumns.map((column) => column.name)).toContain("analytics_workspace_id");
-    const oauthColumns = database.prepare("PRAGMA table_info(connector_oauth_attempts)")
-      .all() as Array<{ name: string }>;
-    expect(oauthColumns.map((column) => column.name)).toContain("telemetry_operation_id");
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name = 'connector_oauth_attempts'`,
+    ).get()).toBeUndefined();
     const crashColumns = database.prepare("PRAGMA table_info(telemetry_crash_reports)")
       .all() as Array<{ name: string }>;
     expect(crashColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
@@ -775,8 +938,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("tracks current attachment derivatives without a duplicate object catalog", () => {
-    const database = migrateFreshDatabase();
+  it("keeps the legacy attachment import schema coherent through 0089", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     const resourceColumns = database.prepare("PRAGMA table_info(resources)").all() as Array<{ name: string }>;
     expect(resourceColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "content_sha256",
@@ -788,13 +951,6 @@ describe("database migrations", () => {
       "model_content_claimed_at",
       "model_content_claim_id",
     ]));
-    const compactionColumns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all() as Array<{ name: string }>;
-    expect(compactionColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
-      "checkpoint_template_version",
-      "execution_principal_key",
-      "resource_visibility_fingerprint",
-    ]));
-
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('attachment-owner', 'attachment-subject', 'attachment@example.com', 'Attachment Owner', '2026-08-12', '2026-08-12');
@@ -843,104 +999,15 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("advances the bounded resource-inventory revision for every visibility-changing relationship", () => {
-    const database = migrateFreshDatabase();
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('inventory-owner', 'inventory-subject', 'inventory@example.com', 'Inventory Owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('inventory-workspace', 'Inventory Workspace', 'inventory-workspace', 'global', 'inventory-owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('inventory-workstream', 'inventory-workspace', 'Inventory', 'Test revision fencing', 'ad_hoc', 'inventory-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
-      INSERT INTO resources
-        (id, workspace_id, resource_type, provider, title, created_at, updated_at)
-      VALUES
-        ('inventory-upload', 'inventory-workspace', 'file', 'avalon_upload', 'brief.md', '2026-08-12', '2026-08-12'),
-        ('inventory-note-resource', 'inventory-workspace', 'note', 'avalon_note', 'Private note', '2026-08-12', '2026-08-12');
-      INSERT INTO workstream_resources (workstream_id, resource_id, relationship_type, attached_at)
-      VALUES
-        ('inventory-workstream', 'inventory-upload', 'explicit', '2026-08-12'),
-        ('inventory-workstream', 'inventory-note-resource', 'explicit', '2026-08-12');
-    `);
-    const revision = () => database.prepare(
-      "SELECT revision FROM workstream_resource_inventory_revisions WHERE workspace_id = 'inventory-workspace' AND workstream_id = 'inventory-workstream'",
-    ).get() as { revision: number };
-    expect(revision()).toEqual({ revision: 2 });
+  // Resource-inventory revisions and their bookkeeping triggers moved into
+  // Durable Object storage with 0090; covered by apps/api's workerd suites
+  // (test-workers/durable-object-runtime.test.ts et al.).
 
-    database.exec(`
-      UPDATE resources
-         SET updated_at = '2026-08-12T00:00:30Z', model_content_status = 'processing'
-       WHERE id = 'inventory-upload';
-    `);
-    expect(revision()).toEqual({ revision: 2 });
+  // Attachment tool receipts and their invalidation moved into Durable Object
+  // storage with 0090; covered by apps/api's workerd suites.
 
-    database.exec(`
-      UPDATE resources SET title = 'updated.md' WHERE id = 'inventory-upload';
-      INSERT INTO messages
-        (id, workspace_id, workstream_id, author_type, author_user_id, message_type, text_content, sequence_number, created_at)
-      VALUES ('inventory-message', 'inventory-workspace', 'inventory-workstream', 'human', 'inventory-owner', 'text', 'Attached', 1, '2026-08-12');
-      INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
-      VALUES ('inventory-message', 'inventory-upload', 0, '2026-08-12');
-      INSERT INTO notes
-        (id, workspace_id, owner_user_id, resource_id, scope, title, last_activity_at, created_at, updated_at)
-      VALUES ('inventory-note', 'inventory-workspace', 'inventory-owner', 'inventory-note-resource', 'personal', 'Private note', '2026-08-12', '2026-08-12', '2026-08-12');
-      UPDATE notes SET scope = 'workspace', updated_at = '2026-08-12T00:01:00Z' WHERE id = 'inventory-note';
-      DELETE FROM message_attachments WHERE message_id = 'inventory-message' AND resource_id = 'inventory-upload';
-      DELETE FROM workstream_resources WHERE workstream_id = 'inventory-workstream' AND resource_id = 'inventory-upload';
-    `);
-    expect(revision()).toEqual({ revision: 8 });
-    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    database.close();
-  });
-
-  it("invalidates attachment receipts when their derivative changes or resource is deleted", () => {
-    const database = migrateFreshDatabase();
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('receipt-owner', 'receipt-subject', 'receipt@example.com', 'Receipt Owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('receipt-workspace', 'Receipt Workspace', 'receipt-workspace', 'global', 'receipt-owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('receipt-workstream', 'receipt-workspace', 'Receipts', 'Test receipt lifecycle', 'ad_hoc', 'receipt-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('receipt-run', 'receipt-workspace', 'receipt-workstream', 'manual', '{"type":"user","userId":"receipt-owner"}', 'completed', '2026-08-12');
-      INSERT INTO resources
-        (id, workspace_id, resource_type, provider, title, model_content_sha256, created_at, updated_at)
-      VALUES ('receipt-resource', 'receipt-workspace', 'file', 'avalon_upload', 'brief.md', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12', '2026-08-12');
-      INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
-      VALUES ('receipt-invocation-one', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-one', 'read_resource', 'hash-one', '{}', 'receipt/object-one', 'Read', 'completed');
-      INSERT INTO attachment_tool_receipts
-        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-      VALUES ('receipt-workspace', 'receipt-resource', 'receipt-invocation-one', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12');
-      UPDATE resources SET model_content_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id = 'receipt-resource';
-    `);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-one'").get())
-      .toEqual({ count: 0 });
-    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-one'").get())
-      .toEqual({ object_ref: "receipt/object-one", object_kind: "receipt" });
-
-    database.exec(`
-      INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
-      VALUES ('receipt-invocation-two', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-two', 'view_resource', 'hash-two', '{}', 'receipt/object-two', 'Viewed', 'completed');
-      INSERT INTO attachment_tool_receipts
-        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-      VALUES ('receipt-workspace', 'receipt-resource', 'receipt-invocation-two', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '2026-08-12');
-      DELETE FROM resources WHERE id = 'receipt-resource';
-    `);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-two'").get())
-      .toEqual({ count: 0 });
-    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-two'").get())
-      .toEqual({ object_ref: "receipt/object-two", object_kind: "receipt" });
-    database.close();
-  });
-
-  it("persists normalized activity targets independently from provider visibility metadata", () => {
-    const database = migrateFreshDatabase();
+  it("persists normalized activity targets in the legacy import schema", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("target_user_ids_json");
     database.close();
@@ -1018,8 +1085,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("deduplicates active generic-webhook creation requests", () => {
-    const database = migrateFreshDatabase();
+  it("deduplicates active generic-webhook creation requests before retirement", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('webhook-owner', 'webhook-subject', 'webhook@example.com', 'Webhook Owner', '2026-08-10', '2026-08-10');
@@ -1052,8 +1119,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("scopes verified external identities by provider tenant", () => {
-    const database = migrateFreshDatabase();
+  it("scopes legacy imported external identities by provider tenant", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
         ('identity-user-one', 'identity-subject-one', 'identity-one@example.com', 'Identity One', '2026-08-07', '2026-08-07'),
@@ -1083,80 +1150,9 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("stores HyperSight configuration as immutable append-only versions", () => {
-    const database = migrateFreshDatabase();
-    database.exec(`
-      INSERT INTO users
-        (id, google_subject, email, name, created_at, updated_at)
-      VALUES
-        ('user-block-dashboard', 'google-block-dashboard', 'block-dashboard@example.com',
-         'HyperSight Owner', '2026-01-01', '2026-01-01'),
-        ('user-block-dashboard-two', 'google-block-dashboard-two', 'block-dashboard-two@example.com',
-         'HyperSight Member', '2026-01-01', '2026-01-01');
-      INSERT INTO workspaces
-        (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-block-dashboard', 'HyperSight', 'block-dashboard', 'global',
-              'user-block-dashboard', '2026-01-01', '2026-01-01');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-block-dashboard', 'workspace-block-dashboard', 'Shared dashboard',
-              'Test append-only configuration', 'ad_hoc', 'user-block-dashboard', 'idle',
-              '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO block_dashboard_configuration_versions
-        (id, workspace_id, workstream_id, version_number, blocks_json,
-         created_by_user_id, created_at)
-      VALUES
-        ('block-dashboard-version-1', 'workspace-block-dashboard', 'workstream-block-dashboard', 1,
-         '[{"id":"block-1","prompt":"Summarize"}]', 'user-block-dashboard', '2026-01-01'),
-        ('block-dashboard-version-2', 'workspace-block-dashboard', 'workstream-block-dashboard', 2,
-         '[{"id":"block-1","prompt":"List five tasks"}]', 'user-block-dashboard', '2026-01-02');
-      INSERT INTO block_dashboard_user_preferences
-        (workspace_id, workstream_id, user_id, visible, updated_at)
-      VALUES
-        ('workspace-block-dashboard', 'workstream-block-dashboard', 'user-block-dashboard', 1, '2026-01-02'),
-        ('workspace-block-dashboard', 'workstream-block-dashboard', 'user-block-dashboard-two', 0, '2026-01-02');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json,
-         status, model, created_at)
-      VALUES ('block-dashboard-harness-1', 'workspace-block-dashboard', 'workstream-block-dashboard',
-              'block_dashboard_block', '{"type":"workspace","workspaceId":"workspace-block-dashboard"}',
-              'scheduled', 'x-ai/grok-4.3', '2026-01-02');
-      INSERT INTO block_dashboard_block_runs
-        (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
-         trigger_sequence, harness_run_id, status, created_at)
-      VALUES ('block-dashboard-run-1', 'workspace-block-dashboard', 'workstream-block-dashboard',
-              'block-dashboard-version-2', 'block-1', 'List five tasks', 7,
-              'block-dashboard-harness-1', 'queued', '2026-01-02');
-    `);
-
-    expect(database.prepare(
-      `SELECT version_number, blocks_json FROM block_dashboard_configuration_versions
-       WHERE workstream_id = 'workstream-block-dashboard' ORDER BY version_number`,
-    ).all()).toEqual([
-      { version_number: 1, blocks_json: '[{"id":"block-1","prompt":"Summarize"}]' },
-      { version_number: 2, blocks_json: '[{"id":"block-1","prompt":"List five tasks"}]' },
-    ]);
-    expect(() => database.exec(
-      "UPDATE block_dashboard_configuration_versions SET blocks_json = '[]' WHERE id = 'block-dashboard-version-1'",
-    )).toThrow(/block_dashboard_configuration_version_immutable/u);
-    expect(() => database.exec(`
-      INSERT INTO block_dashboard_configuration_versions
-        (id, workspace_id, workstream_id, version_number, blocks_json,
-         created_by_user_id, created_at)
-      VALUES ('block-dashboard-version-duplicate', 'workspace-block-dashboard', 'workstream-block-dashboard',
-              2, '[]', 'user-block-dashboard', '2026-01-03');
-    `)).toThrow(/UNIQUE constraint failed/u);
-    expect(database.prepare(
-      `SELECT user_id, visible FROM block_dashboard_user_preferences
-       WHERE workstream_id = 'workstream-block-dashboard' ORDER BY user_id`,
-    ).all()).toEqual([
-      { user_id: 'user-block-dashboard', visible: 1 },
-      { user_id: 'user-block-dashboard-two', visible: 0 },
-    ]);
-    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    database.close();
-  });
+  // HyperSight (block dashboard) configuration versions, preferences, and
+  // block runs moved into Durable Object storage with 0090; covered by
+  // apps/api's workerd suites.
 
   it("accepts X connections after the connector constraint migration", () => {
     const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
@@ -1296,8 +1292,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("stores one Granola API key connection per workspace and one MCP connection per user", () => {
-    const database = migrateFreshDatabase();
+  it("preserves Granola connection constraints in the legacy import schema", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
@@ -1483,8 +1479,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("creates scoped memory, hybrid-search projections, and immutable run snapshots", () => {
-    const database = migrateFreshDatabase();
+  it("keeps the legacy scoped-memory import schema intact through 0089", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     const scopeColumns = database.prepare("PRAGMA table_info(memory_scopes)").all();
     expect(scopeColumns).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "memory_scope_id", pk: 1 }),
@@ -1505,20 +1501,14 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_items_fts'",
     ).get()).toEqual({ name: "memory_items_fts" });
-    expect(database.prepare("PRAGMA table_info(harness_run_memory_contexts)").all())
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: "memory_context_hash", notnull: 1 }),
-        expect.objectContaining({ name: "results_json", notnull: 1 }),
-      ]));
-    expect(database.prepare("PRAGMA table_info(harness_run_scopes)").all())
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: "memory_context_hash" }),
-      ]));
+    // The immutable per-run memory snapshots (harness_run_memory_contexts,
+    // harness_run_scopes) moved into Durable Object storage with 0090 and are
+    // covered by apps/api's workerd suites (test-workers/durable-object-runtime.test.ts).
     database.close();
   });
 
-  it("creates typed scoped-memory tables and stores automation table declarations", () => {
-    const database = migrateFreshDatabase();
+  it("keeps typed legacy memory-table imports intact through 0089", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     expect(database.prepare("PRAGMA table_info(automation_template_versions)").all())
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ name: "memory_tables_json", notnull: 1 }),
@@ -1576,44 +1566,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("stores independent provider-measured compaction checkpoints per execution principal", () => {
-    const database = migrateFreshDatabase();
-    const columns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all();
-    expect(columns).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "compacted_through_sequence", notnull: 1 }),
-      expect.objectContaining({ name: "messages_json", notnull: 1 }),
-      expect.objectContaining({ name: "context_tokens_before_compaction", notnull: 1 }),
-      expect.objectContaining({ name: "context_window_tokens", notnull: 1 }),
-      expect.objectContaining({ name: "execution_principal_key", notnull: 1 }),
-      expect.objectContaining({ name: "resource_visibility_fingerprint", notnull: 1 }),
-    ]));
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('checkpoint-owner', 'checkpoint-subject', 'checkpoint@example.com', 'Checkpoint Owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('checkpoint-workspace', 'Checkpoint Workspace', 'checkpoint-workspace', 'global', 'checkpoint-owner', '2026-08-12', '2026-08-12');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('checkpoint-workstream', 'checkpoint-workspace', 'Checkpoints', 'Test scoped compaction', 'ad_hoc', 'checkpoint-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
-      INSERT INTO workstream_context_compactions
-        (workspace_id, workstream_id, execution_principal_key, resource_visibility_fingerprint,
-         checkpoint_template_version, harness_run_id, compacted_through_sequence, messages_json,
-         summary, model, context_tokens_before_compaction, context_window_tokens, input_tokens,
-         output_tokens, cost_microusd, created_at, updated_at)
-      VALUES
-        ('checkpoint-workspace', 'checkpoint-workstream', 'user:checkpoint-owner', 'owner-fingerprint',
-         1, 'run-owner', 3, '[]', 'Owner summary', 'model', 80, 100, 10, 4, 2, '2026-08-12', '2026-08-12'),
-        ('checkpoint-workspace', 'checkpoint-workstream', 'workspace:checkpoint-workspace', 'automation-fingerprint',
-         1, 'run-automation', 4, '[]', 'Automation summary', 'model', 85, 100, 11, 5, 3, '2026-08-12', '2026-08-12');
-    `);
-    expect(database.prepare(
-      "SELECT execution_principal_key, summary FROM workstream_context_compactions ORDER BY execution_principal_key",
-    ).all()).toEqual([
-      { execution_principal_key: "user:checkpoint-owner", summary: "Owner summary" },
-      { execution_principal_key: "workspace:checkpoint-workspace", summary: "Automation summary" },
-    ]);
-    database.close();
-  });
+  // Context-compaction checkpoints moved into Durable Object storage with
+  // 0090; covered by apps/api's workerd suites.
 
   it("promotes only descriptions a person wrote and holds one refresh claim per work stream", () => {
     const database = migrateDatabaseThrough("0057_slack_unfurled_link_render_hash.sql");
@@ -1779,14 +1733,83 @@ describe("database migrations", () => {
       "SELECT COUNT(*) AS n FROM users",
     ).get()).toEqual({ n: 2 });
     expect(database.prepare(
-      "SELECT title FROM workstreams WHERE id = '00000000-0000-7000-8000-000000000021'",
-    ).get()).toEqual({ title: "Investigate ENG-142" });
-    for (const table of ["messages", "resources", "connector_connections", "harness_runs",
-      "tool_invocations", "workstream_participants", "workstream_resources",
-      "automation_subscriptions", "schedules"]) {
-      expect(database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(),
-        `${table} must stay empty in the D1 seed`).toEqual({ n: 0 });
+      `SELECT id, workspace_id, do_identity_anchor FROM workstreams
+        WHERE id = '00000000-0000-7000-8000-000000000021'`,
+    ).get()).toEqual({
+      id: "00000000-0000-7000-8000-000000000021",
+      workspace_id: "00000000-0000-7000-8000-000000000002",
+      do_identity_anchor: 1,
+    });
+    // Every workspace/work-stream product table is gone. The D1 seed writes
+    // only identity and routing anchors; product fixtures go through the local
+    // Worker's Durable Object seed route.
+    for (const table of ["messages", "harness_runs", "tool_invocations",
+      "workstream_resources", "elicitations", "workstream_wakeups",
+      "resources", "connector_connections", "workstream_participants",
+      "workstream_read_states", "workstream_pins", "automation_subscriptions",
+      "schedules", "work_opportunities", "memory_items"]) {
+      expect(database.prepare(
+        `SELECT COUNT(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = ?`,
+      ).get(table), `${table} must no longer exist in D1`).toEqual({ n: 0 });
     }
+    database.close();
+  });
+
+  it("opens a fresh post-retirement seed using explicit routing rows", () => {
+    const database = migrateFreshDatabase();
+    database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));
+    database.exec(`
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_draining', generation = 1,
+             serving_contract_version = required_serving_contract_version,
+             updated_at = '2026-08-20T00:00:00.000Z'
+       WHERE id = 1;
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_importing', updated_at = '2026-08-20T00:01:00.000Z'
+       WHERE id = 1;
+    `);
+    // Migration 0090 deliberately removes the completed import-population
+    // triggers. A fresh local seed creates routing rows explicitly, without
+    // reconstructing any product source schema.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_authority_routes").get())
+      .toEqual({ count: 0 });
+    database.exec(`
+      INSERT INTO workstream_authority_routes (
+        workspace_id, workstream_id, generation, object_name, state, stage_index,
+        source_cursor, source_fence_sequence, source_hash, target_hash,
+        row_counts_json, imported_at, verified_at, activated_at, updated_at
+      )
+      SELECT w.workspace_id, w.id, 1, ws.region || ':' || w.workspace_id || ':' || w.id,
+             'verified', 0, 0, 0, 'seeded_in_do', 'seeded_in_do', '{}', NULL,
+             '2026-08-20T00:02:00.000Z', NULL, '2026-08-20T00:02:00.000Z'
+        FROM workstreams w JOIN workspaces ws ON ws.id = w.workspace_id;
+      INSERT INTO workspace_product_authority_routes (
+        workspace_id, generation, state, stage_index, source_cursor,
+        row_counts_json, last_error_code, updated_at
+      )
+      SELECT id, 1, 'verified', 0, 0, '{}', NULL, '2026-08-20T00:02:00.000Z'
+        FROM workspaces;
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_verified', verified_at = '2026-08-20T00:03:00.000Z',
+             updated_at = '2026-08-20T00:03:00.000Z'
+       WHERE id = 1;
+      UPDATE workstream_authority_routes
+         SET state = 'active', activated_at = '2026-08-20T00:04:00.000Z',
+             updated_at = '2026-08-20T00:04:00.000Z';
+      UPDATE workspace_product_authority_routes
+         SET state = 'active', updated_at = '2026-08-20T00:04:00.000Z';
+      UPDATE workstream_authority_control
+         SET phase = 'durable_object_open', opened_at = '2026-08-20T00:05:00.000Z',
+             updated_at = '2026-08-20T00:05:00.000Z'
+       WHERE id = 1;
+    `);
+    expect(database.prepare(
+      "SELECT phase, generation FROM workstream_authority_control WHERE id = 1",
+    ).get()).toEqual({ phase: "durable_object_open", generation: 1 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_authority_routes WHERE state = 'active'",
+    ).get()).toEqual({ count: 2 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
 
@@ -2186,8 +2209,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("leaves every connector foreign key on the live connector table", () => {
-    const database = migrateFreshDatabase();
+  it("leaves every legacy connector foreign key on its import table through 0089", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     const staleReference = database.prepare(
       "SELECT COUNT(*) AS count FROM sqlite_schema WHERE sql LIKE '%connector_connections_before_provider_apps%'",
     ).get() as { count: number };
@@ -2204,14 +2227,6 @@ describe("database migrations", () => {
       INSERT INTO connector_connections
         (id, workspace_id, connector_type, scope, display_name, model_plugin_id, created_at, updated_at)
       VALUES ('connection-1', 'workspace-1', 'github', 'workspace', 'GitHub', 'plugin_github', '2026-01-01', '2026-01-01');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-1', 'workspace-1', 'Smoke', 'Smoke', 'ad_hoc', 'user-1',
-              'running', '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-1', 'workspace-1', 'workstream-1', 'test', '{}', 'running', '2026-01-01');
       INSERT INTO activities
         (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
          event_type, occurred_at, received_at, title, dedupe_key)
@@ -2222,24 +2237,19 @@ describe("database migrations", () => {
          title, created_at, updated_at)
       VALUES ('resource-1', 'workspace-1', 'connection-1', 'repository', 'github', 'repo-1',
               'Repo', '2026-01-01', '2026-01-01');
-      INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-         connection_id, input_hash, input_json, status)
-      VALUES ('tool-1', 'workspace-1', 'workstream-1', 'run-1', 'call-1',
-              'github.repository.get', 'connection-1', 'hash-1', '{}', 'pending');
     `);
 
     database.exec("DELETE FROM connector_connections WHERE id = 'connection-1'");
     expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get()).toEqual({ count: 0 });
     expect(database.prepare("SELECT connection_id FROM resources WHERE id = 'resource-1'").get())
       .toEqual({ connection_id: null });
-    expect(database.prepare("SELECT connection_id FROM tool_invocations WHERE id = 'tool-1'").get())
-      .toEqual({ connection_id: null });
     database.close();
   });
 
   it("removes poll deadlines from webhook-native resource watches without disabling routing", () => {
-    const database = migrateFreshDatabase();
+    // 0016's backfill reads workstream_resources, which 0090 later drops, so
+    // it has to be exercised against the schema it actually deployed onto.
+    const database = migrateDatabaseThrough("0015_shared_github_app_routing.sql");
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
@@ -2248,10 +2258,10 @@ describe("database migrations", () => {
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES ('workspace-watch', 'Watch Workspace', 'watch-workspace', 'global', 'user-watch', '2026-01-01', '2026-01-01');
       INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, created_at, updated_at)
+        (id, workspace_id, connector_type, scope, display_name, created_at, updated_at)
       VALUES
-        ('connection-github', 'workspace-watch', 'github', 'workspace', 'GitHub', 'plugin_github', '2026-01-01', '2026-01-01'),
-        ('connection-google', 'workspace-watch', 'google', 'workspace', 'Google', 'plugin_google', '2026-01-01', '2026-01-01');
+        ('connection-github', 'workspace-watch', 'github', 'workspace', 'GitHub', '2026-01-01', '2026-01-01'),
+        ('connection-google', 'workspace-watch', 'google', 'workspace', 'Google', '2026-01-01', '2026-01-01');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, last_activity_at, created_at, updated_at)
@@ -2297,7 +2307,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("keeps work-stream email addresses immutable and permanently reserves routes", () => {
+  it("keeps email route identities immutable after product email columns retire", () => {
     const database = migrateFreshDatabase();
     database.exec(`
       INSERT INTO users
@@ -2307,20 +2317,16 @@ describe("database migrations", () => {
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES ('workspace-email', 'Email Workspace', 'email-workspace', 'global', 'user-email', '2026-01-01', '2026-01-01');
       INSERT INTO workstreams
-        (id, workspace_id, title, objective, email_address, origin_type, created_by_user_id,
-         harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-email', 'workspace-email', 'Inbox', 'Email this work stream',
-              'bright-steady-clear-otter@automation.with-avalon.com', 'ad_hoc', 'user-email',
-              'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+        (id, workspace_id, do_identity_anchor)
+      VALUES ('workstream-email', 'workspace-email', 1);
       INSERT INTO workstream_email_routes
         (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
       VALUES ('bright-steady-clear-otter', 'global', 'workspace-email', 'workstream-email',
               'active', '2026-01-01', '2026-01-01');
     `);
 
-    expect(() => database.exec(
-      "UPDATE workstreams SET email_address = 'different-address@automation.with-avalon.com' WHERE id = 'workstream-email'",
-    )).toThrow(/immutable/u);
+    expect(database.prepare("PRAGMA table_info(workstreams)").all())
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "email_address" })]));
     expect(() => database.exec(`
       INSERT INTO workstream_email_routes
         (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
@@ -2344,8 +2350,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("shares one permanent route namespace between work streams and automations", () => {
-    const database = migrateFreshDatabase();
+  it("shares one permanent route namespace with legacy automation imports", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
@@ -2402,8 +2408,8 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("supports atomic expiry and reclamation of regional email-processing leases", () => {
-    const database = migrateFreshDatabase();
+  it("supports legacy email-processing lease import through 0089", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
@@ -2851,31 +2857,6 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("gives the ordinary sidebar list a recency index it can seek rather than filter", () => {
-    const database = migrateFreshDatabase();
-    // The list seeks `(workspace_id, last_activity_at DESC)` and then walks, so
-    // on the shared index every ordinary listing steps over each digest row
-    // newer than the last row it returns — and those accumulate one per
-    // occurrence. A partial index is only usable when the query's WHERE implies
-    // its predicate, so this asserts the exact clause the query states.
-    const planFor = (predicate: string): string =>
-      (database.prepare(
-        `EXPLAIN QUERY PLAN
-         SELECT w.id FROM workstreams w
-          WHERE w.workspace_id = 'ws' AND w.archived_at IS NULL AND ${predicate}
-          ORDER BY w.last_activity_at DESC LIMIT 25`,
-      ).all() as Array<{ detail: string }>).map((row) => row.detail).join("\n");
-
-    expect(planFor("w.system_kind IS NULL")).toContain("workstreams_sidebar_recency_ordinary_idx");
-    expect(planFor("w.system_kind IS NULL")).not.toContain("SCAN");
-    // A listing that asks for machinery has no `system_kind` predicate at all —
-    // it asks for everything and pages — so it keeps the general index rather
-    // than reaching one it could never imply.
-    expect(planFor("1 = 1")).toContain("workstreams_sidebar_recency_idx");
-    expect(planFor("1 = 1")).not.toContain("SCAN");
-    database.close();
-  });
-
   it("retires the artifact message type while leaving the table for the old Worker", () => {
     const database = migrateDatabaseThrough("0068_digest_workstream_per_occurrence.sql");
     database.exec(`
@@ -2982,24 +2963,30 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("owns Terminal sandbox, policy, task, grant, and publication state inside a workspace", () => {
-    const database = migrateFreshDatabase();
+  it("keeps the legacy Terminal network-policy import schema through 0089", () => {
+    // This pins the last schema the WorkspaceDO importer consumed. Migration
+    // 0090 removes these tables after the one-way cutover; current behavior is
+    // covered by the WorkspaceDO tests.
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
     const terminalTables = [
-      "workstream_sandboxes",
       "workspace_sandbox_network_policies",
       "workspace_sandbox_network_domains",
       "workspace_sandbox_network_policy_mutations",
-      "sandbox_tasks",
-      "sandbox_imported_resources",
-      "terminal_publication_grants",
-      "workstream_terminal_repositories",
-      "repository_publications",
     ];
+    const allTerminalTables = [
+      "repository_publications",
+      "sandbox_imported_resources",
+      "sandbox_tasks",
+      "terminal_publication_grants",
+      ...terminalTables,
+      "workstream_sandboxes",
+      "workstream_terminal_repositories",
+    ].sort();
     expect(database.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%sandbox%'
        OR type = 'table' AND name IN ('terminal_publication_grants', 'workstream_terminal_repositories', 'repository_publications')
        ORDER BY name`,
-    ).all()).toEqual(terminalTables.slice().sort().map((name) => ({ name })));
+    ).all()).toEqual(allTerminalTables.map((name) => ({ name })));
 
     for (const table of terminalTables) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -3016,33 +3003,12 @@ describe("database migrations", () => {
       VALUES ('terminal-owner', 'terminal-owner-subject', 'terminal@example.com', 'Terminal Owner', '2026-08-13', '2026-08-13');
       INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES ('terminal-workspace', 'Terminal Workspace', 'terminal-workspace', 'global', 'terminal-owner', '2026-08-13', '2026-08-13');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('terminal-workstream', 'terminal-workspace', 'Terminal', 'Run code', 'ad_hoc',
-              'terminal-owner', 'idle', '2026-08-13', '2026-08-13', '2026-08-13');
       INSERT INTO workspace_sandbox_network_policies
         (workspace_id, mode, revision, verification_state, baseline_manifest_version,
          effective_domains_json, created_at, updated_at)
       VALUES ('terminal-workspace', 'trusted_only', 1, 'verified', 'terminal-network-v1', '[]',
               '2026-08-13', '2026-08-13');
-      INSERT INTO workstream_sandboxes
-        (workspace_id, workstream_id, state, stable_name, generation,
-         authority_fingerprint, applied_network_revision, version, last_activity_at,
-         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'avalon-terminal-workstream', 1,
-              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
-              '2026-08-13', '2026-08-13');
     `);
-    expect(() => database.exec(`
-      INSERT INTO workstream_sandboxes
-        (workspace_id, workstream_id, state, stable_name, generation,
-         authority_fingerprint, applied_network_revision, version, last_activity_at,
-         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'duplicate', 2,
-              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
-              '2026-08-13', '2026-08-13');
-    `)).toThrow(/UNIQUE constraint failed/u);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });

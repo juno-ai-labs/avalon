@@ -503,6 +503,21 @@ Because API deployment is continuous, a merge to `main` is a production release.
 
 The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
+Migration `0090_drop_legacy_product_tables.sql` is the one deliberate reverse-order
+exception. It deletes tables and columns the previous Worker still names, so
+applying it first would break every new work-stream creation until deployment
+finished — or indefinitely if deployment failed. The deployment workflow reads
+each remote pending-migration ledger; when 0090 is pending in a region, it
+deploys the replacement Workers first and applies 0090 afterward. The
+replacement Worker probes the regional `workstreams` shape when reserving an
+identity anchor and can write both the through-0089 required-column shape and
+the final three-column shape. Therefore a failed Worker deploy leaves the old
+schema untouched, while a failed migration leaves the compatible Worker serving
+the old schema. Detection comes from the remote ledger, not the triggering Git
+diff, so a superseded workflow or later regional retry retains the barrier.
+Once 0090 is no longer pending, the workflow automatically returns to the
+ordinary migration-first order.
+
 Twenty seconds is the happy path, and it is the figure that makes this rule feel safe to skip. A failed deployment leaves the migrations applied, as the paragraph above says, so a deploy that breaks after the migration step leaves the previous Worker writing through the new default until a fix-forward lands — minutes or hours, not seconds, and every row written in that time takes the default.
 
 So when a migration adds a `NOT NULL` column to a table the Worker writes to on a hot path, **choose the default that is safe for the old code to produce**, not the one that is convenient for the rows already there. Those are different questions and they are answered in different places: existing rows are the migration's own `UPDATE`, which can say anything; rows written during the window get the column default and nothing else. Expect the safe default to cost an extra `UPDATE` rather than nothing — a default picked for the window is usually the wrong answer for some class of existing rows, and that class then needs its own backfill.
@@ -616,7 +631,9 @@ Both regions completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
 (the cron importer, the per-object import RPCs, and the deploy workflow's
 cutover steps) has been retired; the control row, the route directory, and the
-legacy D1 fence triggers deliberately remain. The control row is read on every
+minimal three-column work-stream identity anchor deliberately remain. Migration
+0090 removes the product tables, their fences, and the completed route-population
+triggers. The control row is read on every
 request and fails closed — do not delete it, and never edit
 `serving_contract_version` manually. `workstream_authority_routes` is now the
 live work-stream-to-object directory: creation writes it, and regional effect
@@ -643,11 +660,11 @@ Effect receipts and terminal notification shells disappear after 30 days; a
 redelivery older than that converges on the idempotent product identities
 (directory waterline, activity dedupe key, intent ID) instead of a receipt.
 
-The legacy D1 product triggers are the permanent tripwire. An error containing
-`workstream_do_authoritative` (or `workspace_do_authoritative`) means a missed
-writer; quarantine and fix that path. Do not remove the trigger or fall back to
-D1. Workspace resource records, schedules for D1-owned modules, connector
-delivery, audit, and telemetry remain valid D1 writers.
+Migration 0090 removes the legacy D1 product tables and their writer fences. A
+post-cutover `no such table` or `no such column` from a product statement means
+the runtime router was bypassed; quarantine and fix that path, and never recreate
+the table or fall back to D1. Identity, membership, routing, migration/control,
+audit, and telemetry remain valid D1 writers.
 
 ## Timezones
 
@@ -1230,9 +1247,9 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
   `SubstreamAgent` is canonical for its substream product tables,
   `WorkstreamDO` is canonical for aggregate metadata/outbox, `WorkspaceDO` is
   canonical for cross-work-stream directory/viewer/pin/resource/feedback
-  indexes, and D1 stays canonical for identity/membership, schedules and
-  connector/workspace/activity modules that remain relational, migration,
-  external delivery, and audit.
+  indexes and every workspace-scoped product module, and D1 stays canonical for
+  identity/membership, routing, migration/control, and operational
+  audit/telemetry only.
 - R2 stores large payloads, uploads, and snapshots referenced by their owning
   regional database.
 - Use D1 PITR before the work-stream authority open. After open, use object

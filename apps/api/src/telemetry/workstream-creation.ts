@@ -8,6 +8,7 @@ import {
 
 import type { Env, IdentityAuthContext } from "../env";
 import { logWarn } from "../observability/logger";
+import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
@@ -102,7 +103,11 @@ export async function recordWorkstreamCreatedTelemetry(
   input: WorkstreamCreationTelemetryInput,
 ): Promise<void> {
   try {
-    const row = await env.DB.prepare(
+    // The counts live with the work-stream authority — messages and their
+    // attachments have no regional copy — so the read routes through the
+    // runtime database rather than the regional handle the emitters use.
+    const routed = withWorkstreamRuntimeDatabase(env, input.workspaceId, input.workstreamId);
+    const row = await routed.DB.prepare(
       `SELECT w.scope, w.origin_type, w.system_kind, w.model_override,
               (SELECT COUNT(*) FROM workstream_participants participant
                WHERE participant.workstream_id = w.id AND participant.removed_at IS NULL) AS participant_count,
