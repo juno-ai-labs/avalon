@@ -29,6 +29,8 @@
     "db:seed": "pnpm env:sync && pnpm --filter @avalon/api db:seed && pnpm --filter @avalon/api db:seed:eu",
     "health:regions": "node scripts/check-regional-health.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
+    "e2e:local": "node scripts/e2e-local.mjs",
+    "db:open-authority": "node scripts/open-local-authority.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
     "test": "pnpm -r --if-present test",
     "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",

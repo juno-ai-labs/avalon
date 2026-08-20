@@ -6,6 +6,7 @@ import { requestContext, securityMiddleware } from "./middleware/request-context
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
 import { authRoutes } from "./routes/auth";
+import { devRoutes } from "./routes/dev";
 import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { digestRoutes } from "./routes/digest";
@@ -110,6 +111,8 @@ export function createApp(): Hono<HonoAppEnv> {
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
   app.route("/auth", authRoutes);
+  // Development tooling; every handler re-checks the dev gate itself.
+  app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
   app.route("/ingest/resend", resendInboundRoutes);
