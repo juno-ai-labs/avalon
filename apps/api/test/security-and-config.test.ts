@@ -134,17 +134,6 @@ describe("API security utilities", () => {
   });
 
   it("attaches resources with watching off until a canonical watch is activated", () => {
-    const attachSql = __workstreamServiceTesting.attachResourceSql.replace(/\s+/gu, " ");
-    expect(attachSql).toContain("VALUES (?, ?, ?, 0, 'attachment', ?)");
-    expect(attachSql).toContain("ON CONFLICT(workstream_id, resource_id) DO NOTHING");
-    expect(attachSql).not.toContain("watch_enabled = 1");
-
-    const readSql = __workstreamServiceTesting.workstreamResourcesSql.replace(/\s+/gu, " ");
-    expect(readSql).toContain("LEFT JOIN resource_watches rw");
-    expect(readSql).toContain("rw.enabled = 1");
-    expect(readSql).not.toContain("rw.next_poll_at IS NOT NULL");
-    expect(readSql).toContain("WHEN rw.id IS NOT NULL THEN 'watching'");
-
     const enableSql = __resourceServiceTesting.enableResourceWatchSql.replace(/\s+/gu, " ");
     expect(enableSql).toContain("watch_type = excluded.watch_type");
     expect(enableSql).toContain("next_poll_at = excluded.next_poll_at");
@@ -163,17 +152,6 @@ describe("API security utilities", () => {
     });
     expect(() => __resourceServiceTesting.resourceWatchMode({ supportsWatches: false, supportsPolling: false }, at))
       .toThrow("This connector does not support resource watches");
-  });
-
-  it("loads durable rail data only from the current work stream and workspace", () => {
-    const harnessSql = __workstreamServiceTesting.workstreamHarnessTasksSql.replace(/\s+/gu, " ");
-    const toolSql = __workstreamServiceTesting.workstreamToolTasksSql.replace(/\s+/gu, " ");
-
-    expect(harnessSql).toContain("WHERE hr.workspace_id = ? AND hr.workstream_id = ?");
-    expect(harnessSql).toContain("m.client_message_id = ('harness:' || hr.id)");
-    expect(toolSql).toContain("WHERE ti.workspace_id = ? AND ti.workstream_id = ?");
-    expect(__workstreamServiceTesting.backgroundTaskStatus("needs_input")).toBe("needs_input");
-    expect(__workstreamServiceTesting.backgroundTaskStatus("ambiguous")).toBe("failed");
   });
 
   it("preserves offline credentials only for the same stable Google account", () => {

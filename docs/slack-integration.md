@@ -23,7 +23,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
 | `apps/api/src/services/slack-mention-service.ts` | Workspace-bot mention delivery. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
-| `apps/api/src/workflows/workstream-loop.ts` | The workflow output sink that reaches Slack. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `screens/new-automation.tsx` | Installation administration and the automation destination. |
 | `config/provider-apps/slack.json` | The manifest. |
 

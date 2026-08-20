@@ -90,6 +90,30 @@ export function permitsLegacyRuntimeDrain(control: WorkstreamAuthorityControl): 
   return control.phase === "legacy_open" || control.phase === "maintenance_draining";
 }
 
+/**
+ * Refuse to serve a work-stream product call anywhere but the Durable-Object
+ * authority.
+ *
+ * The pre-cutover D1 execution arms are gone: production opened the authority
+ * in both regions, and a local stack reaches the same state with
+ * `pnpm db:open-authority`. A deployment that has not is an unsupported
+ * configuration, and the honest answer is this refusal — not a silent run of
+ * code no environment is meant to execute.
+ */
+export async function requireOpenWorkstreamAuthority(
+  env: Pick<Env, "DB">,
+): Promise<WorkstreamAuthorityControl> {
+  const control = await readWorkstreamAuthorityControl(env);
+  if (control.phase !== "durable_object_open") {
+    throw new ApiError(
+      503,
+      "workstream_authority_not_open",
+      "This deployment serves work streams from Durable Objects only; open the authority first (locally: pnpm db:open-authority)",
+    );
+  }
+  return control;
+}
+
 /** Reject product ingress that reaches a named WorkerEntrypoint instead of the default HTTP handler. */
 export async function requireWorkstreamIngress(
   env: Pick<Env, "DB">,

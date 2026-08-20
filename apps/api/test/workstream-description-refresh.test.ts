@@ -16,7 +16,6 @@ import {
   refreshWorkstreamDescription,
   restUntil,
 } from "../src/services/workstream-description-service";
-import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
@@ -201,84 +200,6 @@ function refreshRow(database: DatabaseSync): Record<string, unknown> | undefined
   ).get(WORKSTREAM_ID) as Record<string, unknown> | undefined;
 }
 
-describe("who wrote the description", () => {
-  function service(env: Env): WorkstreamService {
-    return new WorkstreamService(env, {
-      sessionId: "session-1",
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      role: "owner",
-    });
-  }
-
-  it("marks a description a person edited as authored", async () => {
-    const { database, env } = fixture();
-
-    const updated = await service(env).update(WORKSTREAM_ID, {
-      objective: "Run the EU payments incident review.",
-    });
-
-    expect(updated.objective).toBe("Run the EU payments incident review.");
-    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
-      .toMatchObject({ description_source: "authored" });
-  });
-
-  it("does not treat a resubmitted, unchanged description as authorship", async () => {
-    const { database, env } = fixture();
-    addQualifyingConversation(database);
-    await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    });
-
-    await service(env).update(WORKSTREAM_ID, {
-      objective: "Look into the payment error Morgan reported on Monday.",
-    });
-
-    // A no-op PATCH must not flip the provenance or reset the loop's state.
-    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
-      .toMatchObject({ description_source: "derived" });
-    expect(refreshRow(database)).toMatchObject({ decision: "kept", consecutive_keeps: 1 });
-  });
-
-  it("never shortens a rest the work stream had already earned", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    const { database, env } = fixture();
-    addQualifyingConversation(database);
-    await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    });
-    // Stand in for a long-settled description that has earned the ceiling.
-    const earned = new Date(Date.now() + 48 * 60 * 60 * 1_000).toISOString();
-    database.prepare(
-      "UPDATE workstream_description_refreshes SET rest_until = ?, consecutive_keeps = 4 WHERE workstream_id = ?",
-    ).run(earned, WORKSTREAM_ID);
-
-    await service(env).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
-
-    const row = refreshRow(database)!;
-    expect(String(row.rest_until)).toBe(earned);
-    // An edit is not an evaluation, so it neither confirms nor refutes.
-    expect(row.consecutive_keeps).toBe(4);
-  });
-
-  it("leaves the source alone when an edit does not touch the description", async () => {
-    const { database, env } = fixture({ descriptionSource: "authored" });
-
-    const updated = await service(env).update(WORKSTREAM_ID, { title: "EU payments" });
-
-    expect(updated.title).toBe("EU payments");
-    expect(objective(database)).toBe("Look into the payment error Morgan reported on Monday.");
-    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
-      .toMatchObject({ description_source: "authored" });
-  });
-});
-
 describe("description proposal guards", () => {
   const rewrite = (description: string | null, confidence = 0.95): Proposal => ({
     decision: "rewrite",
@@ -408,30 +329,6 @@ describe("work-stream description refresh", () => {
       // this evaluation read.
       description: "Run the EU payments incident review.",
     });
-  });
-
-  it("records an authored edit over a failed evaluation without tripping the row's constraints", async () => {
-    const { database, env } = fixture();
-    addQualifyingConversation(database);
-    vi.stubGlobal("fetch", async () => new Response(
-      JSON.stringify({ error: { message: "model unavailable" } }),
-      { status: 503, headers: { "Content-Type": "application/json" } },
-    ));
-    await refreshWorkstreamDescription(env, { ...input, now: NOW });
-    expect(refreshRow(database)).toMatchObject({ decision: "failed", rejection_code: "model_unavailable" });
-
-    await new WorkstreamService(env, {
-      sessionId: "session-1",
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      role: "owner",
-    }).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
-
-    // A decision that carries a rejection code has to clear it on the way out,
-    // or the table's CHECK rejects the write and the person's edit 500s.
-    expect(refreshRow(database)).toMatchObject({ decision: "authored", rejection_code: null });
-    expect(objective(database)).toBe("Run the EU payments incident review.");
   });
 
   it("reads the last 200 messages when the last 72 hours holds fewer", async () => {
@@ -646,41 +543,6 @@ describe("what it takes to spend a model call", () => {
     await refreshWorkstreamDescription(env, { ...input, now });
     expect(refreshRow(database)).toMatchObject({ decision: "rewritten", consecutive_keeps: 0 });
     expect(refreshRow(database)!.rest_until).toBe(restUntil(now, 0));
-  });
-
-  it("rests instead of second-guessing a description a person just wrote", async () => {
-    const { database, env, prompts } = fixture();
-    addQualifyingConversation(database);
-
-    await new WorkstreamService(env, {
-      sessionId: "session-1",
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      role: "owner",
-    }).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
-
-    const row = refreshRow(database)!;
-    // `authored`, not `kept`: the loop did not look, a person settled it.
-    expect(row).toMatchObject({
-      decision: "authored",
-      rejection_code: null,
-      confidence: null,
-      model: null,
-      consecutive_keeps: 0,
-      previous_description: "Look into the payment error Morgan reported on Monday.",
-      description: "Run the EU payments incident review.",
-      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
-    });
-    // The edit stamps the wall clock, so the rest is asserted against the
-    // instant it recorded rather than against this test's frozen one.
-    expect(String(row.rest_until)).toBe(restUntil(new Date(String(row.evaluated_at)), 0));
-    expect(await refreshWorkstreamDescription(env, {
-      ...input,
-      now: new Date(String(row.evaluated_at)),
-    })).toEqual({ status: "skipped", reason: "resting" });
-    expect(prompts).toHaveLength(0);
-    expect(objective(database)).toBe("Run the EU payments incident review.");
   });
 });
 

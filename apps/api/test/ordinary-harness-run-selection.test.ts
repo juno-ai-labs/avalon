@@ -9,18 +9,6 @@ function source(relativePath: string): string {
 }
 
 describe("ordinary harness-run selection", () => {
-  it("keeps inline child and HyperSight rows out of workstream latest-run and retry state", () => {
-    const service = source("../src/services/workstream-service.ts");
-    expect(service).toMatch(
-      /SELECT id, origin, status, model, error_json, started_at, completed_at, created_at FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block' ORDER BY created_at DESC LIMIT 1/u,
-    );
-    // `retry` reads the trigger beside the status: it replays the failed run's
-    // own trigger, and the same two exclusions decide which run that is.
-    expect(service).toMatch(
-      /SELECT id, status, trigger_message_id FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block' ORDER BY created_at DESC LIMIT 1/u,
-    );
-  });
-
   it("keeps inline child and HyperSight rows out of automation and activity recovery", () => {
     const automation = source("../src/services/automation-service.ts");
     expect(automation).toContain(

@@ -8,8 +8,8 @@ import type { Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
-import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamContract } from "./helpers/durable-authority";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const databases: DatabaseSync[] = [];
@@ -54,7 +54,7 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-ownerless', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
+      VALUES ('7a000000-0000-4000-8000-000000000001', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', NULL, 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
@@ -62,7 +62,7 @@ describe("Slack workspace workstream assignment", () => {
          opening_client_message_id, workstream_id, invocation_kind, channel_type,
          context_json, created_at, updated_at)
       VALUES ('session-ownerless', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
-              'T123', 'U456', 'C123', '1.0', 'event:ownerless', 'workstream-ownerless',
+              'T123', 'U456', 'C123', '1.0', 'event:ownerless', '7a000000-0000-4000-8000-000000000001',
               'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
     `);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -81,6 +81,7 @@ describe("Slack workspace workstream assignment", () => {
     }));
     const env = createTestEnv({
       DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -107,10 +108,10 @@ describe("Slack workspace workstream assignment", () => {
     });
     expect(database.prepare(
       `SELECT user_id, participation_reason FROM workstream_participants
-       WHERE workstream_id = 'workstream-ownerless'`,
+       WHERE workstream_id = '7a000000-0000-4000-8000-000000000001'`,
     ).get()).toEqual({ user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" });
     expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-ownerless'",
+      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000001'",
     ).get()).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
   });
 
@@ -147,7 +148,7 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-owned', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
+      VALUES ('7a000000-0000-4000-8000-000000000002', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', 'user-owner', 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
@@ -155,7 +156,7 @@ describe("Slack workspace workstream assignment", () => {
          opening_client_message_id, workstream_id, invocation_kind, channel_type,
          context_json, created_at, updated_at)
       VALUES ('session-owned', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
-              'T123', 'U456', 'C123', '1.0', 'event:owned', 'workstream-owned',
+              'T123', 'U456', 'C123', '1.0', 'event:owned', '7a000000-0000-4000-8000-000000000002',
               'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
     `);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -170,6 +171,7 @@ describe("Slack workspace workstream assignment", () => {
     }), { status: 200, headers: { "content-type": "application/json" } })));
     const env = createTestEnv({
       DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -186,7 +188,7 @@ describe("Slack workspace workstream assignment", () => {
     )).resolves.toBe(1);
 
     expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-owned'",
+      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000002'",
     ).get()).toEqual({ created_by_user_id: "user-owner" });
   });
 
@@ -199,10 +201,14 @@ describe("Slack workspace workstream assignment", () => {
       displayName: "Taylor",
       avatarUrl: null,
     }));
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database),
+      AVALON_REGION: "global",
+    });
 
     await expect(new SlackWorkspaceWorkstreamService(env, asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524")).answerOpenElicitation(
-      "workstream-retry",
+      "7a000000-0000-4000-8000-000000000005",
       {
         actor: {
           provider: "slack",
@@ -227,33 +233,6 @@ describe("Slack workspace workstream assignment", () => {
         },
       },
     )).resolves.toEqual({ elicitation: null, harnessRunId: null });
-
-    expect(database.prepare(
-      "SELECT id, status, answer_json FROM elicitations ORDER BY created_at",
-    ).all()).toEqual([
-      { id: "elicitation-a", status: "open", answer_json: null },
-      { id: "elicitation-b", status: "open", answer_json: null },
-    ]);
-  });
-
-  it("does not answer another user elicitation when a client response is retried", async () => {
-    const database = migratedDatabase();
-    seedElicitationRetry(database, "human", "a352221e-2577-4ad0-8889-5b24421f63fb", null);
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
-    const service = new WorkstreamService(env, {
-      sessionId: "slack:T123:U456",
-      userId: asUserId("a352221e-2577-4ad0-8889-5b24421f63fb"),
-      workspaceId: asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524"),
-      region: "global",
-      role: "member",
-    });
-
-    await expect(service.answerElicitation(
-      "workstream-retry",
-      "elicitation-b",
-      { answer: "stale answer" },
-      "event:retry",
-    )).resolves.toEqual({ elicitation: undefined, harnessRunId: null });
 
     expect(database.prepare(
       "SELECT id, status, answer_json FROM elicitations ORDER BY created_at",
@@ -299,13 +278,13 @@ describe("Slack workspace workstream assignment", () => {
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
       VALUES
-        ('workstream-guessed', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Guessed', 'Slack task', 'ad_hoc', 'user-jordan',
+        ('7a000000-0000-4000-8000-000000000003', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Guessed', 'Slack task', 'ad_hoc', 'user-jordan',
          'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01'),
-        ('workstream-elsewhere', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Elsewhere', 'Slack task', 'ad_hoc', 'user-owner',
+        ('7a000000-0000-4000-8000-000000000004', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Elsewhere', 'Slack task', 'ad_hoc', 'user-owner',
          'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
       INSERT INTO workstream_participants
         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-      VALUES ('workstream-guessed', 'user-jordan', 'user-jordan', 'creator', '2026-01-01');
+      VALUES ('7a000000-0000-4000-8000-000000000003', 'user-jordan', 'user-jordan', 'creator', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -313,17 +292,21 @@ describe("Slack workspace workstream assignment", () => {
          assigned_user_id, assigned_at, assignment_method, context_json, created_at, updated_at)
       VALUES
         ('session-guessed', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
-         'T123', 'U456', 'C123', '1.0', 'event:guessed', 'workstream-guessed',
+         'T123', 'U456', 'C123', '1.0', 'event:guessed', '7a000000-0000-4000-8000-000000000003',
          'app_mention', 'public', 'user-jordan', '2026-01-01', 'verified_email', '{}',
          '2026-01-01', '2026-01-01'),
         ('session-elsewhere', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-slack', NULL, 'workspace',
-         'T123', 'U456', 'C123', '2.0', 'event:elsewhere', 'workstream-elsewhere',
+         'T123', 'U456', 'C123', '2.0', 'event:elsewhere', '7a000000-0000-4000-8000-000000000004',
          'app_mention', 'public', 'user-owner', '2026-01-01', 'explicit_link', '{}',
          '2026-01-01', '2026-01-01');
       INSERT INTO slack_link_challenges
         (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
       VALUES ('${await sha256("link-token")}', 'connection-slack', 'T123', 'U456',
               '2099-01-01T00:00:00.000Z', '2026-01-01');
+      INSERT INTO slack_installation_routes
+        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+      VALUES ('T123', 'global', '3f88f9ca-d7b3-4714-828e-b22187914524',
+              'connection-slack', 'active', '2026-01-01', '2026-01-01');
     `);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({ ok: true }),
@@ -331,6 +314,12 @@ describe("Slack workspace workstream assignment", () => {
     )));
     const env = createTestEnv({
       DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database),
+      // App Home reads the member's recent work streams from the WorkspaceDO
+      // directory after cutover; an empty page keeps the link flow moving.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { recentWorkstreamDirectory: vi.fn(async () => ({ items: [] })) },
+      }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -352,18 +341,18 @@ describe("Slack workspace workstream assignment", () => {
     // The link is a stronger statement about who this Slack member is than the
     // address its own earlier assignment matched on.
     expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-guessed'",
+      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000003'",
     ).get()).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
     expect(database.prepare(
       `SELECT user_id, participation_reason FROM workstream_participants
-       WHERE workstream_id = 'workstream-guessed' ORDER BY user_id`,
+       WHERE workstream_id = '7a000000-0000-4000-8000-000000000003' ORDER BY user_id`,
     ).all()).toEqual([
       { user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" },
       { user_id: "user-jordan", participation_reason: "explicit" },
     ]);
     // A creator recorded by anything other than that guess still stands.
     expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-elsewhere'",
+      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000004'",
     ).get()).toEqual({ created_by_user_id: "user-owner" });
   });
 });
@@ -587,7 +576,6 @@ describe("Slack public channel membership", () => {
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
-      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
     });
 
     await new SlackAgentService(env).processQueuedIngress("event:acknowledge");
@@ -616,7 +604,6 @@ describe("Slack public channel membership", () => {
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
-      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
     });
 
     await new SlackAgentService(env).processQueuedIngress(`event:${reactionError}`);
@@ -683,18 +670,71 @@ describe("Slack public channel membership", () => {
               '44444444-4444-4444-8444-444444444444', 'T123', 'U456',
               'active', '2026-01-01', '2026-01-01');
     `);
+    database.exec(`
+      INSERT INTO slack_installation_routes
+        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
+    `);
     insertSlackEventJob(database, "event:linked", appMention("EvLinked"));
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
+    // A linked member creates through the object creation coordinator, whose
+    // product boundary (`initialize`) is fabricated here; the regional anchor
+    // row carries the attribution the assertion below reads.
     const env = createTestEnv({
       ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
-      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+        product: {
+          initialize: (request) => {
+            const input = request.input as Record<string, unknown>;
+            return {
+              workstream: testWorkstreamContract({
+                id: input.workstreamId,
+                workspaceId: input.workspaceId,
+                title: input.title,
+                objective: input.objective,
+                titleStatus: input.titleStatus,
+                createdByUserId: input.creatorUserId,
+                emailAddress: input.emailAddress,
+              }),
+              messageId: crypto.randomUUID(),
+              harnessRunId: crypto.randomUUID(),
+            };
+          },
+          attach_resource: (request) => ({
+            id: request.resourceId,
+            workspaceId: "22222222-2222-4222-8222-222222222222",
+            connectionId: null,
+            resourceType: "slack_thread",
+            provider: "slack",
+            providerResourceId: null,
+            title: "Slack thread",
+            mimeType: null,
+            canonicalUrl: null,
+            watchEnabled: false,
+            watchStatus: "unsupported",
+            lastHydratedAt: null,
+            createdAt: "2026-01-02T00:00:00.000Z",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+          }),
+        },
+      }),
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+      }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+      }),
     });
 
-    await new SlackAgentService(env).processQueuedIngress("event:linked");
+    await new SlackAgentService(env).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:linked",
+    );
 
     expect(methods).toContain("reactions.add");
     expect(methods).not.toContain("users.info");
@@ -1015,21 +1055,21 @@ function seedElicitationRetry(
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
        harness_status, next_sequence_number, email_address, email_route_status,
        last_activity_at, created_at, updated_at)
-    VALUES ('workstream-retry', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Retry', 'Retry', 'ad_hoc', NULL,
+    VALUES ('7a000000-0000-4000-8000-000000000005', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Retry', 'Retry', 'ad_hoc', NULL,
             'needs_input', 2, 'retry@automation.with-avalon.com', 'active',
             '2026-01-01', '2026-01-01', '2026-01-01');
     INSERT INTO harness_runs
       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
     VALUES
-      ('run-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-01'),
-      ('run-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'test', '{}', 'needs_input', '2026-01-02');
+      ('run-a', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-01'),
+      ('run-b', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-02');
     INSERT INTO elicitations
       (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
        options_json, minimum_selections, maximum_selections, status, created_at)
     VALUES
-      ('elicitation-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'run-a', 'First?', 'text',
+      ('elicitation-a', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'run-a', 'First?', 'text',
        '[]', 0, NULL, 'open', '2026-01-01'),
-      ('elicitation-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', 'run-b', 'Second?', 'text',
+      ('elicitation-b', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'run-b', 'Second?', 'text',
        '[]', 0, NULL, 'open', '2026-01-02');
   `);
   database.prepare(
@@ -1037,7 +1077,7 @@ function seedElicitationRetry(
      (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
       message_type, text_content, structured_content_json, sequence_number, created_at,
       external_actor_json)
-     VALUES ('message-retry', 'event:retry', '3f88f9ca-d7b3-4714-828e-b22187914524', 'workstream-retry', ?, ?,
+     VALUES ('message-retry', 'event:retry', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', ?, ?,
              'elicitation', '', NULL, 1, '2026-01-01', ?)`,
   ).run(authorType, authorUserId, externalActorJson);
 }
@@ -1322,9 +1362,7 @@ function slackMembershipEnvironment(
     OPENROUTER_PRIMARY_MODEL: "test-model",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
     WORKSTREAM_EMAIL_ADDRESS_KEY: "test-workstream-email-address-key",
-    WORKSTREAM_LOOP_WORKFLOW: {
-      create: vi.fn(async () => ({ id: "workflow-instance" })),
-    },
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database),
     SLACK_APP_ID: "A1",
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
@@ -1340,6 +1378,9 @@ function migratedDatabase(): DatabaseSync {
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
+  // The retired pre-cutover arms are gone: Slack ingress serves work streams
+  // through the Durable-Object authority, so every fixture opens it first.
+  openWorkstreamAuthorityForTest(database);
   return database;
 }
 
@@ -1355,6 +1396,16 @@ function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
       },
       async all<T>() {
+        // Mutations issued through `.all()` by the runtime-database routers
+        // still need an honest `meta.changes`.
+        if (!/^\s*(?:SELECT|WITH)/iu.test(sql) && !/\bRETURNING\b/iu.test(sql)) {
+          const result = database.prepare(sql).run(...values as SQLInputValue[]);
+          return createTestD1Result<T>({
+            success: true,
+            results: [],
+            meta: { changes: Number(result.changes) },
+          });
+        }
         return createTestD1Result<T>({
           success: true,
           results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],

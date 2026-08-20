@@ -284,10 +284,11 @@ replacement isolate from overlapping the previous owner. Once that lease
 expires, replay resumes through the same run scope and tool receipts, so an
 external write is not intentionally performed twice.
 
-Legacy work-stream runs may still drain through `WorkstreamLoopWorkflow` before
-the maintenance authority opens. New work-stream loops do not create a Workflow
-after the switch. Non-workstream agent loops may continue using their generic
-Workflow abstraction; this cutover changes only the work-stream-down runtime.
+`WorkstreamLoopWorkflow` and its binding are gone: every work-stream run
+executes inside the SubstreamAgent, and a stack whose authority is not
+`durable_object_open` is refused with `workstream_authority_not_open` rather
+than routed to retired code. Non-workstream agent loops keep their generic
+Workflow abstraction; the retirement changed only the work-stream-down runtime.
 
 ### HyperSight block agents
 
@@ -963,6 +964,59 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-20 — The pre-cutover execution arms are removed from the product path
+
+**What changed:** Every phase split in `WorkstreamService` and
+`routes/workstreams.ts` now keeps only the Durable-Object arm: the service's
+product methods delegate to `WorkstreamObjectClient` /
+`WorkstreamObjectCreationService` unconditionally, and a stack whose authority
+is not `durable_object_open` is refused with a 503
+`workstream_authority_not_open` (`requireOpenWorkstreamAuthority` in
+`workstream-authority.ts`) that names the fix: `pnpm db:open-authority`.
+`launchWorkstreamHarness` and `startWorkstreamWorkflow` carry the same guard
+and dispatch only to the SubstreamAgent. `WorkstreamLoopWorkflow` is deleted —
+file, `index.ts` export, `WORKSTREAM_LOOP_WORKFLOW` binding in both Wrangler
+configs and the Env contract, and its `/health` probe. The regional
+control-plane reads stay: `list`, pins, socket-ticket visibility gates, and
+email-route reconciliation still read the D1 `workstreams` index, which
+remains the routing/identity anchor. The service's `create` also stopped
+letting a failed origin-resource attach fail the create, restoring the
+contract the legacy arm kept.
+
+**Why:** Production is fully cut over — `workstream_authority_control.phase =
+'durable_object_open'` in both regions — and local development reaches the
+same state via `pnpm db:open-authority`. The legacy arms were reachable only
+on a local stack that skipped that step, a configuration that is no longer
+supported; such calls must fail loudly, not silently run 2,000 lines of code
+no deployment executes. Dead arms in a 3,000-line service are where the next
+confusion hides: every reader had to re-derive which half was live before
+touching anything.
+
+**Considered and rejected:** Keeping the arms behind the phase check "for
+safety" — the fences already abort their D1 writes post-cutover, so the arms
+could only half-run; and quarantining them into a separate legacy module —
+that preserves the reading burden the removal exists to end. Draining code was
+not kept either: no legacy Workflow instance can exist since the cutover, so
+there is nothing left to drain.
+
+**Deliberate leftovers:** The D1 product tables and their reject fences stay
+until `seed.sql` is reworked (a separate stage — no migrations were touched
+here); `packages/db` query helpers that lost their last production caller
+(e.g. parts of `database.workstreams.*`) stay for a later sweep because that
+package is shared surface. `bootstrapWorkstreamRuntimeEnvironment` and
+`workstreamExecutionEnvironment` keep their non-open fallbacks for the DO-
+internal legacy-open read paths this change deliberately did not touch.
+
+**Consequences:** Unit tests that exercised the legacy arms were retargeted to
+the object boundary (see `test/helpers/durable-authority.ts`, which walks the
+phase machine and serves the runtime SQL port from sqlite) or replaced by
+`workstream-durable-authority.test.ts`, which pins the refusal across the
+member-visible surface. The launch failure path — member-safe copy persisted,
+diagnostics logged — is pinned there too. Anything still writing the fenced D1
+product tables outside the DO port is now a bug by definition, not a phase.
+
+
 
 ### 2026-08-20 — The object creation path schedules the first naming pass
 

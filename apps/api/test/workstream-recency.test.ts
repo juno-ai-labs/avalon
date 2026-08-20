@@ -1,9 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { WorkstreamDetailSchema } from "@avalon/contracts";
-import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import type { HonoAppEnv } from "../src/env";
-import { workstreamRoutes } from "../src/routes/workstreams";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "../src/services/workstream-email-routing-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
@@ -15,103 +11,6 @@ const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000003";
 const CONNECTION_ID = "00000000-0000-4000-8000-000000000004";
 
 describe("work-stream recency ordering", () => {
-  it("opens a healthy work stream with one combined visibility lookup", async () => {
-    const row = contractWorkstreamRow();
-    const sqlStatements: string[] = [];
-    const prepare = vi.fn((sql: string) => {
-      sqlStatements.push(sql);
-      const statement = {
-        bind: vi.fn(() => statement),
-        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
-        all: vi.fn(async () => ({ success: true, results: [] })),
-      };
-      return statement;
-    });
-    const service = new WorkstreamService(
-      createTestEnv({
-        APP_ENV: "production",
-        AVALON_REGION: "global",
-        DB: { prepare, batch: vi.fn() },
-      }),
-      { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
-    );
-
-    await expect(service.get(WORKSTREAM_ID)).resolves.toMatchObject({ id: WORKSTREAM_ID });
-
-    expect(sqlStatements.filter((sql) => sql.includes("SELECT w.*, t.name AS origin_label"))).toHaveLength(1);
-    expect(sqlStatements.some((sql) => sql.includes("SELECT email_address, email_route_status, archived_at"))).toBe(false);
-  });
-
-  it("includes the model-facing plugin id in embedded work-stream connections", async () => {
-    const row = contractWorkstreamRow();
-    const connection = contractConnectionRow();
-    const prepare = vi.fn((sql: string) => {
-      const statement = {
-        bind: vi.fn(() => statement),
-        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
-        all: vi.fn(async () => ({
-          success: true,
-          results: sql.includes("FROM connector_connections c") ? [connection] : [],
-        })),
-      };
-      return statement;
-    });
-    const service = new WorkstreamService(
-      createTestEnv({
-        APP_ENV: "production",
-        AVALON_REGION: "global",
-        DB: { prepare, batch: vi.fn() },
-      }),
-      { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
-    );
-
-    const detail = await service.get(WORKSTREAM_ID);
-
-    expect(detail.connections).toEqual([
-      expect.objectContaining({ id: CONNECTION_ID, modelPluginId: "plugin_google" }),
-    ]);
-  });
-
-  it("serves a GET work-stream response that satisfies the released wire contract", async () => {
-    const row = contractWorkstreamRow();
-    const connection = contractConnectionRow();
-    const prepare = vi.fn((sql: string) => {
-      const statement = {
-        bind: vi.fn(() => statement),
-        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
-        all: vi.fn(async () => ({
-          success: true,
-          results: sql.includes("FROM connector_connections c") ? [connection] : [],
-        })),
-      };
-      return statement;
-    });
-    const environment = createTestEnv({
-      APP_ENV: "production",
-      AVALON_REGION: "global",
-      DB: { prepare, batch: vi.fn() },
-    });
-    const app = new Hono<HonoAppEnv>();
-    app.use("*", async (context, next) => {
-      context.set("auth", {
-        sessionId: "test-session",
-        workspaceId: WORKSPACE_ID,
-        userId: USER_ID,
-        region: "global",
-        role: "owner",
-      });
-      await next();
-    });
-    app.route("/workstreams", workstreamRoutes);
-
-    const response = await app.request(`/workstreams/${WORKSTREAM_ID}`, undefined, environment);
-
-    expect(response.status).toBe(200);
-    expect(WorkstreamDetailSchema.parse(await response.json()).connections).toEqual([
-      expect.objectContaining({ id: CONNECTION_ID, modelPluginId: "plugin_google" }),
-    ]);
-  });
-
   it("rejects a connection row that violates the wire contract", async () => {
     const row = contractWorkstreamRow();
     const connection = {
