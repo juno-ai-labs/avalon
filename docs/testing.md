@@ -31,6 +31,7 @@ once and passes on a rerun.
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @avalon/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @avalon/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Two real regional Workers under `wrangler dev`, with the local D1 database. |
+| `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
 `pnpm test` runs every package's `test` script recursively, and `@avalon/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
