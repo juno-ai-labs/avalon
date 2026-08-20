@@ -300,7 +300,12 @@ describe("database migrations", () => {
            created_at, updated_at, model_plugin_id)
         VALUES ('scrub-slack', 'scrub-workspace', 'slack', 'workspace', NULL, 'T1',
                 'Slack', '[]', 'healthy', '{}', '{}', '2026-08-19T00:00:00.000Z',
-                '2026-08-19T00:00:00.000Z', 'plugin_slack_workspace');
+                '2026-08-19T00:00:00.000Z', 'plugin_slack_workspace'),
+               -- The kept rows hang off a second connection so the scrub's
+               -- deletes below cannot reach them by cascade.
+               ('scrub-slack-kept', 'scrub-workspace', 'slack', 'personal', 'scrub-user', 'T2',
+                'Slack Kept', '[]', 'healthy', '{}', '{}', '2026-08-19T00:00:00.000Z',
+                '2026-08-19T00:00:00.000Z', 'plugin_slack_personal');
         INSERT INTO activities
           (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
            event_type, occurred_at, received_at, title, dedupe_key, processing_status)
@@ -310,9 +315,15 @@ describe("database migrations", () => {
         INSERT INTO activities
           (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
            event_type, occurred_at, received_at, title, dedupe_key, processing_status)
-        VALUES ('scrub-activity-kept', 'scrub-workspace', 'scrub-slack', 'workspace', 'slack',
+        VALUES ('scrub-activity-kept', 'scrub-workspace', 'scrub-slack-kept', 'workspace', 'slack',
                 'event-kept', 'message', '2026-08-19', '2026-08-19', 'Kept',
                 'dedupe-kept', 'processed');
+        INSERT INTO connector_oauth_attempts
+          (id, region, provider, user_id, workspace_id, status, connection_id,
+           expires_at, created_at, updated_at)
+        VALUES ('scrub-attempt', 'global', 'slack', 'scrub-user', 'scrub-workspace',
+                'succeeded', 'scrub-slack', '2099-01-01T00:00:00.000Z',
+                '2026-08-19T00:00:00.000Z', '2026-08-19T00:00:00.000Z');
         INSERT INTO activity_suggestions
           (id, workspace_id, activity_id, workstream_id, confidence, reason, created_at)
         VALUES ('scrub-suggestion', 'scrub-workspace', 'scrub-activity', 'scrub-workstream',
@@ -340,6 +351,14 @@ describe("database migrations", () => {
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM activity_suggestions WHERE id = 'scrub-suggestion'`,
       ).get()).toEqual({ count: 0 });
+      // The other half of what a foreign key does on delete: `SET NULL` makes
+      // SQLite issue an UPDATE against the child, so the update fences have to
+      // admit the same window or the scrub aborts just as loudly as it did on
+      // the cascade.
+      database.exec(`DELETE FROM connector_connections WHERE id = 'scrub-slack'`);
+      expect(database.prepare(
+        `SELECT connection_id FROM connector_oauth_attempts WHERE id = 'scrub-attempt'`,
+      ).get()).toEqual({ connection_id: null });
       // Still refused once the region is open: the scrub is the one window in
       // which these rows may go, not a general licence to write D1.
       database.exec(`
