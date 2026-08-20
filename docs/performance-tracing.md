@@ -113,6 +113,7 @@ under `avalon.`, so it can never collide with a convention added later:
 | `avalon.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
 | `avalon.workspace.id`, `avalon.workstream.id`, `avalon.substream.id` | The identifiers a slow trace has to be attributable to. |
 | `avalon.request.id` | The desktop's `x-request-id`. |
+| `avalon.analytics.person_id`, `avalon.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
 | `avalon.socket.ticket_id`, `avalon.socket.connection_id` | The two socket joins below. |
 | `avalon.message.client_id` | The composer's client message id. |
 | `avalon.harness_run.id`, `avalon.agent.invoked` | What the write started. |
@@ -123,6 +124,56 @@ under `avalon.`, so it can never collide with a convention added later:
 becomes an attribute name. Add a name there rather than at a call site, so a
 rename happens once and a dashboard filtering on `avalon.workspace.id` never has
 to know which component emitted the span.
+
+### Joining a system span to a product event
+
+A span carries both identities: `user.id` and `avalon.workspace.id` are the
+product keys, and `avalon.analytics.person_id` and
+`avalon.analytics.workspace_id` are the surrogates PostHog is keyed on
+(`users.analytics_person_id`, `workspaces.analytics_workspace_id`). Carrying
+both is the whole point — one lets an operator go from a slow trace to the
+person to talk to, the other lets them go from that trace to what the person was
+doing in the product, without reconstructing a mapping by hand.
+
+**They are read on the query that authenticates the request, and nowhere else.**
+`authenticate` in `apps/api/src/middleware/auth.ts` already joined `workspaces`
+and is one primary key from `users`, so both surrogates arrive on a round trip
+the request was making anyway. There is no cache to invalidate and no second
+store to keep in step. Both are LEFT joins: a column added for observability
+must never be able to decide an authentication.
+
+They are **absent until a product event mints them**, which is correct rather
+than a gap — the pipeline creates them lazily, so before the first one there is
+no PostHog person for a trace to point at. `setAttributes` drops nulls, so the
+attribute is simply not there.
+
+**Which spans carry which**, and why it is not uniform:
+
+| Span | Person | Workspace |
+| --- | --- | --- |
+| Anything rooted in an HTTP request | yes | yes |
+| A Durable Object reached over a binding call | inherited — the span is a child of the HTTP root above | inherited |
+| `workstream.room.socket.accept` / `…subscribe`, `workstream.message.send` on WorkspaceDO | no | yes |
+
+The socket-rooted spans are their own traces, so they need identity of their
+own. They get the workspace surrogate from the `workspaces` row their
+authorization query already joins. They deliberately do **not** get the person
+surrogate: that would mean a Durable Object joining `users` on every socket
+frame, and no diagnostic is worth widening what a socket's authorization depends
+on. A socket trace is one hop from an HTTP trace that has it — through
+`avalon.socket.ticket_id`, `avalon.socket.connection_id`, or
+`avalon.message.client_id` — and it still carries the raw `user.id`, so the
+"who do I talk to" question is answerable without the hop. Only the PostHog
+person join needs it.
+
+The objects set what they do have after their own session query answers, rather
+than accepting it over RPC; `WorkstreamObjectClient` narrows the auth payload it
+sends for exactly this reason. A correlation value arriving from outside is one
+the object would have to decide whether to trust, for something it resolves
+anyway.
+
+Nothing authorizes on either attribute. They are correlation values, and the
+authority for who a request belongs to remains `userId` and `workspaceId`.
 
 ### What the platform cannot join, and what does
 
@@ -318,8 +369,14 @@ content, with no hook to redact it —
 has the detail. An OTLP export moves that content out of the region's own trust
 boundary.
 
-The second is identity, and it is a correctness problem before it is a privacy
-one.
+The second is identity, and it has two halves. Spans now carry the analytics
+surrogates deliberately, so a system trace can be matched to a product event —
+which means **a trace holds both identities at once, and whatever stores traces
+holds the mapping that keeping them apart was protecting**. That is a reasonable
+trade for an internal observability destination and a poor one for a destination
+chosen casually.
+
+The other half is a correctness problem before it is a privacy one.
 
 Spans carry raw `user.id` and `avalon.workspace.id` — the same ids every other
 diagnostic in Workers Logs already carries. PostHog is keyed on neither.
@@ -349,6 +406,62 @@ project would require a new recorded decision. A trace export configured without
 noticing would route around that boundary rather than change it.
 
 ## Changelog
+
+### 2026-08-20 — Spans carry the analytics surrogates, read on the auth query
+
+**What changed:** Traced requests now set `avalon.analytics.person_id` and
+`avalon.analytics.workspace_id` alongside the raw `user.id` and
+`avalon.workspace.id`. Both are read from the session query that already
+authenticates an HTTP request; the two Durable Objects add only the workspace
+surrogate, from the `workspaces` row they already join.
+`IdentityAuthContext` carries both as optional fields.
+
+**Why:** A system span could identify the person to us and a PostHog event could
+identify the same person to PostHog, and nothing connected the two — the
+surrogates are random UUIDv7s whose mapping to `users.id` exists only in
+regional D1. Answering "this trace was slow, what was that person doing, and who
+do I email" meant a manual join through the database. Carrying both identities on
+the span removes the step.
+
+**Considered and rejected:** *Workers KV, with an in-memory cache in front.* This
+was the proposal, and it loses on four counts, the last of them decisive. It buys
+no round trip, because the D1 read happens regardless — `workspaces` was already
+joined and `users` is a primary key away, so the columns are free where a KV read
+is a fresh I/O hop that can miss the colo cache and fall back through the regional
+and central tiers. It is eventually consistent, so a freshly minted surrogate is
+invisible for up to a minute — on exactly the first-session traces most worth
+having. It becomes a second source of truth needing a write path and an
+invalidation story for data whose authority is a D1 column. And **a KV namespace
+is global**: jurisdictional restriction for KV is in private beta, so putting EU
+member identity in one would move it out of the region that
+[`regionalization.md`](regionalization.md) and [`telemetry.md`](telemetry.md)
+keep it in, to save a query that is not being made. *An isolate-local cache on
+its own* has the same first objection — there is nothing to cache — and would
+add a bounded map that can never be authoritative, for no saving. *Putting the
+surrogates in the access token or the socket ticket.* The session read happens
+anyway, so it saves nothing, and it would bake a lazily minted value into a
+credential issued before it exists. *The inverse: sending the raw `users.id` to
+PostHog as a person property, and joining there.* One `$set` per person rather
+than two attributes per span, and cheaper — but it reverses the decision
+`telemetry.md` records, which is that raw product ids do not go to PostHog. Given
+the choice of which side carries the linkage, traces already carry raw ids and
+internal detail, and PostHog deliberately does not.
+
+**Consequences:** The `users` join added to `authenticate` must stay a LEFT join
+and never become a condition — a session whose surrogates are half-minted is
+normal, and filtering on them would turn a telemetry detail into a sign-out.
+A Durable Object must not grow a `users` join for this: the workerd suite
+declares only the tables it needs and most of it has no `users` table at all,
+which is the shape of the coupling being avoided rather than an accident of the
+tests. Both suites' `workspaces` declarations now need `analytics_workspace_id`. The attributes
+are absent, not empty, until the telemetry pipeline mints them; a dashboard has
+to tolerate that. Anything that changes how the surrogates are minted in
+`apps/api/src/telemetry/authenticated.ts` now has a second consumer. And a trace
+now holds both identities at once, so the destination holding traces holds the
+mapping the pseudonymity was protecting — which raises the bar on where traces
+are exported, described in **Operations** below.
+
+Shipped in #TBD.
 
 ### 2026-08-20 — Three work-stream flows get custom spans on Cloudflare's tracing
 
