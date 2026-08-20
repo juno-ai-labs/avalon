@@ -224,6 +224,10 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: ['user-2'],
+      // The create request travels under the trace id the screen printed;
+      // asserted as present rather than by value so the exact-shape check that
+      // proves `modelOverride` is absent keeps working.
+      requestId: expect.any(String),
     }));
   });
 
@@ -270,6 +274,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      requestId: expect.any(String),
     }));
   });
 
@@ -290,6 +295,7 @@ describe('New work-stream home', () => {
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       modelOverride: 'deepseek/deepseek-v4-pro',
+      requestId: expect.any(String),
     }));
   });
 
@@ -312,6 +318,7 @@ describe('New work-stream home', () => {
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       modelOverride: 'x-ai/grok-4.3',
+      requestId: expect.any(String),
     }));
   });
 
@@ -334,6 +341,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      requestId: expect.any(String),
     }));
   });
 
@@ -358,6 +366,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      requestId: expect.any(String),
     }));
   });
 
@@ -378,6 +387,7 @@ describe('New work-stream home', () => {
     expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Create this once',
       participantIds: [],
+      requestId: expect.any(String),
     });
 
     resolveCreate(createdWorkstream);
@@ -399,6 +409,7 @@ describe('New work-stream home', () => {
       openingMessage: '',
       participantIds: [],
       attachmentIds: ['resource-notes'],
+      requestId: expect.any(String),
     }));
     expect(screen.getByRole('button', { name: 'Attach a file' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();

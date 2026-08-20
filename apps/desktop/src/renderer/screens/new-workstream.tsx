@@ -6,6 +6,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative } from '../lib/format';
+import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -296,15 +297,31 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     [workstreams.data],
   );
 
+  // Opened on the keystroke that starts a work stream and closed when the
+  // screen has actually changed, so the line it prints spans what the person
+  // waited for rather than what the request took. Held in a ref because the
+  // mutation's callbacks each run in their own commit.
+  const createTrace = useRef<PerfTrace | null>(null);
   const create = useMutation({
-    mutationFn: (input: CreateWorkstreamInput) =>
-      api!.createWorkstream({
+    mutationFn: (input: CreateWorkstreamInput) => {
+      const trace = startPerfTrace('workstream_create');
+      createTrace.current = trace;
+      trace.annotate({
+        participantCount: input.participantIds.length,
+        attachmentCount: input.attachmentIds.length,
+        openingMessageLength: input.openingMessage.length,
+      });
+      return trace.step('create_request', () => api!.createWorkstream({
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
+        requestId: trace.traceId,
         ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
-      }),
+      }));
+    },
     onError: (_error, input) => {
+      createTrace.current?.end({ outcome: 'failed' });
+      createTrace.current = null;
       // Back to the launcher with the words still in it. The optimistic turn
       // stood for a work stream that does not exist, so it cannot stay on
       // screen next to an error about why.
@@ -344,7 +361,14 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       attachmentDraft.consume(input.attachmentLocalIds);
+      createTrace.current?.mark('cache_seed');
       void navigate(`/workstreams/${created.workstream.id}`);
+      createTrace.current?.end({
+        outcome: 'navigated',
+        workstreamId: created.workstream.id,
+        harnessRunId: created.harnessRunId,
+      });
+      createTrace.current = null;
     },
   });
 

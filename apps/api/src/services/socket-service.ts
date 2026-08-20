@@ -18,6 +18,7 @@ import {
 } from "@avalon/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { inFlowSpan } from "../observability/tracing";
 import {
   blockDashboardAgentName,
   substreamAgentName,
@@ -76,11 +77,19 @@ function signingKey(env: Env): Uint8Array {
   throw new ApiError(503, "socket_auth_not_configured", "Realtime authentication is not configured");
 }
 
+/**
+ * `ticketId` is accepted rather than only generated so the issuing route can
+ * log the same id the room later reports consuming. It is the only identifier
+ * shared by the two: a socket upgrade is a new connection carrying no request
+ * id, so without it a slow room cannot be traced back to the client that asked
+ * for the ticket.
+ */
 export async function issueSocketTicket(
   env: Env,
   auth: AuthContext,
   workstreamId: string,
   substreamId = "0",
+  ticketId: string = uuidV7(),
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
@@ -93,7 +102,7 @@ export async function issueSocketTicket(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(uuidV7())
+    .setJti(ticketId)
     .setIssuer("avalon-api")
     .setAudience("avalon-workstream-socket")
     .setIssuedAt(now)
@@ -394,33 +403,55 @@ export class SocketService {
     ) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this substream");
     }
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      claims.workspaceId,
-      substreamAgentName(
-        claims.region,
+    // A WebSocket upgrade is its own invocation, and the browser can attach no
+    // header to the handshake, so nothing links this trace to the request that
+    // issued the ticket except the ticket id — which the issuing route records
+    // under the same attribute name. The span starts once the claims are
+    // readable; a rejected ticket is already an `http_request` row of its own.
+    return inFlowSpan(this.env, "workstream.socket.upgrade", {
+      flow: "workstream_open",
+      component: "api_socket",
+      identity: {
+        workspaceId: claims.workspaceId,
+        workstreamId: claims.workstreamId,
+        userId: claims.userId,
+        sessionId: claims.sessionId,
+        substreamId: claims.substreamId,
+      },
+      attributes: { "avalon.socket.ticket_id": claims.ticketId },
+    }, async (span) => {
+      const stub = await span.step("workstream.socket.room_stub", () => durableObjectStubForWorkspace(
+        this.env,
+        this.env.SUBSTREAM_AGENTS,
         claims.workspaceId,
-        claims.workstreamId,
-        claims.substreamId,
-      ),
-    );
-    const headers = new Headers(request.headers);
-    // The ticket has been verified; the room has no use for it and should not
-    // receive a live credential on a subrequest it does not authenticate with.
-    headers.delete("sec-websocket-protocol");
-    headers.set("x-avalon-workspace-id", claims.workspaceId);
-    headers.set("x-avalon-workstream-id", claims.workstreamId);
-    headers.set("x-avalon-substream-id", claims.substreamId);
-    headers.set("x-avalon-session-id", claims.sessionId);
-    headers.set("x-avalon-user-id", claims.userId);
-    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
-    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
-    const response = await stub
-      .fetch(new Request("https://room.internal/socket", { method: "GET", headers }));
-    // The room answers the upgrade; the subprotocol is negotiated out here so
-    // it stays a transport concern the room never has to know about.
-    return withNegotiatedSubprotocol(request, response);
+        substreamAgentName(
+          claims.region,
+          claims.workspaceId,
+          claims.workstreamId,
+          claims.substreamId,
+        ),
+      ));
+      const headers = new Headers(request.headers);
+      // The ticket has been verified; the room has no use for it and should not
+      // receive a live credential on a subrequest it does not authenticate with.
+      headers.delete("sec-websocket-protocol");
+      headers.set("x-avalon-workspace-id", claims.workspaceId);
+      headers.set("x-avalon-workstream-id", claims.workstreamId);
+      headers.set("x-avalon-substream-id", claims.substreamId);
+      headers.set("x-avalon-session-id", claims.sessionId);
+      headers.set("x-avalon-user-id", claims.userId);
+      headers.set("x-avalon-socket-ticket-id", claims.ticketId);
+      headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+      // No trace header is written: the room's spans are already children of
+      // this one, because a Durable Object call is a traced binding call and
+      // everything inside it runs in this span's async context.
+      const response = await span.step("workstream.socket.room_upgrade", () => stub
+        .fetch(new Request("https://room.internal/socket", { method: "GET", headers })));
+      span.setAttributes({ "http.response.status_code": response.status });
+      // The room answers the upgrade; the subprotocol is negotiated out here so
+      // it stays a transport concern the room never has to know about.
+      return withNegotiatedSubprotocol(request, response);
+    });
   }
 }
 
