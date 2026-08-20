@@ -45,11 +45,15 @@ machine, and imports the seeded work streams into their objects through the
 Worker's dev-only route, so `pnpm smoke:local` keeps passing on an opened
 stack.
 
-Model dependence is decided from the Worker's own `/health`: with OpenRouter
-configured (an `OPENROUTER_API_KEY` in `.env.local` and `pnpm env:sync`), a
-run must complete with a reply; without one, a run must still reach a terminal
-state that tells the member the truth. The oracles themselves are unit-tested
-in `scripts/e2e-local-oracles.test.mjs` — this lane's own first deployment
+The lane **requires** a configured OpenRouter key by default: `/health` must
+report the provider configured (an `OPENROUTER_API_KEY` in `.env.local`,
+`pnpm env:sync`, and a Worker restart), and a run must complete with a reply.
+Without a key it refuses to run rather than silently weakening — the no-model
+oracle only proves "terminal and truthful", which cannot catch a run failing
+before the provider for the wrong reason, the exact defect family this lane
+exists for. `--allow-no-model` opts into that degraded oracle explicitly, for
+credential-less environments. The oracles and the gate are unit-tested in
+`scripts/e2e-local-oracles.test.mjs` — this lane's own first deployment
 failed 34 stop scenarios because `idle` was missing from its terminal set, so
 the pass conditions are treated as code that can rot.
 
