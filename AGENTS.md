@@ -35,6 +35,25 @@ is a separate suite that CI runs as `pnpm --filter @avalon/desktop test:release`
 Run that one too when touching a release script, or its tests will not execute
 locally and the name of the other gate will suggest they did.
 
+## Writing tests
+
+**Read [`docs/testing.md`](docs/testing.md) before adding a test.** It maps the
+suites to what each one can prove, and holds the two rules below.
+
+- **Default to the real Cloudflare pipeline.** Anything that depends on the
+  runtime — Durable Object storage, alarms, hibernation, WebSocket upgrades, D1
+  semantics — belongs in `apps/api/test-workers/`, which runs on real workerd
+  (`pnpm --filter @avalon/api test:workers`). That suite's D1 starts with no
+  schema, so a test there declares the tables it needs; a query or a constraint
+  is proved in the Node suite instead, which applies the checked-in migrations
+  rather than stubbing a database. A double stands in for something that
+  *cannot* run here — Workers AI, Vectorize, Flagship, a provider's API — never
+  for setup that was inconvenient.
+- **Prove every test can fail.** Break the code it covers, watch that test fail
+  for the reason its name claims, then revert. An assertion that survives the
+  break is asserting on a fixture, a mock's own configuration, or a value the
+  subject computed — none of which is coverage.
+
 ## Flaky tests
 
 **A test that fails once and passes on a rerun is a defect in the test or the

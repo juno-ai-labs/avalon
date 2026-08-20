@@ -1,5 +1,11 @@
 # End-to-end verification
 
+This document covers the checks that need a running system: the local smoke
+script and the manual desktop flows. The automated suites — where a unit or
+integration test belongs, which runtime it runs on, and why the default is the
+real Cloudflare pipeline rather than a double — are in
+[`testing.md`](testing.md).
+
 ## Automated local smoke
 
 Start from a migrated and seeded local database:
