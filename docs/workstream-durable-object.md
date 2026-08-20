@@ -958,6 +958,25 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — A re-derived projection wins over the version it reuses
+
+**What changed:** When a child effect arrives under a projection version this
+object has already stored but with a different payload hash, the newer payload
+is adopted and `substream_projection_version_reused` is logged, instead of
+throwing `substream_projection_version_conflict`.
+
+**Why:** The child numbers its own projections and restarts that counter when a
+maintenance import rebuilds it, while this object's projection survives. A
+re-derived effect therefore arrives under a version already seen, carrying
+different bytes — which is not the divergence the conflict was written to
+catch. It failed activation across the fleet immediately after the epoch guard
+above stopped rejecting the same effects one layer earlier.
+
+**What a future change has to respect:** the child is the authority for its own
+projection; this table is a cache of it. Outside a campaign the two should
+never disagree at the same version, which is why the disagreement is still
+logged rather than passed over in silence.
+
 ### 2026-08-20 — The parent follows the authority epoch instead of gating on it
 
 **What changed:** `applyChildEnvelope` matches identity on the workspace and
