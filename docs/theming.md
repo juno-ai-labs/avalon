@@ -39,12 +39,12 @@ dotted keys, because flat keys diff cleanly and a nested tree does not:
 ```json
 {
   "$schema": "../theme.schema.json",
-  "id": "airy",
-  "name": "Airy",
+  "id": "airy-dark",
+  "name": "Airy Dark",
   "appearance": "dark",
   "description": "Near-black, amber, and a great deal of room.",
   "tokens": {
-    "sys.color.surface.canvas": "#0a0806",
+    "sys.color.surface.canvas": "#100e0c",
     "sys.color.text.default": "{ref.color.neutral.14}"
   }
 }
@@ -118,8 +118,9 @@ no flash at all bundles its font.
 
 ## A backdrop that moves
 
-Some backdrops are not values. Airy's is a field of light that orbits, and there
-is no `background-image` that orbits — it needs a clock and a frame loop. Rather
+Some backdrops are not values. Both Airy variants light the room with a field
+that orbits, and there is no `background-image` that orbits — it needs a clock
+and a frame loop. Rather
 than invent a declarative motion vocabulary that would cover that one case and
 none of the next, a theme may bring a whole document:
 
@@ -342,15 +343,36 @@ account row at the foot of the navigation paints `transparent` for this reason.
 
 ### The themes
 
-`light` and `dark` are the two `system` resolves to. `airy` is a deliberate
-choice only — one near-black ground lit by two overlapping amber circles and
-running the full width of the window, amber where the others are chartreuse,
-borders that barely exist, uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
-double the vertical spacing, so negative space does the work the lines used to.
-A person's turn has no bubble there at all: `--av-cmp-bubble-background` is
-transparent, `--av-cmp-bubble-padding` is zero, and `--av-cmp-turn-align` is
-`flex-start`, so every message
-sits in one left-aligned column as plain text.
+`light` and `dark` are the two `system` resolves to. **`airy` and `airy-dark`
+are one theme at two brightnesses** — the same room, the same furniture,
+different lamps. Both are deliberate choices only; neither is what `system`
+resolves to.
+
+What they share is structure, and a test enforces it: every token that is not a
+colour is identical between them. Prose at 1.85 leading, roughly double the
+vertical spacing, uppercase letterspaced micro-labels, a person's turn with no
+bubble at all, a 2px line where the other themes put a dot, and a composer that
+is a rule rather than a card.
+
+What differs is the palette and, in one place that matters, the *blending*:
+
+| | `airy` | `airy-dark` |
+| --- | --- | --- |
+| Ground | `#f7f3ec` warm paper | `#100e0c` near-black |
+| Accent | `#d2822c` | `#e8a15c` |
+| Field blending | `mix-blend-mode: multiply` | normal |
+| Bloom alphas | ~.5 at the core | ~.32 at the core |
+
+The blending is not a detail. On paper an additive bloom is glare: it lightens a
+ground that is already near-white, so the orb reads as a blown-out patch rather
+than as colour. Multiplying darkens toward the pigment instead, which is how ink
+behaves on a page — and it is why the light field's alphas are roughly double
+the dark field's and still land softer. Copying one field into the other
+produces something that looks broken in a way that is hard to name.
+
+Only the warm bloom follows the brand token. The reference writes that one as
+the accent and the other three as fixed hues, so a retint moves the light the
+theme is named for and leaves the rest of the field where the design put it.
 
 ### Choosing one
 
@@ -476,7 +498,7 @@ reads a stylesheet.
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
 - **A theme whose backdrop is a document previews as its floor.** The Settings
-  miniature draws `sys.backdrop.*`, and Airy's blooms live in the document rather
+  miniature draws `sys.backdrop.*`, and Airy's blooms live in its document rather
   than in those tokens, so the Airy swatch is a flat ground. Mounting a live
   frame per swatch would put four animation loops behind a preference pane to
   show a 92px thumbnail of one.
@@ -512,7 +534,43 @@ Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — The navigation marks selection with a line, and the composer is a rule
+### 2026-08-20 — Airy became two themes, and the light one multiplies
+
+**What changed:** the theme formerly called `airy` is now `airy-dark`, and
+`airy` is its light counterpart — warm paper, the same structure, the same four
+blooms. Its sidebar edge also changed: it had been an opaque brown line *darker*
+than the ground it sat on, where the reference draws a faint warm hairline over
+the backdrop.
+
+**Why they are one theme and not two.** A test now asserts that every non-colour
+token is identical between them. That is the claim being made: same spacing,
+same type scale, same marker, same composer — one design at two brightnesses. If
+a future change needs them to differ structurally, that is a signal they have
+become separate themes and should be named as such, not a signal to delete the
+test.
+
+**Why the light field multiplies.** Ported additively first, and it was wrong in
+a way worth recording: on a near-white ground an additive bloom only lightens
+what is already light, so each orb read as a blown-out patch instead of colour.
+`mix-blend-mode: multiply` darkens toward the pigment, the way ink does on
+paper. That is also why the light alphas are roughly double the dark ones — they
+are doing the opposite operation — and a future change must not "fix" the
+asymmetry by matching them.
+
+**How the light palette was built.** Not by hand: colour-typed tokens were taken
+from the existing `light` theme, everything else from `airy-dark`, then the
+reference's own values laid over the top. One thing that approach got wrong and
+had to be corrected by looking at it — Airy sets several colours to
+`transparent` outright (the message bubble, its border, the small shadow), and
+those are decisions about the theme's *shape*, not its palette. Taking the light
+theme's values there gave the light variant a bubble Airy does not have. Where
+Airy removes something, both variants remove it.
+
+**Consequences:** a stored preference of `airy` now selects the light variant.
+Nothing is deployed, so nobody is switched from under themselves; if that changes
+before release, the rename needs a migration rather than a note.
+
+8-20 — The navigation marks selection with a line, and the composer is a rule
 
 **What changed:** two component shapes became a theme's decision.
 

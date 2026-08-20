@@ -16,7 +16,7 @@ export const fontScheme = 'avalon-font';
  * Themes that bring a backdrop document. A theme not listed here paints its
  * backdrop entirely with `sys.backdrop.*` and mounts no frame at all.
  */
-export const themesWithBackdrop = ['airy'] as const;
+export const themesWithBackdrop = ['airy', 'airy-dark'] as const;
 
 export type ThemeWithBackdrop = (typeof themesWithBackdrop)[number];
 

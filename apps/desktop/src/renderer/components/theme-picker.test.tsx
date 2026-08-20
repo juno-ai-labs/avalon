@@ -30,7 +30,7 @@ describe('ThemePicker', () => {
 
     expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
     expect(screen.getAllByRole('radio').map((option) => option.textContent))
-      .toEqual(['System', 'Light', 'Dark', 'Airy']);
+      .toEqual(['System', 'Light', 'Dark', 'Airy', 'Airy Dark']);
   });
 
   it('starts on System, and says which appearance that is resolving to', () => {
@@ -62,7 +62,7 @@ describe('ThemePicker', () => {
     const swatches = [...container.querySelectorAll('.settings-theme-swatch')];
 
     expect(swatches.map((swatch) => swatch.getAttribute('data-theme')))
-      .toEqual(['light', 'light', 'dark', 'airy']);
+      .toEqual(['light', 'light', 'dark', 'airy', 'airy-dark']);
   });
 
   // The System swatch has no palette of its own, so it previews what choosing
