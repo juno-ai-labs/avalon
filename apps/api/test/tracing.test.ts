@@ -205,8 +205,13 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       "avalon.workstream.id": "workstream-1",
       "http.request.method": "GET",
     });
-    expect(rows(info).find((row) => row.event === "perf_flow"))
-      .toMatchObject({ request_id: requestId, flow: "workstream_open" });
+    // The caller's attributes reach the summary row too, so one row explains
+    // itself without the trace beside it.
+    expect(rows(info).find((row) => row.event === "perf_flow")).toMatchObject({
+      request_id: requestId,
+      flow: "workstream_open",
+      "http.request.method": "GET",
+    });
   });
 
   it("carries the analytics surrogates PostHog is keyed on, when they exist", async () => {
@@ -248,5 +253,28 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     expect(attributes["user.id"]).toBe("user-1");
     expect(Object.keys(attributes)).not.toContain("avalon.analytics.person_id");
     expect(Object.keys(attributes)).not.toContain("avalon.analytics.workspace_id");
+  });
+
+  it("carries what authentication cost, which the flow's own duration excludes", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const app = new Hono<HonoAppEnv>();
+    // Authentication is middleware: it finishes before any route opens a flow
+    // span, so its cost lands in `http_request` and not in `perf_flow`. The
+    // attribute is what makes the difference between the two readable rather
+    // than an unexplained gap.
+    app.use("*", async (c, next) => {
+      c.set("requestId", "request-1");
+      c.set("authDurationMs", 42);
+      await next();
+    });
+    app.get("/probe", (c) => requestFlowSpan(c, "workstream.detail.read", {
+      flow: "workstream_open",
+    }, async () => c.json({ ok: true })));
+
+    await app.request("/probe", undefined, envAt("info"));
+
+    expect(recordedSpans()[0]?.attributes).toMatchObject({ "avalon.auth.duration_ms": 42 });
+    expect(rows(info).find((row) => row.event === "perf_flow"))
+      .toMatchObject({ "avalon.auth.duration_ms": 42 });
   });
 });

@@ -224,11 +224,12 @@ export function inFlowSpan<T>(
   run: (span: FlowSpan) => Promise<T>,
 ): Promise<T> {
   const identity = options.identity ?? {};
+  const callerAttributes = options.attributes ?? {};
   const base: SpanAttributes = {
     "avalon.flow": options.flow,
     "avalon.component": options.component,
     ...identityAttributes(identity),
-    ...(options.attributes ?? {}),
+    ...callerAttributes,
   };
   return inSpan(name, base, async (span) => {
     // `Date.now()` is pinned by workerd for the duration of a synchronous run
@@ -240,7 +241,12 @@ export function inFlowSpan<T>(
     const startedAt = Date.now();
     const steps: Array<[string, number]> = [];
     let cursor = startedAt;
-    let extra: LogFields = {};
+    // Seeded from the caller's attributes so the summary row is self-describing
+    // — the HTTP method and route, the transport, the authentication cost —
+    // rather than a duration with no context beside it. The flow and identity
+    // fields are added explicitly below and are deliberately not duplicated
+    // here under their attribute names.
+    let extra: LogFields = definedFields(callerAttributes);
 
     const close = (stepName: string): void => {
       const at = Date.now();
@@ -344,6 +350,10 @@ export function requestFlowSpan<T>(
       // HTTP span a destination has ever seen.
       "http.request.method": c.req.method,
       "http.route": c.req.routePath,
+      // Authentication runs before this span opens, so its cost is inside
+      // `http_request` and outside this flow's duration. Carrying the number
+      // is what stops the difference between the two reading as unexplained.
+      "avalon.auth.duration_ms": c.get("authDurationMs"),
       ...(options.attributes ?? {}),
     },
   }, run);
