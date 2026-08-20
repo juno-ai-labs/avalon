@@ -4,9 +4,10 @@ Which suite a new test belongs in, which runtime it runs on, and the check that
 has to pass before it is worth keeping. Read it before adding tests to a change.
 
 Two rules run through everything below. **Default to the real Cloudflare
-pipeline**: workerd, a real Durable Object, real SQLite, the checked-in
-migrations — a double stands in for something that *cannot* be run here, never
-for setup that was inconvenient. And **prove the test can fail**: a test that
+pipeline**: real workerd and a real Durable Object for anything the runtime
+decides, and the checked-in migrations against real SQLite for anything a query
+decides — a double stands in for something that *cannot* be run here, never for
+setup that was inconvenient. And **prove the test can fail**: a test that
 stays green when the code under it is broken is not covering that code, and the
 suite is worse off for it because the name says otherwise.
 
@@ -24,6 +25,8 @@ once and passes on a rerun.
 | `apps/api/test/**/*.test.ts` | `pnpm --filter @avalon/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. |
 | `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | jsdom. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). |
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @avalon/<pkg> test` | Node. Pure contract, harness, and connector logic. |
+| `packages/db/test/**/*.test.ts` | `pnpm --filter @avalon/db test` | Node. The migration sequence itself and the work-stream queries over it — where a migration's own test goes, rather than beside the package's source. |
+| `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @avalon/site test`, `pnpm --filter @avalon/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @avalon/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @avalon/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
@@ -51,7 +54,7 @@ shape of your own code:
 - Alarms, hibernation, eviction, and what survives each — `runDurableObjectAlarm`
   and `evictDurableObject` are the only honest way to test them.
 - WebSocket upgrades. Node's `Response` refuses status 101, so the Node suite
-  stands in a fake one that validates nothing; a rebuild that workerd rejects at
+  substitutes a fake one that validates nothing; a rebuild that workerd rejects at
   runtime constructs happily there. That has already cost one bug, and the
   detail is in [`realtime-sockets.md`](realtime-sockets.md#testing).
 - Anything reached through a real binding: D1 semantics, queue sends, RPC
@@ -72,10 +75,16 @@ against the checked-in migrations rather than against a stub:
   `packages/db/migrations/*.sql` to a fresh in-memory `node:sqlite` database, and
   `sqliteD1()` presents it through the `D1Database` surface the services use.
   Sixty-odd API test files already work this way.
-- `test/helpers/sql-storage.ts` — `createTestSqlStorage()` does the same for
-  object-local `SqlStorage`, and turns foreign keys on because `node:sqlite`
-  defaults them off while workerd enforces them. Without that, an object-side
-  foreign key is unenforced in tests and enforced in production.
+- `test/helpers/sql-storage.ts` — `createTestSqlStorage()` presents a
+  `node:sqlite` database through the object-local `SqlStorage` surface, and turns
+  foreign keys on because `node:sqlite` defaults them off while workerd enforces
+  them. Without that, an object-side foreign key is unenforced in tests and
+  enforced in production. **It applies no schema of its own** — unlike
+  `migratedSqliteDatabase()`, it adapts whatever database it is handed, so the
+  test has to run the object's real schema into it (the exported
+  `*_SCHEMA_MIGRATIONS` arrays) rather than hand-build the tables it expects.
+  A test that skips that step is asserting against its own fixture schema, which
+  is the drift this rung exists to catch.
 
 A wrong column name, a broken join, or a constraint the migration actually
 declares fails here. Assert by reading rows back, not by trusting the write.
@@ -93,17 +102,19 @@ for platform bindings.
 
 ### 4. `vi.mock` on a module
 
-The last resort, and rare on purpose — seventeen files in the API suite. Mocking
-a module replaces code the change is supposed to protect, and the mock keeps
-passing after the real module's contract moves. If the subject's dependencies are
-all mocked, the test covers the wiring of the mocks.
+The last resort, and rare on purpose — seventeen of the API suite's 183 files
+(`grep -rl 'vi\.mock(' apps/api/test`; counting `vi.mocked` as well returns 25,
+but that helper only types a value that is already mocked). Mocking a module
+replaces code the change is supposed to protect, and the mock keeps passing after
+the real module's contract moves. If the subject's dependencies are all mocked,
+the test covers the wiring of the mocks.
 
 ## Writing a workerd test
 
 ```ts
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
-import { env, exports } from "cloudflare:workers";
+import { env } from "cloudflare:workers"; // add `exports` for a route-level test
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -114,22 +125,29 @@ beforeEach(async () => {
 
 - **`env` and the Worker come from `cloudflare:workers`.** `cloudflare:test`
   still exports `env` and `SELF`, and both are deprecated as of
-  `@cloudflare/vitest-pool-workers` 0.21: use `env` and
-  `exports.default.fetch()` from `cloudflare:workers` instead. Everything else —
+  `@cloudflare/vitest-pool-workers` 0.21: import `env` and `exports` from
+  `cloudflare:workers` instead, and reach the Worker through
+  `exports.default.fetch()`. Everything else —
   `reset`, `runInDurableObject`, `runDurableObjectAlarm`, `evictDurableObject`,
   `listDurableObjectIds`, `createExecutionContext` — stays on `cloudflare:test`.
 - **`await reset()` between tests.** Storage isolation is per *file*, not per
   test: Cloudflare gives each test file its own storage environment, and within
   one file the second test inherits whatever the first wrote. Cloudflare's
-  example puts `reset()` in `afterEach`; `beforeEach` is equivalent and is what
-  `durable-object-runtime.test.ts` does.
-- **Know what `reset()` does and does not reach.** It deletes all data from
-  every attached binding, and for D1 that includes the *schema* — measured here,
-  154 tables before the call and none after. Durable Object storage survives it,
-  which is why `agent-run-lifecycle.test.ts` and
-  `agent-run-dispatch-reliability.test.ts` take a fresh object id per test
-  instead of resetting. `abortAllDurableObjects()` resets instances while keeping
-  their persisted data, which is what an eviction test wants.
+  example puts `reset()` in `afterEach`; `beforeEach` is what
+  `durable-object-runtime.test.ts` does, and it is the one to copy — it holds
+  even for a test that inherited state because a previous test's own cleanup
+  never ran.
+- **Know what `reset()` reaches: everything.** It deletes all data from every
+  attached binding. For D1 that includes the *schema* — measured here, 154 tables
+  before the call and none after — and it reaches Durable Object storage too: a
+  table written through `runInDurableObject` is gone when the same object id is
+  opened after a reset. Do not believe otherwise on the strength of a comment;
+  `agent-run-lifecycle.test.ts` and `agent-run-dispatch-reliability.test.ts` say
+  storage outlives `reset()`, and what actually keeps their tests independent is
+  that they never call it — they take a fresh object id per test.
+  `abortAllDurableObjects()` is the one that keeps persisted data, but it aborts
+  instances rather than retiring them: a test *about* eviction still wants
+  `evictDurableObject`, which drains in flight work and hibernates sockets.
 - **Bindings come from `apps/api/wrangler.test.jsonc`**, not from the production
   configs. A new Durable Object class needs both a binding and its name in the
   `new_sqlite_classes` migration tag, or the object has no SQLite storage.
@@ -145,8 +163,8 @@ beforeEach(async () => {
 - **`exports.default.fetch()` reaches the real Hono app**, but
   `wrangler.test.jsonc` declares a subset of the env contract, so any route
   currently answers `503` `env_contract_failed` with the missing keys listed.
-  Route-level tests on workerd are possible — add the vars and bindings that log
-  names to `wrangler.test.jsonc` first. Never relax `src/env.ts` to make a test
+  Route-level tests on workerd are possible — add the vars and bindings whose
+  names that error lists to `wrangler.test.jsonc` first. Never relax `src/env.ts` to make a test
   pass; the contract is what stops a half-configured Worker serving traffic.
 - **The first call into the Worker costs about 14 seconds** while its module
   graph is instantiated; later calls in the same file take milliseconds. That
@@ -154,7 +172,13 @@ beforeEach(async () => {
   route-level test in a file an explicit `timeout`.
 - **One file at a time** needs the config named, and the path is
   package-relative:
-  `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts test-workers/<file>.test.ts`.
+
+  ```bash
+  pnpm --filter @avalon/api exec vitest run \
+    --config vitest.workers.config.ts \
+    test-workers/<file>.test.ts
+  ```
+
 - **A passing run is noisy.** workerd prints `disconnected: other end of
   WebSocketPipe was destroyed`, `NOSENTRY SQLite alarm overdue`, and stack
   addresses on a completely green run. Read the summary line, and capture the
@@ -192,7 +216,7 @@ is usually one of these:
   covers it; the test spends a name on nothing.
 - **The seed, not the result.** Asserting on a row the test inserted, without the
   operation under test having read, moved, or rewritten it.
-- **`toHaveBeenCalled()` as the whole assertion**, when the thing that matters is
+- **`toHaveBeenCalled()` as the whole assertion.** When the thing that matters is
   the state the call produces. Assert the row, the response body, or the event
   that reached the socket — on rungs 1 and 2 those are all readable, which is
   most of why the real pipeline is the default.
@@ -237,9 +261,11 @@ touch this area or a change worth making that has not been made.
   [the flaky-test rule](../AGENTS.md#flaky-tests) forbids leaving in place.
   Queue consumers have the equivalent: `createMessageBatch()` plus
   `getQueueResult(batch, ctx)`, which reports ack/retry state *and* waits.
-  `createScheduledController()` is the same thing for a cron handler — relevant
-  to `WorkspaceScheduler` and the `ACTIVITY_QUEUE` paths, neither of which is
-  currently driven through those helpers.
+  `createScheduledController()` only builds the controller for a cron handler and
+  waits for nothing, so a scheduled test still needs its own
+  `createExecutionContext()` and a closing `waitOnExecutionContext(ctx)`. Both
+  are relevant to `WorkspaceScheduler` and the `ACTIVITY_QUEUE` paths, neither of
+  which is currently driven through these helpers.
 - **Per-file storage isolation has preconditions.** Cloudflare documents that
   isolation only holds if every storage operation is awaited, response bodies
   from `fetch()` and `R2.get()` are fully consumed, and non-primitive RPC
