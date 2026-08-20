@@ -8,6 +8,12 @@ function isReadStatement(sql: string): boolean {
 
 /** Node SQLite adapter for object-local SqlStorage unit tests. */
 export function createTestSqlStorage(database: DatabaseSync): SqlStorage {
+  // workerd enforces foreign keys in Durable Object storage and refuses to let
+  // a `PRAGMA` turn them off, while node:sqlite defaults them off. Left as it
+  // was, every object-side foreign key in these schemas went unenforced in
+  // tests and enforced in production — a regression could pass CI and fail
+  // only inside a maintenance window.
+  database.exec("PRAGMA foreign_keys = ON");
   return createCloudflareTestBinding<SqlStorage>({
     exec: <T extends Record<string, SqlStorageValue>>(query: string, ...bindings: unknown[]) => {
       let rows: T[] = [];
