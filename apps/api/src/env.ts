@@ -175,6 +175,19 @@ export interface IdentityAuthContext {
   workspaceId: WorkspaceId | null;
   region: Region;
   role: "owner" | "admin" | "member" | null;
+  /**
+   * The analytics surrogates this person and workspace are known by in PostHog
+   * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
+   * They ride the session query that authenticates the request rather than
+   * being looked up, so they cost nothing, and they are optional because they
+   * are minted lazily: null means no PostHog identity exists yet, and there is
+   * therefore nothing for a trace to match against.
+   *
+   * They are correlation values only. Nothing authorizes on them; the
+   * authority for who this is remains `userId` and `workspaceId`.
+   */
+  analyticsPersonId?: string | null;
+  analyticsWorkspaceId?: string | null;
 }
 
 export interface AuthContext extends IdentityAuthContext {
@@ -186,6 +199,16 @@ export interface AppVariables {
   requestId: string;
   auth: IdentityAuthContext | undefined;
   telemetryOperator: TelemetryOperatorPrincipal | undefined;
+  /**
+   * How long authentication took, in milliseconds.
+   *
+   * Authentication runs as middleware, before any route opens its flow span, so
+   * its cost sits inside `http_request` and outside `perf_flow`. Without this a
+   * reader comparing the two finds an unexplained gap. It is one uncached,
+   * blocking D1 round trip on every authenticated request — see
+   * `docs/performance-tracing.md`.
+   */
+  authDurationMs: number | undefined;
 }
 
 export type HonoAppEnv = {

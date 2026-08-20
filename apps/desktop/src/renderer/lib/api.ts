@@ -58,6 +58,8 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
+import { newRequestId } from './perf-trace';
+import { logDebug } from '../../common/logger';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
@@ -149,6 +151,13 @@ interface RequestOptions<T> {
   headers?: HeadersInit;
   schema: ZodType<T>;
   signal?: AbortSignal;
+  /**
+   * The `x-request-id` this call travels under. A caller that is timing a flow
+   * passes the id it already printed, so the Worker's rows for this request
+   * carry the same one; everything else gets a fresh id rather than none, which
+   * is what makes an arbitrary slow call findable in Workers Logs at all.
+   */
+  requestId?: string;
 }
 
 interface DraftState {
@@ -258,11 +267,18 @@ const runNowResponseSchema = z.object({
 // The issuing endpoints still put the ticket in the URL for desktop builds
 // released before the subprotocol scheme. Strip it on the way in, so no call
 // site can open a socket whose URL carries the credential.
-const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() })
-  .transform(({ url, ticket }): SocketTicket => ({
+const socketTicketSchema = z.object({
+  url: z.string(),
+  ticket: z.string(),
+  // Optional because the socket-ticket shape is shared with regional Workers
+  // that predate it; a client that does not get one simply prints no ticket id.
+  ticketId: z.string().optional(),
+})
+  .transform(({ url, ticket, ticketId }): SocketTicket => ({
     url: socketUrlWithoutTicket(url),
     ticket,
     protocols: socketTicketProtocols(ticket),
+    ...(ticketId === undefined ? {} : { ticketId }),
   }));
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
@@ -626,6 +642,24 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
   };
 }
 
+/**
+ * A request path with every query *value* dropped, keeping the parameter names.
+ *
+ * A path is diagnostic and goes to the renderer's console and log file, but a
+ * query string is caller data: `/auth/invitations/preview?token=…` carries a
+ * bearer invitation token, and `/resources?q=…` carries whatever someone typed
+ * into a search box. Keeping the names says which parameters were sent, which
+ * is what a latency trace actually needs, and keeping none of the values means
+ * there is no list of sensitive keys to maintain and get wrong later.
+ */
+export function redactQuery(path: string): string {
+  const separator = path.indexOf('?');
+  if (separator === -1) return path;
+  const names = new URLSearchParams(path.slice(separator + 1));
+  const keys = [...new Set([...names.keys()])];
+  return keys.length === 0 ? path.slice(0, separator) : `${path.slice(0, separator)}?${keys.join(',')}`;
+}
+
 export class AvalonApi {
   private readonly drafts = new Map<string, DraftState>();
   private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
@@ -715,15 +749,48 @@ export class AvalonApi {
     );
   }
 
+  /**
+   * Stamps the request id and prints one trace line per call. The id is set
+   * before `execute`, so a credential renewal replays the same id — deliberate:
+   * the two attempts are one call from the caller's point of view, and the
+   * server's own rows distinguish them by status.
+   */
+  private async traced(
+    path: string,
+    method: string,
+    requestId: string | undefined,
+    headers: Headers,
+    run: () => Promise<Response>,
+  ): Promise<Response> {
+    const id = requestId ?? newRequestId();
+    headers.set('X-Request-Id', id);
+    const startedAt = typeof performance === 'undefined' ? Date.now() : performance.now();
+    let status = 0;
+    try {
+      const response = await run();
+      status = response.status;
+      return response;
+    } finally {
+      const durationMs = Math.round(
+        (typeof performance === 'undefined' ? Date.now() : performance.now()) - startedAt,
+      );
+      const safePath = redactQuery(path);
+      logDebug('perf', `http ${method} ${safePath} ${status} ${durationMs}ms`, {
+        method, path: safePath, status, durationMs, requestId: id,
+      });
+    }
+  }
+
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-    const response = await this.execute(path, {
-      method: options.method ?? 'GET',
+    const method = options.method ?? 'GET';
+    const response = await this.traced(path, method, options.requestId, headers, () => this.execute(path, {
+      method,
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-    });
+    }));
     if (!response.ok) return this.throwResponseError(response);
     if (response.status === 204) throw new ApiError('The service returned no response body.', 502, 'unexpected_empty_response');
     const payload: unknown = await response.json();
@@ -740,12 +807,13 @@ export class AvalonApi {
   private async requestVoid(path: string, options: Omit<RequestOptions<never>, 'schema'>): Promise<void> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-    const response = await this.execute(path, {
-      method: options.method ?? 'POST',
+    const method = options.method ?? 'POST';
+    const response = await this.traced(path, method, options.requestId, headers, () => this.execute(path, {
+      method,
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-    });
+    }));
     if (!response.ok) return this.throwResponseError(response);
   }
 
@@ -1209,6 +1277,8 @@ export class AvalonApi {
     participantIds: string[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
+    /** The caller's open `workstream_create` trace id, when it has one. */
+    requestId?: string;
   }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const operationId = uuidV7();
@@ -1227,6 +1297,7 @@ export class AvalonApi {
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       },
       schema: createWorkstreamResponseSchema,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     });
     return {
       workstream: mapWorkstreamSummary(response.workstream),
@@ -1594,10 +1665,10 @@ export class AvalonApi {
     return { enabled: false };
   }
 
-  getSocketTicket(id: string, substreamId = '0'): Promise<SocketTicket> {
+  getSocketTicket(id: string, substreamId = '0', requestId?: string): Promise<SocketTicket> {
     return this.request(
       `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket`,
-      { schema: socketTicketSchema },
+      { schema: socketTicketSchema, ...(requestId ? { requestId } : {}) },
     );
   }
 

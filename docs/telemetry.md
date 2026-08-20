@@ -573,6 +573,38 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-20 — The analytics surrogates gain a second reader
+
+**What changed:** Nothing about how `users.analytics_person_id` and
+`workspaces.analytics_workspace_id` are minted, stored, or delivered. They are
+now also read on the session query that authenticates an HTTP request, and set
+on system traces as `avalon.analytics.person_id` and
+`avalon.analytics.workspace_id`. A Durable Object reads only the workspace
+surrogate, from a table it already joins — see
+[`performance-tracing.md`](performance-tracing.md#joining-a-system-span-to-a-product-event).
+
+**Why:** A slow trace and the product events for the same session could not be
+matched. The surrogates are random and their mapping to the product ids lives
+only in this region's D1, so answering "what was this person doing when it was
+slow" required a manual database join every time.
+
+**Considered and rejected:** Sending the raw `users.id` to PostHog as a person
+property and joining there instead. It is cheaper — one `$set` per person rather
+than two attributes per span — but it reverses this document's standing
+decision that product ids do not reach PostHog, in order to save work on a path
+that is not hot. The linkage is carried on the trace side, where raw ids already
+are.
+
+**Consequences:** These two columns now have a consumer outside this subsystem,
+so their lifecycle is no longer purely a telemetry concern: a change to how they
+are minted, rotated, or cleared has to consider traces as well. Nothing about
+their authority changed — nothing authorizes on them in either subsystem. Note
+that a trace now carries both a product id and its surrogate together, so the
+separation this document maintains holds only as far as the trace destination:
+exporting traces to a third party hands that party the mapping.
+
+Shipped in #203.
+
 ### 2026-08-20 — One warmed builder serves every symbolicator build
 
 **What changed:** CI and the API deployment now warm a shared `docker-container`

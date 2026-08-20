@@ -75,7 +75,7 @@ export function logRequestEvent(
 // the caller's — a name that starts matching `sensitiveKey` reads `[REDACTED]`
 // in the summary too, instead of printing the plaintext beside the hidden
 // field.
-const SUMMARY_FIELDS = ["method", "path", "status", "code"] as const;
+const SUMMARY_FIELDS = ["method", "path", "status", "code", "flow", "phase", "component"] as const;
 
 // Workers Logs renders the log list's message column from the entry's `message`
 // field. An entry that omits one lists as a blank row that has to be expanded

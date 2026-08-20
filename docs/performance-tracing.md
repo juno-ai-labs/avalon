@@ -1,0 +1,655 @@
+# Performance tracing
+
+Three things in Avalon are slow enough that a person notices: starting a work
+stream, opening one that already exists, and sending a message to one. Each
+spans the Electron renderer, a regional Worker, and two or three Durable
+Objects, and until this existed the only measurement of any of them was the
+`http_request` log row's total duration — a single number that says a create
+took four seconds and nothing about which of its eleven awaited round trips took
+them.
+
+The tracing here is **Cloudflare's**, not ours. Both regional Workers enable
+Workers automatic tracing, which instruments handler invocations, outbound
+`fetch`, and binding calls — D1, KV, R2, Durable Objects — and exports the result
+over OTLP. That is already everything an OpenTelemetry SDK would be installed to
+provide: trace and span ids, parent/child nesting, context propagation across a
+subrequest, and the exporter. **Do not add an OpenTelemetry package to this
+repository, and do not mint a trace id or write a `traceparent` header** — the
+runtime does not even expose a trace id to forge one from.
+[`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md) is the
+reference for what the platform does, what its custom-span API supports, and the
+limitations that shape the code below; read it before changing anything here.
+
+What this document covers is the layer on top: the custom spans that name the
+steps inside one invocation, the attributes that say which workspace and which
+person a slow trace belongs to, and the ids that join the traces the platform
+necessarily keeps apart.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place an Avalon identifier becomes an attribute name. |
+| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
+| `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `GET /:id/messages`, `POST /:id/messages`, and both socket-ticket routes. |
+| `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
+| `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The workspace command socket's `create_message`, which is how the desktop actually sends a message. |
+| `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
+| `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer's local tracer and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
+| `apps/desktop/src/renderer/lib/api.ts` | Stamps `x-request-id` on every HTTP call and prints one line per call. |
+| `apps/desktop/src/common/logger.ts` | `logDebug`, the trace level the renderer's lines print at. |
+
+## How it works
+
+### A custom span is a callback
+
+```ts
+await span.step("workstream.create.receipt.reserve", () => this.env.DB.prepare(…).run());
+```
+
+`inSpan(name, attributes, run)` wraps `tracing.enterSpan` from
+`cloudflare:workers`. The span ends when `run` settles — resolved or thrown —
+and the runtime records the throw. Two platform behaviors do the rest, and they
+are why there is so little code here:
+
+- **Spans nest by async context.** Anything that runs inside the callback —
+  another `inSpan`, a D1 query, a Durable Object call — becomes its child
+  automatically. There is no manual parenting, and the runtime exposes no
+  `spanContext()` to do it with even if there were.
+- **`console` output is attributed to the active span.** Every
+  `logStructuredEvent` call made inside one of these spans is exported as an
+  OTLP log record carrying that span's trace id, so a destination correlates the
+  logs to the trace with no work from us. This is the whole reason the logger
+  stays as it is: a structured object per `console` call, indexed fields, one
+  `message` summary.
+
+`span.setAttributes` takes a record and skips anything `undefined` or `null` —
+an attribute is set or absent, never present-and-empty, because
+"present-and-empty" makes *unknown* indistinguishable from *known to be nothing*
+in a dashboard. `span.setError(code, message)` writes `otel.status_code`,
+`error.type`, and `otel.status_description`; the runtime has no `setOutcome`
+yet, and those are the attribute names every OTLP backend already reads a status
+from.
+
+### A flow span also lands in Workers Logs
+
+`inFlowSpan` is `inSpan` plus two things: it stamps the flow and identity
+attributes on the root, and it accumulates each `step`'s duration so the flow
+**also** emits one `perf_flow` log row carrying the whole breakdown, its
+`slowest_step`, and the identity.
+
+Two properties of `step` decide how a flow has to be written:
+
+- **A step's duration is measured from the end of the previous step**, not from
+  its own `inSpan`. Anything awaited *between* two steps is charged to the later
+  one. Every awaited call inside a flow therefore belongs inside a step — an
+  unstepped `await` does not go unmeasured, it silently inflates its neighbour
+  and makes `slowest_step` name the wrong thing.
+- **`avalon.flow` and `avalon.component` are repeated onto every step span.**
+  OpenTelemetry does not inherit attributes from a parent, so a step span
+  without them cannot be filtered or grouped by the flow it belongs to. The
+  identity attributes are deliberately not repeated: they are many, the step
+  already shares the root's trace, and `perf_flow` carries every step's duration
+  beside the identity, which is the path built for aggregating across requests.
+
+**One person opening a work stream produces about eight of these rows, not
+one.** A flow is per component invocation, and an open crosses the detail read,
+the transcript read, the socket ticket, the socket upgrade, the room's accept,
+its subscribe, and its `get` and `messages` calls. All unconditional, both
+regions, at `LOG_LEVEL: "info"`. The one-row-per-flow decision below is still
+the right one — per *step* would be roughly forty — but eight is the number to
+budget against before enabling an OTLP export.
+
+That row is not a duplicate of the trace. A trace answers *what happened in this
+one invocation* and is read in a trace UI or at the OTLP destination; the row
+answers *which step is slow across ten thousand creates* from the Workers Logs
+Query Builder, with no join and no trace sampling in the way. It is not free:
+Cloudflare bills a span and a log event identically, out of one allowance, so
+the row costs the same as adding a thirteenth span. One row per flow is the
+budget it is worth.
+
+Durations come from `Date.now()`, which workerd pins for the duration of a
+synchronous run and advances only across I/O — a Spectre mitigation, and the
+same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
+work that took longer. A step's number is therefore the time it spent waiting on
+D1, a Durable Object, or a provider, and a step that is pure computation reads
+`0ms` however long it took. Nothing on these paths is CPU-bound.
+
+### Attribute names
+
+Everything below is namespaced or conventional on purpose: Cloudflare's own
+`cloudflare.*` span and attribute names are explicitly **not final** during the
+tracing beta, so a dashboard should filter on the `avalon.*` names this
+repository controls wherever it has the choice.
+
+Semantic-convention names where OpenTelemetry defines one — `user.id`,
+`session.id`, `http.request.method`, `http.route`, `http.response.status_code`,
+`otel.status_code`, `error.type`. Everything this product owns is namespaced
+under `avalon.`, so it can never collide with a convention added later:
+
+| Attribute | Meaning |
+| --- | --- |
+| `avalon.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
+| `avalon.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
+| `avalon.workspace.id`, `avalon.workstream.id`, `avalon.substream.id` | The identifiers a slow trace has to be attributable to. |
+| `avalon.request.id` | The desktop's `x-request-id`. |
+| `avalon.analytics.person_id`, `avalon.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
+| `avalon.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
+| `avalon.socket.ticket_id`, `avalon.socket.connection_id` | The two socket joins below. |
+| `avalon.message.client_id` | The composer's client message id. |
+| `avalon.harness_run.id`, `avalon.agent.invoked` | What the write started. |
+| `avalon.snapshot.bytes`, `avalon.snapshot.message_count`, `avalon.snapshot.trims` | What a subscription had to assemble. |
+| `avalon.create.path`, `avalon.create.receipt_state`, `avalon.create.first_naming` | Which create this was. |
+
+`identityAttributes` in `tracing.ts` is the only place an Avalon identifier
+becomes an attribute name. Add a name there rather than at a call site, so a
+rename happens once and a dashboard filtering on `avalon.workspace.id` never has
+to know which component emitted the span.
+
+### Joining a system span to a product event
+
+A span carries both identities: `user.id` and `avalon.workspace.id` are the
+product keys, and `avalon.analytics.person_id` and
+`avalon.analytics.workspace_id` are the surrogates PostHog is keyed on
+(`users.analytics_person_id`, `workspaces.analytics_workspace_id`). Carrying
+both is the whole point — one lets an operator go from a slow trace to the
+person to talk to, the other lets them go from that trace to what the person was
+doing in the product, without reconstructing a mapping by hand.
+
+**They are read on the query that authenticates the request, and nowhere else.**
+`authenticate` in `apps/api/src/middleware/auth.ts` already joined `workspaces`
+and is one primary key from `users`, so both surrogates arrive on a round trip
+the request was making anyway. There is no cache to invalidate and no second
+store to keep in step. Both are LEFT joins: a column added for observability
+must never be able to decide an authentication.
+
+What "free" means here is precise, and worth being precise about, because that
+session query is **not cached** — every authenticated request pays it, blocking,
+before its handler runs. Adding the two columns adds no round trip and no scan:
+against the checked-in migrations, `EXPLAIN QUERY PLAN` shows the new join as
+`SEARCH u USING INDEX sqlite_autoindex_users_1 (id=?)` — a primary-key point
+lookup, the same shape as the two joins already there — and the statement grows
+from 57 to 71 VDBE operations, all on pages the query is already touching. The
+network hop dominates both numbers by orders of magnitude.
+
+That the query itself is uncached is a separate question from this change, and
+[Failure modes and limits](#failure-modes-and-limits) says what is known about
+it and what the levers are.
+
+They are **absent until a product event mints them**, which is correct rather
+than a gap — the pipeline creates them lazily, so before the first one there is
+no PostHog person for a trace to point at. `setAttributes` drops nulls, so the
+attribute is simply not there.
+
+**Which spans carry which**, and why it is not uniform:
+
+| Span | Person | Workspace |
+| --- | --- | --- |
+| Anything rooted in an HTTP request | yes | yes |
+| A Durable Object reached over a binding call | inherited — the span is a child of the HTTP root above | inherited |
+| `workstream.room.socket.accept` / `…subscribe`, `workstream.message.send` on WorkspaceDO | no | yes |
+
+The socket-rooted spans are their own traces, so they need identity of their
+own. They get the workspace surrogate from the `workspaces` row their
+authorization query already joins. They deliberately do **not** get the person
+surrogate: that would mean a Durable Object joining `users` on every socket
+frame, and no diagnostic is worth widening what a socket's authorization depends
+on. A socket trace is one hop from an HTTP trace that has it — through
+`avalon.socket.ticket_id`, `avalon.socket.connection_id`, or
+`avalon.message.client_id` — and it still carries the raw `user.id`, so the
+"who do I talk to" question is answerable without the hop. Only the PostHog
+person join needs it.
+
+The objects set what they do have after their own session query answers, rather
+than accepting it over RPC; `WorkstreamObjectClient` narrows the auth payload it
+sends for exactly this reason. A correlation value arriving from outside is one
+the object would have to decide whether to trust, for something it resolves
+anyway.
+
+Nothing authorizes on either attribute. They are correlation values, and the
+authority for who a request belongs to remains `userId` and `workspaceId`.
+
+### What the platform cannot join, and what does
+
+Automatic tracing links a Worker to everything it calls. It cannot link two
+separate client-initiated invocations, and each of these flows has at least one
+seam of that kind. Each is bridged by an **attribute both traces carry** —
+deliberately an attribute and never a stand-in trace id, because a hand-made
+trace id would build a second trace graph beside the platform's and the two
+would never meet.
+
+| Seam | The attribute that crosses it |
+| --- | --- |
+| Renderer → Worker, over HTTP | `avalon.request.id`, from the `x-request-id` the desktop mints per call and the Worker echoes. |
+| `GET …/socket` → the WebSocket upgrade → the room | `avalon.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
+| The room's upgrade → the `subscribe` that follows | `avalon.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
+| Renderer → workspace command socket → WorkspaceDO | `avalon.message.client_id`, which the renderer, the command, and the command result all carry. |
+
+### The three flows
+
+**`workstream_create`** — `POST /workstreams` opens `workstream.create` and the
+creation service adds a span per awaited call:
+`workstream.create.authority.read_recheck` (named for the second read it is —
+the route already resolved the same row), `…receipt.reserve`, `…receipt.read`,
+`…email_address.reserve`, `…d1_rows.write`, `…object.initialize`,
+`…substream.flush_effects`, `…workstream.flush_directory`,
+`…workspace.directory_probe`, `…route.activate`, `…email_route.activate`,
+`…receipt.complete`. Inside `object.initialize` the room adds
+`workstream.room.initialize` and its children. A replayed create is labelled
+`avalon.create.path = replayed_receipt` so it does not sit in the same
+distribution as a first one.
+
+**`workstream_open`** — four traces, joined by the attributes above: the
+socket-ticket route (`workstream.socket.ticket`), the edge upgrade
+(`workstream.socket.upgrade`), the room's acceptance
+(`workstream.room.socket.accept`), and the room's subscription
+(`workstream.room.socket.subscribe`). When the subscription's plan is a
+snapshot, `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit
+inside it. `avalon.snapshot.trims` is worth reading beside the byte size: the
+trim loop re-serializes the whole frame per dropped message, and that count is
+the only place its cost appears. `GET /:id` and `GET /:id/messages` carry the
+same flow, because a resync fetches canonical state over HTTP and is part of the
+same wait.
+
+**`workstream_message_send`** — the desktop sends over the workspace command
+socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
+`…authority_read`, `…session_auth`, `…object_write`, `…respond`, with the room's
+`workstream.room.create_message` nested under the write. `POST /:id/messages`
+traces the same flow for the HTTP path, distinguished by `avalon.transport`.
+
+### The desktop half
+
+The renderer is not a Worker, so automatic tracing does not reach it and there
+is no span to attach to. It is deliberately **not** an OpenTelemetry client:
+shipping a browser SDK and an exporter out of the Electron renderer would move
+telemetry off the main-owned regional path [`telemetry.md`](telemetry.md)
+requires everything to travel on.
+
+Instead `AvalonApi` stamps `x-request-id` on every call and prints one
+`[perf] http <method> <path> <status> <ms>` line, and each flow prints one
+`[perf] <flow> <ms>` line carrying its phases and the correlation ids above.
+Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
+and of a terminal until a reader opens the Verbose level. That is what lets it
+stay on in every build rather than behind a preference nobody had enabled when
+the slow open happened.
+
+## Invariants
+
+- **No OpenTelemetry package, no hand-made trace id, no `traceparent`.** The
+  platform owns trace identity and propagation. Anything minted here becomes a
+  second trace graph that never joins the first, and the failure is silent:
+  every row still looks right on its own.
+- **A step is named, or it is not traced.** `noFlowSpan` opens no spans and
+  emits no rows, so a background path costs nothing. What it must not do is open
+  spans under a flow it is not part of.
+- **An attribute is set or absent.** `setAttributes` drops `undefined` and
+  `null` rather than writing an empty value.
+- **`identityAttributes` is the only place an id becomes an attribute name.**
+- **`x-request-id` is not authoritative for anything.** It is a client-supplied
+  correlation label; `requestContext` validates its shape and mints one when it
+  is absent or malformed, and nothing authorizes, routes, or bills on it.
+- **Observation never changes the operation.** `noFlowSpan` is a working
+  `FlowSpan`, `step` returns exactly what its callback returns, and a step that
+  throws rethrows unchanged.
+- **No content is recorded *by this module*.** Counts, ids, sizes, and status
+  codes only. The logger's `redact` still applies to the `perf_flow` row, but it
+  is a backstop rather than the rule, and it does not apply to span attributes
+  at all. Note that this invariant is about what we add: the platform's own
+  Durable Object SQL spans carry bound parameter values, and therefore message
+  content, whatever this module does — see
+  [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md#what-automatic-tracing-captures-that-we-would-never-log).
+
+## Boundary
+
+This module owns latency diagnosis for the three named flows and nothing else.
+
+- **It is not product telemetry.** [`telemetry.md`](telemetry.md) owns product
+  signals, their regional routing, and the preferences that gate them; the
+  `api_operation_outcome` event's coarse duration bucket is a product metric and
+  stays where it is. A span and a `perf_flow` row are diagnostics, subject to
+  Workers Traces and Workers Logs retention, and reach no destination adapter.
+- **It is not the run ledger.** A harness run's duration, tokens, and cost are
+  `harness_run_finished` and the `RUN_ANALYTICS` dataset, described in
+  [`runbook.md`](runbook.md#root-run-analytics). Tracing stops at the run
+  dispatch: the run is asynchronous by design and is not part of what the caller
+  waits for.
+- **It does not configure the exporter.** Where traces and logs are sent is
+  `observability` in the Wrangler configs plus the account's OTLP destination,
+  and neither is decided here.
+- Callers are the routes, services, and Durable Objects listed above. New spans
+  are welcome inside the three flows; a fourth flow means adding a name to
+  `PerfFlow` and a section here.
+
+## Failure modes and limits
+
+- **Custom spans require `observability.traces`.** With it disabled the
+  callbacks still run and the `perf_flow` rows are still written, but nothing is
+  exported — the failure looks like missing traces, not like an error.
+- **A flow's step list is capped at 64**, after which steps are dropped from the
+  summary row and a `steps_truncated` marker is appended. The clock is not
+  reset, so the total and every earlier step stay truthful. Spans themselves are
+  not capped here; the platform's own limits apply.
+- **`0ms` means "no I/O", not "instant"** — see the clock note above.
+- **Spans and log rows are billed identically from 1 October 2026** — one
+  observability event each, 20 million a month included on the paid plan, $0.60
+  per million beyond it — and head sampling is 1 in both regional configs. A
+  create emits roughly a dozen custom spans plus one `perf_flow` row on top of
+  the platform's own spans, so lowering `head_sampling_rate` — which can be set
+  separately for logs and traces — is the lever if volume becomes the problem,
+  not deleting spans.
+- **Span and attribute names are not final upstream.** Cloudflare may rename
+  `cloudflare.*` attributes during the beta; a saved query built on one can break
+  without a deployment here.
+- **`perf_flow` does not include authentication.** `requireAuth` is middleware
+  and finishes before a route opens its span, so its cost sits inside
+  `http_request` and outside the flow. The difference is carried explicitly as
+  `avalon.auth.duration_ms`, on the span and in the row, so the gap between the
+  two durations reads as a number rather than as a mystery.
+- **The session lookup is one uncached, blocking D1 round trip per
+  authenticated request**, and there is no read replication on the `DB` binding.
+  Whether that is a problem is now measurable rather than arguable: read
+  `avalon.auth.duration_ms`, and the platform's own `d1_first` span for the same
+  query carries `cloudflare.d1.response.sql_duration_ms` beside it, which
+  separates the database's own time from the round trip to reach it. If it does
+  turn out to matter, the lever is
+  [D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+  with the Sessions API — **but not naively for this query**: a session read
+  served by a stale replica can admit a session that was just revoked, so it
+  would need `first-primary` or bookmark-based consistency, which gives back
+  much of what replication buys. Treat it as a decision with a security
+  argument in it, not a configuration change.
+- **A `workstream_open` trace is not always a completed open.** The renderer
+  closes the trace on the first valid server frame and records which one it was
+  as `outcome`. A `snapshot` means the screen filled; a `resync_required` means
+  the server sent the client to HTTP instead, closing the socket and deferring
+  reconciliation to the next connect, which this trace does not cover. The
+  durations are therefore only comparable within one outcome — **filter
+  `outcome = snapshot` before reading a percentile.** Making the trace span the
+  reconnect would mean a renderer trace that outlives its socket, which is a
+  larger change than this one.
+- **Retention is the platform's.** Nothing here is durable, and a flow
+  investigated a month later has no trace and no rows.
+- **The desktop's lines are lost on quit.** They live in the renderer's console
+  and are written nowhere.
+
+## Testing
+
+| Suite | What it proves |
+| --- | --- |
+| `apps/api/test/tracing.test.ts` (`pnpm --filter @avalon/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
+| `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence — every socket path calls it defensively — and that `newRequestId` produces something `requestContext` will accept rather than replace. |
+| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, and that a caller's own id is used when it has one. |
+| `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
+
+Three traps:
+
+- **`cloudflare:workers` does not exist under Node.** The Node suite aliases it
+  to `test/helpers/cloudflare-workers.ts`, whose `tracing` stand-in keeps the
+  contract a call site depends on — the callback runs, the result is returned, a
+  throw propagates, attributes are recorded — and records what was opened for
+  `recordedSpans()`. It does **not** nest by async context and it exports
+  nothing. Anything that depends on real nesting or on export belongs in
+  `apps/api/test-workers/`, per [`testing.md`](testing.md).
+- **`resetRecordedSpans()` in `afterEach`.** The recorder is module state; a
+  test that does not clear it sees the previous test's spans and passes for the
+  wrong reason.
+- **The clock has to be stubbed one step per `Date.now()` call** — one for
+  opening the flow, one per step closed, and one for the summary. A miscount
+  shifts every duration by one step and the assertion fails somewhere other than
+  where the mistake is.
+
+## Operations
+
+Traces go wherever the account's OTLP destination points; the `perf_flow` rows
+go to Workers Logs. To investigate one slow interaction a person reported:
+
+1. Get an id from their client — the request id from a `[perf] http …` line, or
+   the `traceId` / `ticketId` / `clientMessageId` from a `[perf] <flow>` line.
+2. In the trace destination, filter on the matching attribute:
+   `avalon.request.id`, `avalon.socket.ticket_id`, or
+   `avalon.message.client_id`. For a socket open, follow
+   `avalon.socket.ticket_id` into the room's acceptance, then
+   `avalon.socket.connection_id` into the subscription.
+3. In Workers Logs, `event = perf_flow` with the same `request_id` gives the
+   same breakdown as one row, including `slowest_step`.
+
+To find the pattern rather than the instance, filter `event = perf_flow` with
+`flow = <name>` and `duration_ms >` a threshold, and group by `slowest_step`.
+Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
+there are enough production rows to pick thresholds that are not guesses; they
+are deliberately not guessed here.
+
+**Before any of this is pointed at a third-party destination**, two things have
+to be decided rather than inherited.
+
+The first is not about this module at all and is the larger of the two: the
+platform's automatic Durable Object SQL spans carry
+`cloudflare.durable_object.query.bindings`, which for Avalon means message
+content, with no hook to redact it —
+[`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md#what-automatic-tracing-captures-that-we-would-never-log)
+has the detail. An OTLP export moves that content out of the region's own trust
+boundary.
+
+The second is identity, and it has two halves. Spans now carry the analytics
+surrogates deliberately, so a system trace can be matched to a product event —
+which means **a trace holds both identities at once, and whatever stores traces
+holds the mapping that keeping them apart was protecting**. That is a reasonable
+trade for an internal observability destination and a poor one for a destination
+chosen casually.
+
+The other half is a correctness problem before it is a privacy one.
+
+Spans carry raw `user.id` and `avalon.workspace.id` — the same ids every other
+diagnostic in Workers Logs already carries. PostHog is keyed on neither.
+`users.analytics_person_id` and `workspaces.analytics_workspace_id` are random
+UUIDv7 surrogates, minted lazily by `ensurePersonAnalyticsId` and
+`ensureWorkspaceAnalyticsId` in `apps/api/src/telemetry/authenticated.ts`, and
+they are what the adapter sends as `distinct_id` and `$groups.workspace`. The
+mapping between a product id and its analytics id exists only in that region's
+D1; nothing derives one from the other.
+
+So an exporter that promoted `user.id` to `distinct_id` would not merely widen
+what PostHog holds — **it would make one human two people there**, one under
+`analytics_person_id` from the product pipeline and one under `users.id` from
+traces, and one workspace two groups. Un-merging that afterwards means
+reconstructing the D1 mapping.
+
+Two ways out, and either is fine: map through the analytics ids at the exporter,
+or keep the attributes as opaque correlation values and never promote them to
+identity. What is not fine is letting a destination's default identity mapping
+decide.
+
+Note also that an OTLP destination is account configuration and covers **both**
+regional Workers. Today no EU telemetry reaches PostHog at all — `POSTHOG_HOST`
+is set only in `wrangler.global.jsonc`, the EU Worker holds no destination
+credential, and [`telemetry.md`](telemetry.md) records that an EU PostHog
+project would require a new recorded decision. A trace export configured without
+noticing would route around that boundary rather than change it.
+
+## Changelog
+
+### 2026-08-20 — Review pass: the step accounting, and four things it hid
+
+**What changed:** `step` now closes the gap since the previous step as an
+explicit `unattributed` entry before starting its own measurement. It used to
+measure from the previous step's end, so anything awaited *between* two steps
+was billed to the later one — a fast step could be named `slowest_step` at the
+cost of its slow neighbour, while its own span recorded the truth. `mark` keeps
+the old accounting on purpose: it exists to name work that has already happened.
+
+Three call sites were mismeasuring because of it, and are fixed independently
+so they read correctly rather than as a named gap:
+`SubstreamAgent.acceptSocketInSpan` no longer reads the workstream authority
+control twice; `sendSnapshot` gives `socketAuth` its own step; and the create
+service's `durableObjectStubForWorkspace` calls now surface as `unattributed`
+rather than inflating the step after them.
+
+Also in this pass: `avalon.snapshot.bytes` reports UTF-8 bytes rather than
+`String.length`, carried in a variable so the trim loop encodes once per
+iteration instead of twice; `step` repeats `avalon.flow` and `avalon.component`
+onto each child span, because OpenTelemetry does not inherit attributes and a
+step that lacks them cannot be grouped by its flow; the renderer's create trace
+reports `navigation_requested` rather than `navigated` and ends a superseded
+trace instead of orphaning it; the renderer no longer logs query-string values;
+and `test-workers/tracing-runtime.test.ts` pins `tracing.enterSpan` against the
+real runtime.
+
+**Why:** Review found them, and most were the instrumentation lying about the
+thing it exists to measure — the PR's own framing is "the create took four
+seconds and 3.1 of them were the authority read", which the step accounting
+could not actually support. `encoded.length` counts UTF-16 code units against a
+cap measured in UTF-8, so any non-ASCII transcript under-reported exactly the
+frames most likely to trip it. And every tracing test ran against the
+`cloudflare:workers` stub, which `AGENTS.md` reserves for what cannot run on
+workerd — custom spans can, so the whole feature rested on an import no test
+resolved for real, on an API in open beta.
+
+The duplicated authority read was not only a measurement defect: it is an
+uncached D1 round trip, so every socket accept paid two to save header parsing
+on the maintenance path.
+
+**Considered and rejected:** *Repeating the identity attributes onto every step
+span too*, which review also asked for. The root of the same trace carries them
+and `perf_flow` carries them beside every step duration, so the cost would be
+paid per span for something already available twice. *Keeping the renderer's
+create trace open until the destination screen commits.* The surface is
+optimistic — the work stream appears on the keystroke — so the person's wait
+ended long before `navigate`, and holding a renderer trace across a route commit
+to measure a screen they already have buys nothing; the label was the part that
+was wrong. *Making `workstream_open` span a reconnect* after a
+`resync_required`, which would mean a renderer trace outliving its socket; the
+`outcome` attribute names which frame arrived instead, and the limitation is
+recorded under **Failure modes and limits**.
+
+**Consequences:** A step's number is now its own, so `slowest_step` can be
+trusted — but a flow with unstepped awaits will show an `unattributed` entry,
+and that entry is a bug report about the instrumentation rather than a finding
+about the code. `avalon.snapshot.bytes` is not comparable across this change for
+non-ASCII transcripts; earlier values read low.
+
+Shipped in #203.
+
+### 2026-08-20 — Spans carry the analytics surrogates, read on the auth query
+
+**What changed:** Traced requests now set `avalon.analytics.person_id` and
+`avalon.analytics.workspace_id` alongside the raw `user.id` and
+`avalon.workspace.id`. Both are read from the session query that already
+authenticates an HTTP request; the two Durable Objects add only the workspace
+surrogate, from the `workspaces` row they already join.
+`IdentityAuthContext` carries both as optional fields.
+
+**Why:** A system span could identify the person to us and a PostHog event could
+identify the same person to PostHog, and nothing connected the two — the
+surrogates are random UUIDv7s whose mapping to `users.id` exists only in
+regional D1. Answering "this trace was slow, what was that person doing, and who
+do I email" meant a manual join through the database. Carrying both identities on
+the span removes the step.
+
+**Considered and rejected:** *Workers KV, with an in-memory cache in front.* This
+was the proposal, and it loses on four counts, the last of them decisive. It buys
+no round trip, because the D1 read happens regardless — `workspaces` was already
+joined and `users` is a primary key away, so the columns are free where a KV read
+is a fresh I/O hop that can miss the colo cache and fall back through the regional
+and central tiers. It is eventually consistent, so a freshly minted surrogate is
+invisible for up to a minute — on exactly the first-session traces most worth
+having. It becomes a second source of truth needing a write path and an
+invalidation story for data whose authority is a D1 column. And **a KV namespace
+is global**: jurisdictional restriction for KV is in private beta, so putting EU
+member identity in one would move it out of the region that
+[`regionalization.md`](regionalization.md) and [`telemetry.md`](telemetry.md)
+keep it in, to save a query that is not being made. *An isolate-local cache on
+its own* has the same first objection — there is nothing to cache — and would
+add a bounded map that can never be authoritative, for no saving. *Putting the
+surrogates in the access token or the socket ticket.* The session read happens
+anyway, so it saves nothing, and it would bake a lazily minted value into a
+credential issued before it exists. *The inverse: sending the raw `users.id` to
+PostHog as a person property, and joining there.* One `$set` per person rather
+than two attributes per span, and cheaper — but it reverses the decision
+`telemetry.md` records, which is that raw product ids do not go to PostHog. Given
+the choice of which side carries the linkage, traces already carry raw ids and
+internal detail, and PostHog deliberately does not.
+
+**Also measured here:** authentication now records `avalon.auth.duration_ms`.
+The session lookup is uncached and blocks every authenticated request, and it
+runs before any flow span opens — so it was both invisible in `perf_flow` and
+the reason `perf_flow` and `http_request` disagree. Whether it is expensive is
+now a query.
+
+**Consequences:** The `users` join added to `authenticate` must stay a LEFT join
+and never become a condition — a session whose surrogates are half-minted is
+normal, and filtering on them would turn a telemetry detail into a sign-out.
+A Durable Object must not grow a `users` join for this: the workerd suite
+declares only the tables it needs and most of it has no `users` table at all,
+which is the shape of the coupling being avoided rather than an accident of the
+tests. Both suites' `workspaces` declarations now need `analytics_workspace_id`. The attributes
+are absent, not empty, until the telemetry pipeline mints them; a dashboard has
+to tolerate that. Anything that changes how the surrogates are minted in
+`apps/api/src/telemetry/authenticated.ts` now has a second consumer. And a trace
+now holds both identities at once, so the destination holding traces holds the
+mapping the pseudonymity was protecting — which raises the bar on where traces
+are exported, described in **Operations** below.
+
+Shipped in #203.
+
+### 2026-08-20 — Three work-stream flows get custom spans on Cloudflare's tracing
+
+**What changed:** Starting a work stream, opening one, and sending it a message
+are each traced end to end with custom spans over Cloudflare's automatic
+tracing, using `tracing.enterSpan` from `cloudflare:workers`. Every step is a
+named span; workspace, work-stream, user, request, ticket, connection, and
+client-message ids travel as OpenTelemetry-style attributes. Each flow also
+emits one `perf_flow` Workers Log row carrying its step breakdown. The desktop
+stamps `x-request-id` on every HTTP call and prints its own phase lines at the
+trace level.
+
+**Why:** These three flows were reported slow with no way to say which part was
+slow. The only measurement was `http_request`'s total duration, and a create
+alone is eleven awaited round trips — a receipt, an email-address reservation, a
+D1 batch, a Durable Object initialize, two effect flushes, a directory probe, a
+route activation — behind one number. Diagnosis meant adding a temporary log,
+deploying, and waiting for it to happen again. The socket path was worse: an
+upgrade opens a new connection carrying no request id, so nothing tied a slow
+room back to the client that asked for the ticket, and the subscription that
+actually fills the screen was invisible.
+
+**Considered and rejected:** *An OpenTelemetry SDK — `@microlabs/otel-cf-workers`
+or the Node SDK.* The platform already emits OTLP traces and logs from these
+Workers with `observability.traces` enabled; an SDK would add an exporter, an
+async-context shim, and a second trace graph that the platform's own spans for
+D1 and Durable Object calls would not appear in. *Minting W3C trace ids and
+propagating `traceparent` by hand.* This was built first and removed: the
+runtime already owns trace identity, exposes no `spanContext()` to read it, and
+propagates across subrequests itself — hand-made ids would have produced traces
+that looked correct in isolation and joined nothing. *Using an id that survives
+a seam as the trace id* — the socket ticket id and the client message id are
+both UUIDs, and a UUID without its dashes is a valid trace id. Same objection:
+it forks the trace graph. They are correlation *attributes* instead. *A new
+product telemetry event.* Latency diagnosis is not a product signal: it would
+have to clear the regional, identity, and preference machinery in
+`telemetry.md`, and it would arrive bucketed, because that pipeline is
+deliberately coarse. *A new `x-avalon-trace-id` header between client and
+Worker.* `x-request-id` was already accepted, validated, CORS-allowed, and
+echoed; a second header would have been the same value under another name and a
+full pass of [`when-adding-a-new-http-header.md`](when-adding-a-new-http-header.md).
+
+**Consequences:** The platform owns trace identity — anything that reintroduces
+a hand-made id or a `traceparent` here re-creates the fork this entry removed,
+and it fails silently. `PerfFlow` is the registry: a flow not in it opens no
+spans, by design. The socket-ticket routes now return `ticketId` and
+`WorkstreamService.socketTicket` mints it rather than letting the issuer
+generate one, so anything that changes how ticket ids are made must keep the
+route and the room recording the same value, or the socket seam stops joining.
+Custom spans depend on `observability.traces` staying enabled in both regional
+Wrangler configs, and on the Node suite's `cloudflare:workers` alias — a new
+module that imports `tracing` is unimportable from a Node test until that shim
+covers what it uses. `Date.now()` under workerd means a step's number is I/O
+time and a CPU-only step reads zero. The desktop suite now buffers console
+output for passing tests, so a test that was reading a log line from a passing
+run's output will not find it. No saved Workers Logs view was added: the
+thresholds would have been guesses. And the identity note in **Operations** is
+unresolved on purpose — raw ids on spans are fine for Workers Logs and are *not*
+fine to forward into PostHog identity unchanged.
+
+Shipped in #203.
