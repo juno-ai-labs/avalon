@@ -532,6 +532,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
         SELECT RAISE(ABORT, 'workspace_placement_affinity_immutable');
       END`,
   ],
+}, {
+  version: 2,
+  description: "connector OAuth attempt telemetry columns the connection service reads",
+  statements: [
+    // `connection-service.ts` writes and reads these four alongside
+    // `telemetry_operation_id`, which version 1 carried alone. The object
+    // table was therefore narrower than the queries routed to it: every
+    // connector OAuth attempt statement naming them fails once a region serves
+    // this table from the object, and the maintenance import — which passes
+    // each D1 column through by name — cannot land the rows at all. Added
+    // rather than dropped at import because the columns are live product
+    // telemetry, not migration residue.
+    `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_event_version INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_scope TEXT`,
+    `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_capability_count INTEGER`,
+    `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_reconnect INTEGER NOT NULL DEFAULT 0`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
