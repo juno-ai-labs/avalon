@@ -1,707 +1,826 @@
 /*
- * The theme engine.
+ * GENERATED FILE — do not edit.
  *
- * Every colour, radius, and unit of breathing room the renderer draws with is
- * declared here, once per theme, and nowhere else. `app.css` names tokens; this
- * file decides what they are. A theme is therefore a block of custom properties
- * rather than a fork of the stylesheet, and adding one costs a block rather than
- * an audit of 3,700 lines.
+ * Written by `scripts/build-theme-css.mjs` from the design-token JSON under
+ * `config/design-tokens/`. Edit a theme there and run `pnpm tokens:build`;
+ * `pnpm tokens:check` fails if this file and that JSON disagree.
  *
- * Read `docs/theming.md` before adding a theme or a token. Two rules matter
- * enough to restate here:
- *
- *   1. Surfaces are named, not numbered. `--canvas`, `--sidebar`, `--surface`,
- *      `--raised` and `--elevated` are declared outright by each theme because
- *      their *relationship* inverts between light and dark: a dark theme makes
- *      a control recede by darkening it, a light theme by greying it. Nothing
- *      derives one from another.
- *
- *   2. Everything monotonic lives on the `--n-*` ramp, which runs from the
- *      faintest mark a theme can make on its own surface (`--n-1`) to its
- *      strongest text (`--n-14`). The ramp is ordered by *contrast against the
- *      surface*, never by lightness, so `--n-3` is a border in every theme
- *      without the stylesheet knowing which way round the theme is.
+ * See `docs/theming.md` for the token taxonomy and what each tier means.
  */
 
+/* Dark — Avalon's original low-light palette. */
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* Surfaces */
-  --canvas: #111210;
-  /* The navigation is a translucent layer, not a panel of its own: whatever the
-   * shell paints behind it — the canvas, and the light a theme casts across it —
-   * reads through. `--sidebar-solid` is the same tone made opaque, for the one
-   * state that cannot be see-through: the drawer, which sits over the content.
-   * `--sidebar-edge` is the single line dividing navigation from content, and a
-   * theme may keep it visible after flattening every other border. */
-  --sidebar: rgba(122, 124, 108, 0.06);
-  --sidebar-solid: #181916;
-  --sidebar-edge: #282924;
-  --surface: #1d1e1b;
-  --surface-2: #22231f;
-  --sunken: #191a17;
-  --raised: #292a26;
-  --raised-hover: #30312c;
-  --elevated: #292a26;
-  --elevated-hover: #383934;
+  /* The neutral ramp, ordered by contrast against the surface rather than by
+   * lightness, so a step means the same thing whichever way round a theme
+   * runs. Fills at the faint end, text at the strong end. */
+  --av-ref-color-neutral-1: #242521;
+  --av-ref-color-neutral-2: #292a26;
+  --av-ref-color-neutral-3: #30312c;
+  --av-ref-color-neutral-4: #343530;
+  --av-ref-color-neutral-5: #3b3c36;
+  --av-ref-color-neutral-6: #44453f;
+  --av-ref-color-neutral-7: #55564f;
+  --av-ref-color-neutral-8: #6f6f68;
+  --av-ref-color-neutral-9: #77766f;
+  --av-ref-color-neutral-10: #94948c;
+  --av-ref-color-neutral-11: #aaa9a2;
+  --av-ref-color-neutral-12: #cac9c2;
+  --av-ref-color-neutral-13: #dfded9;
+  --av-ref-color-neutral-14: #ecebe5;
 
-  /* Contrast ramp: faintest mark on --surface through to strongest text */
-  --n-1: #242521;
-  --n-2: #292a26;
-  --n-3: #30312c;
-  --n-4: #343530;
-  --n-5: #3b3c36;
-  --n-6: #44453f;
-  --n-7: #55564f;
-  --n-8: #6f6f68;
-  --n-9: #77766f;
-  --n-10: #94948c;
-  --n-11: #aaa9a2;
-  --n-12: #cac9c2;
-  --n-13: #dfded9;
-  --n-14: #ecebe5;
+  /* The line ramp. Borders are not faint fills: a theme that draws with space
+   * needs to flatten its lines without erasing the fills that share a contrast
+   * level with them. */
+  --av-ref-color-line-1: #292a26;
+  --av-ref-color-line-2: #343530;
+  --av-ref-color-line-3: #3b3c36;
+  --av-ref-color-line-4: #44453f;
+  --av-ref-color-line-5: #55564f;
+  --av-ref-color-line-6: #74746d;
 
-  /* Line ramp. Borders are not faint fills, and a theme that wants to draw with
-   * space instead of lines needs to say so without also erasing the fills that
-   * share a contrast level with them — `--n-4` is both the default border and
-   * the selected sidebar row. Six steps: a divider you should barely see, the
-   * default border, one that should read, one under the pointer, one on an
-   * engaged control, and a focus border, which stays visible in every theme. */
-  --line-1: #292a26;
-  --line-2: #343530;
-  --line-3: #3b3c36;
-  --line-4: #44453f;
-  --line-5: #55564f;
-  --line-6: #74746d;
+  /* The window's backdrop: one painted layer behind every pane, so a theme's
+   * light runs unbroken beneath a translucent sidebar and the feed beside it
+   * rather than being repainted per pane and showing a seam at the join. Each
+   * token is a CSS `background-*` longhand under its own name, so a theme
+   * declares a backdrop the way a stylesheet would and the browser's own
+   * sizing, centring and tiling rules apply unchanged. `image` also accepts
+   * `{"svg": "<svg …>"}` for artwork drawn in the theme file and `{"url":
+   * "https://…"}` for one fetched over the network, and an array for layers. */
+  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
+  --av-sys-backdrop-image: none;
+  --av-sys-backdrop-position: 0% 0%;
+  --av-sys-backdrop-size: auto;
+  --av-sys-backdrop-repeat: no-repeat;
+  --av-sys-backdrop-attachment: fixed;
+  --av-sys-backdrop-blend-mode: normal;
 
-  /* Accents. Six roles each: the hue itself, a brighter one for hover, a
-   * readable-on-surface text tone, a tinted block, a tinted border, and the
-   * text drawn on top of a filled swatch of the hue. */
-  --brand: #cedc00;
-  --brand-strong: #e0ec25;
-  --brand-soft: #aab96a;
-  --brand-ink: #cedc00;
-  --brand-wash: #25291f;
-  --brand-edge: #3f4932;
-  --brand-on: #11140f;
+  /* The named surfaces. Declared outright by each theme because their
+   * relationship inverts between light and dark — a dark theme makes a control
+   * recede by darkening it, a light theme by greying it. */
+  --av-sys-color-surface-canvas: #111210;
+  --av-sys-color-surface-default: #1d1e1b;
+  --av-sys-color-surface-subtle: #22231f;
+  --av-sys-color-surface-sunken: #191a17;
+  --av-sys-color-surface-raised: #292a26;
+  --av-sys-color-surface-raised-hover: #30312c;
+  --av-sys-color-surface-elevated: #292a26;
+  --av-sys-color-surface-elevated-hover: #383934;
+  --av-sys-color-surface-inverse-hover: #ffffff;
 
-  --blue: #47c7fc;
-  --blue-strong: #8ec2fb;
-  --blue-soft: #64aaf4;
-  --blue-wash: #15202a;
-  --blue-edge: #283037;
-  --blue-on: #0d1620;
+  /* Text tones, strongest to faintest. */
+  --av-sys-color-text-on-inverse: #171815;
+  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
+  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
+  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
+  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
 
-  --green: #6ecb87;
-  --green-strong: #88d29f;
-  --green-fill: #315b44;
-  --green-fill-edge: #3f7255;
-  --green-soft: #93b69c;
-  --green-wash: #1b2b20;
-  --green-edge: #294632;
-  --green-on: #d7f0e0;
+  /* The three borders the stylesheet names directly; each resolves to a step
+   * on the line ramp. */
+  --av-sys-color-border-highlight: rgba(255, 255, 255, 0.035);
+  --av-sys-color-border-default: var(--av-ref-color-line-2);
+  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
+  --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  --gold: #e6bd45;
-  --gold-strong: #f0d49c;
-  --gold-soft: #dec38d;
-  --gold-wash: #3a3022;
-  --gold-edge: #604d2c;
-  --gold-on: #1c1608;
+  /* Avalon's own colour. `ink` is the brand drawn as a mark or a label on an
+   * ordinary surface, which is a different question from `base`: the
+   * chartreuse is a fine fill on white and an illegible label on it. */
+  --av-sys-color-brand-base: #cedc00;
+  --av-sys-color-brand-strong: #e0ec25;
+  --av-sys-color-brand-soft: #aab96a;
+  --av-sys-color-brand-ink: #cedc00;
+  --av-sys-color-brand-wash: #25291f;
+  --av-sys-color-brand-edge: #3f4932;
+  --av-sys-color-brand-on: #11140f;
+  --av-sys-color-brand-tint: rgba(206, 220, 0, 0.3);
+  --av-sys-color-brand-tint-strong: rgba(206, 220, 0, 0.45);
+  --av-sys-color-brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.055), transparent 62%);
+  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
-  --red: #d8756f;
-  --red-strong: #ef8a83;
-  --red-soft: #dda49e;
-  --red-wash: #3a2422;
-  --red-edge: #5b302d;
-  --red-on: #17100f;
+  /* The hue for links, focus and selection. */
+  --av-sys-color-accent-base: #47c7fc;
+  --av-sys-color-accent-strong: #8ec2fb;
+  --av-sys-color-accent-soft: #64aaf4;
+  --av-sys-color-accent-wash: #15202a;
+  --av-sys-color-accent-edge: #283037;
+  --av-sys-color-accent-on: #0d1620;
+  --av-sys-color-accent-tint: rgba(71, 199, 252, 0.42);
+
+  /* Positive state. `fill` and `fill-edge` are a filled control — a switch
+   * that is on, a selected preset — which is neither the vivid hue nor the
+   * wash. */
+  --av-sys-color-success-base: #6ecb87;
+  --av-sys-color-success-strong: #88d29f;
+  --av-sys-color-success-fill: #315b44;
+  --av-sys-color-success-fill-edge: #3f7255;
+  --av-sys-color-success-soft: #93b69c;
+  --av-sys-color-success-wash: #1b2b20;
+  --av-sys-color-success-edge: #294632;
+  --av-sys-color-success-on: #d7f0e0;
+
+  /* Attention short of failure. */
+  --av-sys-color-warning-base: #e6bd45;
+  --av-sys-color-warning-strong: #f0d49c;
+  --av-sys-color-warning-soft: #dec38d;
+  --av-sys-color-warning-wash: #3a3022;
+  --av-sys-color-warning-edge: #604d2c;
+  --av-sys-color-warning-on: #1c1608;
+
+  /* Failure and destructive action. */
+  --av-sys-color-danger-base: #d8756f;
+  --av-sys-color-danger-strong: #ef8a83;
+  --av-sys-color-danger-soft: #dda49e;
+  --av-sys-color-danger-wash: #3a2422;
+  --av-sys-color-danger-edge: #5b302d;
+  --av-sys-color-danger-on: #17100f;
+  --av-sys-color-danger-tint: rgba(216, 117, 111, 0.13);
+  --av-sys-color-danger-tint-strong: rgba(216, 117, 111, 0.28);
+
+  /* What sits between a layer and what it covers. */
+  --av-sys-color-scrim-default: rgba(0, 0, 0, 0.55);
+  --av-sys-color-scrim-subtle: rgba(0, 0, 0, 0.3);
+  --av-sys-color-scrim-solid: rgba(10, 11, 8, 0.98);
+
+  /* The colour of a focus indicator. */
+  --av-sys-color-focus-default: var(--av-sys-color-accent-base);
+  --av-sys-color-focus-quiet: #6a7f95;
+
+  /* Selected text. */
+  --av-sys-color-selection-background: rgba(71, 199, 252, 0.28);
+
+  /* The scrollbar thumb. */
+  --av-sys-color-scrollbar-thumb: #3a3b35;
+
+  /* The sweep across a loading skeleton. */
+  --av-sys-color-shimmer-default: rgba(255, 255, 255, 0.07);
+
+  /* Syntax highlighting. `prism-react-renderer` takes a JavaScript object
+   * rather than a class, so these reach it as `var()` inside an inline style. */
+  --av-sys-color-syntax-plain: #e5e4df;
+  --av-sys-color-syntax-comment: #777772;
+  --av-sys-color-syntax-punctuation: #aaa9a3;
+  --av-sys-color-syntax-tag: #ff8a50;
+  --av-sys-color-syntax-number: #e6a06b;
+  --av-sys-color-syntax-string: #b995f5;
+  --av-sys-color-syntax-operator: #d8d7d2;
+  --av-sys-color-syntax-keyword: #ff7b2c;
+  --av-sys-color-syntax-function: #17a9f5;
+  --av-sys-color-syntax-variable: #e8b75c;
+
+  /* One per participant, chosen by a hash of their id. Six is enough that a
+   * repeat is rare in a room and few enough that each stays distinguishable. */
+  --av-sys-color-person-1: #8db6de;
+  --av-sys-color-person-2: #c79bd5;
+  --av-sys-color-person-3: #81bfa5;
+  --av-sys-color-person-4: #d2a47f;
+  --av-sys-color-person-5: #a6a0d9;
+  --av-sys-color-person-6: #cf9ba2;
+
+  /* Depth. A theme that lifts nothing sets these to `none`. */
+  --av-sys-elevation-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --av-sys-elevation-shadow-md: 0 12px 35px rgba(0, 0, 0, 0.4);
+  --av-sys-elevation-shadow-lg: 0 22px 75px rgba(0, 0, 0, 0.52);
+  --av-sys-elevation-shadow-rail: -8px 0 28px rgba(0, 0, 0, 0.16);
+  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(0, 0, 0, 0.38);
+  --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.35);
+
+  /* Whole box-shadow values for a focus ring, so a theme controls its spread
+   * as well as its colour. */
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(71, 199, 252, 0.25);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(130, 151, 172, 0.12);
+  --av-sys-focus-ring-brand: 0 0 0 2px rgba(206, 220, 0, 0.22);
+
+  /* The corner scale. */
+  --av-sys-size-radius-xs: 4px;
+  --av-sys-size-radius-sm: 5px;
+  --av-sys-size-radius-md: 7px;
+  --av-sys-size-radius-lg: 10px;
+  --av-sys-size-radius-xl: 12px;
+  --av-sys-size-radius-pill: 999px;
+
+  /* Border widths. */
+  --av-sys-size-border-hairline: 1px;
+
+  /* The height of a control. */
+  --av-sys-size-control-height: 32px;
+
+  /* Padding around a pane of content. */
+  --av-sys-space-pane-padding: 20px;
+
+  /* Between message blocks in the feed. */
+  --av-sys-space-stack-gap: 31px;
+
+  /* Between rows in a list. */
+  --av-sys-space-row-gap: 1px;
+
+  /* Between one group of rows and the next. */
+  --av-sys-space-group-gap: 12px;
+
+  /* Between events in the feed. */
+  --av-sys-space-block-gap: 16px;
+
+  /* Between paragraphs. */
+  --av-sys-space-prose-gap: 14px;
+
+  /* The families. `ui` is named but not bundled, so weight resolves against
+   * whatever the platform substitutes. */
+  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-display: var(--av-sys-font-family-ui);
+  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /* The sizes the interface sets, as against the document size a theme
+   * inherits. */
+  --av-sys-font-size-base: 14px;
+  --av-sys-font-size-prose: 14px;
+  --av-sys-font-size-row: 12.5px;
+  --av-sys-font-size-hint: 10.5px;
+  --av-sys-font-size-action: 13px;
+  --av-sys-font-size-meta: 9.5px;
+  --av-sys-font-size-author: 12px;
+  --av-sys-font-size-title: 13px;
+
+  /* Line height. */
+  --av-sys-font-leading-prose: 1.6;
+  --av-sys-font-leading-base: 1.48;
+
+  /* Weights. Only meaningful to the degree the resolved family supports them. */
+  --av-sys-font-weight-strong: 560;
+  --av-sys-font-weight-heading: 600;
+  --av-sys-font-weight-emphasis: 620;
+
+  /* The four properties that decide whether a label is sentence case or
+   * letterspaced small capitals. They apply to the label over a turn in the
+   * feed as well as the one over a group of navigation rows. */
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.02em;
+  --av-sys-label-transform: none;
+  --av-sys-label-weight: 560;
+
+  /* The content pane. `background` is the fill drawn over the backdrop, so a
+   * theme that wants its backdrop to show through the feed sets it to
+   * `transparent` rather than to a colour that happens to match. */
+  --av-cmp-pane-background: var(--av-sys-color-surface-default);
+
+  /* The navigation. `background` is a translucent tint, so `background-solid`
+   * exists for the narrow-width drawer, which sits over the content and cannot
+   * be see-through. */
+  --av-cmp-sidebar-background: rgba(122, 124, 108, 0.06);
+  --av-cmp-sidebar-background-solid: #181916;
+  --av-cmp-sidebar-border: #282924;
+  --av-cmp-sidebar-width: 300px;
+
+  /* Inside a navigation row. `height-dense` is the floor under the rows whose
+   * height comes from their content; `height` is the floor for a single-line
+   * row. */
+  --av-cmp-row-height: 31px;
+  --av-cmp-row-padding: 3px 7px;
+  --av-cmp-row-leading: 1.25;
+  --av-cmp-row-hint-gap: 2px;
+  --av-cmp-row-height-dense: 30px;
+
+  /* The band a group's label sits in. */
+  --av-cmp-group-label-height: 26px;
+  --av-cmp-group-label-gap: 4px;
+
+  /* The fill behind a person's turn. A theme with one continuous ground can
+   * set all three to nothing and let the message sit on the page as plain
+   * text. */
+  --av-cmp-bubble-background: var(--av-sys-color-surface-raised-hover);
+  --av-cmp-bubble-border: var(--av-ref-color-line-3);
+  --av-cmp-bubble-padding: 9px 14px;
+
+  /* Where a person's own turn sits. The three move together: a turn
+   * left-aligned but still capped reads as text that wraps early for no
+   * reason. */
+  --av-cmp-turn-align: flex-end;
+  --av-cmp-turn-margin: auto;
+  --av-cmp-turn-width: min(72%, 620px);
+
+  /* The reading column, and the label over a turn in it. */
+  --av-cmp-feed-width: 860px;
+  --av-cmp-feed-width-wide: 920px;
+  --av-cmp-feed-padding-y: 42px;
+  --av-cmp-feed-padding-x: 34px;
+  --av-cmp-feed-author-font-size: 10.5px;
+  --av-cmp-feed-author-font-weight: 560;
+
+  /* A surface that deliberately opposes the theme: light on a dark theme and
+   * dark on a light one, so it cannot be a ramp step in either. */
+  --av-cmp-tooltip-background: #e9e8e1;
+  --av-cmp-tooltip-foreground: #1c1d1a;
+
+  /* A switch. The knob is white on a grey track in a light theme, which is
+   * about two to one; the lift from `sys.elevation.shadow.sm` is what makes
+   * the off state read as a control. */
+  --av-cmp-toggle-track: #44453f;
+  --av-cmp-toggle-knob-off: #b0afa8;
 
   /* Connector faces. Each keeps enough of the provider's own colour to be
    * recognised at 20px, on a block the theme can still sit behind. */
-  --face-github: #292a2d;
-  --face-github-ink: #d0cfd0;
-  --face-google: #302b28;
-  --face-google-ink: #e2a084;
-  --face-drive: #29312b;
-  --face-drive-ink: #91c4a1;
-  --face-slack: #2b2f33;
-  --face-slack-ink: #9fc0d4;
-  --face-linear: #2e2b36;
-  --face-linear-ink: #b5a2df;
-  --face-webhook: #312c28;
-  --face-webhook-ink: #d7aa83;
-  --face-search: #283037;
-  --face-search-ink: #8eb8d6;
-  --face-plug: #30302a;
-  --face-plug-ink: #c2bd8a;
-
-  /* Geometry */
-  --radius-xs: 4px;
-  --radius-sm: 5px;
-  --radius-md: 7px;
-  --radius-lg: 10px;
-  --radius-xl: 12px;
-  --radius-pill: 999px;
-  --hairline: 1px;
-
-  /* Density. These are the handful of measurements that decide how much air the
-   * interface has; a theme changes its feel mostly by changing them. */
-  --sidebar-width: 300px;
-  --row-height: 31px;
-  --control-height: 32px;
-  --pane-pad: 20px;
-  --stack-gap: 31px;
-  --feed-width: 860px;
-  --feed-width-wide: 920px;
-  --feed-pad-y: 42px;
-  --feed-pad-x: 34px;
-  /* Vertical rhythm. Everything a theme changes to make the interface breathe
-   * downward: the gap between rows in a list, between one group of rows and the
-   * next, between blocks in the feed, between paragraphs, and the leading of
-   * prose itself. Airy roughly doubles all five. */
-  --row-gap: 1px;
-  --group-gap: 12px;
-  --block-gap: 16px;
-  --prose-gap: 14px;
-  --leading-prose: 1.6;
-  /* The fill behind a person's turn. A theme with one continuous ground can set
-   * it transparent and let the message sit on the page as plain text. */
-  --bubble-fill: var(--raised-hover);
-  --bubble-edge: var(--line-3);
-  --bubble-pad: 9px 14px;
-  /* Where a person's own turn sits in the feed. The convention is that your
-   * messages hug the far edge and are narrower than the agent's; a theme that
-   * puts every turn in one left-aligned column changes all three together,
-   * because a turn left-aligned but still capped reads as text that wraps early
-   * for no reason. */
-  --turn-align: flex-end;
-  --turn-margin: auto;
-  --turn-width: min(72%, 620px);
-  /* Inside a navigation row: its padding, the leading of its two lines, the gap
-   * between title and hint, and the floor under the denser rows that carry
-   * both. `--row-height` is the floor for a single-line row; a work-stream or
-   * note row sets its own, because its height comes from its content. */
-  --row-pad: 3px 7px;
-  --row-leading: 1.25;
-  --row-hint-gap: 2px;
-  --row-height-dense: 30px;
-  /* The band a group's label sits in, and the gap under it. */
-  --label-height: 26px;
-  --label-gap: 4px;
-
-  /* Type */
-  --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: var(--font-ui);
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --text-base: 14px;
-  --leading-base: 1.48;
-  --weight-strong: 560;
-  /* The type scale. `--text-base` is the document's; these are the sizes the
-   * interface actually sets, and a theme that wants larger, lighter type moves
-   * them together rather than overriding rules. */
-  --text-prose: 14px;
-  --text-row: 12.5px;
-  --text-hint: 10.5px;
-  --text-action: 13px;
-  --text-meta: 9.5px;
-  --text-author: 12px;
-  --text-title: 13px;
-  --text-feed-author: 10.5px;
-  --weight-heading: 600;
-  --weight-emphasis: 620;
-  --weight-feed-author: 560;
-  /* Micro-labels: the small type over a group of rows. A theme that wants
-   * letterspaced small capitals changes these four and nothing else. */
-  --label-size: 10px;
-  --label-tracking: 0.02em;
-  --label-transform: none;
-  --label-weight: 560;
-
-  /* Depth and ambience */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
-  --shadow-md: 0 12px 35px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 22px 75px rgba(0, 0, 0, 0.52);
-  --shadow-rail: -8px 0 28px rgba(0, 0, 0, 0.16);
-  --shadow-rail-strong: -14px 0 42px rgba(0, 0, 0, 0.38);
-  --shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.35);
-  --scrim: rgba(0, 0, 0, 0.55);
-  --scrim-soft: rgba(0, 0, 0, 0.3);
-  --scrim-solid: rgba(10, 11, 8, 0.98);
-  --ring: 0 0 0 2px rgba(71, 199, 252, 0.25);
-  --ring-quiet: 0 0 0 2px rgba(130, 151, 172, 0.12);
-  --ring-brand: 0 0 0 2px rgba(206, 220, 0, 0.22);
-  --brand-tint: rgba(206, 220, 0, 0.3);
-  --brand-tint-strong: rgba(206, 220, 0, 0.45);
-  --brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.055), transparent 62%);
-  --red-tint: rgba(216, 117, 111, 0.13);
-  --red-tint-strong: rgba(216, 117, 111, 0.28);
-  --blue-tint: rgba(71, 199, 252, 0.42);
-  --edge-highlight: rgba(255, 255, 255, 0.035);
-  --shimmer: rgba(255, 255, 255, 0.07);
-  /* Painted over --canvas on the shell. Most themes have nothing to say here. */
-  --canvas-wash: none;
-  /* Inverted pieces: a surface that deliberately opposes the theme, and the
-   * text drawn on one. A tooltip is light on a dark theme and dark on a light
-   * one, so it cannot be a ramp step in either. */
-  --ink-hover: #ffffff;
-  --tooltip-bg: #e9e8e1;
-  --tooltip-ink: #1c1d1a;
-  --ink-on: #171815;
-  --toggle-track: #44453f;
-  --toggle-knob-off: #b0afa8;
-
-  --focus-ring: var(--blue);
-  --focus-ring-quiet: #6a7f95;
-  --selection: rgba(71, 199, 252, 0.28);
-  --scrollbar-thumb: #3a3b35;
-
-  /* Syntax highlighting. `prism-react-renderer` is handed a JavaScript object
-   * rather than a class, so these reach it as `var()` in an inline style. */
-  --code-plain: #e5e4df;
-  --code-comment: #777772;
-  --code-punctuation: #aaa9a3;
-  --code-tag: #ff8a50;
-  --code-number: #e6a06b;
-  --code-string: #b995f5;
-  --code-operator: #d8d7d2;
-  --code-keyword: #ff7b2c;
-  --code-function: #17a9f5;
-  --code-variable: #e8b75c;
-
-  /* One per participant, picked by a hash of their id. Six is enough that a
-   * repeat is rare in a room and few enough that each stays distinguishable. */
-  --person-1: #8db6de;
-  --person-2: #c79bd5;
-  --person-3: #81bfa5;
-  --person-4: #d2a47f;
-  --person-5: #a6a0d9;
-  --person-6: #cf9ba2;
-
-  /* Aliases kept for the vocabulary the stylesheet already spoke. */
-  --ink: var(--n-14);
-  --ink-soft: var(--n-12);
-  --muted: var(--n-10);
-  --muted-2: var(--n-8);
-  --line: var(--line-2);
-  --line-soft: var(--line-1);
-  --line-strong: var(--line-3);
-  --brand-hover: var(--brand-strong);
-  --yellow: var(--gold);
-  --orange: var(--brand-ink);
+  --av-cmp-connector-github-background: #292a2d;
+  --av-cmp-connector-github-foreground: #d0cfd0;
+  --av-cmp-connector-google-background: #302b28;
+  --av-cmp-connector-google-foreground: #e2a084;
+  --av-cmp-connector-drive-background: #29312b;
+  --av-cmp-connector-drive-foreground: #91c4a1;
+  --av-cmp-connector-slack-background: #2b2f33;
+  --av-cmp-connector-slack-foreground: #9fc0d4;
+  --av-cmp-connector-linear-background: #2e2b36;
+  --av-cmp-connector-linear-foreground: #b5a2df;
+  --av-cmp-connector-webhook-background: #312c28;
+  --av-cmp-connector-webhook-foreground: #d7aa83;
+  --av-cmp-connector-search-background: #283037;
+  --av-cmp-connector-search-foreground: #8eb8d6;
+  --av-cmp-connector-plug-background: #30302a;
+  --av-cmp-connector-plug-foreground: #c2bd8a;
 }
-
-/*
- * Light. Drawn from the same family of interfaces the dark theme is: a warm
- * near-white page, a sidebar that recedes by greying rather than by darkening,
- * hairline rules instead of visible borders, and controls that sit on the page
- * as a slightly greyer block rather than a lighter one.
- *
- * The ramp is compressed at its faint end and stretched at its strong end,
- * which is the asymmetry a light interface needs and the reason these values
- * are written out rather than interpolated from the dark theme's.
- */
-[data-theme='light'] {
-  color-scheme: light;
-
-  --canvas: #ffffff;
-  --sidebar: rgba(180, 172, 140, 0.11);
-  --sidebar-solid: #f7f6f2;
-  --sidebar-edge: #e8e5dc;
-  --surface: #ffffff;
-  --surface-2: #faf9f6;
-  --sunken: #f4f2ed;
-  --raised: #f3f2ed;
-  --raised-hover: #eae8e1;
-  --elevated: #ffffff;
-  --elevated-hover: #f3f2ed;
-
-  --n-1: #f4f2ed;
-  --n-2: #ebe9e2;
-  --n-3: #e2dfd7;
-  --n-4: #d9d5cb;
-  --n-5: #cbc7bb;
-  --n-6: #b6b1a3;
-  --n-7: #9c9789;
-  --n-8: #857f72;
-  --n-9: #746e62;
-  --n-10: #635e53;
-  --n-11: #514c43;
-  --n-12: #3b372f;
-  --n-13: #2a2721;
-  --n-14: #1a1814;
-
-  --line-1: #ebe9e2;
-  --line-2: #e2dfd7;
-  --line-3: #d9d5cb;
-  --line-4: #cbc7bb;
-  --line-5: #b6b1a3;
-  --line-6: #9c9789;
-
-  /* Avalon's chartreuse survives as a fill with dark text on it, and is
-   * replaced by an olive for anything that has to be read as text or a line —
-   * #cedc00 against white is under 1.5:1. */
-  --brand: #cedc00;
-  --brand-strong: #dbe834;
-  --brand-soft: #6b7500;
-  --brand-ink: #67700a;
-  --brand-wash: #f6f8e2;
-  --brand-edge: #dde4a8;
-  --brand-on: #1d2000;
-
-  --blue: #1a7fc4;
-  --blue-strong: #145f96;
-  --blue-soft: #1a6fae;
-  --blue-wash: #eef5fb;
-  --blue-edge: #c3dcef;
-  --blue-on: #ffffff;
-
-  --green: #2e8a54;
-  --green-strong: #247344;
-  --green-fill: #2e8a54;
-  --green-fill-edge: #247344;
-  --green-soft: #35754f;
-  --green-wash: #edf6f0;
-  --green-edge: #bcdcc8;
-  --green-on: #ffffff;
-
-  --gold: #b8860b;
-  --gold-strong: #9a7009;
-  --gold-soft: #8a6208;
-  --gold-wash: #fbf3e0;
-  --gold-edge: #ecd9a8;
-  --gold-on: #241a00;
-
-  --red: #c3453f;
-  --red-strong: #a5332e;
-  --red-soft: #b23a34;
-  --red-wash: #fdeeed;
-  --red-edge: #f2c9c6;
-  --red-on: #ffffff;
-
-  --face-github: #f0efec;
-  --face-github-ink: #24292f;
-  --face-google: #fbeeea;
-  --face-google-ink: #b4472a;
-  --face-drive: #eaf5ee;
-  --face-drive-ink: #1a7a48;
-  --face-slack: #eef2f7;
-  --face-slack-ink: #2f5b80;
-  --face-linear: #f0eefa;
-  --face-linear-ink: #4b41a8;
-  --face-webhook: #fbf1e8;
-  --face-webhook-ink: #97552a;
-  --face-search: #edf3f8;
-  --face-search-ink: #2a5f85;
-  --face-plug: #f4f3e8;
-  --face-plug-ink: #6c6a2c;
-
-  --radius-xs: 5px;
-  --radius-sm: 7px;
-  --radius-md: 9px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
-
-  --row-height: 33px;
-  --pane-pad: 22px;
-  --stack-gap: 32px;
-  --feed-pad-y: 46px;
-  --row-gap: 1px;
-  --group-gap: 13px;
-  --block-gap: 17px;
-  --prose-gap: 15px;
-  --leading-prose: 1.62;
-  --bubble-fill: var(--raised-hover);
-  --bubble-edge: var(--line-3);
-  --bubble-pad: 9px 14px;
-  --turn-align: flex-end;
-  --turn-margin: auto;
-  --turn-width: min(72%, 620px);
-  --row-pad: 3px 7px;
-  --row-leading: 1.25;
-  --row-hint-gap: 2px;
-  --row-height-dense: 30px;
-  --label-height: 26px;
-  --label-gap: 4px;
-  --text-prose: 14px;
-  --text-row: 12.5px;
-  --text-hint: 10.5px;
-  --text-action: 13px;
-  --text-meta: 9.5px;
-  --text-author: 12px;
-  --text-title: 13px;
-  --text-feed-author: 10.5px;
-  --weight-heading: 600;
-  --weight-emphasis: 620;
-  --weight-feed-author: 560;
-
-  --shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
-  --shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
-  --shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
-  --shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
-  --shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
-  --shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
-  --scrim: rgba(38, 36, 30, 0.34);
-  --scrim-soft: rgba(38, 36, 30, 0.18);
-  --scrim-solid: rgba(246, 245, 241, 0.98);
-  --ring: 0 0 0 2px rgba(26, 127, 196, 0.22);
-  --ring-quiet: 0 0 0 2px rgba(96, 92, 83, 0.14);
-  --ring-brand: 0 0 0 2px rgba(140, 152, 0, 0.28);
-  --brand-tint: rgba(140, 152, 0, 0.32);
-  --brand-tint-strong: rgba(140, 152, 0, 0.5);
-  --brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.14), transparent 62%);
-  --red-tint: rgba(195, 69, 63, 0.1);
-  --red-tint-strong: rgba(195, 69, 63, 0.24);
-  --blue-tint: rgba(26, 127, 196, 0.36);
-  --edge-highlight: rgba(30, 28, 22, 0.05);
-  --shimmer: rgba(30, 28, 22, 0.05);
-  --ink-hover: #000000;
-  --tooltip-bg: #2b2823;
-  --tooltip-ink: #f4f2ed;
-  --ink-on: #ffffff;
-  --toggle-track: #c0bbae;
-  --toggle-knob-off: #ffffff;
-
-  --focus-ring: var(--blue);
-  --focus-ring-quiet: #8fadc4;
-  --selection: rgba(26, 127, 196, 0.2);
-  --scrollbar-thumb: #d2cec4;
-
-  --code-plain: #24231e;
-  --code-comment: #8a857a;
-  --code-punctuation: #5c5850;
-  --code-tag: #b3441c;
-  --code-number: #9a5518;
-  --code-string: #6a3fb5;
-  --code-operator: #3d3a33;
-  --code-keyword: #a8380f;
-  --code-function: #0a6ba8;
-  --code-variable: #8a6208;
-
-  --person-1: #2f6f9e;
-  --person-2: #7a4a91;
-  --person-3: #2f7d5c;
-  --person-4: #9a5f2a;
-  --person-5: #4f4a9e;
-  --person-6: #9b4550;
-}
-
-/*
- * Airy. A homage rather than a reproduction: a warm near-black page lit from
- * one corner, amber where the other themes are chartreuse, no borders worth the
- * name, and roughly half again the spacing everywhere so that the negative
- * space does the work the lines used to.
- *
- * It is a dark theme, so it inherits nothing from `light`; every token it does
- * not restate comes from the `:root` block above.
- */
+/* Airy — Near-black, amber, and a great deal of room. */
 [data-theme='airy'] {
   color-scheme: dark;
 
-  /* Airy has one ground, not two. `--canvas` and `--surface` are the same
-   * colour and the navigation adds no tint of its own, so the page — and the
-   * light cast across it — runs the full width of the window, under the
-   * navigation and the message feed alike, broken only by `--sidebar-edge`.
-   * The other themes keep a distinct pane; this is the theme choosing not to. */
-  --canvas: #0a0806;
-  --sidebar: transparent;
-  --sidebar-solid: #0c0a07;
-  --sidebar-edge: #1f1a12;
-  --surface: #0a0806;
-  --surface-2: #110e0a;
-  --sunken: #080604;
-  --raised: #16110b;
-  --raised-hover: #1e1711;
-  --elevated: #17120c;
-  --elevated-hover: #221b13;
+  --av-ref-color-neutral-1: #100d09;
+  --av-ref-color-neutral-2: #16120c;
+  --av-ref-color-neutral-3: #1d1710;
+  --av-ref-color-neutral-4: #2a2318;
+  --av-ref-color-neutral-5: #342c1f;
+  --av-ref-color-neutral-6: #453c2e;
+  --av-ref-color-neutral-7: #5c5344;
+  --av-ref-color-neutral-8: #766c5c;
+  --av-ref-color-neutral-9: #8a8070;
+  --av-ref-color-neutral-10: #a19684;
+  --av-ref-color-neutral-11: #b8ac99;
+  --av-ref-color-neutral-12: #d3c8b5;
+  --av-ref-color-neutral-13: #e4dbcb;
+  --av-ref-color-neutral-14: #f2ebdf;
 
-  /* The composer and the input fields sit on `--n-1`, and in a theme with no
-   * borders that fill is the only thing making them a box. It is a breath above
-   * the page rather than a panel; `--n-4` upward is left alone, because the
-   * selected sidebar row and every hover state are drawn from it. */
-  --n-1: #100d09;
-  --n-2: #16120c;
-  --n-3: #1d1710;
-  --n-4: #2a2318;
-  --n-5: #342c1f;
-  --n-6: #453c2e;
-  --n-7: #5c5344;
-  --n-8: #766c5c;
-  --n-9: #8a8070;
-  --n-10: #a19684;
-  --n-11: #b8ac99;
-  --n-12: #d3c8b5;
-  --n-13: #e4dbcb;
-  --n-14: #f2ebdf;
+  --av-ref-color-line-1: #0f0c08;
+  --av-ref-color-line-2: #131009;
+  --av-ref-color-line-3: #171208;
+  --av-ref-color-line-4: #1d170d;
+  --av-ref-color-line-5: #262013;
+  --av-ref-color-line-6: #4a4030;
 
-  --line-1: #0f0c08;
-  --line-2: #131009;
-  --line-3: #171208;
-  --line-4: #1d170d;
-  --line-5: #262013;
-  --line-6: #4a4030;
+  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
+  --av-sys-backdrop-image: radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, 0.09), transparent 62%), radial-gradient(60% 50% at 6% 96%, rgba(224, 140, 58, 0.05), transparent 58%);
+  --av-sys-backdrop-position: 0% 0%;
+  --av-sys-backdrop-size: auto;
+  --av-sys-backdrop-repeat: no-repeat;
+  --av-sys-backdrop-attachment: fixed;
+  --av-sys-backdrop-blend-mode: normal;
 
-  /* Amber carries everything the chartreuse carries elsewhere. */
-  --brand: #e08c3a;
-  --brand-strong: #f0a55a;
-  --brand-soft: #d29757;
-  --brand-ink: #e08c3a;
-  --brand-wash: #1d1409;
-  --brand-edge: #3a2812;
-  --brand-on: #140c04;
+  --av-sys-color-surface-canvas: #0a0806;
+  --av-sys-color-surface-default: #0a0806;
+  --av-sys-color-surface-subtle: #110e0a;
+  --av-sys-color-surface-sunken: #080604;
+  --av-sys-color-surface-raised: #16110b;
+  --av-sys-color-surface-raised-hover: #1e1711;
+  --av-sys-color-surface-elevated: #17120c;
+  --av-sys-color-surface-elevated-hover: #221b13;
+  --av-sys-color-surface-inverse-hover: #fffaf1;
 
-  --blue: #7fa8c8;
-  --blue-strong: #9dc0da;
-  --blue-soft: #8fb3ce;
-  --blue-wash: #101820;
-  --blue-edge: #22303c;
-  --blue-on: #0a1119;
+  --av-sys-color-text-on-inverse: #0c0a07;
+  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
+  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
+  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
+  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
 
-  --green: #7fae97;
-  --green-strong: #9cc6b0;
-  --green-fill: #23392e;
-  --green-fill-edge: #375247;
-  --green-soft: #8bb9a2;
-  --green-wash: #0e1712;
-  --green-edge: #1e2f26;
-  --green-on: #cfe6da;
+  --av-sys-color-border-highlight: rgba(242, 235, 223, 0.04);
+  --av-sys-color-border-default: var(--av-ref-color-line-2);
+  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
+  --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  --gold: #d9b168;
-  --gold-strong: #e9c98d;
-  --gold-soft: #cfa961;
-  --gold-wash: #1c1509;
-  --gold-edge: #382a13;
-  --gold-on: #140f04;
+  --av-sys-color-brand-base: #e08c3a;
+  --av-sys-color-brand-strong: #f0a55a;
+  --av-sys-color-brand-soft: #d29757;
+  --av-sys-color-brand-ink: #e08c3a;
+  --av-sys-color-brand-wash: #1d1409;
+  --av-sys-color-brand-edge: #3a2812;
+  --av-sys-color-brand-on: #140c04;
+  --av-sys-color-brand-tint: rgba(224, 140, 58, 0.34);
+  --av-sys-color-brand-tint-strong: rgba(224, 140, 58, 0.5);
+  --av-sys-color-brand-glow: radial-gradient(circle, rgba(224, 140, 58, 0.08), transparent 62%);
+  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
-  --red: #cc7a6a;
-  --red-strong: #e09585;
-  --red-soft: #d08a7b;
-  --red-wash: #1d100c;
-  --red-edge: #3a201a;
-  --red-on: #150b08;
+  --av-sys-color-accent-base: #7fa8c8;
+  --av-sys-color-accent-strong: #9dc0da;
+  --av-sys-color-accent-soft: #8fb3ce;
+  --av-sys-color-accent-wash: #101820;
+  --av-sys-color-accent-edge: #22303c;
+  --av-sys-color-accent-on: #0a1119;
+  --av-sys-color-accent-tint: rgba(127, 168, 200, 0.34);
 
-  --face-github: #16120c;
-  --face-github-ink: #c9c3ba;
-  --face-google: #1c130c;
-  --face-google-ink: #d9926e;
-  --face-drive: #101711;
-  --face-drive-ink: #8ab99b;
-  --face-slack: #101418;
-  --face-slack-ink: #94b3c9;
-  --face-linear: #14121c;
-  --face-linear-ink: #a99dd0;
-  --face-webhook: #1d150c;
-  --face-webhook-ink: #d9a271;
-  --face-search: #0f151a;
-  --face-search-ink: #8fb0c6;
-  --face-plug: #191509;
-  --face-plug-ink: #c4b478;
+  --av-sys-color-success-base: #7fae97;
+  --av-sys-color-success-strong: #9cc6b0;
+  --av-sys-color-success-fill: #23392e;
+  --av-sys-color-success-fill-edge: #375247;
+  --av-sys-color-success-soft: #8bb9a2;
+  --av-sys-color-success-wash: #0e1712;
+  --av-sys-color-success-edge: #1e2f26;
+  --av-sys-color-success-on: #cfe6da;
 
-  /* Almost nothing is rounded, and almost nothing is boxed. */
-  --radius-xs: 2px;
-  --radius-sm: 3px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
+  --av-sys-color-warning-base: #d9b168;
+  --av-sys-color-warning-strong: #e9c98d;
+  --av-sys-color-warning-soft: #cfa961;
+  --av-sys-color-warning-wash: #1c1509;
+  --av-sys-color-warning-edge: #382a13;
+  --av-sys-color-warning-on: #140f04;
 
-  --sidebar-width: 320px;
-  --row-height: 46px;
-  --control-height: 36px;
-  --pane-pad: 34px;
-  --stack-gap: 58px;
-  --feed-width: 880px;
-  --feed-width-wide: 940px;
-  --feed-pad-y: 64px;
-  --feed-pad-x: 46px;
-  --row-gap: 5px;
-  --group-gap: 60px;
-  --block-gap: 28px;
-  --prose-gap: 22px;
-  --leading-prose: 1.85;
-  --bubble-fill: transparent;
-  --bubble-edge: transparent;
-  --bubble-pad: 0;
-  --turn-align: flex-start;
-  --turn-margin: 0;
-  --turn-width: 100%;
-  --row-pad: 9px 10px;
-  --row-leading: 1.55;
-  --row-hint-gap: 7px;
-  --row-height-dense: 44px;
-  --label-height: 34px;
-  --label-gap: 22px;
+  --av-sys-color-danger-base: #cc7a6a;
+  --av-sys-color-danger-strong: #e09585;
+  --av-sys-color-danger-soft: #d08a7b;
+  --av-sys-color-danger-wash: #1d100c;
+  --av-sys-color-danger-edge: #3a201a;
+  --av-sys-color-danger-on: #150b08;
+  --av-sys-color-danger-tint: rgba(204, 122, 106, 0.14);
+  --av-sys-color-danger-tint-strong: rgba(204, 122, 106, 0.3);
 
-  --font-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
-  --text-base: 15px;
-  --leading-base: 1.75;
-  --weight-strong: 450;
-  --text-prose: 16.5px;
-  --text-row: 14.5px;
-  --text-hint: 11px;
-  --text-action: 14.5px;
-  --text-meta: 10.5px;
-  --text-author: 12.5px;
-  --text-title: 15px;
-  --text-feed-author: 12px;
-  --weight-heading: 480;
-  --weight-emphasis: 500;
-  --weight-feed-author: 470;
-  --label-size: 10px;
-  --label-tracking: 0.18em;
-  --label-transform: uppercase;
-  --label-weight: 500;
+  --av-sys-color-scrim-default: rgba(6, 4, 2, 0.72);
+  --av-sys-color-scrim-subtle: rgba(6, 4, 2, 0.5);
+  --av-sys-color-scrim-solid: rgba(7, 5, 3, 0.98);
 
-  --shadow-sm: none;
-  --shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
-  --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.7);
-  --shadow-rail: -10px 0 44px rgba(0, 0, 0, 0.5);
-  --shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
-  --shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
-  --scrim: rgba(6, 4, 2, 0.72);
-  --scrim-soft: rgba(6, 4, 2, 0.5);
-  --scrim-solid: rgba(7, 5, 3, 0.98);
-  --ring: 0 0 0 2px rgba(224, 140, 58, 0.28);
-  --ring-quiet: 0 0 0 2px rgba(224, 140, 58, 0.12);
-  --ring-brand: 0 0 0 2px rgba(224, 140, 58, 0.26);
-  --brand-tint: rgba(224, 140, 58, 0.34);
-  --brand-tint-strong: rgba(224, 140, 58, 0.5);
-  --brand-glow: radial-gradient(circle, rgba(224, 140, 58, 0.08), transparent 62%);
-  --red-tint: rgba(204, 122, 106, 0.14);
-  --red-tint-strong: rgba(204, 122, 106, 0.3);
-  --blue-tint: rgba(127, 168, 200, 0.34);
-  --edge-highlight: rgba(242, 235, 223, 0.04);
-  --shimmer: rgba(242, 235, 223, 0.05);
-  /* The light in the corner. It is a background-image rather than a colour so
-   * that it can sit under the whole shell without any element owning it. */
-  --canvas-wash:
-    radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, 0.09), transparent 62%),
-    radial-gradient(60% 50% at 6% 96%, rgba(224, 140, 58, 0.05), transparent 58%);
-  --ink-hover: #fffaf1;
-  --tooltip-bg: #efe8dc;
-  --tooltip-ink: #17130d;
-  --ink-on: #0c0a07;
-  --toggle-track: #2a2318;
-  --toggle-knob-off: #8a8070;
+  --av-sys-color-focus-default: var(--av-sys-color-brand-base);
+  --av-sys-color-focus-quiet: #6b5a44;
 
-  --focus-ring: var(--brand);
-  --focus-ring-quiet: #6b5a44;
-  --selection: rgba(224, 140, 58, 0.24);
-  --scrollbar-thumb: #2c2418;
+  --av-sys-color-selection-background: rgba(224, 140, 58, 0.24);
 
-  --code-plain: #e4dbcb;
-  --code-comment: #6e6455;
-  --code-punctuation: #a19684;
-  --code-tag: #e09a5e;
-  --code-number: #d9b168;
-  --code-string: #b9a3d4;
-  --code-operator: #c3b8a6;
-  --code-keyword: #e08c3a;
-  --code-function: #8fb3ce;
-  --code-variable: #d9b168;
+  --av-sys-color-scrollbar-thumb: #2c2418;
 
-  --person-1: #7fa8c8;
-  --person-2: #b39bcc;
-  --person-3: #7fae97;
-  --person-4: #d9a271;
-  --person-5: #9d95c9;
-  --person-6: #c98d92;
+  --av-sys-color-shimmer-default: rgba(242, 235, 223, 0.05);
+
+  --av-sys-color-syntax-plain: #e4dbcb;
+  --av-sys-color-syntax-comment: #6e6455;
+  --av-sys-color-syntax-punctuation: #a19684;
+  --av-sys-color-syntax-tag: #e09a5e;
+  --av-sys-color-syntax-number: #d9b168;
+  --av-sys-color-syntax-string: #b9a3d4;
+  --av-sys-color-syntax-operator: #c3b8a6;
+  --av-sys-color-syntax-keyword: #e08c3a;
+  --av-sys-color-syntax-function: #8fb3ce;
+  --av-sys-color-syntax-variable: #d9b168;
+
+  --av-sys-color-person-1: #7fa8c8;
+  --av-sys-color-person-2: #b39bcc;
+  --av-sys-color-person-3: #7fae97;
+  --av-sys-color-person-4: #d9a271;
+  --av-sys-color-person-5: #9d95c9;
+  --av-sys-color-person-6: #c98d92;
+
+  --av-sys-elevation-shadow-sm: none;
+  --av-sys-elevation-shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
+  --av-sys-elevation-shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.7);
+  --av-sys-elevation-shadow-rail: -10px 0 44px rgba(0, 0, 0, 0.5);
+  --av-sys-elevation-shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
+  --av-sys-elevation-shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
+
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(224, 140, 58, 0.28);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(224, 140, 58, 0.12);
+  --av-sys-focus-ring-brand: 0 0 0 2px rgba(224, 140, 58, 0.26);
+
+  --av-sys-size-radius-xs: 2px;
+  --av-sys-size-radius-sm: 3px;
+  --av-sys-size-radius-md: 4px;
+  --av-sys-size-radius-lg: 6px;
+  --av-sys-size-radius-xl: 8px;
+  --av-sys-size-radius-pill: 999px;
+
+  --av-sys-size-border-hairline: 1px;
+
+  --av-sys-size-control-height: 36px;
+
+  --av-sys-space-pane-padding: 34px;
+
+  --av-sys-space-stack-gap: 58px;
+
+  --av-sys-space-row-gap: 5px;
+
+  --av-sys-space-group-gap: 60px;
+
+  --av-sys-space-block-gap: 28px;
+
+  --av-sys-space-prose-gap: 22px;
+
+  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
+  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-prose: 16.5px;
+  --av-sys-font-size-row: 14.5px;
+  --av-sys-font-size-hint: 11px;
+  --av-sys-font-size-action: 14.5px;
+  --av-sys-font-size-meta: 10.5px;
+  --av-sys-font-size-author: 12.5px;
+  --av-sys-font-size-title: 15px;
+
+  --av-sys-font-leading-prose: 1.85;
+  --av-sys-font-leading-base: 1.75;
+
+  --av-sys-font-weight-strong: 450;
+  --av-sys-font-weight-heading: 480;
+  --av-sys-font-weight-emphasis: 500;
+
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.18em;
+  --av-sys-label-transform: uppercase;
+  --av-sys-label-weight: 500;
+
+  --av-cmp-pane-background: transparent;
+
+  --av-cmp-sidebar-background: transparent;
+  --av-cmp-sidebar-background-solid: #0c0a07;
+  --av-cmp-sidebar-border: #1f1a12;
+  --av-cmp-sidebar-width: 320px;
+
+  --av-cmp-row-height: 46px;
+  --av-cmp-row-padding: 9px 10px;
+  --av-cmp-row-leading: 1.55;
+  --av-cmp-row-hint-gap: 7px;
+  --av-cmp-row-height-dense: 44px;
+
+  --av-cmp-group-label-height: 34px;
+  --av-cmp-group-label-gap: 22px;
+
+  --av-cmp-bubble-background: transparent;
+  --av-cmp-bubble-border: transparent;
+  --av-cmp-bubble-padding: 0;
+
+  --av-cmp-turn-align: flex-start;
+  --av-cmp-turn-margin: 0;
+  --av-cmp-turn-width: 100%;
+
+  --av-cmp-feed-width: 880px;
+  --av-cmp-feed-width-wide: 940px;
+  --av-cmp-feed-padding-y: 64px;
+  --av-cmp-feed-padding-x: 46px;
+  --av-cmp-feed-author-font-size: 12px;
+  --av-cmp-feed-author-font-weight: 470;
+
+  --av-cmp-tooltip-background: #efe8dc;
+  --av-cmp-tooltip-foreground: #17130d;
+
+  --av-cmp-toggle-track: #2a2318;
+  --av-cmp-toggle-knob-off: #8a8070;
+
+  --av-cmp-connector-github-background: #16120c;
+  --av-cmp-connector-github-foreground: #c9c3ba;
+  --av-cmp-connector-google-background: #1c130c;
+  --av-cmp-connector-google-foreground: #d9926e;
+  --av-cmp-connector-drive-background: #101711;
+  --av-cmp-connector-drive-foreground: #8ab99b;
+  --av-cmp-connector-slack-background: #101418;
+  --av-cmp-connector-slack-foreground: #94b3c9;
+  --av-cmp-connector-linear-background: #14121c;
+  --av-cmp-connector-linear-foreground: #a99dd0;
+  --av-cmp-connector-webhook-background: #1d150c;
+  --av-cmp-connector-webhook-foreground: #d9a271;
+  --av-cmp-connector-search-background: #0f151a;
+  --av-cmp-connector-search-foreground: #8fb0c6;
+  --av-cmp-connector-plug-background: #191509;
+  --av-cmp-connector-plug-foreground: #c4b478;
+}
+/* Light — A warm near-white page with hairline rules. */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --av-ref-color-neutral-1: #f4f2ed;
+  --av-ref-color-neutral-2: #ebe9e2;
+  --av-ref-color-neutral-3: #e2dfd7;
+  --av-ref-color-neutral-4: #d9d5cb;
+  --av-ref-color-neutral-5: #cbc7bb;
+  --av-ref-color-neutral-6: #b6b1a3;
+  --av-ref-color-neutral-7: #9c9789;
+  --av-ref-color-neutral-8: #857f72;
+  --av-ref-color-neutral-9: #746e62;
+  --av-ref-color-neutral-10: #635e53;
+  --av-ref-color-neutral-11: #514c43;
+  --av-ref-color-neutral-12: #3b372f;
+  --av-ref-color-neutral-13: #2a2721;
+  --av-ref-color-neutral-14: #1a1814;
+
+  --av-ref-color-line-1: #ebe9e2;
+  --av-ref-color-line-2: #e2dfd7;
+  --av-ref-color-line-3: #d9d5cb;
+  --av-ref-color-line-4: #cbc7bb;
+  --av-ref-color-line-5: #b6b1a3;
+  --av-ref-color-line-6: #9c9789;
+
+  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
+  --av-sys-backdrop-image: none;
+  --av-sys-backdrop-position: 0% 0%;
+  --av-sys-backdrop-size: auto;
+  --av-sys-backdrop-repeat: no-repeat;
+  --av-sys-backdrop-attachment: fixed;
+  --av-sys-backdrop-blend-mode: normal;
+
+  --av-sys-color-surface-canvas: #ffffff;
+  --av-sys-color-surface-default: #ffffff;
+  --av-sys-color-surface-subtle: #faf9f6;
+  --av-sys-color-surface-sunken: #f4f2ed;
+  --av-sys-color-surface-raised: #f3f2ed;
+  --av-sys-color-surface-raised-hover: #eae8e1;
+  --av-sys-color-surface-elevated: #ffffff;
+  --av-sys-color-surface-elevated-hover: #f3f2ed;
+  --av-sys-color-surface-inverse-hover: #000000;
+
+  --av-sys-color-text-on-inverse: #ffffff;
+  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
+  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
+  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
+  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
+
+  --av-sys-color-border-highlight: rgba(30, 28, 22, 0.05);
+  --av-sys-color-border-default: var(--av-ref-color-line-2);
+  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
+  --av-sys-color-border-strong: var(--av-ref-color-line-3);
+
+  --av-sys-color-brand-base: #cedc00;
+  --av-sys-color-brand-strong: #dbe834;
+  --av-sys-color-brand-soft: #6b7500;
+  --av-sys-color-brand-ink: #67700a;
+  --av-sys-color-brand-wash: #f6f8e2;
+  --av-sys-color-brand-edge: #dde4a8;
+  --av-sys-color-brand-on: #1d2000;
+  --av-sys-color-brand-tint: rgba(140, 152, 0, 0.32);
+  --av-sys-color-brand-tint-strong: rgba(140, 152, 0, 0.5);
+  --av-sys-color-brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.14), transparent 62%);
+  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
+
+  --av-sys-color-accent-base: #1a7fc4;
+  --av-sys-color-accent-strong: #145f96;
+  --av-sys-color-accent-soft: #1a6fae;
+  --av-sys-color-accent-wash: #eef5fb;
+  --av-sys-color-accent-edge: #c3dcef;
+  --av-sys-color-accent-on: #ffffff;
+  --av-sys-color-accent-tint: rgba(26, 127, 196, 0.36);
+
+  --av-sys-color-success-base: #2e8a54;
+  --av-sys-color-success-strong: #247344;
+  --av-sys-color-success-fill: #2e8a54;
+  --av-sys-color-success-fill-edge: #247344;
+  --av-sys-color-success-soft: #35754f;
+  --av-sys-color-success-wash: #edf6f0;
+  --av-sys-color-success-edge: #bcdcc8;
+  --av-sys-color-success-on: #ffffff;
+
+  --av-sys-color-warning-base: #b8860b;
+  --av-sys-color-warning-strong: #9a7009;
+  --av-sys-color-warning-soft: #8a6208;
+  --av-sys-color-warning-wash: #fbf3e0;
+  --av-sys-color-warning-edge: #ecd9a8;
+  --av-sys-color-warning-on: #241a00;
+
+  --av-sys-color-danger-base: #c3453f;
+  --av-sys-color-danger-strong: #a5332e;
+  --av-sys-color-danger-soft: #b23a34;
+  --av-sys-color-danger-wash: #fdeeed;
+  --av-sys-color-danger-edge: #f2c9c6;
+  --av-sys-color-danger-on: #ffffff;
+  --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
+  --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
+
+  --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
+  --av-sys-color-scrim-subtle: rgba(38, 36, 30, 0.18);
+  --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
+
+  --av-sys-color-focus-default: var(--av-sys-color-accent-base);
+  --av-sys-color-focus-quiet: #8fadc4;
+
+  --av-sys-color-selection-background: rgba(26, 127, 196, 0.2);
+
+  --av-sys-color-scrollbar-thumb: #d2cec4;
+
+  --av-sys-color-shimmer-default: rgba(30, 28, 22, 0.05);
+
+  --av-sys-color-syntax-plain: #24231e;
+  --av-sys-color-syntax-comment: #8a857a;
+  --av-sys-color-syntax-punctuation: #5c5850;
+  --av-sys-color-syntax-tag: #b3441c;
+  --av-sys-color-syntax-number: #9a5518;
+  --av-sys-color-syntax-string: #6a3fb5;
+  --av-sys-color-syntax-operator: #3d3a33;
+  --av-sys-color-syntax-keyword: #a8380f;
+  --av-sys-color-syntax-function: #0a6ba8;
+  --av-sys-color-syntax-variable: #8a6208;
+
+  --av-sys-color-person-1: #2f6f9e;
+  --av-sys-color-person-2: #7a4a91;
+  --av-sys-color-person-3: #2f7d5c;
+  --av-sys-color-person-4: #9a5f2a;
+  --av-sys-color-person-5: #4f4a9e;
+  --av-sys-color-person-6: #9b4550;
+
+  --av-sys-elevation-shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
+  --av-sys-elevation-shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
+  --av-sys-elevation-shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
+  --av-sys-elevation-shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
+  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
+  --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
+
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(26, 127, 196, 0.22);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(96, 92, 83, 0.14);
+  --av-sys-focus-ring-brand: 0 0 0 2px rgba(140, 152, 0, 0.28);
+
+  --av-sys-size-radius-xs: 5px;
+  --av-sys-size-radius-sm: 7px;
+  --av-sys-size-radius-md: 9px;
+  --av-sys-size-radius-lg: 12px;
+  --av-sys-size-radius-xl: 14px;
+  --av-sys-size-radius-pill: 999px;
+
+  --av-sys-size-border-hairline: 1px;
+
+  --av-sys-size-control-height: 32px;
+
+  --av-sys-space-pane-padding: 22px;
+
+  --av-sys-space-stack-gap: 32px;
+
+  --av-sys-space-row-gap: 1px;
+
+  --av-sys-space-group-gap: 13px;
+
+  --av-sys-space-block-gap: 17px;
+
+  --av-sys-space-prose-gap: 15px;
+
+  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-display: var(--av-sys-font-family-ui);
+  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --av-sys-font-size-base: 14px;
+  --av-sys-font-size-prose: 14px;
+  --av-sys-font-size-row: 12.5px;
+  --av-sys-font-size-hint: 10.5px;
+  --av-sys-font-size-action: 13px;
+  --av-sys-font-size-meta: 9.5px;
+  --av-sys-font-size-author: 12px;
+  --av-sys-font-size-title: 13px;
+
+  --av-sys-font-leading-prose: 1.62;
+  --av-sys-font-leading-base: 1.48;
+
+  --av-sys-font-weight-strong: 560;
+  --av-sys-font-weight-heading: 600;
+  --av-sys-font-weight-emphasis: 620;
+
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.02em;
+  --av-sys-label-transform: none;
+  --av-sys-label-weight: 560;
+
+  --av-cmp-pane-background: var(--av-sys-color-surface-default);
+
+  --av-cmp-sidebar-background: rgba(180, 172, 140, 0.11);
+  --av-cmp-sidebar-background-solid: #f7f6f2;
+  --av-cmp-sidebar-border: #e8e5dc;
+  --av-cmp-sidebar-width: 300px;
+
+  --av-cmp-row-height: 33px;
+  --av-cmp-row-padding: 3px 7px;
+  --av-cmp-row-leading: 1.25;
+  --av-cmp-row-hint-gap: 2px;
+  --av-cmp-row-height-dense: 30px;
+
+  --av-cmp-group-label-height: 26px;
+  --av-cmp-group-label-gap: 4px;
+
+  --av-cmp-bubble-background: var(--av-sys-color-surface-raised-hover);
+  --av-cmp-bubble-border: var(--av-ref-color-line-3);
+  --av-cmp-bubble-padding: 9px 14px;
+
+  --av-cmp-turn-align: flex-end;
+  --av-cmp-turn-margin: auto;
+  --av-cmp-turn-width: min(72%, 620px);
+
+  --av-cmp-feed-width: 860px;
+  --av-cmp-feed-width-wide: 920px;
+  --av-cmp-feed-padding-y: 46px;
+  --av-cmp-feed-padding-x: 34px;
+  --av-cmp-feed-author-font-size: 10.5px;
+  --av-cmp-feed-author-font-weight: 560;
+
+  --av-cmp-tooltip-background: #2b2823;
+  --av-cmp-tooltip-foreground: #f4f2ed;
+
+  --av-cmp-toggle-track: #c0bbae;
+  --av-cmp-toggle-knob-off: #ffffff;
+
+  --av-cmp-connector-github-background: #f0efec;
+  --av-cmp-connector-github-foreground: #24292f;
+  --av-cmp-connector-google-background: #fbeeea;
+  --av-cmp-connector-google-foreground: #b4472a;
+  --av-cmp-connector-drive-background: #eaf5ee;
+  --av-cmp-connector-drive-foreground: #1a7a48;
+  --av-cmp-connector-slack-background: #eef2f7;
+  --av-cmp-connector-slack-foreground: #2f5b80;
+  --av-cmp-connector-linear-background: #f0eefa;
+  --av-cmp-connector-linear-foreground: #4b41a8;
+  --av-cmp-connector-webhook-background: #fbf1e8;
+  --av-cmp-connector-webhook-foreground: #97552a;
+  --av-cmp-connector-search-background: #edf3f8;
+  --av-cmp-connector-search-foreground: #2a5f85;
+  --av-cmp-connector-plug-background: #f4f3e8;
+  --av-cmp-connector-plug-foreground: #6c6a2c;
 }

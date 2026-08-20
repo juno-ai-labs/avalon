@@ -9,35 +9,36 @@ import { resolvedThemes, themeWindowBackground } from '../../common/themes';
 // `?raw` an empty string for a file it is already processing as CSS. This file
 // is typed by `tsconfig.node.json` so that `node:fs` stays out of the renderer
 // program.
-function stylesheet(name: string): string {
-  return readFileSync(resolve(process.cwd(), 'src/renderer/styles', name), 'utf8');
+const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+
+/**
+ * The design-token JSON, two directories up at the repository root. It is the
+ * source of truth for what a token is and what each theme sets; `themes.css` is
+ * generated from it, and `scripts/build-theme-css.test.mjs` holds the two
+ * together. What is left for this file is the half that JSON cannot see: how
+ * `app.css` and the main process use the vocabulary.
+ */
+const tokensDirectory = resolve(process.cwd(), '../../config/design-tokens');
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
-const themes = stylesheet('themes.css');
-const app = stylesheet('app.css');
+const registry = readJson<{ tokens: Record<string, { $type: string }> }>(
+  join(tokensDirectory, 'registry.json'),
+);
+const themeFiles = readdirSync(join(tokensDirectory, 'themes'))
+  .filter((entry) => entry.endsWith('.json'))
+  .map((entry) => readJson<{ id: string; tokens: Record<string, string> }>(
+    join(tokensDirectory, 'themes', entry),
+  ));
 
-/** One theme's declaration block, by the selector that introduces it. */
-function themeBlock(selector: string): string {
-  const start = themes.indexOf(`${selector} {`);
-  expect(start, `${selector} is not declared in themes.css`).toBeGreaterThan(-1);
-  return themes.slice(themes.indexOf('{', start) + 1, themes.indexOf('\n}', start));
+/** The custom property a token path is written to; mirrors the generator. */
+function customProperty(path: string): string {
+  return `--av-${path.replace(/\./gu, '-')}`;
 }
 
-function tokensIn(block: string): Map<string, string> {
-  const declared = new Map<string, string>();
-  for (const [, name, value] of block.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/gu)) {
-    if (name && value) declared.set(name, value.trim());
-  }
-  return declared;
-}
-
-const BLOCKS = {
-  dark: ":root,\n[data-theme='dark']",
-  light: "[data-theme='light']",
-  airy: "[data-theme='airy']",
-} as const;
-
-const dark = tokensIn(themeBlock(BLOCKS.dark));
+const declared = new Set(Object.keys(registry.tokens).map(customProperty));
 
 /**
  * The engine's one structural rule: `app.css` names tokens and never a colour.
@@ -49,7 +50,7 @@ const dark = tokensIn(themeBlock(BLOCKS.dark));
  * the 269th.
  */
 describe('no colour is written into app.css', () => {
-  // `white-space`, `border-top`, and `var(--red)` all contain a colour name in
+  // `white-space`, `border-top`, and `var(--av-sys-color-danger-base)` all contain a colour name in
   // a position that is not a colour, so the check reads declaration values
   // rather than searching the file.
   const COLOUR_NAMES = [
@@ -110,7 +111,7 @@ describe('no colour is written into app.css', () => {
    * Lines come off the line ramp and fills come off the neutral one.
    *
    * The two were one ramp until Airy needed borders that all but disappear: at
-   * the border band `--n-4` was simultaneously the default border and the
+   * the border band `--av-ref-color-neutral-4` was simultaneously the default border and the
    * selected sidebar row's fill, so making the border vanish took the selection
    * with it. A border that reaches back onto `--n-*` re-creates that coupling
    * silently — it looks right in whichever theme it was written against.
@@ -128,7 +129,7 @@ describe('no colour is written into app.css', () => {
   /**
    * The navigation's tint is applied exactly once.
    *
-   * `--sidebar` is translucent, so a second element painting it over a surface
+   * `--av-cmp-sidebar-background` is translucent, so a second element painting it over a surface
    * that already carries it composites twice and comes out visibly darker. The
    * account row at the foot of the navigation did exactly that, and it is the
    * shape anything added inside the sidebar will reach for. Only the panel
@@ -138,15 +139,37 @@ describe('no colour is written into app.css', () => {
     const offenders = app
       .replace(/\/\*[\s\S]*?\*\//gu, ' ')
       .split('}')
-      .filter((block) => /background(-color)?\s*:\s*var\(--sidebar\)/u.test(block))
+      .filter((block) => /background(-color)?\s*:\s*var\(--av-cmp-sidebar-background\)/u.test(block))
       .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '')
       // The Settings preview is the one legitimate second painter: it
-      // composites the tint over the offered theme's own `--canvas`, which is
+      // composites the tint over the offered theme's own `--av-sys-color-surface-canvas`, which is
       // what the real navigation does over the shell, rather than over a
       // surface already carrying it.
       .filter((selector) => selector !== '.sidebar' && selector !== '.settings-theme-swatch-sidebar');
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The window's backdrop is painted by one element.
+   *
+   * The shell and the main pane each carried a copy so that the pane, being
+   * opaque, would still show the theme's light. Two copies of one gradient
+   * cannot be kept in register — a `fixed` attachment holds them together only
+   * while both elements are viewport-sized — and a seam ran down the sidebar's
+   * edge where Airy's glow stopped and started again. The pane takes a fill it
+   * can set to `transparent` instead, and nothing else repaints the backdrop.
+   */
+  it('paints the backdrop once', () => {
+    const painters = app
+      .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+      .split('}')
+      .filter((block) => /background-image\s*:\s*var\(--av-sys-backdrop-image\)/u.test(block))
+      .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '');
+
+    // The Settings miniature is the second painter on purpose: it draws the
+    // offered theme's backdrop, not the running one's, at swatch scale.
+    expect(painters).toEqual(['.workspace-shell', '.settings-theme-swatch']);
   });
 
   // The guard has to be able to see one, or it is asserting that its own
@@ -156,88 +179,9 @@ describe('no colour is written into app.css', () => {
     expect(literalColoursIn('.a { background: rgba(0, 0, 0, 0.4); }')).toEqual(['rgba(']);
     expect(literalColoursIn('.a { border: 1px solid white; }')).toEqual(['white']);
     expect(literalColoursIn('.a { white-space: nowrap; border-top: 0; }')).toEqual([]);
-    expect(literalColoursIn('.a { color: var(--red); }')).toEqual([]);
+    expect(literalColoursIn('.a { color: var(--av-sys-color-danger-base); }')).toEqual([]);
   });
 });
-
-/** Every theme restates the whole palette; see `colourTokens` for why. */
-describe('theme completeness', () => {
-  /**
-   * A token whose dark value names a colour. These are the ones a theme has to
-   * restate: a length, a font stack, or an alias means the same thing whatever
-   * the theme, but a colour inherited from the dark block is a dark colour, and
-   * inheriting one is silent. A light theme missing `--tooltip-ink` draws a
-   * tooltip in near-black on near-black; nothing else looks wrong, and nobody
-   * finds it until a person hovers something.
-   */
-  function colourTokens(block: Map<string, string>): string[] {
-    return [...block]
-      .filter(([, value]) => /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|color-mix\(/iu.test(value))
-      .map(([name]) => name);
-  }
-
-  const required = colourTokens(dark);
-
-  it('has colour tokens to check', () => {
-    // Guards the guard: a refactor that stopped these matching would leave the
-    // two assertions below passing over an empty list.
-    expect(required.length).toBeGreaterThan(60);
-  });
-
-  it.each([['light'], ['airy']] as const)('%s restates every colour the dark theme names', (name) => {
-    const declared = tokensIn(themeBlock(BLOCKS[name]));
-    const missing = required.filter((token) => !declared.has(token));
-
-    expect(missing).toEqual([]);
-  });
-
-  it.each([['light'], ['airy']] as const)('%s introduces no token the other themes lack', (name) => {
-    const extra = [...tokensIn(themeBlock(BLOCKS[name])).keys()].filter((token) => !dark.has(token));
-
-    expect(extra).toEqual([]);
-  });
-
-  // The aliases are the vocabulary the stylesheet already spoke, and they are
-  // defined once — in the dark block, which is also `:root` — as `var(--n-*)`.
-  // A theme that redefined one to a literal would be pinning a colour that a
-  // ramp step already decides, and the two would drift.
-  it('leaves the legacy aliases pointing at ramp steps', () => {
-    for (const alias of ['--ink', '--ink-soft', '--muted', '--muted-2']) {
-      expect(dark.get(alias)).toMatch(/^var\(--n-\d+\)$/u);
-    }
-    // The three line aliases point at the *line* ramp, not the neutral one. A
-    // border and a faint fill sit at the same contrast level and want opposite
-    // treatment in a theme that draws with space, so they cannot share a step.
-    for (const alias of ['--line', '--line-soft', '--line-strong']) {
-      expect(dark.get(alias)).toMatch(/^var\(--line-\d+\)$/u);
-    }
-    for (const name of ['light', 'airy'] as const) {
-      expect(tokensIn(themeBlock(BLOCKS[name])).has('--ink')).toBe(false);
-    }
-  });
-
-  it.each([['--n-', 14], ['--line-', 6]] as const)('orders the %s ramp by contrast', (prefix, length) => {
-    for (const [name, selector] of Object.entries(BLOCKS)) {
-      const declared = tokensIn(themeBlock(selector));
-      const steps = Array.from({ length }, (_, index) => declared.get(`${prefix}${index + 1}`));
-
-      expect(steps.every(Boolean), `${name} declares all ${length} ${prefix} steps`).toBe(true);
-      // Ordered by contrast against the surface, so the direction is whichever
-      // way the theme runs: monotonic *distance* from the first step is what
-      // has to hold, in a light theme and a dark one alike.
-      const distances = steps.map((step) => Math.abs(luminance(step!) - luminance(steps[0]!)));
-      const ascending = distances.every((value, index) => index === 0 || value >= distances[index - 1]!);
-
-      expect(ascending, `${name} ramp is monotonic: ${distances.map(Math.round).join(', ')}`).toBe(true);
-    }
-  });
-});
-
-function luminance(hex: string): number {
-  const value = hex.trim().replace('#', '');
-  const channel = (offset: number): number => Number.parseInt(value.slice(offset, offset + 2), 16);
-  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
-}
 
 /**
  * The one value written down twice. The main process needs a window's
@@ -246,6 +190,47 @@ function luminance(hex: string): number {
  */
 describe('window background', () => {
   it.each(resolvedThemes.map((theme) => [theme] as const))('matches the %s theme’s own canvas', (theme) => {
-    expect(tokensIn(themeBlock(BLOCKS[theme])).get('--canvas')).toBe(themeWindowBackground[theme]);
+    const file = themeFiles.find((candidate) => candidate.id === theme);
+
+    expect(file?.tokens['sys.color.surface.canvas']).toBe(themeWindowBackground[theme]);
+  });
+});
+
+/**
+ * Every `var()` in the stylesheet names a token the registry declares.
+ *
+ * A custom property that resolves to nothing is the quietest failure in CSS:
+ * the declaration is dropped and the element keeps whatever it inherited, which
+ * usually looks almost right. With about 1,300 references and names as long as
+ * `--av-sys-color-surface-raised-hover`, a transposition is a matter of time,
+ * and nothing else in the build would say a word about it.
+ */
+describe('token references', () => {
+  // Properties the stylesheet defines for its own use rather than taking from a
+  // theme. Each is set by a rule in this same file.
+  const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
+    '--composer-line-height', '--composer-text-padding', '--system-message-lines',
+    '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width'];
+
+  // Set at runtime rather than in CSS: two by components as inline styles, three
+  // by libraries on their own elements. They cannot be checked from this file,
+  // so they are listed to say they were considered.
+  const RUNTIME = ['--rail-width', '--person-accent', '--markdown-table-columns', '--arrival-index',
+    '--radix-select-content-available-height', '--radix-select-trigger-width'];
+
+  it('names only tokens the registry declares', () => {
+    const referenced = new Set(
+      [...app.matchAll(/var\((--[a-z0-9-]+)/giu)].map((match) => match[1]!),
+    );
+    const known = new Set([...declared, ...RULE_LOCAL, ...RUNTIME]);
+    const unknown = [...referenced].filter((name) => !known.has(name));
+
+    expect(unknown).toEqual([]);
+  });
+
+  it('defines every rule-local property it names', () => {
+    for (const name of RULE_LOCAL) {
+      expect(app.includes(`${name}:`), `${name} is never defined`).toBe(true);
+    }
   });
 });

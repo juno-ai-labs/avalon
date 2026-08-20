@@ -47,7 +47,7 @@ import { Button, InlineError } from './primitives';
  * without this function knowing there is more than one theme.
  */
 function personAccent(id: string): string {
-  const palette = ['--person-1', '--person-2', '--person-3', '--person-4', '--person-5', '--person-6'];
+  const palette = ['--av-sys-color-person-1', '--av-sys-color-person-2', '--av-sys-color-person-3', '--av-sys-color-person-4', '--av-sys-color-person-5', '--av-sys-color-person-6'];
   const hash = [...id].reduce((total, character) => total + character.charCodeAt(0), 0);
   return `var(${palette[hash % palette.length] ?? palette[0]!})`;
 }
@@ -71,21 +71,21 @@ function safeJson(value: unknown): string {
  * they pinned every code block to the dark theme.
  */
 const markdownCodeTheme: PrismTheme = {
-  plain: { backgroundColor: 'transparent', color: 'var(--code-plain)' },
+  plain: { backgroundColor: 'transparent', color: 'var(--av-sys-color-syntax-plain)' },
   styles: [
-    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: 'var(--code-comment)' } },
-    { types: ['punctuation'], style: { color: 'var(--code-punctuation)' } },
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: 'var(--av-sys-color-syntax-comment)' } },
+    { types: ['punctuation'], style: { color: 'var(--av-sys-color-syntax-punctuation)' } },
     { types: ['namespace'], style: { opacity: 0.72 } },
-    { types: ['tag', 'constant', 'symbol', 'deleted'], style: { color: 'var(--code-tag)' } },
-    { types: ['boolean', 'number'], style: { color: 'var(--code-number)' } },
-    { types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: { color: 'var(--code-string)' } },
-    { types: ['operator', 'entity', 'url'], style: { color: 'var(--code-operator)' } },
-    { types: ['atrule', 'attr-value', 'keyword'], style: { color: 'var(--code-keyword)' } },
-    { types: ['function'], style: { color: 'var(--code-function)' } },
-    { types: ['regex', 'important', 'variable'], style: { color: 'var(--code-variable)' } },
+    { types: ['tag', 'constant', 'symbol', 'deleted'], style: { color: 'var(--av-sys-color-syntax-tag)' } },
+    { types: ['boolean', 'number'], style: { color: 'var(--av-sys-color-syntax-number)' } },
+    { types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: { color: 'var(--av-sys-color-syntax-string)' } },
+    { types: ['operator', 'entity', 'url'], style: { color: 'var(--av-sys-color-syntax-operator)' } },
+    { types: ['atrule', 'attr-value', 'keyword'], style: { color: 'var(--av-sys-color-syntax-keyword)' } },
+    { types: ['function'], style: { color: 'var(--av-sys-color-syntax-function)' } },
+    { types: ['regex', 'important', 'variable'], style: { color: 'var(--av-sys-color-syntax-variable)' } },
     { types: ['important', 'bold'], style: { fontWeight: '700' } },
     { types: ['italic'], style: { fontStyle: 'italic' } },
-    { types: ['class-name', 'maybe-class-name'], style: { color: 'var(--code-string)' } },
+    { types: ['class-name', 'maybe-class-name'], style: { color: 'var(--av-sys-color-syntax-string)' } },
   ],
 };
 

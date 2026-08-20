@@ -11,6 +11,8 @@
     "dev": "concurrently -k -n api,desktop -c blue,magenta \"pnpm dev:api\" \"pnpm dev:desktop\"",
     "dev:site": "pnpm --filter @avalon/site dev",
     "env:sync": "node scripts/sync-dev-env.mjs",
+    "tokens:build": "node scripts/build-theme-css.mjs",
+    "tokens:check": "node scripts/build-theme-css.mjs --check",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
     "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs",
