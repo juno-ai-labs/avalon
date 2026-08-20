@@ -4,7 +4,6 @@ import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
-import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { reconcileDigestDefaults } from "./services/digest-service";
 import { reapProcessedActivityPayloads } from "./services/normalized-activity-service";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
@@ -22,38 +21,6 @@ import {
   readWorkstreamAuthorityControl,
   workstreamMaintenanceResponse,
 } from "./services/workstream-authority";
-import { processWorkstreamAuthorityMigration } from "./services/workstream-authority-migration";
-
-const REAPER_BATCH_LIMIT = 100;
-const REAPER_MAX_BATCHES = 5;
-const DRAFT_ATTACHMENT_TTL_HOURS = 24;
-
-async function reapExpiredHarnessAttempts(env: Env): Promise<void> {
-  for (let batch = 0; batch < REAPER_MAX_BATCHES; batch += 1) {
-    const reaped = await reapStaleHarnessRuns(env.DB, { limit: REAPER_BATCH_LIMIT });
-    if (reaped.length < REAPER_BATCH_LIMIT) return;
-  }
-}
-
-async function reapExpiredDraftAttachments(env: Env): Promise<void> {
-  const cutoff = new Date(Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000).toISOString();
-  const stale = await env.DB.prepare(
-    `SELECT id FROM resources
-     WHERE provider = 'avalon_upload' AND attachment_status = 'draft' AND created_at < ?
-       AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
-       AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
-     LIMIT 100`,
-  ).bind(cutoff).all<{ id: string }>();
-  if (stale.results.length === 0) return;
-  await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
-    `DELETE FROM resources
-      WHERE id = ? AND provider = 'avalon_upload' AND attachment_status = 'draft' AND created_at < ?
-        AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
-        AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)`,
-  ).bind(resource.id, cutoff)));
-  // The delete trigger owns R2 cleanup. A draft that was attached after the
-  // stale scan loses the conditional delete and its objects are never touched.
-}
 
 async function processCrashTelemetry(env: Env): Promise<void> {
   await reapExpiredCrashReports(env);
@@ -182,46 +149,14 @@ export default {
   }),
   scheduled: withEnvContract((_controller, env, context) => {
     context.waitUntil((async () => {
-      const authority = await readWorkstreamAuthorityControl(env);
-      if (authority.phase === "maintenance_importing" || authority.phase === "maintenance_verified") {
-        // The importer deliberately reserves one of the invocation's six
-        // outbound-connection slots. Do not make telemetry compete with its
-        // route waves during the maintenance window.
-        //
-        // 100 operations per tick: a tick finishes in well under the one-minute
-        // cron interval, so consecutive ticks never overlap — generation 4
-        // showed that overlapping ticks turn one transient failure into a
-        // cascade that quarantines every in-flight route.
-        await processWorkstreamAuthorityMigration(env, authority, 100);
-        await processTelemetry(env);
-        return;
-      }
-      if (authority.phase === "maintenance_draining") {
-        await Promise.all([
-          reapExpiredHarnessAttempts(env),
-          processTelemetry(env),
-        ]);
-        return;
-      }
-      if (authority.phase === "quarantined") {
-        await processTelemetry(env);
-        return;
-      }
-      const backgroundTasks = [
-        reapExpiredActivityEvents(env),
-        reapProcessedActivityPayloads(env),
-        processTelemetry(env),
-      ];
-      const legacyWorkspaceStorageTasks = authority.phase === "legacy_open"
-        ? [reapExpiredHarnessAttempts(env), reapExpiredDraftAttachments(env)]
-        : [];
       await Promise.all([
         processDueOpportunityWindows(env),
         processDueSuggestedWork(env),
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
-        ...legacyWorkspaceStorageTasks,
-        ...backgroundTasks,
+        reapExpiredActivityEvents(env),
+        reapProcessedActivityPayloads(env),
+        processTelemetry(env),
       ]);
     })());
   }),

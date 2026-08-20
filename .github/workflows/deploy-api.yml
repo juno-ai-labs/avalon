@@ -4,18 +4,6 @@ name: Deploy Avalon API
 # validate both Wrangler configurations, apply the remote D1 migrations, deploy
 # EU, deploy Global, then call GET /health on both regions.
 #
-# When a region's workstream_authority_control row is still `legacy_open`, the
-# deploy also drives the one-time WorkstreamDO authority maintenance cutover
-# (drain -> import -> verify -> activate -> open) through
-# scripts/run-authority-cutover.mjs, one region at a time with a health check
-# between them. That window returns 503 for non-health traffic until the
-# region opens, so merging the cutover branch deliberately takes each region
-# down while its data moves. Every phase flip is a guarded D1 UPDATE the
-# migration's own triggers can reject, a completed region is a fast no-op on
-# every later merge, and a quarantined campaign fails the run for a human to
-# repair with a new generation — the script observes and sequences, it cannot
-# outrun the campaign's evidence.
-#
 # The Global Worker holds named service bindings into EU entrypoints, so EU is
 # always deployed first. A release that introduces a brand-new cross-region
 # entrypoint is the documented three-stage bootstrap exception and must be run
@@ -60,11 +48,6 @@ on:
           - global
       apply_migrations:
         description: Apply pending D1 migrations remotely before deploying
-        required: true
-        default: true
-        type: boolean
-      run_cutover:
-        description: Drive a pending WorkstreamDO authority cutover after deploying
         required: true
         default: true
         type: boolean
@@ -191,10 +174,7 @@ jobs:
   deploy:
     needs: verify
     runs-on: ubuntu-latest
-    # The authority cutover polls a cron-driven import campaign whose duration
-    # scales with each region's data, so the job budget is generous; an expiry
-    # fails the run while the campaign keeps progressing, and a rerun resumes.
-    timeout-minutes: 150
+    timeout-minutes: 45
     environment: api-production
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -203,7 +183,6 @@ jobs:
       DEPLOY_EU: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'global' }}
       DEPLOY_GLOBAL: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'eu' }}
       APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
-      RUN_CUTOVER: ${{ github.event_name != 'workflow_dispatch' || inputs.run_cutover }}
 
     steps:
       # The dispatch input may name a mutable branch, so deploy the immutable
@@ -261,22 +240,6 @@ jobs:
       - name: Deploy the Global Worker
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @avalon/api deploy:global
-
-      # One region at a time, EU first to mirror the deploy order, with a
-      # health gate between regions so a bad EU open never cascades. Both
-      # steps are fast no-ops once a region is durable_object_open, and both
-      # need the migrations that created the control row.
-      - name: Drive the WorkstreamDO authority cutover for EU
-        if: env.RUN_CUTOVER == 'true' && env.DEPLOY_EU == 'true' && env.APPLY_MIGRATIONS == 'true'
-        run: node scripts/run-authority-cutover.mjs eu
-
-      - name: Verify EU health before the Global cutover
-        if: env.RUN_CUTOVER == 'true' && env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true' && env.APPLY_MIGRATIONS == 'true'
-        run: node scripts/check-regional-health.mjs eu
-
-      - name: Drive the WorkstreamDO authority cutover for Global
-        if: env.RUN_CUTOVER == 'true' && env.DEPLOY_GLOBAL == 'true' && env.APPLY_MIGRATIONS == 'true'
-        run: node scripts/run-authority-cutover.mjs global
 
       - name: Verify regional health
         run: |
