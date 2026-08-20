@@ -1,6 +1,6 @@
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
+import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks, redactQuery } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -1461,5 +1461,16 @@ describe('expired access-token recovery', () => {
 
     await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
     expect(reportJavascriptError).not.toHaveBeenCalled();
+  });
+
+  it("keeps query parameter names out of the log but never their values", async () => {
+    // `/auth/invitations/preview?token=…` carries a live invitation credential
+    // and `/resources?q=…` carries whatever someone typed into a search box.
+    // Neither belongs in the renderer's console or log file.
+    expect(redactQuery('/auth/invitations/preview?token=secret-invitation-token'))
+      .toBe('/auth/invitations/preview?token');
+    expect(redactQuery('/resources?limit=50&q=quarterly%20revenue'))
+      .toBe('/resources?limit,q');
+    expect(redactQuery('/workstreams/abc/messages')).toBe('/workstreams/abc/messages');
   });
 });
