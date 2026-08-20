@@ -60,6 +60,17 @@ shape of your own code:
   detail is in [`realtime-sockets.md`](realtime-sockets.md#testing).
 - Anything reached through a real binding: D1 semantics, queue sends, RPC
   envelopes between objects.
+- Platform APIs the code imports but the Node suite can only stub.
+  `tracing.enterSpan` from `cloudflare:workers` is the standing example: the
+  tracing tests in `test/` run against a hand-written stub, which is right for
+  asserting span names and attributes cheaply, but it means nothing there ever
+  resolves the real import.
+  `test-workers/tracing-runtime.test.ts` is the smoke test that does — the API
+  is reachable, it runs the callback, it awaits the promise, it propagates a
+  throw — and it is deliberately shallow, because the runtime exposes no way to
+  read a finished span back and anything deeper would be asserting on the stub
+  again. A beta platform API that only a double has ever exercised is not
+  covered.
 
 The Node suite cannot stand in for any of it. `apps/api/vitest.config.ts` aliases
 `cloudflare:workers` to `test/helpers/cloudflare-workers.ts`, a ten-line stand-in

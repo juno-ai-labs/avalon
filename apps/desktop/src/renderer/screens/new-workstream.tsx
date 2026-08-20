@@ -297,13 +297,16 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     [workstreams.data],
   );
 
-  // Opened on the keystroke that starts a work stream and closed when the
-  // screen has actually changed, so the line it prints spans what the person
-  // waited for rather than what the request took. Held in a ref because the
-  // mutation's callbacks each run in their own commit.
+  // Opened on the keystroke that starts a work stream and closed once the
+  // route change is requested. The surface is optimistic — the work stream is
+  // already on screen — so what this spans is the round trip behind it. Held in
+  // a ref because the mutation's callbacks each run in their own commit.
   const createTrace = useRef<PerfTrace | null>(null);
   const create = useMutation({
     mutationFn: (input: CreateWorkstreamInput) => {
+      // A second create starting while one is in flight would otherwise drop
+      // the first trace on the floor, silently losing the slower of the two.
+      createTrace.current?.end({ outcome: 'superseded' });
       const trace = startPerfTrace('workstream_create');
       createTrace.current = trace;
       trace.annotate({
@@ -363,8 +366,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       attachmentDraft.consume(input.attachmentLocalIds);
       createTrace.current?.mark('cache_seed');
       void navigate(`/workstreams/${created.workstream.id}`);
+      // `navigation_requested`, not `navigated`: the route update is scheduled
+      // here and this trace closes before React commits it. The distinction is
+      // small because the surface is optimistic — the person has been looking
+      // at the work stream since the keystroke, so what this measures is the
+      // round trip behind a screen they already have, not a wait for one.
       createTrace.current?.end({
-        outcome: 'navigated',
+        outcome: 'navigation_requested',
         workstreamId: created.workstream.id,
         harnessRunId: created.harnessRunId,
       });

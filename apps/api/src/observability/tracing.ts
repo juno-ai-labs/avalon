@@ -190,9 +190,10 @@ export function inSpan<T>(
 
 /**
  * A flow's root span. Beyond `inSpan` it does two things: it stamps the flow
- * and identity attributes every child then inherits by being nested under it,
- * and it accumulates each `step`'s duration so the flow also lands in Workers
- * Logs as **one row** carrying the whole step breakdown.
+ * and identity attributes on the root — children do *not* inherit attributes in
+ * OpenTelemetry, which is why `step` repeats the flow and component onto each
+ * one — and it accumulates each `step`'s duration so the flow also lands in
+ * Workers Logs as **one row** carrying the whole step breakdown.
  *
  * The log row is not a duplicate of the trace. A trace answers "what happened
  * in this one invocation" and needs the trace UI or the OTLP destination to
@@ -248,15 +249,35 @@ export function inFlowSpan<T>(
     // here under their attribute names.
     let extra: LogFields = definedFields(callerAttributes);
 
-    const close = (stepName: string): void => {
-      const at = Date.now();
-      const durationMs = at - cursor;
-      cursor = at;
+    const record = (stepName: string, durationMs: number): void => {
       // An unbounded list is a leak on a long-lived Durable Object invocation.
       // Past the cap steps are dropped but the clock is not, so the total and
       // every earlier step stay truthful.
       if (steps.length < MAX_STEPS) steps.push([stepName, durationMs]);
       else if (steps.length === MAX_STEPS) steps.push(["steps_truncated", 0]);
+    };
+
+    const close = (stepName: string): void => {
+      const at = Date.now();
+      record(stepName, at - cursor);
+      cursor = at;
+    };
+
+    /**
+     * Charge whatever ran since the last step to `unattributed` rather than to
+     * the step about to start.
+     *
+     * A step used to be measured from the previous step's end, so an awaited
+     * call sitting *between* two steps was billed to the later one: the row
+     * could name a fast step as `slowest_step` at the cost of its slow
+     * neighbour, while that step's own span recorded the truth. Naming the gap
+     * keeps the parts summing to `duration_ms` — an unstepped await now shows
+     * up as itself instead of hiding inside whatever ran next.
+     */
+    const closeGap = (): void => {
+      const at = Date.now();
+      if (at > cursor) record("unattributed", at - cursor);
+      cursor = at;
     };
 
     const flowSpan: FlowSpan = {
@@ -274,12 +295,29 @@ export function inFlowSpan<T>(
         return span.isTraced;
       },
       async step<T2>(stepName: string, stepRun: () => Promise<T2>, attributes: SpanAttributes = {}): Promise<T2> {
+        closeGap();
         try {
-          return await inSpan(stepName, attributes, () => stepRun());
+          // The flow and component are repeated onto every child. OpenTelemetry
+          // does not inherit attributes, so without this a step span cannot be
+          // filtered or grouped by the flow it belongs to — only followed by
+          // hand from its parent. Two short strings per span is worth that.
+          //
+          // The identity attributes are deliberately *not* repeated: they are
+          // many, they are on the root of the same trace, and the `perf_flow`
+          // row already carries every step's duration next to them, which is
+          // the path built for aggregating across requests.
+          return await inSpan(stepName, {
+            "avalon.flow": options.flow,
+            "avalon.component": options.component,
+            ...attributes,
+          }, () => stepRun());
         } finally {
           close(stepName);
         }
       },
+      // `mark` deliberately keeps the old accounting: it exists to name work
+      // that has already happened since the last step, so the span between the
+      // cursor and now *is* what it is reporting.
       mark(stepName: string): void {
         close(stepName);
       },
