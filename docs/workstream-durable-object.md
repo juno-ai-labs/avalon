@@ -958,6 +958,34 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The activation scrub runs in resumable chunks
+
+**What changed:** `activateWorkspaceProductRoute` no longer issues the whole
+workspace deletion as one D1 batch. Its fifty targets are now a declared,
+foreign-key-ordered list, deleted 500 rows at a time under a 20,000-row budget
+per invocation. Falling short of the budget returns without activating: the
+route stays `verified` and the next cron tick resumes.
+
+**Why:** With the fences finally clear, the deletes ran — and D1 answered
+`exceeded its CPU time limit and was reset`. The largest workspaces carry six
+figures of provenance rows, each delete cascading further, which is more work
+than one batch is allowed to do. This is the fourth distinct cause behind an
+activation failure and the first that was never a correctness bug.
+
+**What a future change has to respect:** the original batch was deliberately
+all-or-nothing, so that D1 was never partially scrubbed while the control plane
+still promised a rollback source. That property is gone and could not be kept —
+the batch it depended on cannot run at this scale. The invariant that replaces
+it is narrower but sufficient: a route turns `active` only after its last
+target comes back empty, so an active route is always a fully scrubbed one, and
+a partially scrubbed workspace is always still `verified`. Anything that reads
+`verified` as "D1 untouched" is now wrong.
+
+**Considered and rejected:** deleting per statement rather than per chunk (a
+single `DELETE` over 72,000 edges exceeds the same limit on its own), and
+deferring the scrub until after the region opens (it would leave a full copy of
+the workspace readable in D1 for as long as the cleanup lagged).
+
 ### 2026-08-20 — Legacy bookkeeping triggers stand down once D1 stops being the authority
 
 **What changed:** Migration 0089 confines eight legacy triggers to
