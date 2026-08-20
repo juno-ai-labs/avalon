@@ -141,10 +141,10 @@ beforeEach(async () => {
   attached binding. For D1 that includes the *schema* — measured here, 154 tables
   before the call and none after — and it reaches Durable Object storage too: a
   table written through `runInDurableObject` is gone when the same object id is
-  opened after a reset. Do not believe otherwise on the strength of a comment;
-  `agent-run-lifecycle.test.ts` and `agent-run-dispatch-reliability.test.ts` say
-  storage outlives `reset()`, and what actually keeps their tests independent is
-  that they never call it — they take a fresh object id per test.
+  opened after a reset. A file that isolates its tests some other way is not
+  evidence against that: `agent-run-lifecycle.test.ts` and
+  `agent-run-dispatch-reliability.test.ts` take a fresh object id per test
+  because they never call `reset()`, not because storage would survive one.
   `abortAllDurableObjects()` is the one that keeps persisted data, but it aborts
   instances rather than retiring them: a test *about* eviction still wants
   `evictDurableObject`, which drains in flight work and hibernates sockets.

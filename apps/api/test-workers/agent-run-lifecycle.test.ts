@@ -40,7 +40,7 @@ import {
 } from "./helpers/substream-fixture";
 
 let unique = 0;
-/** A fresh object per test: Durable Object storage outlives `reset()`. */
+/** A fresh object per test: this file never calls `reset()`, so a reused id would carry the last test's rows. */
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
