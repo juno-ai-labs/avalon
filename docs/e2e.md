@@ -33,7 +33,7 @@ or wedge anything (concurrent bursts). Counts and concurrency are arguments:
 ```text
 pnpm db:migrate && pnpm db:seed
 pnpm dev:api:local            # in another terminal
-pnpm db:open-authority        # walk local D1 to durable_object_open + import seeds
+pnpm db:open-authority        # walk local D1 to durable_object_open + seed product fixtures
 pnpm e2e:local -- --happy 10 --sad 8 --chaos 2 --concurrency 4
 ```
 
@@ -41,8 +41,8 @@ pnpm e2e:local -- --happy 10 --sad 8 --chaos 2 --concurrency 4
 *legacy* path, and none of the Durable-Object-authority code runs — which is
 how a defect that failed every production harness run stayed invisible to
 every local check. The walk is idempotent, respects the production state
-machine, and imports the seeded work streams into their objects through the
-Worker's dev-only route, so `pnpm smoke:local` keeps passing on an opened
+machine, and seeds the product fixtures into the Durable Objects through the Worker's
+dev-only route, so `pnpm smoke:local` keeps passing on an opened
 stack.
 
 The lane **requires** a configured OpenRouter key by default: `/health` must
