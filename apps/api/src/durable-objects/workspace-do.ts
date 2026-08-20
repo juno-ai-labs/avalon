@@ -2280,70 +2280,70 @@ export class WorkspaceDO extends DurableObject<Env> {
         "avalon.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
       },
     }, async (span) => {
-    try {
-      const authority = await span.step("workstream.message.authority_read", () =>
-        readWorkstreamAuthorityControl(this.env));
-      if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
-        throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
-      }
-      const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
-      if (auth) span.setAttributes(identityAttributes({
-        analyticsWorkspaceId: auth.analyticsWorkspaceId,
-      }));
-      if (!auth) {
-        span.setError("session_inactive");
-        socket.close(1008, "Session no longer active");
-        return;
-      }
-      const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
-        this.env,
-        auth,
-        command.workstreamId,
-        command.substreamId,
-        true,
-      ).createMessage({
-        ...command.payload,
-        telemetryOperationId: command.operationId,
-      }));
-      span.setAttributes({
-        "avalon.agent.invoked": result.agentInvoked,
-        "avalon.harness_run.id": result.harnessRunId,
-      });
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_succeeded",
-        command: "create_message",
-        clientMessageId: command.payload.clientMessageId,
-        ...result,
-      })));
-      span.mark("workstream.message.respond");
-    } catch (error) {
-      const safe = error instanceof ApiError
-        ? error
-        : new ApiError(500, "message_write_failed", "The message could not be sent");
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_failed",
-        command: "create_message",
-        clientMessageId: command.payload.clientMessageId,
-        error: {
-          status: safe.status,
-          code: safe.code,
-          message: safe.message,
-          ...(safe.details ? { details: safe.details } : {}),
-        },
-      })));
-      if (!(error instanceof ApiError)) {
-        logWarn(this.env, "workspace_socket_create_message_failed", {
-          workspace_id: attachment.workspaceId,
-          workstream_id: command.workstreamId,
-          substream_id: command.substreamId,
-          user_id: attachment.userId,
-          client_message_id: command.payload.clientMessageId,
-          reason: error instanceof Error ? error.message : "unknown",
+      try {
+        const authority = await span.step("workstream.message.authority_read", () =>
+          readWorkstreamAuthorityControl(this.env));
+        if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
+          throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+        }
+        const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
+        if (auth) span.setAttributes(identityAttributes({
+          analyticsWorkspaceId: auth.analyticsWorkspaceId,
+        }));
+        if (!auth) {
+          span.setError("session_inactive");
+          socket.close(1008, "Session no longer active");
+          return;
+        }
+        const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
+          this.env,
+          auth,
+          command.workstreamId,
+          command.substreamId,
+          true,
+        ).createMessage({
+          ...command.payload,
+          telemetryOperationId: command.operationId,
+        }));
+        span.setAttributes({
+          "avalon.agent.invoked": result.agentInvoked,
+          "avalon.harness_run.id": result.harnessRunId,
         });
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_succeeded",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          ...result,
+        })));
+        span.mark("workstream.message.respond");
+      } catch (error) {
+        const safe = error instanceof ApiError
+          ? error
+          : new ApiError(500, "message_write_failed", "The message could not be sent");
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_failed",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          error: {
+            status: safe.status,
+            code: safe.code,
+            message: safe.message,
+            ...(safe.details ? { details: safe.details } : {}),
+          },
+        })));
+        if (!(error instanceof ApiError)) {
+          logWarn(this.env, "workspace_socket_create_message_failed", {
+            workspace_id: attachment.workspaceId,
+            workstream_id: command.workstreamId,
+            substream_id: command.substreamId,
+            user_id: attachment.userId,
+            client_message_id: command.payload.clientMessageId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+        span.setError(safe.code, safe.message);
+        span.setAttributes({ "http.response.status_code": safe.status });
       }
-      span.setError(safe.code, safe.message);
-      span.setAttributes({ "http.response.status_code": safe.status });
-    }
     });
   }
 

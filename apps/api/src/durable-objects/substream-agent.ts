@@ -850,16 +850,15 @@ export class SubstreamAgent extends DurableObject<Env> {
   }
 
   private async runProductRequest(
-    parsedData: SubstreamProductRequest,
+    request: SubstreamProductRequest,
     span: FlowSpan,
   ): Promise<Response> {
-    const parsed = { data: parsedData };
     const current = await span.step("workstream.room.session_auth", () => this.socketAuth({
-      workspaceId: parsed.data.auth.workspaceId,
-      userId: parsed.data.auth.userId,
-      sessionId: parsed.data.auth.sessionId,
+      workspaceId: request.auth.workspaceId,
+      userId: request.auth.userId,
+      sessionId: request.auth.sessionId,
     }));
-    if (!current || current.role !== parsed.data.auth.role || current.region !== parsed.data.auth.region) {
+    if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
       span.setError("session_revoked");
       return jsonResponse({ error: "session_revoked" }, 401);
     }
@@ -872,11 +871,11 @@ export class SubstreamAgent extends DurableObject<Env> {
       analyticsWorkspaceId: current.analyticsWorkspaceId,
     }));
     try {
-      if (parsed.data.operation === "initialize") {
-        const input = parsed.data.input;
+      if (request.operation === "initialize") {
+        const input = request.input;
         const result = await span.step("workstream.room.product.initialize", () =>
           this.product.initialize(current, input));
-        const identity = { workspaceId: parsed.data.input.workspaceId, workstreamId: parsed.data.input.workstreamId };
+        const identity = { workspaceId: request.input.workspaceId, workstreamId: request.input.workstreamId };
         // The dispatch is durable state and must land before anything that can
         // fail for cosmetic reasons: a refused broadcast used to abort this
         // handler after the run was committed, leaving a run with no executor,
@@ -899,14 +898,14 @@ export class SubstreamAgent extends DurableObject<Env> {
           harnessRunId: result.harnessRunId,
         });
       }
-      if (parsed.data.operation === "get") {
+      if (request.operation === "get") {
         return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
-      if (parsed.data.operation === "context") {
+      if (request.operation === "context") {
         return jsonResponse(await this.product.context(current));
       }
-      if (parsed.data.operation === "messages") {
-        const query = parsed.data;
+      if (request.operation === "messages") {
+        const query = request;
         const page = await span.step("workstream.room.product.messages", () => this.product.messages(
           current,
           query.limit,
@@ -919,19 +918,19 @@ export class SubstreamAgent extends DurableObject<Env> {
       }
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
-      if (parsed.data.operation === "update") {
-        const result = await this.product.update(current, parsed.data.input);
+      if (request.operation === "update") {
+        const result = await this.product.update(current, request.input);
         for (const event of result.events) await this.publishLocalProductEvent(identity, event);
         return jsonResponse(result.workstream);
       }
-      if (parsed.data.operation === "acknowledge_read") {
-        return jsonResponse(await this.product.acknowledgeRead(current, parsed.data.input));
+      if (request.operation === "acknowledge_read") {
+        return jsonResponse(await this.product.acknowledgeRead(current, request.input));
       }
-      if (parsed.data.operation === "mark_unread") {
+      if (request.operation === "mark_unread") {
         return jsonResponse(await this.product.markUnread(current));
       }
-      if (parsed.data.operation === "create_message") {
-        const input = parsed.data.input;
+      if (request.operation === "create_message") {
+        const input = request.input;
         const result = await span.step("workstream.room.product.create_message", () =>
           this.product.createMessage(current, input));
         await span.step("workstream.room.run.dispatch", () =>
@@ -951,33 +950,33 @@ export class SubstreamAgent extends DurableObject<Env> {
           harnessRunId: result.harnessRunId,
         });
       }
-      if (parsed.data.operation === "add_participant") {
-        const participant = await this.product.addParticipant(current, parsed.data.userId);
+      if (request.operation === "add_participant") {
+        const participant = await this.product.addParticipant(current, request.userId);
         await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
         return jsonResponse(participant);
       }
-      if (parsed.data.operation === "remove_participant") {
-        await this.product.removeParticipant(current, parsed.data.userId);
+      if (request.operation === "remove_participant") {
+        await this.product.removeParticipant(current, request.userId);
         await this.publishLocalProductEvent(identity, {
           type: "participant_removed",
-          userId: parsed.data.userId,
+          userId: request.userId,
         });
         return jsonResponse({ ok: true });
       }
-      if (parsed.data.operation === "attach_resource") {
-        const resource = await this.product.attachResource(current, parsed.data.resourceId);
+      if (request.operation === "attach_resource") {
+        const resource = await this.product.attachResource(current, request.resourceId);
         await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
         return jsonResponse(resource);
       }
-      if (parsed.data.operation === "detach_resource") {
-        await this.product.detachResource(current, parsed.data.resourceId);
+      if (request.operation === "detach_resource") {
+        await this.product.detachResource(current, request.resourceId);
         return jsonResponse({ ok: true });
       }
-      if (parsed.data.operation === "resolve_suggestion") {
+      if (request.operation === "resolve_suggestion") {
         const result = await this.product.resolveSuggestion(
           current,
-          parsed.data.suggestionId,
-          parsed.data.action,
+          request.suggestionId,
+          request.action,
         );
         if (result.changed && result.suggestion) {
           await this.publishLocalProductEvent(identity, {
@@ -987,11 +986,11 @@ export class SubstreamAgent extends DurableObject<Env> {
         }
         return jsonResponse({ suggestion: result.suggestion, resourceId: result.resourceId });
       }
-      if (parsed.data.operation === "answer_elicitation") {
+      if (request.operation === "answer_elicitation") {
         const result = await this.product.answerElicitation(
           current,
-          parsed.data.elicitationId,
-          parsed.data.input,
+          request.elicitationId,
+          request.input,
         );
         await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         if (result.elicitation) {
@@ -1002,7 +1001,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         }
         return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
       }
-      if (parsed.data.operation === "stop") {
+      if (request.operation === "stop") {
         await this.product.stop(current);
         return jsonResponse({ ok: true });
       }
