@@ -1314,16 +1314,24 @@ const WORKSPACE_SCRUB_TARGETS: readonly { table: string; where: string; binds: n
 async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
   let budget = WORKSPACE_SCRUB_ROW_BUDGET;
   for (const target of WORKSPACE_SCRUB_TARGETS) {
+    const binds = Array.from({ length: target.binds }, () => route.workspace_id);
     for (;;) {
+      // Whether the target still holds rows is asked directly rather than read
+      // from the delete's `meta.changes`, which reports zero for this
+      // statement shape against D1 — a chunked delete that trusted it stopped
+      // after one chunk per target per tick, scrubbing 500 rows a minute
+      // against workspaces holding six figures of them.
+      const present = await env.DB.prepare(
+        `SELECT 1 AS present FROM ${target.table} ${target.where} LIMIT 1`,
+      ).bind(...binds).first<{ present: number }>();
+      if (!present) break;
       if (budget <= 0) return;
-      const deleted = await env.DB.prepare(
+      await env.DB.prepare(
         `DELETE FROM ${target.table} WHERE rowid IN (
            SELECT rowid FROM ${target.table} ${target.where} LIMIT ${WORKSPACE_SCRUB_CHUNK}
          )`,
-      ).bind(...Array.from({ length: target.binds }, () => route.workspace_id)).run();
-      const changes = Number(deleted.meta.changes ?? 0);
-      budget -= changes;
-      if (changes < WORKSPACE_SCRUB_CHUNK) break;
+      ).bind(...binds).run();
+      budget -= WORKSPACE_SCRUB_CHUNK;
     }
   }
   const at = new Date().toISOString();
@@ -1465,8 +1473,10 @@ export async function processWorkstreamAuthorityMigration(
           verifiedProducts,
           activateWorkspaceProductRoute,
         )) return;
-        operationsRemaining -= verifiedProducts.length;
-        continue;
+        // One scrub pass per route per tick. Looping here would re-enter the
+        // same still-`verified` routes for the rest of the operation budget,
+        // stacking dozens of 20,000-row passes into a single invocation.
+        return;
       }
       const verified = await nextRoutes(env, "verified", batchSize);
       if (verified.length > 0) {
