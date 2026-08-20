@@ -222,9 +222,9 @@ account row at the foot of the navigation paints `transparent` for this reason.
 ### The themes
 
 `light` and `dark` are the two `system` resolves to. `airy` is a deliberate
-choice only — one near-black ground lit from a corner and running the full width
-of the window, amber where the others are chartreuse, borders that barely exist,
-uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
+choice only — one near-black ground lit by two overlapping amber circles and
+running the full width of the window, amber where the others are chartreuse,
+borders that barely exist, uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
 double the vertical spacing, so negative space does the work the lines used to.
 A person's turn has no bubble there at all: `--av-cmp-bubble-background` is
 transparent, `--av-cmp-bubble-padding` is zero, and `--av-cmp-turn-align` is
@@ -374,6 +374,26 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-20 — Airy is lit by two circles, not two corners
+
+**What changed:** `sys.backdrop.image` in Airy is two overlapping amber discs
+sitting in the field — one at 67%/28%, one lower and left of centre at 52%/84% —
+instead of the two corner washes it had.
+
+**Why:** the corner washes were a guess at the reference, and the reference has
+circles: discs with a discernible edge, placed in the canvas, overlapping, with
+the corners of the window left near-black. Reading them as corner lights put the
+brightness where the design had none and left the middle flat.
+
+**Their radii are percentages, not `vw`.** `vw` was the first cut and it is
+wrong: a percentage radius is relative to the *background positioning area*, and
+the Settings miniature is a 92×58 swatch with its own. Sized in `vw` it sampled a
+window-sized glow through a keyhole and previewed a flat brown block. The cost is
+that a disc is only exactly circular at the aspect ratio the two percentages were
+picked for; at other window shapes it stretches with the window, which is the
+behaviour a full-window backdrop wants anyway. Do not "fix" that back to a
+viewport unit without giving the swatch a backdrop of its own.
 
 ### 2026-08-20 — The window has one backdrop, and a theme can draw it
 
