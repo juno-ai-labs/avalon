@@ -45,7 +45,7 @@ interface DispatchRow extends Record<string, SqlStorageValue> {
 }
 
 let unique = 0;
-/** A fresh object per test; `reset()` does not clear Durable Object storage. */
+/** A fresh object per test: this file never calls `reset()`, so a reused id would carry the last test's dispatch rows. */
 function substreamStub(): DurableObjectStub {
   unique += 1;
   const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, `s${unique}`);
