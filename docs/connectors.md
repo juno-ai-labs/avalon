@@ -722,6 +722,30 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-20 — The OAuth attempt table regains the telemetry columns its service reads
+
+**What changed:** `WorkspaceDO` schema version 2 adds
+`telemetry_event_version`, `telemetry_scope`, `telemetry_capability_count`, and
+`telemetry_reconnect` to `connector_oauth_attempts`. Version 1 carried only
+`telemetry_operation_id`.
+
+**Why:** `connection-service.ts` writes and reads all five columns together,
+and `connector_oauth_attempts` is one of the tables the workspace runtime
+router sends to the object. The object's table was therefore narrower than the
+statements routed to it — every OAuth attempt query naming those columns fails
+against an opened region, and the maintenance import, which passes each D1
+column through by name, cannot land the rows at all (it quarantined generation
+7 of the Global cutover with `no column named telemetry_capability_count`).
+The columns are live product telemetry, so they are added to the object rather
+than dropped at import.
+
+**Considered and rejected:** Filtering the four columns out in the importer's
+row mapper — it would have unblocked the campaign while leaving the opened
+region unable to run the service's own queries, converting a loud import
+failure into a silent runtime one. Editing schema version 1 in place was never
+an option: its statements are hashed, and changing them strands every object
+that already applied it.
+
 ### 2026-08-18 — Connector ingress routing is migration-tested and repairable
 
 **What changed:** The D1 ingress directory's backfill and insert/update triggers
