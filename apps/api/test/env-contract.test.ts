@@ -222,6 +222,22 @@ describe("environment contract", () => {
     ]);
   });
 
+  it("refuses a cleartext scanner endpoint on anything but loopback", () => {
+    // The scanner receives customer file bytes. A mistyped `http://` on a vendor
+    // host would put uploaded documents on the wire in the clear, and nothing
+    // downstream would notice, so the contract catches it at boot.
+    expect(() => assertEnvContract(productionEnv({ SCANII_API_BASE_URL: "https://api-us1.scanii.com" })))
+      .not.toThrow();
+    expect(() => assertEnvContract(productionEnv({ SCANII_API_BASE_URL: "http://127.0.0.1:9876" })))
+      .not.toThrow();
+
+    let thrown: EnvContractError | undefined;
+    try {
+      assertEnvContract(productionEnv({ SCANII_API_BASE_URL: "http://api-us1.scanii.com" }));
+    } catch (error) { thrown = error as EnvContractError; }
+    expect(thrown?.keys).toEqual(["SCANII_API_BASE_URL is invalid"]);
+  });
+
   it("requires the attachment scanner credentials in both regions", () => {
     // Absent credentials are not a degraded feature. `enforce` is the default
     // enforcement, so a deployed region without them answers 503 to every

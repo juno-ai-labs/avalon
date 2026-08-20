@@ -185,6 +185,21 @@ workspace with its work streams, automations, and onboarding checklist.
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are
   macOS-only and must run on a Mac.
+- **Anything served by the WorkspaceDO, in a freshly seeded sandbox.** `pnpm
+  db:seed` writes the workspace row to D1 but never gives the workspace's
+  Durable Object its identity, so every statement the workspace runtime database
+  routes to that object fails with `workspace_object_identity_mismatch` and the
+  route answers a generic 500. `GET /workstreams` answers normally while
+  `GET /resources` and `POST /resources/upload` do not, which is the quickest way
+  to recognize it. Triggering the scheduled handler
+  (`/cdn-cgi/handler/scheduled`) does not provision it either. Attachment
+  behaviour therefore cannot be driven end to end in a window here — verify it
+  with `pnpm --filter @avalon/api exec vitest run test/attachment-malware-scan.test.ts`,
+  which exercises the same path against a fully migrated database.
+- **Container-backed features**, unless a Docker daemon is running. `pnpm
+  dev:api:local` builds the crash-symbolicator image at startup and both regions
+  exit when the daemon is absent; `--enable-containers=false` starts the Workers
+  without it.
 - **Remote D1, deploys, and anything else that needs Cloudflare credentials.**
 
 `packages/db/seed.sql` includes the resource and connector fixtures required by

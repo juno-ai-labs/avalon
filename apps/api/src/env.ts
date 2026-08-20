@@ -226,6 +226,27 @@ const binding = <T>() => z.custom<T>((value) => value != null && typeof value ==
  */
 const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 
+/**
+ * The attachment scanner's endpoint, which carries customer file bytes to a
+ * third party and must therefore be encrypted.
+ *
+ * `HttpUrlSchema` is deliberately not enough here. It admits `http:` so that
+ * loopback development works, which is right for the public base URLs it
+ * guards and wrong for this one: a mistyped `http://` on a vendor host would
+ * put uploaded documents on the wire in the clear, and nothing downstream would
+ * notice. Loopback keeps its exemption, because a developer pointing this at a
+ * local stub to exercise the upload path is not sending anything anywhere.
+ */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const ScannerUrlSchema = HttpUrlSchema.refine((value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}, "must be HTTPS unless it addresses loopback");
+
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
@@ -308,7 +329,7 @@ const EnvContractSchema = z.object({
   NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   POSTHOG_HOST: HttpUrlSchema.optional(),
-  SCANII_API_BASE_URL: HttpUrlSchema.optional(),
+  SCANII_API_BASE_URL: ScannerUrlSchema.optional(),
 });
 
 /**
