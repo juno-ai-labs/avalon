@@ -111,7 +111,6 @@ describe("the health probe under a misconfigured environment", () => {
       PAYLOADS: { list: async () => ({ objects: [] }) },
       SUBSTREAM_AGENTS: { idFromName: () => "id", get: () => room },
       ACTIVITY_QUEUE: { send: () => undefined },
-      WORKSTREAM_LOOP_WORKFLOW: { create: () => undefined },
       CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
       CONNECTOR_EVENT_WORKFLOW: { create: () => undefined },
       WORK_OPPORTUNITY_WORKFLOW: { create: () => undefined },

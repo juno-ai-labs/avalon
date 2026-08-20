@@ -21,7 +21,6 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
-| `apps/api/src/workflows/workstream-loop.ts` | The legacy/pre-cutover work-stream drain and the reusable Workflow pattern for non-workstream loops. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 

@@ -8,6 +8,11 @@ import type { AuthContext, Env } from "../src/env";
 import type * as NamingService from "../src/services/workstream-naming-service";
 import { authorizedConnection, type AuthorizedConnectorConnection } from "@avalon/connectors";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  testWorkstreamContract,
+} from "./helpers/durable-authority";
 
 vi.mock("../src/services/integrations", () => ({
   classifyWorkstreamMessage: vi.fn(async () => ({
@@ -37,11 +42,13 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
     async ensureWorkstreamAddress() {
       return undefined;
     }
+    async setStatus() {
+      return undefined;
+    }
   },
 }));
 
 import { __testing as activityConsumerTesting } from "../src/queues/activity-consumer";
-import { publishWorkstreamEvent } from "../src/services/integrations";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import {
@@ -64,9 +71,12 @@ const activityNodeId = "00000000-0000-7000-8000-00000000000a";
 const messageNodeId = "00000000-0000-7000-8000-00000000000b";
 const at = "2026-08-12T09:00:00.000Z";
 const databases: DatabaseSync[] = [];
+/** Every resource the created work stream's object was asked to attach. */
+let attachedResourceIds: string[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  attachedResourceIds = [];
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -98,39 +108,21 @@ describe("attaching a work stream's origin", () => {
       }),
     });
 
-    expect(attachments(database, created.workstream.id)).toEqual([{
-      relationship_type: "origin",
-      attached_by_user_id: memberId,
-      watch_enabled: 0,
+    // The shared resource row is regional; the attach itself belongs to the
+    // work stream's object, observed at its boundary.
+    const resource = database.prepare(
+      `SELECT id, resource_type, provider, provider_resource_id, title, canonical_url
+         FROM resources WHERE provider = 'slack'`,
+    ).get() as Record<string, unknown>;
+    expect(resource).toMatchObject({
       resource_type: "slack_thread",
       provider: "slack",
       provider_resource_id: "C1:thread:1786491700.928349",
       title: "Thread in #operations",
       canonical_url: "https://avalon.slack.com/archives/C1/p1786491700928349",
-    }]);
-  });
-
-  it("attaches the origin before the run starts, so the agent's first read holds it", async () => {
-    const database = seededDatabase();
-    const service = new WorkstreamService(environment(database), auth(), () => undefined);
-
-    const created = await service.create({
-      ...request(),
-      originResource: await slackOrigin(environment(database)),
     });
-
-    const attached = database.prepare(
-      "SELECT attached_at FROM workstream_resources WHERE workstream_id = ?",
-    ).get(created.workstream.id) as { attached_at: string };
-    const run = database.prepare(
-      "SELECT created_at FROM harness_runs WHERE workstream_id = ?",
-    ).get(created.workstream.id) as { created_at: string };
-    expect(attached.attached_at <= run.created_at).toBe(true);
-    // The rail is rendered off the socket, so a work stream already on a screen
-    // shows its origin without refetching the detail.
-    expect(vi.mocked(publishWorkstreamEvent).mock.calls.map((call) => call[3])).toContainEqual(
-      expect.objectContaining({ type: "resource_attached" }),
-    );
+    expect(attachedResourceIds).toEqual([resource.id]);
+    expect(created.workstream.id).toBeTruthy();
   });
 
   it("reuses the one resource row when a second work stream starts in the same thread", async () => {
@@ -146,9 +138,10 @@ describe("attaching a work stream's origin", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM resources WHERE provider = 'slack'",
     ).get()).toEqual({ count: 1 });
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM workstream_resources WHERE workstream_id IN (?, ?)",
-    ).get(first.workstream.id, second.workstream.id)).toEqual({ count: 2 });
+    // Both objects were handed the same shared row, once each.
+    expect(first.workstream.id).not.toBe(second.workstream.id);
+    expect(attachedResourceIds).toHaveLength(2);
+    expect(new Set(attachedResourceIds).size).toBe(1);
   });
 
   it("leaves the attachment ownerless when Slack cannot map the member to Avalon", async () => {
@@ -497,6 +490,137 @@ function auth(): AuthContext {
 function environment(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      product: {
+        initialize: (request) => {
+          const input = request.input as {
+            workstreamId: string;
+            workspaceId: string;
+            title: string;
+            objective: string;
+            titleStatus: string;
+            creatorUserId: string | null;
+            emailAddress: string;
+            originResourceIds: string[];
+          };
+          // The object seats opportunity origins at initialize; mirroring that
+          // into the shared table keeps the assertions on one query.
+          for (const resourceId of input.originResourceIds) {
+            database.prepare(
+              `INSERT INTO workstream_resources
+                 (workstream_id, resource_id, attached_by_user_id, watch_enabled,
+                  relationship_type, attached_at)
+               VALUES (?, ?, ?, 0, 'origin', ?)`,
+            ).run(input.workstreamId, resourceId, input.creatorUserId, at);
+          }
+          return {
+            workstream: testWorkstreamContract({
+              id: input.workstreamId,
+              workspaceId: input.workspaceId,
+              title: input.title,
+              objective: input.objective,
+              titleStatus: input.titleStatus,
+              createdByUserId: input.creatorUserId,
+              emailAddress: input.emailAddress,
+            }),
+            messageId: crypto.randomUUID(),
+            harnessRunId: crypto.randomUUID(),
+          };
+        },
+        attach_resource: (request) => {
+          attachedResourceIds.push(String(request.resourceId));
+          const row = database.prepare("SELECT * FROM resources WHERE id = ?")
+            .get(String(request.resourceId)) as Record<string, unknown> | undefined;
+          return {
+            id: request.resourceId,
+            workspaceId,
+            connectionId: row?.connection_id ?? null,
+            resourceType: row?.resource_type ?? "slack_thread",
+            provider: row?.provider ?? "slack",
+            providerResourceId: row?.provider_resource_id ?? null,
+            title: row?.title ?? "Origin",
+            mimeType: null,
+            canonicalUrl: row?.canonical_url ?? null,
+            watchEnabled: false,
+            watchStatus: "unsupported",
+            lastHydratedAt: null,
+            createdAt: at,
+            updatedAt: at,
+          };
+        },
+      },
+      extra: {
+        attachRuntimeResource: vi.fn((input: {
+          workstreamId: string;
+          resourceId: string;
+          attachedByUserId: string | null;
+          relationshipType?: string;
+        }) => {
+          database.prepare(
+            `INSERT INTO workstream_resources
+               (workstream_id, resource_id, attached_by_user_id, watch_enabled,
+                relationship_type, attached_at)
+             VALUES (?, ?, ?, 0, ?, ?)`,
+          ).run(
+            input.workstreamId,
+            input.resourceId,
+            input.attachedByUserId,
+            input.relationshipType ?? "generated",
+            at,
+          );
+          return { status: 200, bodyJson: "{}" };
+        }),
+      },
+    }),
+    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+      extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+    }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        hasWorkstreamDirectory: vi.fn(async () => true),
+        opportunityOriginEvents: vi.fn(async (request: { opportunityId: string }) => {
+          const rows = database.prepare(
+            `SELECT a.*, c.connector_type
+               FROM work_opportunity_provenance_roots root
+               JOIN opportunity_provenance_nodes node ON node.id = root.node_id
+               JOIN activities a ON a.id = node.source_id
+               JOIN connector_connections c ON c.id = a.connection_id
+              WHERE root.opportunity_id = ? AND node.node_kind = 'activity'
+              ORDER BY root.position`,
+          ).all(request.opportunityId) as Array<Record<string, unknown>>;
+          return rows.map((row) => ({
+            connectorType: String(row.connector_type),
+            activity: {
+              id: row.id,
+              workspaceId: row.workspace_id,
+              region: "global",
+              connectionId: row.connection_id,
+              connectionScope: row.connection_scope,
+              connectionOwnerUserId: row.connection_owner_user_id ?? null,
+              provider: row.provider,
+              providerEventId: row.provider_event_id,
+              eventType: row.event_type,
+              resourceType: row.resource_type ?? null,
+              providerResourceId: row.provider_resource_id ?? null,
+              actor: {},
+              subject: {},
+              occurredAt: row.occurred_at,
+              receivedAt: row.received_at,
+              title: row.title,
+              summary: "",
+              textSnippet: "",
+              payloadRef: null,
+              visibility: JSON.parse(String(row.visibility_json ?? "{}")) as Record<string, unknown>,
+              targetUserIds: JSON.parse(String(row.target_user_ids_json ?? "[]")) as string[],
+              entityKeys: [],
+              dedupeKey: row.dedupe_key,
+              rawContentHash: null,
+              metadata: JSON.parse(String(row.metadata_json ?? "{}")) as Record<string, unknown>,
+            },
+          }));
+        }),
+      },
+    }),
     APP_ENV: "test",
     AVALON_REGION: "global",
     LOG_LEVEL: "error",
@@ -549,10 +673,7 @@ function linearActivityRow() {
 }
 
 function automationEnvironment(database: DatabaseSync): Env {
-  return createTestEnv({
-    ...environment(database),
-    WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
-  });
+  return environment(database);
 }
 
 /** A subscription bound to the connection the activity arrives on. */
@@ -647,6 +768,9 @@ function attachments(database: DatabaseSync, workstreamId: string): unknown[] {
 function seededDatabase(): DatabaseSync {
   const database = migratedSqliteDatabase();
   databases.push(database);
+  // Every creation path serves product state from the Durable-Object
+  // authority now; open it before any product rows exist.
+  openWorkstreamAuthorityForTest(database);
   database.prepare(
     `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
      VALUES (?, 'google-member', 'member@example.com', 'Member Person', NULL, ?, ?)`,

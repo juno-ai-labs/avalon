@@ -8,8 +8,9 @@ import { __testing } from "../src/queues/activity-consumer";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
-const createWorkflow = vi.hoisted(() => vi.fn(async () => ({ id: "workflow-instance" })));
+const createWorkflow = vi.hoisted(() => vi.fn(async () => ({ status: 200, bodyJson: "{}" })));
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -83,7 +84,7 @@ afterEach(() => {
   createWorkflow.mockClear();
 });
 
-function envFor(database: DatabaseSync): Env {
+function envFor(database: DatabaseSync, objectStore: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -92,14 +93,18 @@ function envFor(database: DatabaseSync): Env {
       idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ refresh: async () => undefined }),
     },
-    WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
+      extra: { dispatchRun: createWorkflow },
+    }),
   });
 }
 
 describe("activity triggers after an automation is deleted", () => {
   it("starts a run while the automation is visible and none once it is deleted", async () => {
     const database = seededDatabase();
-    const env = envFor(database);
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    const env = envFor(database, objectStore);
 
     // Control: the trigger matches this activity today, so matching opens
     // exactly one run. Without this the deleted case would prove nothing.
@@ -127,6 +132,9 @@ describe("activity triggers after an automation is deleted", () => {
 function seededDatabase(): DatabaseSync {
   const database = migratedSqliteDatabase();
   databases.push(database);
+  // Connector-activity runs launch through the Durable-Object authority now;
+  // open it before any product rows exist, the way a fresh stack does.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${USER_ID}', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');

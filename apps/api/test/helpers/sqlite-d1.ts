@@ -30,6 +30,17 @@ export function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
       },
       async all<T>() {
+        // The runtime-database routers issue every statement through `.all()`,
+        // and their callers read `meta.changes` off mutations — report it the
+        // way D1 does instead of a flat zero.
+        if (!/^\s*(?:SELECT|WITH)/iu.test(sql) && !/\bRETURNING\b/iu.test(sql)) {
+          const result = database.prepare(sql).run(...values as SQLInputValue[]);
+          return createTestD1Result<T>({
+            success: true,
+            results: [],
+            meta: { changes: Number(result.changes) },
+          });
+        }
         return createTestD1Result<T>({
           success: true,
           results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],

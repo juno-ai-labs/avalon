@@ -43,176 +43,24 @@ afterEach(() => {
 });
 
 describe("who may continue a Slack work stream", () => {
-  it("opens a private work stream seated with the private channel's members", async () => {
-    // The channel is the room. Without the roster read the work stream is
-    // private and empty, which is the same channel unable to find its own work
-    // stream in Avalon — worse than the public work stream this replaced.
+  // The pre-cutover D1 execution arms are gone: on the one unsupported stack
+  // that never opened the Durable-Object authority, Slack ingress must fail
+  // loudly instead of running legacy code. The seating, scope, and actor rules
+  // themselves are exercised against the durable path — in the object test
+  // below and in the Workers-runtime suites.
+  it("refuses to open a work stream while the authority is not durable_object_open", async () => {
     const database = await seededDatabase();
-    insertEventJob(database, "event:private", appMention("EvPrivate", { channelType: "group" }));
-    const slack = stubSlack({ privateChannel: true, members: ["U456", "UKAT", "USTRANGER"] });
-
-    await service(database).processQueuedIngress("event:private");
-
-    expect(database.prepare("SELECT scope FROM workstreams").get())
-      .toEqual({ scope: "personal" });
-    expect(database.prepare(
-      "SELECT user_id FROM workstream_participants ORDER BY user_id",
-    ).all()).toEqual([
-      // Linked, and the member who summoned Avalon.
-      { user_id: TAYLOR },
-      // Not linked at all: matched on the email Slack attests to, which is
-      // enough to seat somebody and not enough to run as them.
-      { user_id: KAT },
-    ]);
-    // Taylor's account link resolves in the bulk D1 read. Only the two members
-    // with no stored mapping spend a Slack profile lookup.
-    expect(slack.methods.filter((method) => method === "users.info")).toHaveLength(2);
-  });
-
-  it("opens a public work stream from a public channel without reading the roster", async () => {
-    const database = await seededDatabase();
-    insertEventJob(database, "event:public", appMention("EvPublic"));
-    const slack = stubSlack({ privateChannel: false, members: ["U456"] });
-
-    await service(database).processQueuedIngress("event:public");
-
-    expect(database.prepare("SELECT scope FROM workstreams").get())
-      .toEqual({ scope: "workspace" });
-    // A public channel's work stream is readable by the workspace, so the
-    // roster would cost a `users.info` per member and buy nothing.
-    expect(slack.methods).not.toContain("conversations.members");
-  });
-
-  it("bounds profile lookups for an unmapped private audience", async () => {
-    const database = await seededDatabase();
-    insertEventJob(database, "event:bounded", appMention("EvBounded", { channelType: "group" }));
-    const slack = stubSlack({
-      privateChannel: true,
-      members: ["U456", ...Array.from({ length: 18 }, (_, index) => `UUNKNOWN${index}`)],
-      profileDelayMs: 5,
-    });
-
-    await service(database).processQueuedIngress("event:bounded");
-
-    expect(slack.maxProfilesInFlight).toBeLessThanOrEqual(6);
-    expect(slack.methods.filter((method) => method === "users.info")).toHaveLength(18);
-  });
-
-  it("lets a different linked member continue the thread, under their own authority", async () => {
-    // The refusal this replaces. Adam is linked, and is not the member who
-    // started the thread.
-    const database = await seededDatabase();
-    insertEventJob(database, "event:open", appMention("EvOpen"));
+    insertEventJob(database, "event:refused", appMention("EvRefused"));
     stubSlack({ privateChannel: false, members: ["U456"] });
-    const roomEvents: Record<string, unknown>[] = [];
-    await service(database, roomEvents).processQueuedIngress("event:open");
 
-    insertEventJob(database, "event:reply", appMention("EvReply", {
-      user: "UADAM",
-      threadTs: "1.0",
-      ts: "1.1",
-      text: "<@UBOT> Avalon, do the deep research on every Delta company too",
-    }));
-    stubSlack({ privateChannel: false, members: ["U456"] });
-    await service(database, roomEvents).processQueuedIngress("event:reply");
+    await expect(service(database).processQueuedIngress("event:refused"))
+      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
 
-    const messages = database.prepare(
-      "SELECT author_type, author_user_id, text_content FROM messages ORDER BY sequence_number",
-    ).all();
-    expect(messages).toContainEqual({
-      author_type: "human",
-      author_user_id: ADAM,
-      text_content: "Avalon, do the deep research on every Delta company too",
-    });
-    // Seated by their own arrival, which is what makes the same reply work when
-    // the work stream is private.
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM workstream_participants WHERE user_id = ?",
-    ).get(ADAM)).toEqual({ count: 1 });
-    expect(roomEvents).toContainEqual(expect.objectContaining({
-      type: "participant_added",
-      participant: expect.objectContaining({
-        user: expect.objectContaining({ id: ADAM }),
-      }),
-    }));
-  });
-
-  it("routes needs-input delivery to the triggering member despite a stale installation link", async () => {
-    const database = await seededDatabase();
-    insertEventJob(database, "event:delivery-open", appMention("EvDeliveryOpen"));
-    stubSlack({ privateChannel: false, members: ["U456"] });
-    const slackService = service(database);
-    await slackService.processQueuedIngress("event:delivery-open");
-    const workstream = database.prepare("SELECT id FROM workstreams").get() as { id: string };
-    // A reinstall can leave an active identity link attached to the retired
-    // connection. It must not answer whether this installation is linked.
-    database.exec(`
-      INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-         display_name, granted_scopes_json, status, cursor_json, config_json,
-         created_at, updated_at, model_plugin_id)
-      VALUES ('connection-stale', '${WORKSPACE}', 'slack', 'workspace', NULL, 'T123',
-              'Retired Slack', '[]', 'disabled', '{}', '{}', '2025-12-01', '2025-12-01',
-              'plugin_slack_stale');
-      INSERT INTO slack_user_links
-        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
-         status, created_at, updated_at)
-      VALUES ('link-stale-stranger', '${WORKSPACE}', 'connection-stale', '${KAT}',
-              'T123', 'USTRANGER', 'active', '2025-12-01', '2025-12-01');
-    `);
-
-    const slack = stubSlack({ privateChannel: false, members: [] });
-    await slackService.deliverWorkstreamOutcome(
-      WORKSPACE,
-      workstream.id,
-      "Which connected member should approve this?",
-      "delivery:needs-input",
-      "needs_input",
-      "USTRANGER",
-    );
-
-    expect(slack.calls.find((call) => call.method === "conversations.open")?.body)
-      .toMatchObject({ users: "USTRANGER" });
-    const controls = slack.calls.find((call) => call.method === "chat.stopStream")?.body;
-    expect(JSON.stringify(controls)).toContain("Give feedback");
-  });
-
-  it("records an unmapped member's reply in a private conversation", async () => {
-    const database = await seededDatabase();
-    insertEventJob(database, "event:open", appMention("EvOpen2", { channelType: "group" }));
-    stubSlack({ privateChannel: true, members: ["U456"] });
-    await service(database).processQueuedIngress("event:open");
-
-    insertEventJob(database, "event:stranger", appMention("EvStranger", {
-      user: "USTRANGER",
-      threadTs: "1.0",
-      ts: "1.2",
-      channelType: "group",
-      text: "<@UBOT> Avalon, we would get stomped in SEO by Delta Air Lines",
-    }));
-    stubSlack({ privateChannel: true, members: ["U456"] });
-    await service(database).processQueuedIngress("event:stranger");
-
-    // Under their Slack identity, with no Avalon account invented for them:
-    // losing what somebody said in the conversation the work stream lives in is
-    // the worse failure.
-    const stranger = database.prepare(
-      "SELECT author_type, author_user_id, external_actor_json FROM messages WHERE text_content = ?",
-    ).get("Avalon, we would get stomped in SEO by Delta Air Lines") as {
-      author_type: string;
-      author_user_id: string | null;
-      external_actor_json: string;
-    };
-    expect(stranger.author_user_id).toBeNull();
-    expect(JSON.parse(stranger.external_actor_json)).toMatchObject({
-      provider: "slack",
-      providerUserId: "USTRANGER",
-    });
-    expect(database.prepare("SELECT scope FROM workstreams").get())
-      .toEqual({ scope: "personal" });
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM workstream_participants",
-    ).get()).toEqual({ count: 1 });
+    // The refusal reached the job ledger, and no legacy product row appeared.
+    expect(database.prepare("SELECT status FROM slack_ingress_jobs WHERE id = 'event:refused'").get())
+      .toEqual({ status: "failed" });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get())
+      .toEqual({ count: 0 });
   });
 
   it("admits the audience through the work stream's object once the region is open", async () => {
@@ -323,9 +171,6 @@ function service(
     PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.test",
     WORKSTREAM_EMAIL_ADDRESS_KEY: "test-workstream-email-address-key",
-    WORKSTREAM_LOOP_WORKFLOW: {
-      create: vi.fn(async () => ({ id: "workflow-instance" })),
-    },
     ...(roomEvents ? {
       SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
         jurisdiction: () => createCloudflareTestBinding<DurableObjectNamespace>({

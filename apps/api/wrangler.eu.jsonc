@@ -174,7 +174,6 @@
     ]
   },
   "workflows": [
-    { "name": "avalon-eu-workstream-loop", "binding": "WORKSTREAM_LOOP_WORKFLOW", "class_name": "WorkstreamLoopWorkflow" },
     { "name": "avalon-eu-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
     { "name": "avalon-eu-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
     { "name": "avalon-eu-work-opportunity", "binding": "WORK_OPPORTUNITY_WORKFLOW", "class_name": "WorkOpportunityWorkflow" }

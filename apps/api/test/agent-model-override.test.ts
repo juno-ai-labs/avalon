@@ -8,6 +8,7 @@ import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -44,7 +45,8 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"): AutomationService {
+function serviceFor(fixture: Fixture, logLevel: Env["LOG_LEVEL"] = "error"): AutomationService {
+  const { database, objectStore } = fixture;
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -54,7 +56,7 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
     // which is exactly the value a pinned run has to differ from.
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-    WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ refresh: async () => undefined }),
@@ -67,7 +69,8 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
   return new AutomationService(env, auth);
 }
 
-function schedulerFor(database: DatabaseSync): WorkspaceScheduler {
+function schedulerFor(fixture: Fixture): WorkspaceScheduler {
+  const { database, objectStore } = fixture;
   const objectDatabase = new DatabaseSync(":memory:");
   databases.push(objectDatabase);
   const storage = createCloudflareTestBinding<DurableObjectStorage>({
@@ -88,39 +91,50 @@ function schedulerFor(database: DatabaseSync): WorkspaceScheduler {
       APP_ENV: "test",
       LOG_LEVEL: "error",
       OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-      WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+      // Post-cutover the scheduler serves workspace product SQL through the
+      // WorkspaceDO port and reads work-stream alarm targets from its
+      // directory. The stub keeps the seeded automation rows in the same
+      // database while answering the directory RPC with no extra targets.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          workstreamScheduleTargets: async () => ({ items: [] }),
+          dueWorkstreamDirectory: async () => [],
+          plannedWorkstream: async () => null,
+        },
+      }),
     }),
   );
 }
 
-function runWorkstream(database: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
-  return database.prepare(
+function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
+  return objectStore.prepare(
     "SELECT id, model_override FROM workstreams WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1",
   ).get(subscriptionId) as { id: string; model_override: string | null };
 }
 
 describe("automation model override", () => {
   it("copies the automation's pinned model onto every run it creates", async () => {
-    const database = seededDatabase();
+    const fixture = seededDatabase();
 
-    const run = await serviceFor(database).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
+    const run = await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
 
-    expect(database.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
       .toEqual({ model_override: "openai/gpt-5.6-terra" });
     // The run's expected model is recorded at schedule time, so the pin has to
     // reach `harness_runs` in the same batch that writes the work stream.
-    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
   it("leaves an unpinned automation's runs to the flag and its Worker-variable default", async () => {
-    const database = seededDatabase();
+    const fixture = seededDatabase();
 
-    const run = await serviceFor(database).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
+    const run = await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
 
-    expect(database.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
       .toEqual({ model_override: null });
-    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
   });
 
@@ -128,8 +142,8 @@ describe("automation model override", () => {
   // work-stream read path says so; these paths write the column, so without
   // their own log a retirement would move every pinned automation in silence.
   it("says so when a run drops a pin naming a model that has left the list", async () => {
-    const database = seededDatabase();
-    database.exec(`
+    const fixture = seededDatabase();
+    fixture.database.exec(`
       UPDATE automation_subscriptions SET model_override = 'anthropic/claude-opus-4.6'
        WHERE id = '${PINNED_SUBSCRIPTION_ID}';
     `);
@@ -140,11 +154,11 @@ describe("automation model override", () => {
       warnings.push(entry as Record<string, unknown>);
     });
 
-    const run = await serviceFor(database, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
+    const run = await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
 
-    expect(database.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
       .toEqual({ model_override: null });
-    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
     expect(warnings).toContainEqual(expect.objectContaining({
       event: "workstream_model_override_unknown",
@@ -157,8 +171,8 @@ describe("automation model override", () => {
   // A scheduled run is the common automation shape, and it never passes through
   // `createRun` — the scheduler Durable Object writes the work stream itself.
   it("carries the pin into a run the scheduler alarm creates", async () => {
-    const database = seededDatabase();
-    database.exec(`
+    const fixture = seededDatabase();
+    fixture.database.exec(`
       INSERT INTO schedules
         (id, workspace_id, automation_subscription_id, schedule_type, rrule, timezone,
          next_run_at, enabled, version, created_at, updated_at)
@@ -166,23 +180,24 @@ describe("automation model override", () => {
         ('00000000-0000-7000-8000-000000000009', '${WORKSPACE_ID}', '${PINNED_SUBSCRIPTION_ID}', 'calendar', 'FREQ=DAILY', 'America/Los_Angeles',
          '2026-01-02T16:00:00.000Z', 1, 1, '2026-01-01', '2026-01-01');
     `);
-    const scheduler = schedulerFor(database);
+    const scheduler = schedulerFor(fixture);
 
     await scheduler.refresh(WORKSPACE_ID);
     await scheduler.alarm();
 
-    const workstream = runWorkstream(database, PINNED_SUBSCRIPTION_ID);
+    const workstream = runWorkstream(fixture.objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
     // The scheduler creates the harness run after the work stream exists, so
     // it resolves the model from the row rather than being handed the value.
-    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
   // Connector-activity runs are the third path that writes a work stream
   // directly, in the queue consumer rather than in either of the above.
   it("carries the pin into a run a matching connector activity creates", async () => {
-    const database = seededDatabase();
+    const fixture = seededDatabase();
+    const { database, objectStore } = fixture;
     database.exec(`
       UPDATE automation_template_versions
          SET trigger_definitions_json = '[{"type":"connector_activity","connectorType":"github","eventTypes":["github.pull_request.merged"],"deterministicFilters":{}}]'
@@ -214,7 +229,7 @@ describe("automation model override", () => {
       APP_ENV: "test",
       LOG_LEVEL: "error",
       OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-      WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     });
 
     await __testing.runMatchingAutomations(env, {
@@ -235,16 +250,27 @@ describe("automation model override", () => {
       visibility_json: "{}",
     } as never);
 
-    const workstream = runWorkstream(database, PINNED_SUBSCRIPTION_ID);
+    const workstream = runWorkstream(objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
-    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+    expect(objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 });
 
-function seededDatabase(): DatabaseSync {
+interface Fixture {
+  database: DatabaseSync;
+  /** The WorkstreamDO store the runtime SQL port writes product rows into. */
+  objectStore: DatabaseSync;
+}
+
+function seededDatabase(): Fixture {
   const database = migratedSqliteDatabase();
   databases.push(database);
+  // Every automation run path now launches through the Durable-Object
+  // authority; open it before any product rows exist, as a fresh stack does.
+  openWorkstreamAuthorityForTest(database);
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${USER_ID}', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');
@@ -275,5 +301,5 @@ function seededDatabase(): DatabaseSync {
        '{"type":"user","userId":"${USER_ID}"}', 'active', 'quiet-amber-steady-heron@automation.with-avalon.com',
        'active', NULL, '2026-01-01', '2026-01-01');
   `);
-  return database;
+  return { database, objectStore };
 }

@@ -50,7 +50,6 @@ export interface Env {
   WORKSPACE_SCHEDULERS: DurableObjectNamespace<WorkspaceScheduler>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
-  WORKSTREAM_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
@@ -237,7 +236,6 @@ const EnvContractSchema = z.object({
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace<WorkspaceScheduler>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
-  WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
   WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
