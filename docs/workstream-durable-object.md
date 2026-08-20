@@ -958,6 +958,32 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The scrub gets a rate limit of its own
+
+**What changed:** A tick performs at most `WORKSPACE_SCRUB_PASSES_PER_TICK`
+scrub sweeps. The bare `7429` alternative came back out of the transient
+pattern. A sweep that activates nothing now logs
+`workspace_scrub_pass_activated_nothing` with the generation and the
+work spaces it touched.
+
+**Why:** Making D1 overload transient and restoring the campaign's `continue`
+in one change raised the per-tick query volume back to what produced the
+overload — several thousand round trips, nineteen of the fifty-one target
+probes being full scans of unindexed tables — while removing the only thing
+that would have stopped it. Neither half was wrong alone; together they needed
+a limit the operation budget cannot supply, because that budget charges a scrub
+sweep the same single unit as an import page while a sweep costs fifty times
+more. The `7429` alternative matched any message containing that number
+anywhere, and both real overload strings already match on their words, so it
+bought nothing and risked retrying a genuine defect forever.
+
+**What a future change has to respect:** `activated === 0` is the stall
+detector, and until this entry it was computed and discarded. A campaign
+grinding through a large workspace and a campaign wedged on a route it can
+never finish are indistinguishable from outside — and while wedged, every
+request stays at 503, because `maintenance_verified` accepts no new work. Keep
+that signal reaching the logs.
+
 ### 2026-08-20 — D1 overload is transient, and the scrub deletes the one RESTRICT child it was blocked by
 
 **What changed:** Four repairs from an adversarial review of the chunked
