@@ -348,7 +348,7 @@ the same read, and the trace is where that duplicated round trip is now visible.
 See [`performance-tracing.md`](performance-tracing.md), including its rule
 against adding an OpenTelemetry package.
 
-Shipped in #TBD.
+Shipped in #203.
 
 ### 2026-08-18 — Route activation waits for the WorkspaceDO directory
 

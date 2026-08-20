@@ -421,7 +421,7 @@ so a Worker that predates it still parses. The other ticket audiences —
 workspace, control, block, dictation — deliberately do not return one, because
 nothing traces them yet.
 
-Shipped in #TBD.
+Shipped in #203.
 
 ### 2026-08-18 — Dictation admission serializes in the owning WorkspaceDO
 
