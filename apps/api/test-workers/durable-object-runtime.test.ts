@@ -256,6 +256,42 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(mismatched.status).toBe(409);
     expect(JSON.parse(mismatched.bodyJson)).toEqual({ error: "workstream_effect_identity_mismatch" });
+    // An epoch this object has never been established in is refused.
+    const newer = await parent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [{ ...common, messageId: "native-rpc-newer-epoch", generation: common.generation + 1 }],
+    });
+    expect(newer.status).toBe(409);
+    expect(JSON.parse(newer.bodyJson)).toEqual({ error: "workstream_effect_identity_mismatch" });
+    // An earlier epoch is a replay, not a mismatch. A restarted maintenance
+    // campaign moves an object's generation forward, and refusing these would
+    // strand every effect already in flight — permanently, since the numbers
+    // can never agree again.
+    const replayWorkstreamId = "00000000-0000-7000-8000-0000000001aa";
+    const replayParent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, replayWorkstreamId),
+    ));
+    const establishedAtTwo = await replayParent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [{
+        ...common,
+        messageId: "epoch-two",
+        workstreamId: replayWorkstreamId,
+        generation: 2,
+      }],
+    });
+    expect(establishedAtTwo.status).toBe(200);
+    const replayedFromOne = await replayParent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [{
+        ...common,
+        messageId: "epoch-one",
+        workstreamId: replayWorkstreamId,
+        generation: 1,
+      }],
+    });
+    expect(replayedFromOne.status).toBe(200);
+    expect(JSON.parse(replayedFromOne.bodyJson)).toEqual({ ok: true, accepted: 1 });
   });
 
   it("flushes a creation snapshot through both parents before a route can be advertised", async () => {
