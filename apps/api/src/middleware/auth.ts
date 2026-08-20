@@ -134,13 +134,29 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
   };
 }
 
+/**
+ * Times `authenticate` onto the request context. The session lookup is one
+ * blocking, uncached D1 round trip that every authenticated request pays before
+ * its handler runs, and it is invisible in a flow's own span because it happens
+ * first. Recording the number is what turns "is auth expensive?" into a query
+ * rather than an argument.
+ */
+async function timedAuthenticate(c: Context): Promise<IdentityAuthContext> {
+  const startedAt = Date.now();
+  try {
+    return await authenticate(c);
+  } finally {
+    c.set("authDurationMs", Date.now() - startedAt);
+  }
+}
+
 export const requireIdentityAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
-  c.set("auth", await authenticate(c));
+  c.set("auth", await timedAuthenticate(c));
   await next();
 };
 
 export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
-  const auth = await authenticate(c);
+  const auth = await timedAuthenticate(c);
   if (!auth.workspaceId || !auth.role) {
     throw new ApiError(403, "workspace_setup_required", "Choose or join an organization to continue");
   }
