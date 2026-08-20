@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 4;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 5;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1144,7 +1144,52 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
            FROM workstream_resource_links link CROSS JOIN workstream root WHERE root.id = 1`,
     ],
   },
+  {
+    version: 5,
+    description: "absorb replayed durable message writes inside the insert trigger",
+    statements: rebuiltMessagesInsertTrigger(),
+  },
 ];
+
+/**
+ * Rebuilds `_runtime_messages_insert` so a replayed durable write is absorbed.
+ *
+ * SQLite ignores an `ON CONFLICT` clause on an INSERT against a view: conflict
+ * handling is the INSTEAD OF trigger's job. The harness's durable writers rely
+ * on `ON CONFLICT(workstream_id, client_message_id) DO NOTHING` for replay
+ * safety — a retried attempt writes its final message again under the same
+ * `harness:<runId>` client id with a fresh message id — and against the object
+ * that clause was silently dropped, so the trigger's bare INSERT hit
+ * `parts_client_message_uq` and crashed the run's settlement instead of
+ * deduplicating it. The trigger now carries a second upsert arm: same id and
+ * tool-typed updates in place (as before), same client id from a different
+ * message id is a replay and is ignored.
+ *
+ * Derived from the frozen v1 body with the v3 rounding applied, so the three
+ * versions cannot drift apart.
+ */
+function rebuiltMessagesInsertTrigger(): string[] {
+  const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_messages_insert"));
+  if (!source) throw new Error("messages insert trigger not found in compat schema");
+  const rounded = source.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+  const anchor = `       ON CONFLICT(id) DO UPDATE SET
+         structured_content_json = excluded.structured_content_json,
+         tool_status = excluded.tool_status,
+         edited_at = excluded.edited_at,
+         updated_at = excluded.updated_at
+       WHERE parts.message_type = 'tool';`;
+  if (!rounded.includes(anchor)) throw new Error("messages insert trigger shape changed");
+  const patched = rounded.replace(anchor, `       ON CONFLICT(client_message_id) WHERE client_message_id IS NOT NULL
+         DO NOTHING
+       ON CONFLICT(id) DO UPDATE SET
+         structured_content_json = excluded.structured_content_json,
+         tool_status = excluded.tool_status,
+         edited_at = excluded.edited_at,
+         updated_at = excluded.updated_at
+       WHERE parts.message_type = 'tool';`);
+  return ["DROP TRIGGER IF EXISTS _runtime_messages_insert", patched];
+}
 
 /**
  * Rebuilds every compat trigger that converts an ISO timestamp to epoch
