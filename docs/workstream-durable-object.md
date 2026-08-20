@@ -958,6 +958,25 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The scrub asks whether rows remain instead of trusting a delete's row count
+
+**What changed:** Each chunk loop now issues a `SELECT 1 ... LIMIT 1` against
+the target and stops when it comes back empty, rather than comparing the
+delete's `meta.changes` against the chunk size. The campaign also performs one
+scrub pass per route per tick instead of re-entering still-`verified` routes
+for the rest of its operation budget.
+
+**Why:** D1 reports `meta.changes` as zero for `DELETE ... WHERE rowid IN
+(SELECT ...)`, so the loop believed every chunk deleted nothing and moved to
+the next target after a single pass. Measured in production, that scrubbed 500
+rows per target per minute against workspaces holding six figures of them —
+correct, and roughly three hours from finishing. The local SQLite double
+reports `changes` faithfully, so no test could see it; the regression test now
+zeroes the field deliberately to reproduce what D1 does.
+
+**What a future change has to respect:** progress through the scrub is a
+property of the data, not of a driver's return value. Ask the table.
+
 ### 2026-08-20 — The activation scrub runs in resumable chunks
 
 **What changed:** `activateWorkspaceProductRoute` no longer issues the whole
