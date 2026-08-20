@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
+import { logWarn } from "../observability/logger";
 import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
@@ -53,7 +54,6 @@ const TRANSIENT_CAMPAIGN_ERROR = new RegExp(
     // quarantines a healthy migration mid-outage.
     "d1 db is overloaded",
     "requests queued for too long",
-    "\\b7429\\b",
     "ETIMEDOUT",
     "ECONNRESET",
     "\\b50[234]\\b",
@@ -1241,6 +1241,15 @@ async function quarantineWorkspaceProductRoute(
 
 /** Rows deleted per statement, and per invocation, while scrubbing D1. */
 const WORKSPACE_SCRUB_CHUNK = 500;
+/**
+ * Scrub sweeps per tick. The operation budget cannot bound this: it charges a
+ * sweep the same one unit as an import page, and a sweep costs fifty to a
+ * hundred D1 round trips against an import page's handful. Left to that
+ * budget, one invocation issued several thousand queries and D1 answered by
+ * shedding load — which the campaign now correctly survives rather than
+ * quarantining on, so nothing else would slow it down.
+ */
+const WORKSPACE_SCRUB_PASSES_PER_TICK = 3;
 const WORKSPACE_SCRUB_ROW_BUDGET = 20_000;
 
 /**
@@ -1413,6 +1422,7 @@ export async function processWorkstreamAuthorityMigration(
   // without depending on undocumented queuing above the platform ceiling.
   const concurrency = Math.min(5, maxOperations);
   let operationsRemaining = maxOperations;
+  let scrubPasses = 0;
   const processRoutes = async (
     routes: RouteRow[],
     operation: (env: Env, route: RouteRow) => Promise<void>,
@@ -1499,7 +1509,19 @@ export async function processWorkstreamAuthorityMigration(
           if (await activateWorkspaceProductRoute(scrubEnv, scrubRoute)) activated += 1;
         })) return;
         operationsRemaining -= verifiedProducts.length;
-        if (activated === 0) return;
+        scrubPasses += 1;
+        if (activated === 0) {
+          // The stall signal, which is otherwise computed and thrown away: a
+          // campaign grinding through a large workspace and one wedged on a
+          // route it can never finish look identical from outside, and the
+          // wedged one holds every request at 503 indefinitely.
+          logWarn(env, "workspace_scrub_pass_activated_nothing", {
+            generation: control.generation,
+            workspace_ids: verifiedProducts.map((entry) => entry.workspace_id).join(","),
+          });
+          return;
+        }
+        if (scrubPasses >= WORKSPACE_SCRUB_PASSES_PER_TICK) return;
         continue;
       }
       const verified = await nextRoutes(env, "verified", batchSize);
