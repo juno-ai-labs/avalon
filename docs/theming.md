@@ -1,21 +1,25 @@
 # Theming
 
-Every colour, radius, and unit of breathing room the desktop renderer draws with
-is a CSS custom property declared in one file, and a theme is a block of those
-properties rather than a fork of the stylesheet. This is what makes a new
-appearance cost about ninety declarations instead of an audit of a 3,800-line
-stylesheet, and what stops a component from ever needing to know which theme is
-running.
+A theme is a JSON file. `config/design-tokens/` holds one file per appearance
+and a registry saying which tokens exist and what each one means; a build step
+turns them into the stylesheet the renderer loads. Nothing in the interface
+knows which theme is running, and no component reads a colour, so adding an
+appearance costs a JSON file rather than an audit of a 3,800-line stylesheet.
 
 Read this before adding a theme, adding a token, or writing a colour anywhere in
-the renderer. The rule that everything else follows from is short: **`app.css`
-names tokens and never a colour**, and a test fails if that stops being true.
+the renderer. Two rules carry the rest: **`app.css` names tokens and never a
+colour**, and **`themes.css` is generated — edit the JSON**. A test fails if
+either stops being true.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/styles/themes.css` | Every token value, once per theme. The only file in the renderer where a colour is written down. |
+| `config/design-tokens/registry.json` | Every token that exists, its type, and the prose explaining what it is for. The vocabulary. |
+| `config/design-tokens/themes/*.json` | One appearance each: values for the registry's paths. The only place a colour is written down. |
+| `config/design-tokens/*.schema.json` | JSON Schema for both, so an editor completes and validates them. |
+| `scripts/build-theme-css.mjs` | Turns the JSON into `themes.css`. `pnpm tokens:build` writes it; `pnpm tokens:check` fails on drift. |
+| `apps/desktop/src/renderer/styles/themes.css` | **Generated.** The custom properties, one block per theme. |
 | `apps/desktop/src/renderer/styles/app.css` | The rules. Names tokens; states no colour of its own. |
 | `apps/desktop/src/common/themes.ts` | The vocabulary both processes share: the theme ids, `resolveTheme`, and each theme's window background. |
 | `apps/desktop/src/renderer/lib/theme.ts` | Reading, applying, persisting, and re-resolving the choice. Stamps `data-theme`. |
@@ -23,6 +27,53 @@ names tokens and never a colour**, and a test fails if that stops being true.
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance control in Settings. |
 | `apps/desktop/src/main/application-settings.ts` | `windowTheme`, the mirrored copy the main process paints a new window with. |
 | `apps/desktop/tailwind.config.ts` | The Tailwind palette, pointed at the same tokens so a utility class cannot diverge. |
+
+## A theme file
+
+Shaped after a VS Code colour theme — a little metadata and one flat map of
+dotted keys, because flat keys diff cleanly and a nested tree does not:
+
+```json
+{
+  "$schema": "../theme.schema.json",
+  "id": "airy",
+  "name": "Airy",
+  "appearance": "dark",
+  "description": "Near-black, amber, and a great deal of room.",
+  "tokens": {
+    "sys.color.surface.canvas": "#0a0806",
+    "sys.color.text.default": "{ref.color.neutral.14}"
+  }
+}
+```
+
+`appearance` becomes `color-scheme`, so form controls and scrollbars match.
+A value in braces aliases another token rather than repeating its value; the
+generator turns it into a `var()` reference and a test rejects an alias that
+leads back to itself.
+
+A value may also be an object or an array of them, which is how a background
+layer is written:
+
+```json
+"sys.backdrop.image": [
+  { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'>…</svg>" },
+  { "url": "https://example.test/paper.avif" },
+  { "gradient": "radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, .09), transparent 62%)" }
+]
+```
+
+An array is a CSS layer stack, first on top. `svg` is artwork drawn in the theme
+file: the generator collapses its whitespace, swaps its double quotes for single
+ones and percent-encodes what a `url()` cannot carry, then wraps the result in
+`url("data:image/svg+xml,…")`. It must declare the SVG namespace or nothing
+renders, and it may not alias a token — a data URI is its own document and cannot
+read a custom property, so the generator rejects both rather than emitting a dud.
+`url` must be `https:`, which is all the renderer's Content-Security-Policy
+allows from the network.
+
+Adding a theme is that file plus an entry in `themeChoices`. Everything else —
+the picker, persistence, the window background — reads from those.
 
 ## How it works
 
@@ -42,115 +93,129 @@ produce an identical `data-theme` and the Settings picker has to tell them apart
 Nothing else in the renderer branches on the theme. No component reads a colour,
 and no rule is written twice for two appearances.
 
-### The token vocabulary
+### The token taxonomy
 
-Tokens fall into two kinds, and the difference is the one design decision worth
-understanding before adding any.
+Names are dot-separated and **front-loaded by tier**, so a reader can tell what
+kind of decision a token is from its first word. The three tiers are Material's
+and the shape is GitLab's; the flat dotted keys are VS Code's.
 
-**Surfaces are named, and each theme declares them outright** — `--canvas`,
-`--sidebar`, `--surface`, `--surface-2`, `--sunken`, `--raised`,
-`--raised-hover`, `--elevated`, `--elevated-hover`. Their *relationship* inverts
-between light and dark: a dark theme makes the sidebar recede by darkening it
-below the content pane, a light theme by greying it above one. Nothing derives
-one from another, because there is no derivation that is right in both.
+| Tier | Means | Example |
+| --- | --- | --- |
+| `ref` | A primitive. A step on a ramp, with no opinion about where it is used. | `ref.color.neutral.4` |
+| `sys` | A semantic decision. What the interface *means* by a value. | `sys.color.text.subtle` |
+| `cmp` | One component's own decision, where no semantic token fits. | `cmp.sidebar.border` |
+
+After the tier comes the category (`color`, `space`, `size`, `font`,
+`elevation`), then the concept, then the variant, and any state last —
+`sys.color.surface.raised-hover`, not `sys.color.hover.surface.raised`. Context
+before property; the value never appears in the name, so a token called
+`sys.color.danger.base` can stop being red without becoming a lie.
+
+A path becomes a custom property by prefixing the namespace and swapping dots
+for hyphens: `sys.color.text.default` is `--av-sys-color-text-default`. The
+`--av-` namespace keeps Avalon's properties apart from the ones Radix and
+`tw-fade` set on their own elements.
+
+Two structural decisions sit underneath the taxonomy and are worth
+understanding before adding any token.
+
+**Surfaces are named, and each theme declares them outright** —
+`sys.color.surface.canvas`, `.default`, `.subtle`, `.sunken`, `.raised`,
+`.raised-hover`, `.elevated`, `.elevated-hover`. Their *relationship* inverts
+between light and dark: a dark theme makes a control recede by darkening it, a
+light theme by greying it. Nothing derives one from another, because no
+derivation is right in both.
 
 **Everything monotonic lives on a ramp**, ordered by *contrast against the
 surface* rather than by lightness, so a rule can name a step without knowing
-which way round the theme runs. There are two, and the split is the second
-design decision worth understanding.
-
-`--n-1` … `--n-14` is the neutral ramp: fills at the faint end, text at the
-strong end. `--line-1` … `--line-6` is the line ramp, and every border and
-outline in the stylesheet draws from it — a divider you should barely see, the
-default border, one that should read, one under the pointer, one on an engaged
-control, and a focus border.
+which way round the theme runs. There are two. `ref.color.neutral.1` … `.14` is
+the neutral ramp — fills at the faint end, text at the strong end.
+`ref.color.line.1` … `.6` is the line ramp, and every border and outline draws
+from it.
 
 They were one ramp until Airy needed borders that all but disappear. A border
-and a faint fill sit at the same contrast level, so they shared a step: `--n-4`
-was simultaneously the default border and the selected sidebar row's background.
-Making the border vanish took the selection with it. Separating them lets a
-theme say "draw with space, not lines" in six values without touching anything
-it fills. A test asserts the monotonicity of both.
+and a faint fill sit at the same contrast level, so they shared a step: neutral
+step four was simultaneously the default border and the selected sidebar row's
+background, and making the border vanish took the selection with it. Separating
+them lets a theme say "draw with space, not lines" in six values without
+touching anything it fills.
 
-On top of those sit the accent families — `brand`, `blue`, `green`, `gold`,
-`red` — each with the same six roles:
+On top of those sit the accent families — `brand`, `accent`, `success`,
+`warning`, `danger` — named for what they mean rather than for the hue they
+happen to be. Each carries the same roles:
 
 | Role | What it is for |
 | --- | --- |
-| `--<f>` | The hue itself: a fill, a dot, an icon. |
-| `--<f>-strong` | The hovered fill, or a brighter tone. |
-| `--<f>-soft` | The hue as text, readable on the surface. |
-| `--<f>-wash` | The hue as a tinted background block. |
-| `--<f>-edge` | The hue as a border on that block. |
-| `--<f>-on` | Text drawn on top of a filled swatch of the hue. |
+| `base` | The hue itself: a fill, a dot, an icon. |
+| `strong` | The hovered fill, or a brighter tone. |
+| `soft` | The hue as text, readable on the surface. |
+| `wash` | The hue as a tinted background block. |
+| `edge` | The hue as a border on that block. |
+| `on` | Text drawn on top of a filled swatch of the hue. |
 
-`brand` carries two extras. `--brand-ink` is the brand drawn as a mark, a label,
-or a one-pixel line on an ordinary surface, and it is a different question from
-`--brand`: Avalon's chartreuse is a fine fill on white and an illegible label on
-it. `--brand-on` is the dark text that goes on a chartreuse fill. `green` carries
-`--green-fill` and `--green-fill-edge` for a filled control — a switch that is
-on, a selected preset — which is neither the vivid hue nor the wash.
+`brand` carries `ink`, the brand drawn as a mark or a label on an ordinary
+surface — a different question from `base`, because Avalon's chartreuse is a
+fine fill on white and an illegible label on it. `success` carries `fill` and
+`fill-edge` for a filled control, which is neither the vivid hue nor the wash.
 
-The rest is geometry (`--radius-*`), density (`--sidebar-width`, `--row-height`,
-`--control-height`, `--pane-pad`, `--feed-width`, `--feed-width-wide`,
-`--feed-pad-x`, `--feed-pad-y`), vertical rhythm (`--row-gap` between rows in a
-list, `--group-gap` between one group of rows and the next, `--block-gap`
-between events in the feed, `--stack-gap` between message blocks, `--prose-gap`
-between paragraphs, and `--leading-prose` for the leading of prose itself — the
-five a theme changes to make the interface breathe downward), the inside of a
-navigation row (`--row-pad`, `--row-leading`, `--row-hint-gap`,
-`--row-height-dense`) and the band its group label sits in (`--label-height`,
-`--label-gap`), the fill behind a
-person's turn (`--bubble-fill`, `--bubble-edge`, `--bubble-pad`) and where that
-turn sits (`--turn-align`, `--turn-margin`, `--turn-width`), type — the families (`--font-*`), the
-document's own size and leading (`--text-base`, `--leading-base`), the sizes the
-interface actually sets (`--text-prose`, `--text-row`, `--text-hint`,
-`--text-action`, `--text-meta`, `--text-author`, `--text-feed-author`,
-`--text-title`), the weights (`--weight-strong`, `--weight-heading`,
-`--weight-emphasis`, `--weight-feed-author`), and the four `--label-*`
-properties that decide whether a label is sentence case or letterspaced small
-capitals — which apply to the label over a turn in the feed as well as the one
-over a group of navigation rows, depth (`--shadow-*`, `--scrim*`, `--ring*`), and a handful of
-things that oppose the theme on purpose: `--tooltip-bg`, `--tooltip-ink`,
-`--ink-on`, `--ink-hover`, `--toggle-track`, `--toggle-knob-off`. A tooltip is
-light on a dark theme and dark on a light one, so it cannot be a ramp step in
-either.
+`registry.json` holds a prose explanation per group, and the generator writes
+them into `themes.css` as comments. That file is where a token's reasoning
+lives; the generated stylesheet is where a reader meets it.
 
-`--canvas-wash` is a `background-image` rather than a colour, painted on `body`,
-`.workspace-shell`, and `.main-pane`, always with `background-attachment: fixed`
-so every copy is anchored to the viewport and stays in register with the others.
-Most themes set it to `none`; Airy uses it for the light in the corner, which no
-single element could own.
+### The backdrop
+
+The window has **one** backdrop, painted by `.workspace-shell` and by nothing
+else. The sidebar and the content pane sit on top of it, so a theme's ground and
+whatever light it casts run the full width of the window, unbroken, under both.
+
+`sys.backdrop.*` is that layer, and every token in it is a CSS `background-*`
+longhand under its own name:
+
+| Token | CSS property | What a theme uses it for |
+| --- | --- | --- |
+| `sys.backdrop.color` | `background-color` | The ground the artwork sits on. |
+| `sys.backdrop.image` | `background-image` | Gradients, drawn SVG, a fetched image — one layer or a stack. |
+| `sys.backdrop.position` | `background-position` | Where it centres. |
+| `sys.backdrop.size` | `background-size` | Zoom: `cover`, `contain`, a percentage pair. |
+| `sys.backdrop.repeat` | `background-repeat` | Tiling. |
+| `sys.backdrop.attachment` | `background-attachment` | `fixed` anchors it to the viewport. |
+| `sys.backdrop.blend-mode` | `background-blend-mode` | How the layers combine. |
+
+Sizing, centring, tiling and zoom are not a vocabulary invented here. Every one
+of them already has an answer that a decade of use has sanded smooth, and a
+theme reaching for `background-size: cover` should be able to write exactly
+that. What the theme file adds is the single step it cannot write by hand —
+turning artwork into something a `url()` can carry.
 
 ### The navigation is translucent
 
-`--sidebar` is a translucent tint rather than an opaque colour, so the
-background and whatever light a theme casts across it read through the
-navigation. `.workspace-shell` paints `--canvas` for that reason — it is what
-shows through, and painting `--surface` there would put the content pane's tone
-behind the navigation instead of the page's.
+`--av-cmp-sidebar-background` is a translucent tint rather than an opaque colour,
+so the backdrop and the light across it read through the navigation.
 
-A theme may take that to its conclusion. Airy sets `--sidebar: transparent` and
-makes `--canvas` and `--surface` the same colour, so it has **one ground**: the
-page and the light across it run the full width of the window, under the
-navigation and the message feed alike, broken only by `--sidebar-edge`. The
-other themes keep a distinct content pane, which is why the two are separate
-tokens at all.
+A theme may take that to its conclusion. Airy sets the tint to `transparent` and
+`--av-cmp-pane-background` to `transparent` as well, so it has **one ground**:
+the backdrop is the whole window, under the navigation and the message feed
+alike, broken only by `--av-cmp-sidebar-border`. The other themes keep an opaque
+content pane over the backdrop, which is why the pane's fill is a token at all
+rather than the backdrop showing everywhere.
 
-Continuity across that whole width is what `background-attachment: fixed` buys.
-`.workspace-shell` and `.main-pane` each paint `--canvas-wash`, and a gradient
-positioned per-element would put the same glow at two different places and show
-a seam down the navigation's edge; anchored to the viewport, the two copies are
-in register and read as one light.
+That fill is what the pane is *for*. It must never repaint the backdrop: the
+shell and the pane each carried a copy once, so that the opaque pane would still
+show the theme's light, and two copies of one gradient cannot be kept in
+register — `background-attachment: fixed` holds them together only while both
+elements are viewport-sized. A seam ran down the navigation's edge where Airy's
+glow stopped and started again. A test names the only two elements allowed to
+paint `--av-sys-backdrop-image`: the shell, and the Settings miniature, which
+draws the *offered* theme's backdrop at swatch scale.
 
 Two states translucency cannot serve have tokens of their own:
 
 | Token | Why it is not the tint |
 | --- | --- |
-| `--sidebar-solid` | The narrow-width drawer sits *over* the content. A see-through drawer shows the work stream through the navigation. |
-| `--sidebar-edge` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Airy does. |
+| `--av-cmp-sidebar-background-solid` | The narrow-width drawer sits *over* the content. A see-through drawer shows the work stream through the navigation. |
+| `--av-cmp-sidebar-border` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Airy does. |
 
-Nothing drawn inside the sidebar may paint `--sidebar` again: the tint is
+Nothing drawn inside the sidebar may paint `--av-cmp-sidebar-background` again: the tint is
 already on the surface beneath it, and applying it twice is visibly darker. The
 account row at the foot of the navigation paints `transparent` for this reason.
 
@@ -161,8 +226,9 @@ choice only — one near-black ground lit from a corner and running the full wid
 of the window, amber where the others are chartreuse, borders that barely exist,
 uppercase letterspaced micro-labels, prose set at 1.85 leading, and roughly
 double the vertical spacing, so negative space does the work the lines used to.
-A person's turn has no bubble there at all: `--bubble-fill` is transparent,
-`--bubble-pad` is zero, and `--turn-align` is `flex-start`, so every message
+A person's turn has no bubble there at all: `--av-cmp-bubble-background` is
+transparent, `--av-cmp-bubble-padding` is zero, and `--av-cmp-turn-align` is
+`flex-start`, so every message
 sits in one left-aligned column as plain text.
 
 ### Choosing one
@@ -188,6 +254,18 @@ next report.
 
 ## Invariants
 
+- **`themes.css` is generated.** Editing it works until the next
+  `pnpm tokens:build` silently reverts you. `pnpm tokens:check` runs in CI
+  through `pnpm test:scripts` and fails if the two disagree.
+- **A theme sets only paths the registry declares**, and every alias points at a
+  token that exists and never leads back to itself. A self-referential custom
+  property is not a CSS error: the property resolves to nothing and every rule
+  using it is dropped, so it surfaces as an unstyled interface rather than as a
+  failure. Two tokens were exactly this during the taxonomy rename.
+- **Every `var()` in `app.css` names a declared token.** With around 1,300
+  references and names as long as `--av-sys-color-surface-raised-hover`, a
+  transposition is a matter of time, and an unresolved property looks almost
+  right rather than broken.
 - **`app.css` contains no literal colour** — no hex, no `rgb()`/`hsl()`/`lab()`,
   no colour keyword, including inside a `color-mix()`. A literal that slips back
   in renders correctly under whichever theme it was sampled from and is invisible
@@ -196,23 +274,35 @@ next report.
   is the only thing that catches the 269th.
 - **Every theme restates every token whose value is a colour.** The dark block is
   also `:root`, so an omitted token silently inherits a dark colour: a light theme
-  missing `--tooltip-ink` draws near-black on near-black, nothing else looks
+  missing `--av-cmp-tooltip-foreground` draws near-black on near-black, nothing else looks
   wrong, and nobody finds it until a person hovers something. Lengths, font
-  stacks, and the `var(--n-*)` aliases are deliberately inherited.
+  stacks, and aliases onto a ramp are deliberately left to the generator to
+  fill in.
+- **Every theme's block declares every token.** The generator fills in what a
+  theme was content to inherit, because falling through to `:root` works only
+  while `data-theme` is on the document. An alias is substituted where it is
+  *declared*, so a nested element carrying a different `data-theme` inherits the
+  default theme's already-resolved colour and redeclaring the ramp beneath it
+  changes nothing. The Settings miniature is exactly that element, and it
+  previewed a dark surface under the Light swatch until the blocks were filled
+  out.
+- **The backdrop is painted once.** Only `.workspace-shell` and the Settings
+  miniature may name `--av-sys-backdrop-image`; anything else that paints it
+  draws a second copy of one gradient and shows a seam where the two disagree.
 - **Both ramps are monotonic in contrast against the surface**, in every theme.
-- **Lines come off `--line-*` and fills come off `--n-*`.** A border that reaches
+- **Lines come off `--av-ref-color-line-*` and fills come off `--av-ref-color-neutral-*`.** A border that reaches
   back onto the neutral ramp re-creates the coupling the split exists to remove,
   and does it silently — it looks right in whichever theme it was written
-  against. A test rejects any `border` or `outline` declaration naming `--n-*`.
-- **A focus border stays visible in every theme.** `--line-6` is the one step
+  against. A test rejects any `border` or `outline` declaration naming `--av-ref-color-neutral-*`.
+- **A focus border stays visible in every theme.** `--av-ref-color-line-6` is the one step
   Airy does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
 - **No component reads a colour.** Two places would otherwise have to: the
   `prism-react-renderer` theme and the per-participant accent, both of which take
-  JavaScript values. Both pass `var(--code-*)` and `var(--person-*)` strings into
+  JavaScript values. Both pass `var(--av-sys-color-syntax-*)` and `var(--person-accent)` strings into
   inline styles, which resolve against the element's cascade like any other
   reference.
-- **`themeWindowBackground` equals each theme's own `--canvas`.** It is the one
+- **`themeWindowBackground` equals each theme's own `--av-sys-color-surface-canvas`.** It is the one
   value written down twice, and a test compares the copies.
 - **The Tailwind palette resolves to tokens, never to literals.** It is currently
   unused by any component; literal values there were a silent second copy of the
@@ -251,7 +341,7 @@ reads a stylesheet.
   on it; the cost is that the next window opens on the previous theme's canvas.
 - **A light theme's switch knob** is white on a grey track at about 1.9:1, below
   the 3:1 a graphical control would ideally hold. The knob carries a
-  `--shadow-sm` lift, and the state is also conveyed by its position and by the
+  `--av-sys-elevation-shadow-sm` lift, and the state is also conveyed by its position and by the
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
 - **Themes are not animated.** Switching repaints immediately, and the reported
@@ -261,7 +351,8 @@ reads a stylesheet.
 
 | Suite | What it covers |
 | --- | --- |
-| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every theme restating every colour token, ramp monotonicity, and the duplicated window background. Runs against the files on disk. |
+| `scripts/build-theme-css.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
+| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
 | `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, and the unknown-theme fallback. |
 | `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
@@ -283,6 +374,108 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-20 — The window has one backdrop, and a theme can draw it
+
+`sys.color.surface.wash` is gone. In its place is `sys.backdrop.*`, seven tokens
+that are the CSS `background-*` longhands under their own names, painted on
+`.workspace-shell` and nowhere else, with `cmp.pane.background` as the fill the
+content pane draws over it.
+
+The wash was painted twice — once by the shell, once by the main pane — because
+the pane was opaque and would otherwise have hidden the theme's light.
+`background-attachment: fixed` was supposed to keep the two copies in register,
+and does, but only while both elements are viewport-sized; the pane is not, and
+Airy's glow stopped at the navigation's edge and started again beside it. The
+fix is not a better way to synchronise two copies: it is one copy, with the
+pane's fill made themeable so Airy can set it to `transparent` and let the
+backdrop through. A test now names the only elements allowed to paint the
+backdrop image. The work stream's composer dock lost its gradient in the same
+change — it lays the composer out as a grid row rather than floating it over the
+transcript, so the gradient hid nothing and had only ever been invisible because
+it ended on the pane's own colour. Under a transparent pane it became an opaque
+rectangle cutting the backdrop off.
+
+The token names are deliberately not new. Sizing, centring, tiling and zoom all
+have answers that a decade of use has sanded smooth, and a theme that wants
+`background-size: cover` should write exactly that rather than a synonym invented
+here. What the theme file adds is the one step it cannot write by hand: `image`
+accepts `{"svg": "…"}` for artwork drawn in the theme, `{"url": "https://…"}`
+for one fetched over the network, `{"gradient": "…"}`, and an array of those for
+a layer stack. Inline SVG is percent-encoded into a data URI; it is rejected
+without the SVG namespace, and rejected if it aliases a token, because a data URI
+is its own document and cannot read a custom property — encoding the braces and
+moving on would have drawn the artwork in its fallback colour under every theme.
+
+The generator also began writing *every* token into *every* theme's block
+instead of letting a theme fall through to `:root`. Inheritance worked while
+`data-theme` sat on the document, because `[data-theme='light']` and `:root`
+match the same element and the more specific block wins. It does not work for a
+nested element with a `data-theme` of its own: an alias is substituted where it
+is declared, so `--av-cmp-pane-background: var(--av-sys-color-surface-default)`
+on `:root` resolves to the *dark* surface and inherits down regardless of the
+ramp redeclared beneath it. The Settings miniature is that element, and the Light
+swatch previewed a dark surface the moment the pane fill became an alias. Filling
+the blocks out costs a few kilobytes and makes `data-theme` mean the same thing
+anywhere in the tree; a future change must not "optimise" the repetition back
+out.
+
+Not done: the docks that genuinely float over a scrolling transcript still fade
+to `sys.color.surface.default`. That is correct for a scrim — it has to hide what
+passes under it — but in Airy it means the backdrop's light stops behind them.
+Giving those a scrim that shows the backdrop needs a mask, and a mask over the
+dock would take the composer inside it with it; it was not worth the complexity
+for the small amount of glow involved.
+
+### 2026-08-20 — A theme is a JSON file, and tokens are named by tier
+
+**What changed:** `config/design-tokens/` is now the source of truth: a
+`registry.json` declaring every token with its type and its prose, and one file
+per theme supplying values. `scripts/build-theme-css.mjs` generates
+`themes.css`; `pnpm tokens:check` runs in CI and fails on drift. Every token was
+renamed to a three-tier dot-separated taxonomy (`ref` / `sys` / `cmp`) written
+to custom properties under an `--av-` namespace — 189 tokens and about 1,300
+references. Not one rendered value changed.
+
+**Why:** Asked for, and the flat CSS names had reached the point where they were
+guesses. `--line` and `--line-3` were a semantic alias and a ramp step with
+nothing in the name to say which; `--label-size` was typography while
+`--label-height` was a layout band; `--brand-ink` and `--orange` were the same
+colour under two names, as were `--gold` and `--yellow`. A tier prefix answers
+"what kind of decision is this" before the reader has to know the system, which
+is the property every reference cited converges on.
+
+**Considered and rejected:**
+
+- *Loading the JSON at runtime, so a person could drop in a theme file the way
+  they can in VS Code.* Tempting, and the format now allows it, but the theme is
+  applied before the first React render specifically so a launch shows no flash
+  of the default; fetching and parsing JSON first would reintroduce exactly that.
+  Generating at build time proves the format carries a whole theme without
+  paying for it at startup, and leaves the runtime path open.
+- *Keeping the hand-written CSS as the source and emitting JSON from it.* The
+  wrong way round: the JSON would be a derived artefact nobody edits, which is
+  how it goes stale, and the comments explaining each token would still have
+  nowhere to live but the CSS.
+- *Nesting the JSON by tier.* Flat dotted keys are what VS Code uses and they
+  diff cleanly; a nested tree makes a one-token change a multi-line hunk and
+  makes two themes hard to compare side by side.
+
+**Consequences:** Adding a theme is a JSON file plus an entry in `themeChoices`.
+A number that decides an appearance belongs in that JSON, not in a rule.
+`registry.json` is where a token's reasoning lives, and the generator writes it
+into the stylesheet, so the prose survives in the place a reader meets it.
+Renaming a token means renaming it in the registry, in every theme, and in
+`app.css` together — the reference guard fails on a half-done rename, which is
+the point.
+
+Two dead references surfaced during the rename and were fixed: `var(--mono)`
+and `var(--muted-strong)`, both referenced but never defined since 1.100.0, so
+two values had been rendering in the interface font instead of monospace and one
+control had been taking whatever colour it inherited. Nothing would have caught
+either before the guard existed.
+
+Shipped in #TBD.
 
 ### 2026-08-19 — The type scale became themeable, and Airy went larger and lighter
 

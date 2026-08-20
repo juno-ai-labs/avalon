@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Avalon design token registry",
+  "description": "Every token an Avalon theme may set. A theme file supplies values for these paths and no others.",
+  "type": "object",
+  "required": ["groups", "tokens"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+    "groups": {
+      "description": "A prose explanation per token-path prefix. Emitted as the comments in the generated stylesheet, so this is where a token's reasoning lives.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/path" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "tokens": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/path" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["$type"],
+        "additionalProperties": false,
+        "properties": {
+          "$type": {
+            "enum": ["color", "dimension", "number", "string", "shadow", "gradient", "fontFamily", "fontWeight"]
+          },
+          "$description": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "description": "Dot-separated, front-loaded by tier: ref (primitive), sys (semantic), cmp (component).",
+      "type": "string",
+      "pattern": "^(ref|sys|cmp)(\\.[a-z0-9-]+)+$"
+    }
+  }
+}
