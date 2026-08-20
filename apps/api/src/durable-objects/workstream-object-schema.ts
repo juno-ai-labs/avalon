@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 3;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 4;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1107,6 +1107,42 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 3,
     description: "round trigger timestamp conversion so ISO round-trips are exact",
     statements: roundedCompatTriggerRebuilds(),
+  },
+  {
+    version: 4,
+    description: "qualify the resources view columns so the view is selectable",
+    statements: [
+      // `_runtime_resources` read bare `updated_at` over
+      // `workstream_resource_links CROSS JOIN workstream`, and both tables
+      // carry that column. SQLite validates a view body on first use, not at
+      // CREATE, so v1 shipped this latent: nothing selected the view until
+      // the runtime router was fixed to send transcript reads here, at which
+      // point every harness run failed on it. The schema test now selects
+      // from every view, so an unselectable view cannot ship again.
+      `DROP VIEW IF EXISTS _runtime_resources`,
+      `CREATE VIEW IF NOT EXISTS _runtime_resources AS
+         SELECT json_extract(link.resource_json, '$.id') AS id,
+                root.parent_workspace_key AS workspace_id,
+                json_extract(link.resource_json, '$.connectionId') AS connection_id,
+                json_extract(link.resource_json, '$.type') AS resource_type,
+                json_extract(link.resource_json, '$.provider') AS provider,
+                json_extract(link.resource_json, '$.providerResourceId') AS provider_resource_id,
+                json_extract(link.resource_json, '$.title') AS title,
+                json_extract(link.resource_json, '$.mimeType') AS mime_type,
+                json_extract(link.resource_json, '$.contentRef') AS content_ref,
+                NULL AS content_sha256,
+                NULL AS model_content_ref,
+                NULL AS model_mime_type,
+                NULL AS model_content_sha256,
+                NULL AS model_metadata_json,
+                'ready' AS model_content_status,
+                NULL AS model_content_error_code,
+                json_extract(link.resource_json, '$.canonicalUrl') AS canonical_url,
+                json_extract(link.resource_json, '$.metadata') AS metadata_json,
+                strftime('%Y-%m-%dT%H:%M:%fZ', link.attached_at / 1000.0, 'unixepoch') AS created_at,
+                strftime('%Y-%m-%dT%H:%M:%fZ', link.updated_at / 1000.0, 'unixepoch') AS updated_at
+           FROM workstream_resource_links link CROSS JOIN workstream root WHERE root.id = 1`,
+    ],
   },
 ];
 

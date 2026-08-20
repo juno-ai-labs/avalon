@@ -75,8 +75,23 @@ function mutationTarget(sql: string): string | null {
     .exec(sql)?.[1]?.toLowerCase() ?? null;
 }
 
+/**
+ * True when the statement names a table the work-stream object owns, in FROM,
+ * JOIN, or write position.
+ *
+ * Exported for the workspace router: a statement that touches work-stream
+ * authority must reach this layer even when it also names workspace tables,
+ * because only the work-stream object holds compat views (`_runtime_users`,
+ * `_runtime_resources`) for the tables it does not own. The workspace object
+ * holds no such views for work-stream tables, so the same statement there is
+ * a guaranteed `no such table`.
+ */
+export function referencesWorkstreamAuthorityTable(sql: string): boolean {
+  return LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
+}
+
 function localStatement(sql: string): boolean {
-  const mentionsLocalTable = LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
+  const mentionsLocalTable = referencesWorkstreamAuthorityTable(sql);
   const target = mutationTarget(sql);
   if (mentionsLocalTable && target && !LOCAL_TABLE_SET.has(target)) {
     throw new Error("workstream_runtime_cross_authority_statement");

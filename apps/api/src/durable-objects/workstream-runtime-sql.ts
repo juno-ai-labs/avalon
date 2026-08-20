@@ -143,10 +143,22 @@ export async function executeWorkstreamRuntimeSql(
       const results: WorkstreamRuntimeSqlResult[] = [];
       for (const statement of request.statements) {
         sql.exec(`UPDATE _runtime_statement_changes SET changes = 0 WHERE id = 1`);
-        const cursor = sql.exec<Record<string, SqlStorageValue>>(
-          rewriteWorkstreamRuntimeSql(statement.sql),
-          ...statement.params,
-        );
+        let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
+        try {
+          cursor = sql.exec<Record<string, SqlStorageValue>>(
+            rewriteWorkstreamRuntimeSql(statement.sql),
+            ...statement.params,
+          );
+        } catch (error) {
+          // The statement is the diagnosis. Without it, a rewrite or compat-view
+          // defect surfaces as a bare SQLite error with no way to tell which of
+          // a batch's statements — or whose SQL — produced it.
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `workstream_runtime_statement_failed: ${reason} :: ${statement.sql.slice(0, 300)}`,
+            { cause: error },
+          );
+        }
         const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
         const counted = first(sql.exec<{ changes: number }>(
           `SELECT changes FROM _runtime_statement_changes WHERE id = 1`,
