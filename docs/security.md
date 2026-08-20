@@ -18,6 +18,7 @@ outside this document can break without their own tests failing.
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
+| `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
 | `apps/desktop/src/main/lockdown-mode.ts` | The `safeStorage` mode and its migration. |
 | `apps/desktop/src/main/application-settings.ts` | The shared write queue every preference goes through. |
@@ -609,7 +610,48 @@ incident response that may prompt it.
 
 ## Changelog
 
-### 2026-08-13 — A saved message is rendered outside the application's origin
+### 2026-08-20 — A theme's backdrop runs its own script, in a box with no doors
+
+**What changed:** a theme may ship a whole HTML document as the window's
+backdrop. It is served from `avalon-backdrop://`, a scheme of its own, under
+`default-src 'none'` with no `connect-src`, into a frame carrying
+`sandbox="allow-scripts"` and *not* `allow-same-origin`. A second scheme,
+`avalon-font://`, serves font files a theme named by URL: the main process
+fetches each once, verifies a declared `sha256-` integrity, caps it at 8 MB, and
+writes it under `userData`.
+
+**Why:** Airy's backdrop is a field of light that orbits, and no CSS value
+orbits. The choices were a declarative motion vocabulary covering that one case,
+or letting a theme bring a script. A script is the honest answer for a file
+format modelled on VS Code themes, where the whole point is that people will
+eventually write their own — and the moment they do, "a theme is data" stops
+being true and the isolation has to be real rather than assumed.
+
+Three mechanisms, covering three different things. The scheme withholds the
+application's origin, and with it whatever that origin is ever granted. The
+policy withholds the network, so a backdrop cannot report that it was rendered —
+which for a document nobody audits is the difference between decoration and a
+beacon. The sandbox withholds the parent document, storage, and the preload
+bridge. Any two of the three leaves a hole the third was covering: the policy
+without the sandbox is a document reading the application's DOM; the sandbox
+without the policy is a document calling out. Verified in a running window, not
+argued: `parent.location`, `fetch`, and `localStorage` all throw, and nothing
+Avalon-shaped is on `window`.
+
+The remote-font scheme exists for the same class of reason. A theme could have
+put `https://…` in a `@font-face` and the CSP would have permitted it, but then
+every cold start announces the reader to whoever runs that host, for as long as
+the theme is in use. Fetching in main and serving from a content-addressed cache
+makes that a single request on first use.
+
+**Consequences:** the window's `onHeadersReceived` policy must keep skipping
+backdrop responses. It ends in `frame-ancestors 'none'`, so attaching it means
+the backdrop never renders — the same early return the message exporter needs,
+for a sharper reason. A backdrop frame must never gain `allow-same-origin`, and
+the backdrop policy must never gain a `connect-src`; either alone turns the
+document from decoration into a participant.
+
+8-13 — A saved message is rendered outside the application's origin
 
 **What changed:** Exporting one of Avalon's messages as a picture or a PDF renders
 it in a hidden, preload-free window on a scheme of its own, `avalon-export://`,

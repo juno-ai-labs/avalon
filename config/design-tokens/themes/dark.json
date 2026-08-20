@@ -4,6 +4,26 @@
   "name": "Dark",
   "appearance": "dark",
   "description": "Avalon's original low-light palette.",
+  "fonts": [
+    {
+      "family": "Geist",
+      "style": "normal",
+      "weight": "100 900",
+      "display": "block",
+      "src": {
+        "bundled": "geist-latin-variable.woff2"
+      }
+    },
+    {
+      "family": "Geist Mono",
+      "style": "normal",
+      "weight": "100 900",
+      "display": "block",
+      "src": {
+        "bundled": "geist-mono-latin-variable.woff2"
+      }
+    }
+  ],
   "tokens": {
     "ref.color.neutral.1": "#242521",
     "ref.color.neutral.2": "#292a26",
@@ -137,9 +157,9 @@
     "sys.space.group.gap": "12px",
     "sys.space.block.gap": "16px",
     "sys.space.prose.gap": "14px",
-    "sys.font.family.ui": "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "sys.font.family.ui": "Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
     "sys.font.family.display": "{sys.font.family.ui}",
-    "sys.font.family.mono": "\"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace",
+    "sys.font.family.mono": "\"Geist Mono\", ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace",
     "sys.font.size.base": "14px",
     "sys.font.size.prose": "14px",
     "sys.font.size.row": "12.5px",

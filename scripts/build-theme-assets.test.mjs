@@ -3,12 +3,18 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  assetManifest,
+  backdropDocument,
   customProperty,
+  fontCacheId,
+  fontFaces,
   generate,
+  outputs,
   readTokenSources,
+  resolvedTokens,
   selectorFor,
   stylesheetPath,
-} from './build-theme-css.mjs';
+} from './build-theme-assets.mjs';
 
 const { registry, themes } = readTokenSources();
 
@@ -20,12 +26,14 @@ const { registry, themes } = readTokenSources();
  * else, and the next `pnpm tokens:build` silently reverts them. This runs in CI
  * through `pnpm test:scripts`.
  */
-test('the committed stylesheet is what the token JSON produces', () => {
-  assert.equal(
-    readFileSync(stylesheetPath, 'utf8'),
-    generate({ registry, themes }),
-    'themes.css has drifted from config/design-tokens — run `pnpm tokens:build`',
-  );
+test('every committed artefact is what the token JSON produces', () => {
+  for (const { path, contents } of outputs({ registry, themes })) {
+    assert.equal(
+      readFileSync(path, 'utf8'),
+      contents,
+      `${path} has drifted from config/design-tokens — run \`pnpm tokens:build\``,
+    );
+  }
 });
 
 test('a token path becomes a namespaced custom property', () => {
@@ -249,4 +257,111 @@ test('every theme block declares every token, so data-theme works on any element
 
     assert.deepEqual(missing, [], `${theme.id} leaves tokens to fall through to :root`);
   }
+});
+
+/**
+ * A family the application only names is a family the platform substitutes, and
+ * weight then resolves against whatever it picked — which is why the interface
+ * had two usable weights before the files were bundled. A `bundled` source is
+ * the fix, and `font-display: block` is what stops the first paint showing the
+ * substitute: the file is already local, so the block period never elapses.
+ */
+test('every family a theme names is a face the build emits', () => {
+  const css = generate({ registry, themes });
+  const declared = new Set(fontFaces(themes).map((font) => font.family));
+
+  assert.ok(declared.size > 0, 'no theme declares a font');
+  for (const theme of themes) {
+    for (const path of ['sys.font.family.ui', 'sys.font.family.mono']) {
+      const value = resolvedTokens(theme, themes)[path];
+      if (String(value).startsWith('{')) continue;
+      const first = String(value).split(',')[0].replace(/["']/gu, '').trim();
+      assert.ok(
+        declared.has(first),
+        `${theme.id}: ${path} leads with ${first}, which no font source provides`,
+      );
+    }
+  }
+  for (const font of fontFaces(themes)) {
+    assert.match(css, new RegExp(`font-family: '${font.family}';`, 'u'));
+  }
+  assert.match(css, /font-display: block;/u, 'a bundled face should block rather than swap');
+});
+
+test('a bundled face points at the file that ships, and a remote one never does', () => {
+  const bundled = { family: 'Geist', src: { bundled: 'geist-latin-variable.woff2' } };
+  const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2' } };
+  const css = generate({
+    registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    themes: [{
+      id: 'dark', name: 'D', description: 'd', appearance: 'dark',
+      fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist' },
+    }],
+  });
+
+  assert.match(css, /src: url\('\.\.\/fonts\/geist-latin-variable\.woff2'\) format\('woff2'\);/u);
+  // The renderer asking the remote host directly would announce the reader to
+  // whoever runs it, on every cold start, for as long as the theme is in use.
+  assert.ok(!css.includes('https://fonts.example'), 'a remote URL reached the stylesheet');
+  assert.match(css, new RegExp(`url\\('avalon-font://cache/${fontCacheId(remote.src.url)}\\.woff2'\\)`, 'u'));
+});
+
+test('a bundled font that is not in the repository fails the build', () => {
+  assert.throws(() => generate({
+    registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    themes: [{
+      id: 'dark', name: 'D', description: 'd', appearance: 'dark',
+      fonts: [{ family: 'Ghost', src: { bundled: 'ghost.woff2' } }],
+      tokens: { 'sys.font.family.ui': 'Ghost' },
+    }],
+  }), /which is not in apps\/desktop\/src\/renderer\/fonts/u);
+});
+
+test('the main process is told where to fetch a remote font from', () => {
+  const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2', integrity: 'sha256-AAAA' } };
+  const manifest = assetManifest([{
+    id: 'dark', name: 'D', description: 'd', appearance: 'dark', fonts: [remote], tokens: {},
+  }]);
+
+  assert.match(manifest, new RegExp(`'${fontCacheId(remote.src.url)}': \\{`, 'u'));
+  assert.match(manifest, /url: 'https:\/\/fonts\.example\/far\.woff2'/u);
+  assert.match(manifest, /integrity: 'sha256-AAAA'/u);
+});
+
+/**
+ * A backdrop document is served to an origin of its own, and an origin of its
+ * own inherits nothing from the application's cascade. Everything it needs to
+ * name has to be written into it.
+ */
+test('a backdrop document carries the whole theme it belongs to', () => {
+  const airy = themes.find((theme) => theme.id === 'airy');
+  assert.ok(airy?.backdrop, 'expected Airy to bring a backdrop document');
+
+  const document = backdropDocument(airy, registry, resolvedTokens(airy, themes));
+
+  assert.match(document, /^<!doctype html>/u);
+  assert.ok(document.includes(airy.backdrop.html.trimEnd()), 'the theme markup is not in it');
+  for (const path of Object.keys(registry.tokens)) {
+    assert.ok(
+      document.includes(`${customProperty(path)}:`),
+      `the backdrop cannot read ${path}, which it inherits from nothing`,
+    );
+  }
+  // It paints the theme's own floor rather than relying on frame transparency:
+  // a frame on another origin gets Chromium's default white canvas, and
+  // compositing the application against *that* is what the first cut did.
+  assert.match(document, /background-color: var\(--av-sys-backdrop-color\);/u);
+  assert.match(document, /pointer-events: none/u);
+});
+
+test('a backdrop that moves has to be able to stop', () => {
+  const airy = themes.find((theme) => theme.id === 'airy');
+  const html = airy?.backdrop?.html ?? '';
+  if (!/requestAnimationFrame/u.test(html)) return;
+
+  assert.match(
+    html,
+    /prefers-reduced-motion/u,
+    'a backdrop that animates must honour prefers-reduced-motion: it cannot be dismissed',
+  );
 });

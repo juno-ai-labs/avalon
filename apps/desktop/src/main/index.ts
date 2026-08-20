@@ -59,6 +59,7 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import { backdropScheme, fontScheme } from '../common/theme-assets';
 import { parseResolvedTheme, themeWindowBackground, type ResolvedTheme } from '../common/themes';
 import {
   definitivelyInvalidatesStoredCredential,
@@ -96,6 +97,12 @@ import {
 } from './javascript-error-candidate';
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
+import {
+  ThemeFontCache,
+  backdropResponse,
+  isBackdropUrl,
+  themeAssetSchemes,
+} from './theme-assets';
 import { MenuBarContentStore } from './menu-bar-content';
 import {
   isMessageExportUrl,
@@ -622,7 +629,7 @@ protocol.registerSchemesAsPrivileged([{
     standard: true,
     secure: true,
   },
-}]);
+}, ...themeAssetSchemes]);
 
 // Keep development credentials and user data out of the production Avalon
 // namespace. Development Electron binaries are not signed with the stable
@@ -2668,6 +2675,16 @@ async function installRendererProtocol(): Promise<void> {
   });
 }
 
+/**
+ * Fonts a theme named by URL, kept under `userData` so they survive a relaunch.
+ * Constructed eagerly and lazily populated: nothing is fetched until a stylesheet
+ * asks for a family, which for a theme that bundles its fonts is never.
+ */
+const themeFontCache = new ThemeFontCache({
+  directory: join(app.getPath('userData'), 'theme-fonts'),
+  fetch: (url) => net.fetch(url),
+});
+
 function installMessageExportProtocol(): void {
   protocol.handle(MESSAGE_EXPORT_SCHEME, (request) => {
     const html = messageExporter.document(request.url);
@@ -3269,6 +3286,12 @@ function installContentSecurityPolicy(): void {
     // header this handler writes is cased differently from the one the protocol
     // set. A boundary that survives on header casing is not a boundary.
     if (isMessageExportUrl(details.url)) return callback({});
+    // And a backdrop document carries its own for the same reason: it is served
+    // under `default-src 'none'` with no `connect-src`, which is stricter than
+    // anything below in every direction except the one that matters here — this
+    // handler's policy ends in `frame-ancestors 'none'`, and a backdrop that
+    // cannot be framed is a backdrop that never renders.
+    if (isBackdropUrl(details.url)) return callback({});
     const configuredOrigins = Object.values(runtimeConfig().api).flatMap((rawUrl) => {
       const url = new URL(rawUrl);
       const socketProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -3286,7 +3309,7 @@ function installContentSecurityPolicy(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'`,
+          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
         ],
       },
     });
@@ -3393,6 +3416,8 @@ if (!singleInstanceLock) {
     }
     await installRendererProtocol();
     installMessageExportProtocol();
+    protocol.handle(backdropScheme, (request) => backdropResponse(request.url));
+    protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();
     autoUpdateController = initializeAutoUpdate({

@@ -31,7 +31,7 @@
     "sys.space.group": "Between one group of rows and the next.",
     "sys.space.block": "Between events in the feed.",
     "sys.space.prose": "Between paragraphs.",
-    "sys.font.family": "The families. `ui` is named but not bundled, so weight resolves against whatever the platform substitutes.",
+    "sys.font.family": "The families. `ui` and `mono` are Geist, which ships inside the application as a `bundled` font source \u2014 a family the app only names is a family the platform substitutes, and weight then resolves against whatever it picked.",
     "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
     "sys.font.leading": "Line height.",
     "sys.font.weight": "Weights. Only meaningful to the degree the resolved family supports them.",
