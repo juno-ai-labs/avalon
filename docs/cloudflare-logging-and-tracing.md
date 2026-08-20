@@ -104,11 +104,19 @@ means turning off `observability.traces` for the Worker.
 The practical consequence is about *destination*, not about instrumentation.
 Traces held in Cloudflare's dashboard sit inside the same regional trust
 boundary as the D1 database the content already lives in. An OTLP export sends
-them somewhere else — which for an EU workspace is a residency question
-([`regionalization.md`](regionalization.md)) and for any workspace is a
-processor question. Settle that before configuring an export destination, and
-note that `persist: false` makes it worse rather than better: it removes the
-Cloudflare copy and leaves the third party as the only one.
+them somewhere else, and an export destination is account configuration — it
+covers **both** regional Workers at once. Today no EU telemetry leaves the
+region: `POSTHOG_HOST` is set only in `wrangler.global.jsonc`, the EU Worker
+holds no destination credential, and [`telemetry.md`](telemetry.md) records that
+an EU PostHog project would require a new decision. A trace export configured
+without noticing would route around that boundary rather than change it. Note
+too that `persist: false` makes this worse rather than better: it removes the
+Cloudflare copy and leaves the third party holding the only one.
+
+The identity half of the same decision is in
+[`performance-tracing.md`](performance-tracing.md#operations) — PostHog is keyed
+on random surrogates, not on `users.id`, so a default identity mapping at the
+exporter splits one person in two.
 
 ### Custom spans
 
