@@ -48,6 +48,12 @@ const TRANSIENT_CAMPAIGN_ERROR = new RegExp(
     "reset because its code was updated",
     "storage caused object to be reset",
     "durable object is overloaded",
+    // D1 sheds load with a 7429 when its queue backs up. Observed in
+    // production against this very campaign; treating it as an import defect
+    // quarantines a healthy migration mid-outage.
+    "d1 db is overloaded",
+    "requests queued for too long",
+    "\\b7429\\b",
     "ETIMEDOUT",
     "ECONNRESET",
     "\\b50[234]\\b",
@@ -1276,6 +1282,11 @@ const WORKSPACE_SCRUB_TARGETS: readonly { table: string; where: string; binds: n
   { table: "slack_user_links", where: "WHERE workspace_id = ?", binds: 1 },
   { table: "activities", where: "WHERE workspace_id = ?", binds: 1 },
   { table: "connector_oauth_attempts", where: "WHERE workspace_id = ?", binds: 1 },
+  // `workstream_terminal_repositories.connection_id` is the one RESTRICT
+  // reference into the scrub from outside it: the work-stream rows that hold
+  // it deliberately survive, so the connection cannot be deleted until these
+  // are, and the failure would quarantine the campaign rather than retry.
+  { table: "workstream_terminal_repositories", where: "WHERE workspace_id = ?", binds: 1 },
   { table: "connector_connections", where: "WHERE workspace_id = ?", binds: 1 },
   { table: "work_opportunity_snapshots", where: "WHERE opportunity_id IN (SELECT id FROM work_opportunities WHERE workspace_id = ?)", binds: 1 },
   { table: "work_opportunity_provenance_roots", where: "WHERE opportunity_id IN (SELECT id FROM work_opportunities WHERE workspace_id = ?)", binds: 1 },
@@ -1311,7 +1322,10 @@ const WORKSPACE_SCRUB_TARGETS: readonly { table: string; where: string; binds: n
  * matters survives, because the route turns `active` only after the last
  * target is empty — an active route is always a fully scrubbed one.
  */
-async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
+async function activateWorkspaceProductRoute(
+  env: Env,
+  route: WorkspaceProductRouteRow,
+): Promise<boolean> {
   let budget = WORKSPACE_SCRUB_ROW_BUDGET;
   for (const target of WORKSPACE_SCRUB_TARGETS) {
     const binds = Array.from({ length: target.binds }, () => route.workspace_id);
@@ -1321,11 +1335,14 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
       // statement shape against D1 — a chunked delete that trusted it stopped
       // after one chunk per target per tick, scrubbing 500 rows a minute
       // against workspaces holding six figures of them.
+      // Budget first: several targets have no workspace-leading index, so a
+      // probe that finds nothing scans the whole table. Spending those after
+      // the budget is gone is pure load on a database already shedding it.
+      if (budget <= 0) return false;
       const present = await env.DB.prepare(
         `SELECT 1 AS present FROM ${target.table} ${target.where} LIMIT 1`,
       ).bind(...binds).first<{ present: number }>();
       if (!present) break;
-      if (budget <= 0) return;
       await env.DB.prepare(
         `DELETE FROM ${target.table} WHERE rowid IN (
            SELECT rowid FROM ${target.table} ${target.where} LIMIT ${WORKSPACE_SCRUB_CHUNK}
@@ -1357,6 +1374,7 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
         WHERE workspace_id = ? AND generation = ? AND state = 'verified'`,
     ).bind(at, route.workspace_id, route.generation),
   ]);
+  return true;
 }
 
 async function processWorkspaceProductRoutes(
@@ -1468,15 +1486,21 @@ export async function processWorkstreamAuthorityMigration(
         env, control.generation, "verified", batchSize,
       );
       if (verifiedProducts.length > 0) {
-        if (!await processWorkspaceProductRoutes(
-          env,
-          verifiedProducts,
-          activateWorkspaceProductRoute,
-        )) return;
-        // One scrub pass per route per tick. Looping here would re-enter the
-        // same still-`verified` routes for the rest of the operation budget,
-        // stacking dozens of 20,000-row passes into a single invocation.
-        return;
+        // A route that finished frees the next one, so the loop continues on
+        // progress. A route that only spent its budget is still `verified`,
+        // and looping would re-enter it for the rest of the operation budget,
+        // stacking scrub passes into one invocation — so a pass that activates
+        // nothing ends the tick instead.
+        let activated = 0;
+        if (!await processWorkspaceProductRoutes(env, verifiedProducts, async (
+          scrubEnv: Env,
+          scrubRoute: WorkspaceProductRouteRow,
+        ) => {
+          if (await activateWorkspaceProductRoute(scrubEnv, scrubRoute)) activated += 1;
+        })) return;
+        operationsRemaining -= verifiedProducts.length;
+        if (activated === 0) return;
+        continue;
       }
       const verified = await nextRoutes(env, "verified", batchSize);
       if (verified.length > 0) {
@@ -1524,5 +1548,6 @@ export const __workstreamAuthorityMigrationTesting = {
   isTransientCampaignError,
   WORKSPACE_SCRUB_TARGETS,
   WORKSPACE_SCRUB_CHUNK,
+  WORKSPACE_SCRUB_ROW_BUDGET,
   activateWorkspaceProductRoute,
 };
