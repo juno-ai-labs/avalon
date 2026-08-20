@@ -318,6 +318,12 @@ describe("database migrations", () => {
         VALUES ('scrub-activity-kept', 'scrub-workspace', 'scrub-slack-kept', 'workspace', 'slack',
                 'event-kept', 'message', '2026-08-19', '2026-08-19', 'Kept',
                 'dedupe-kept', 'processed');
+        INSERT INTO resources
+          (id, workspace_id, resource_type, provider, title, content_ref,
+           created_at, updated_at)
+        VALUES ('scrub-resource', 'scrub-workspace', 'document', 'avalon_note',
+                'Scrub note', 'workspaces/scrub/note-1', '2026-08-19T00:00:00.000Z',
+                '2026-08-19T00:00:00.000Z');
         INSERT INTO connector_oauth_attempts
           (id, region, provider, user_id, workspace_id, status, connection_id,
            expires_at, created_at, updated_at)
@@ -359,6 +365,18 @@ describe("database migrations", () => {
       expect(database.prepare(
         `SELECT connection_id FROM connector_oauth_attempts WHERE id = 'scrub-attempt'`,
       ).get()).toEqual({ connection_id: null });
+      // Deleting a resource fires the legacy R2 cleanup and inventory
+      // bookkeeping, which re-enqueues into fenced tables — emptying those
+      // outboxes first cannot help, because the delete itself refills them.
+      // Confined to the phases where D1 still owns the data, they stay quiet
+      // and the scrub completes.
+      database.exec(`DELETE FROM resources WHERE workspace_id = 'scrub-workspace'`);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM resource_object_deletion_outbox`,
+      ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM note_resource_deletion_outbox`,
+      ).get()).toEqual({ count: 0 });
       // Still refused once the region is open: the scrub is the one window in
       // which these rows may go, not a general licence to write D1.
       database.exec(`
