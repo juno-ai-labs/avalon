@@ -199,6 +199,16 @@ export interface AppVariables {
   requestId: string;
   auth: IdentityAuthContext | undefined;
   telemetryOperator: TelemetryOperatorPrincipal | undefined;
+  /**
+   * How long authentication took, in milliseconds.
+   *
+   * Authentication runs as middleware, before any route opens its flow span, so
+   * its cost sits inside `http_request` and outside `perf_flow`. Without this a
+   * reader comparing the two finds an unexplained gap. It is one uncached,
+   * blocking D1 round trip on every authenticated request — see
+   * `docs/performance-tracing.md`.
+   */
+  authDurationMs: number | undefined;
 }
 
 export type HonoAppEnv = {

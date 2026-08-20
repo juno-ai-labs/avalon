@@ -114,6 +114,7 @@ under `avalon.`, so it can never collide with a convention added later:
 | `avalon.workspace.id`, `avalon.workstream.id`, `avalon.substream.id` | The identifiers a slow trace has to be attributable to. |
 | `avalon.request.id` | The desktop's `x-request-id`. |
 | `avalon.analytics.person_id`, `avalon.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
+| `avalon.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
 | `avalon.socket.ticket_id`, `avalon.socket.connection_id` | The two socket joins below. |
 | `avalon.message.client_id` | The composer's client message id. |
 | `avalon.harness_run.id`, `avalon.agent.invoked` | What the write started. |
@@ -141,6 +142,19 @@ and is one primary key from `users`, so both surrogates arrive on a round trip
 the request was making anyway. There is no cache to invalidate and no second
 store to keep in step. Both are LEFT joins: a column added for observability
 must never be able to decide an authentication.
+
+What "free" means here is precise, and worth being precise about, because that
+session query is **not cached** — every authenticated request pays it, blocking,
+before its handler runs. Adding the two columns adds no round trip and no scan:
+against the checked-in migrations, `EXPLAIN QUERY PLAN` shows the new join as
+`SEARCH u USING INDEX sqlite_autoindex_users_1 (id=?)` — a primary-key point
+lookup, the same shape as the two joins already there — and the statement grows
+from 57 to 71 VDBE operations, all on pages the query is already touching. The
+network hop dominates both numbers by orders of magnitude.
+
+That the query itself is uncached is a separate question from this change, and
+[Failure modes and limits](#failure-modes-and-limits) says what is known about
+it and what the levers are.
 
 They are **absent until a product event mints them**, which is correct rather
 than a gap — the pipeline creates them lazily, so before the first one there is
@@ -306,6 +320,24 @@ This module owns latency diagnosis for the three named flows and nothing else.
 - **Span and attribute names are not final upstream.** Cloudflare may rename
   `cloudflare.*` attributes during the beta; a saved query built on one can break
   without a deployment here.
+- **`perf_flow` does not include authentication.** `requireAuth` is middleware
+  and finishes before a route opens its span, so its cost sits inside
+  `http_request` and outside the flow. The difference is carried explicitly as
+  `avalon.auth.duration_ms`, on the span and in the row, so the gap between the
+  two durations reads as a number rather than as a mystery.
+- **The session lookup is one uncached, blocking D1 round trip per
+  authenticated request**, and there is no read replication on the `DB` binding.
+  Whether that is a problem is now measurable rather than arguable: read
+  `avalon.auth.duration_ms`, and the platform's own `d1_first` span for the same
+  query carries `cloudflare.d1.response.sql_duration_ms` beside it, which
+  separates the database's own time from the round trip to reach it. If it does
+  turn out to matter, the lever is
+  [D1 read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+  with the Sessions API — **but not naively for this query**: a session read
+  served by a stale replica can admit a session that was just revoked, so it
+  would need `first-primary` or bookmark-based consistency, which gives back
+  much of what replication buys. Treat it as a decision with a security
+  argument in it, not a configuration change.
 - **Retention is the platform's.** Nothing here is durable, and a flow
   investigated a month later has no trace and no rows.
 - **The desktop's lines are lost on quit.** They live in the renderer's console
@@ -446,6 +478,12 @@ than two attributes per span, and cheaper — but it reverses the decision
 `telemetry.md` records, which is that raw product ids do not go to PostHog. Given
 the choice of which side carries the linkage, traces already carry raw ids and
 internal detail, and PostHog deliberately does not.
+
+**Also measured here:** authentication now records `avalon.auth.duration_ms`.
+The session lookup is uncached and blocks every authenticated request, and it
+runs before any flow span opens — so it was both invisible in `perf_flow` and
+the reason `perf_flow` and `http_request` disagree. Whether it is expensive is
+now a query.
 
 **Consequences:** The `users` join added to `authenticate` must stay a LEFT join
 and never become a condition — a session whose surrogates are half-minted is
