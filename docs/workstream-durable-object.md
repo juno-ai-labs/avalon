@@ -1004,7 +1004,7 @@ computation inside the room will not show up in these numbers. Importing
 `cloudflare:workers` for `tracing` means a Node test of anything on these paths
 depends on the alias in `apps/api/test/helpers/cloudflare-workers.ts`.
 
-Shipped in #TBD.
+Shipped in #203.
 
 ### 2026-08-20 — The pre-cutover execution arms are removed from the product path
 

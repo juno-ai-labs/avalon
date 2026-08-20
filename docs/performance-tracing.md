@@ -499,7 +499,7 @@ now holds both identities at once, so the destination holding traces holds the
 mapping the pseudonymity was protecting — which raises the bar on where traces
 are exported, described in **Operations** below.
 
-Shipped in #TBD.
+Shipped in #203.
 
 ### 2026-08-20 — Three work-stream flows get custom spans on Cloudflare's tracing
 
@@ -560,4 +560,4 @@ thresholds would have been guesses. And the identity note in **Operations** is
 unresolved on purpose — raw ids on spans are fine for Workers Logs and are *not*
 fine to forward into PostHog identity unchanged.
 
-Shipped in #TBD.
+Shipped in #203.
