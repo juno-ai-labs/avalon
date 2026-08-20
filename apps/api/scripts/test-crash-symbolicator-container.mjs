@@ -30,24 +30,6 @@ const PROCESS_PRESSURE_CONTAINER = `avalon-symbolicator-pressure-${process.pid}`
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const BUILD_CONTEXT = resolve(SCRIPT_DIRECTORY, '../crash-symbolicator');
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'avalon-symbolicator-'));
-// The builder stage compiles `minidump-stackwalk` from source, which costs
-// roughly three and a half minutes and depends on nothing in this repository —
-// the same base image and pinned version every time. CI hands in a cache
-// import/export so that layer is fetched instead of rebuilt; locally both are
-// unset and this is an ordinary `docker build` against the daemon's own cache.
-// `--load` is required because a cache-exporting build runs on the
-// `docker-container` driver, whose result does not reach the image store
-// otherwise, and the steps below run the image by tag.
-const CACHE_FROM = process.env.AVALON_CONTAINER_CACHE_FROM;
-const CACHE_TO = process.env.AVALON_CONTAINER_CACHE_TO;
-const BUILD_CACHE_ARGUMENTS = CACHE_FROM || CACHE_TO
-  ? [
-    ...(CACHE_FROM ? [`--cache-from=${CACHE_FROM}`] : []),
-    ...(CACHE_TO ? [`--cache-to=${CACHE_TO}`] : []),
-    '--load',
-  ]
-  : [];
-
 function runDocker(arguments_, options = {}) {
   const result = spawnSync('docker', arguments_, {
     encoding: 'utf8',
@@ -135,7 +117,17 @@ try {
   // checksum-pinned fixture tree cross the test container's non-root boundary.
   chmodSync(temporaryRoot, 0o755);
 
-  runDocker(['build', '--quiet', ...BUILD_CACHE_ARGUMENTS, '--tag', IMAGE, BUILD_CONTEXT]);
+  // The builder stage compiles `minidump-stackwalk` from source, which costs
+  // roughly three and a half minutes and depends on nothing in this repository —
+  // the same base image and pinned version every time. This script never reaches
+  // for a remote cache itself: CI warms the runner's BuildKit cache from the
+  // shared scope in the step before this one, so the layer is already resolved
+  // here and the build is a cache lookup. Locally it is an ordinary build against
+  // the daemon's own cache.
+  // `--load` is required because that shared builder uses the `docker-container`
+  // driver, whose result does not reach the image store otherwise, and the
+  // checks below run the image by tag.
+  runDocker(['build', '--quiet', '--load', '--tag', IMAGE, BUILD_CONTEXT]);
 
   assert.equal(runDocker(containerArguments('id', '-u')), '10001');
 

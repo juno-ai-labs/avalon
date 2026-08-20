@@ -573,6 +573,53 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-20 — One warmed builder serves every symbolicator build
+
+**What changed:** CI and the API deployment now warm a shared `docker-container`
+BuildKit cache with `docker/build-push-action` before anything builds the
+symbolicator image, and the builds that follow name no cache at all. The
+integration script lost its `AVALON_CONTAINER_CACHE_FROM`/`_TO` plumbing and
+passes `--load` unconditionally, and `deploy-api.yml`'s deploy job gained the
+same warm-up so Wrangler's own container build stops recompiling
+`minidump-stackwalk` from source on every release.
+
+**Why:** The earlier arrangement handed the cache flags to the integration
+script and never worked. The `type=gha` backend authenticates with
+`ACTIONS_RUNTIME_TOKEN`, which the runner injects into JavaScript actions and
+never into a `run:` step, so a cache driven from inside the script imported and
+exported nothing — and `docker build --quiet`, whose output the script captures
+and discards on success, hid every miss. Two consecutive `main` runs an hour
+apart each spent about four minutes on the same pinned crate, which is what the
+cache was added to stop. The deploy job had no cache at all, because Wrangler
+drives that build itself with a fixed `docker build` line that accepts no cache
+flags; the layer it rebuilt is the same one, and the whole cost of the image.
+
+**Considered and rejected:** Exposing `ACTIONS_RUNTIME_TOKEN` to the `run:`
+steps with a third-party runtime-export action — it would keep the cache flags
+where they are, but adds another publisher to a workflow that holds the
+Cloudflare deployment token, to solve a problem an action Docker already
+publishes does not have. Also rejected: teaching Wrangler's build about the
+cache. It builds with a fixed command and takes no such option, so the only
+lever on it is which builder its `docker build` resolves to.
+
+**Consequences:** `install: true` on `docker/setup-buildx-action` is now
+load-bearing in both workflows — without it the plain `docker build` that
+follows runs on a different builder and misses the warm cache entirely. So is
+`load: true` on the warm-up: a remote cache import is lazy and scoped to the
+solve that imported it, so only materializing the image leaves layers a later,
+separate build can reuse. The first version of this change used
+`type=cacheonly`, on the reasoning that the warm-up needs no image, and the
+second CI run measured what that costs — every vertex `CACHED` in 2.4s,
+followed by a full recompile in the lane that came next. The warm-up must stay
+a JavaScript action for the token to reach the cache backend.
+The `crash-symbolicator-container` lane owns the `crash-symbolicator` scope and
+is the only step that exports to it; the deploy job imports from it and has
+always run after that lane. A build that has to be observed still needs
+`--quiet` dropped from the script, which captures and discards docker's output
+on success.
+
+Shipped in the pull request for this change.
+
 ### 2026-08-13 — Connector telemetry negotiates one correlated contract version
 
 **What changed:** Current desktop connector starts emit only the rich V2 intent,
