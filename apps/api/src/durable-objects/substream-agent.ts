@@ -1302,6 +1302,19 @@ export class SubstreamAgent extends DurableObject<Env> {
       const code = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code
         : "harness_execution_failed";
+      // A bare `harness_execution_failed` is an uncoded exception, and the
+      // member-safe outcome keeps none of it. Without this line the only fact
+      // production retains is the catch-all code — which is precisely what an
+      // incident hands back when asked what went wrong.
+      logError(this.env, "workstream_harness_threw", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        error_code: code,
+        reason: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
+      });
       outcome = {
         status: code === "run_cancelled" ? "stopped" : "failed",
         error: { code, message: "The Avalon harness could not complete this run" },

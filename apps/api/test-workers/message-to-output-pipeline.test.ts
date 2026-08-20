@@ -174,9 +174,27 @@ describe("a member's message travels the whole pipeline", () => {
     const run = await settledRun(stub, runId);
 
     // Terminal, and honestly so: with no provider credentials the run must
-    // fail — but *at* the provider, past admission, claim, and env assembly.
+    // fail — but *at* the provider, past admission, claim, transcript
+    // projection, and prompt assembly. The recorded inference attempt is the
+    // proof the pipeline reached the model: a run that died in plumbing never
+    // writes one, whatever error code the wreck happens to carry. Both halves
+    // of this incident — the misrouted transcript read and the unselectable
+    // resources view — failed with the same catch-all code, which is why the
+    // code alone is not the oracle.
     expect(run.status).toBe("failed");
     expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(run));
+    // The Bind engine's member-safe sentence is the boundary marker: a run
+    // that dies in plumbing is terminalized with the generic "could not
+    // complete this run" from the drain's catch, while a run that survived
+    // transcript projection and prompt assembly reaches the engine, whose
+    // outcomes carry the "retrying/support" family. Both halves of this
+    // incident — the misrouted transcript read and the unselectable resources
+    // view — carried the same failure *code*, which is why the code alone is
+    // not the oracle. (The test worker has no flag service, so the engine
+    // stops at endpoint selection; that is as far as any credential-less
+    // environment can prove.)
+    const message = (JSON.parse(String(run.error_json)) as { message?: string }).message ?? "";
+    expect(message).toMatch(/Retrying is unlikely to help|try again|support/iu);
 
     // The member sees the truth, not a spinner: the work stream reflects the
     // failure and the object holds no outstanding dispatch or alarm debt. The

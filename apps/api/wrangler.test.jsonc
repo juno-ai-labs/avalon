@@ -11,7 +11,11 @@
     "PUBLIC_WEB_BASE_URL": "https://app.test",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
-    "LOG_LEVEL": "error"
+    "LOG_LEVEL": "error",
+    // Not a credential: lets harness tests reach the provider call itself, so
+    // a run that dies in plumbing and a run refused by the provider stay
+    // distinguishable. The fetch fails either way.
+    "OPENROUTER_API_KEY": "test-not-a-real-key"
   },
   "d1_databases": [
     {
