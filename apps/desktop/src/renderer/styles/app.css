@@ -576,9 +576,43 @@ pre {
 }
 
 .sidebar-action:hover,
-.sidebar-row:hover { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-default); }
+.sidebar-row:hover { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
 .sidebar-action.is-active,
-.sidebar-row.is-active { background: var(--av-ref-color-neutral-4); color: var(--av-sys-color-text-default); }
+.sidebar-row.is-active { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
+
+/* The row's leading mark.
+ *
+ * One element, two jobs held apart: its *shape* is the theme's — a dot, or the
+ * line Airy draws — and its *colour* is the row's state. Keeping them apart is
+ * what lets a theme flatten the selection fill to nothing and still leave the
+ * navigation saying which stream needs an answer and which one is running.
+ *
+ * It stretches between `inset-block` and the row rather than carrying a height,
+ * because that one mechanism describes both shapes: a centred dot is
+ * `calc(50% - 3px)`, and a line is however far in from the row's edges the
+ * theme wants it to start. A height token would have needed a second rule for
+ * the case it could not express. */
+.sidebar-row-icon:has(.status-indicator) { align-self: stretch; }
+
+.sidebar-row .status-compact {
+  align-self: stretch;
+  height: auto;
+  position: relative;
+  width: var(--av-cmp-marker-slot);
+}
+
+.sidebar-row .status-dot {
+  border-radius: var(--av-cmp-marker-radius);
+  box-shadow: var(--av-cmp-marker-glow);
+  /* `auto`, so both insets are honoured. A definite height silently wins over
+     the bottom inset, which is the difference between a line and a 6px tick. */
+  height: auto;
+  inset-block: var(--av-cmp-marker-inset-block);
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  width: var(--av-cmp-marker-inline-size);
+}
 
 .sidebar-section { margin-top: var(--av-sys-space-group-gap); }
 .workstreams-section { margin-top: 22px; }
@@ -2489,7 +2523,7 @@ pre {
 .model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 .stop-button { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); font-size: 10.5px; }
-.composer-send { align-items: center; background: var(--av-sys-color-text-default); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-on-inverse); display: flex; height: 28px; justify-content: center; width: 28px; }
+.composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
 .mention-popover { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); bottom: calc(100% + 7px); box-shadow: var(--av-sys-elevation-shadow-md); left: 0; max-height: 310px; overflow: auto; padding: 4px; position: absolute; width: min(390px, 100%); z-index: 20; }
@@ -3631,12 +3665,28 @@ pre {
   max-width: var(--av-cmp-feed-width-wide);
 }
 
+/* A card or a rule, out of the same five values.
+ *
+ * The card is a box floating over the transcript; the rule is a hairline the
+ * page rests on, which is what Airy draws. Expressing both as one set of tokens
+ * rather than as a mode keeps the focus feedback honest: once the border is
+ * gone, the rule turning warm is the only thing left saying the field is live,
+ * so a theme that flattens the frame has to say what focus looks like. */
 .workstream-screen .workstream-composer {
-  --composer-text-padding: 14px 15px 4px;
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-ref-color-line-4);
-  border-radius: var(--av-sys-size-radius-xl);
-  box-shadow: var(--av-sys-elevation-shadow-md);
+  --composer-text-padding: var(--av-cmp-composer-padding);
+  background: var(--av-cmp-composer-background);
+  border-color: var(--av-cmp-composer-border-color);
+  border-radius: var(--av-cmp-composer-radius);
+  border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-composer-rule-color);
+  border-width: var(--av-cmp-composer-border-width);
+  border-top-width: var(--av-sys-size-border-hairline);
+  box-shadow: var(--av-cmp-composer-shadow);
+  transition: border-color 260ms ease;
+}
+
+.workstream-screen .workstream-composer:focus-within {
+  border-color: var(--av-cmp-composer-border-color-focus);
+  border-top-color: var(--av-cmp-composer-rule-color-focus);
 }
 
 .workstream-screen .workstream-composer textarea {
@@ -3652,6 +3702,7 @@ pre {
 .workstream-screen .composer-submit-area .button {
   color: var(--av-ref-color-neutral-10);
 }
+
 
 .command-popover {
   background: var(--av-sys-color-surface-raised);
