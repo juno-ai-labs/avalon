@@ -26,8 +26,12 @@
     "ref.color.line.5": "#262013",
     "ref.color.line.6": "#4a4030",
     "sys.backdrop.image": [
-      "radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, 0.09), transparent 62%)",
-      "radial-gradient(60% 50% at 6% 96%, rgba(224, 140, 58, 0.05), transparent 58%)"
+      {
+        "gradient": "radial-gradient(32% 50% at 67% 28%, rgba(232, 150, 72, 0.17), rgba(228, 144, 64, 0.062) 40%, rgba(224, 140, 58, 0.014) 72%, transparent)"
+      },
+      {
+        "gradient": "radial-gradient(37% 58% at 52% 84%, rgba(230, 147, 68, 0.145), rgba(226, 141, 60, 0.05) 42%, rgba(224, 140, 58, 0.012) 74%, transparent)"
+      }
     ],
     "sys.color.surface.canvas": "#0a0806",
     "sys.color.surface.default": "#0a0806",
