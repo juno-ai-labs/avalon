@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TERMINAL_STATES, buildPlan, runOutcomeOracle } from "./e2e-local.mjs";
+import { TERMINAL_STATES, buildPlan, modelGateDecision, runOutcomeOracle } from "./e2e-local.mjs";
 
 // The oracles are the part of the e2e lane that can rot silently: a driver
 // whose pass condition is wrong runs green forever over a broken system. Both
@@ -38,4 +38,15 @@ test("the plan interleaves lanes and cycles each lane's scenarios", () => {
     sad: ["c"],
   });
   assert.deepEqual(plan, [["a", 0], ["b", 1], ["a", 2], ["c", 0], ["c", 1]]);
+});
+
+test("a missing model key refuses the lane unless degradation is chosen", () => {
+  assert.equal(modelGateDecision(true, false).run, true);
+  assert.equal(modelGateDecision(true, false).degraded, false);
+  const refused = modelGateDecision(false, false);
+  assert.equal(refused.run, false, "no key and no opt-out must refuse, not degrade silently");
+  assert.match(refused.reason, /OPENROUTER_API_KEY/);
+  const degraded = modelGateDecision(false, true);
+  assert.equal(degraded.run, true);
+  assert.equal(degraded.degraded, true);
 });
