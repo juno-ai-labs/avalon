@@ -365,3 +365,68 @@ test('a backdrop that moves has to be able to stop', () => {
     'a backdrop that animates must honour prefers-reduced-motion: it cannot be dismissed',
   );
 });
+
+/**
+ * The two Airy variants light the same room, and their fields are not
+ * interchangeable.
+ *
+ * On paper an additive bloom is glare: it lightens a ground that is already
+ * near-white, so the orb reads as a blown-out patch rather than as colour.
+ * `mix-blend-mode: multiply` darkens toward the pigment instead, which is how
+ * ink behaves on a page — and it is why the light alphas are roughly double the
+ * dark ones and still land softer. Copying one field into the other, or
+ * retuning one alpha to "match", is how that gets lost.
+ */
+test('the light field multiplies and the dark field does not', () => {
+  const fieldOf = (id) => themes.find((theme) => theme.id === id)?.backdrop?.html ?? '';
+
+  assert.match(fieldOf('airy'), /mix-blend-mode: multiply/u);
+  assert.ok(!fieldOf('airy-dark').includes('mix-blend-mode'), 'the dark field adds light, it does not multiply');
+});
+
+/**
+ * Each bloom's hue, pinned to the reference. Only the warm one follows the
+ * brand — the reference writes it as the accent and the other three as fixed
+ * hues, so a retint moves the light the theme is named for and leaves the rest
+ * of the field where the design put it.
+ */
+test('every bloom carries the hue its reference gives it', () => {
+  const expected = {
+    'airy-dark': [
+      ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.32\)/u],
+      ['cool', /rgba\(150, 178, 166, \.26\)/u],
+      ['clay', /rgba\(196, 120, 86, \.2\)/u],
+      ['ember', /rgba\(224, 132, 64, \.40\)/u],
+    ],
+    airy: [
+      ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.50\)/u],
+      ['cool', /rgba\(112, 158, 141, \.42\)/u],
+      ['clay', /rgba\(196, 120, 86, \.3\)/u],
+      ['ember', /rgba\(232, 138, 58, \.50\)/u],
+    ],
+  };
+
+  for (const [id, blooms] of Object.entries(expected)) {
+    const html = themes.find((theme) => theme.id === id)?.backdrop?.html ?? '';
+    assert.ok(html, `${id} brings no backdrop`);
+    for (const [bloom, hue] of blooms) {
+      assert.match(html, hue, `${id}: the ${bloom} bloom has drifted from its reference`);
+    }
+  }
+});
+
+/**
+ * The two variants are one theme at two brightnesses: the same room, the same
+ * furniture, different lamps. Anything that is not a colour has to agree, or
+ * they are two designs that happen to share a name.
+ */
+test('the Airy variants differ only in colour', () => {
+  const [light, dark] = ['airy', 'airy-dark'].map((id) => themes.find((theme) => theme.id === id));
+  const colourish = new Set(['color', 'gradient', 'shadow']);
+
+  const structural = (theme) => Object.fromEntries(
+    Object.entries(theme.tokens).filter(([path]) => !colourish.has(registry.tokens[path].$type)),
+  );
+
+  assert.deepEqual(structural(light), structural(dark));
+});

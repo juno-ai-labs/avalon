@@ -391,8 +391,273 @@
   --av-cmp-connector-plug-background: #30302a;
   --av-cmp-connector-plug-foreground: #c2bd8a;
 }
-/* Airy — Near-black, amber, and a great deal of room. */
+/* Airy — Warm paper, amber light, and a great deal of room. */
 [data-theme='airy'] {
+  color-scheme: light;
+
+  --av-ref-color-neutral-1: #f2eee6;
+  --av-ref-color-neutral-2: #ece7dd;
+  --av-ref-color-neutral-3: #e4ded2;
+  --av-ref-color-neutral-4: #dad3c5;
+  --av-ref-color-neutral-5: #cdc5b4;
+  --av-ref-color-neutral-6: #b8af9c;
+  --av-ref-color-neutral-7: #a49a88;
+  --av-ref-color-neutral-8: #9b917f;
+  --av-ref-color-neutral-9: #8d8375;
+  --av-ref-color-neutral-10: #7a7164;
+  --av-ref-color-neutral-11: #6b6154;
+  --av-ref-color-neutral-12: #5d5449;
+  --av-ref-color-neutral-13: #332c24;
+  --av-ref-color-neutral-14: #1f1a14;
+
+  --av-ref-color-line-1: #f4f0e8;
+  --av-ref-color-line-2: #eee9df;
+  --av-ref-color-line-3: #e7e1d5;
+  --av-ref-color-line-4: #ddd5c6;
+  --av-ref-color-line-5: #cec5b3;
+  --av-ref-color-line-6: #9c9789;
+
+  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
+  --av-sys-backdrop-image: none;
+  --av-sys-backdrop-position: 0% 0%;
+  --av-sys-backdrop-size: auto;
+  --av-sys-backdrop-repeat: no-repeat;
+  --av-sys-backdrop-attachment: fixed;
+  --av-sys-backdrop-blend-mode: normal;
+
+  --av-sys-color-surface-canvas: #f7f3ec;
+  --av-sys-color-surface-default: #f7f3ec;
+  --av-sys-color-surface-subtle: #f2eee6;
+  --av-sys-color-surface-sunken: #ece7dd;
+  --av-sys-color-surface-raised: #fdfbf7;
+  --av-sys-color-surface-raised-hover: #f5f1e8;
+  --av-sys-color-surface-elevated: #fffdf9;
+  --av-sys-color-surface-elevated-hover: #f6f2e9;
+  --av-sys-color-surface-inverse-hover: #2a241d;
+
+  --av-sys-color-text-on-inverse: #f7f3ec;
+  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
+  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
+  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
+  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
+
+  --av-sys-color-border-highlight: rgba(45, 38, 30, 0.05);
+  --av-sys-color-border-default: var(--av-ref-color-line-2);
+  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
+  --av-sys-color-border-strong: var(--av-ref-color-line-3);
+
+  --av-sys-color-brand-base: #d2822c;
+  --av-sys-color-brand-strong: #b96c1e;
+  --av-sys-color-brand-soft: #c4762a;
+  --av-sys-color-brand-ink: #a2691f;
+  --av-sys-color-brand-wash: #fdf4e8;
+  --av-sys-color-brand-edge: #eccfa8;
+  --av-sys-color-brand-on: #ffffff;
+  --av-sys-color-brand-tint: rgba(210, 130, 44, 0.34);
+  --av-sys-color-brand-tint-strong: rgba(210, 130, 44, 0.5);
+  --av-sys-color-brand-glow: radial-gradient(circle, rgba(210, 130, 44, 0.12), transparent 62%);
+  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
+
+  --av-sys-color-accent-base: #6a80b8;
+  --av-sys-color-accent-strong: #55689b;
+  --av-sys-color-accent-soft: #7b8fc2;
+  --av-sys-color-accent-wash: #eef1f8;
+  --av-sys-color-accent-edge: #c9d3e8;
+  --av-sys-color-accent-on: #ffffff;
+  --av-sys-color-accent-tint: rgba(106, 128, 184, 0.34);
+
+  --av-sys-color-success-base: #4f8271;
+  --av-sys-color-success-strong: #3d6a5b;
+  --av-sys-color-success-fill: #dfeae5;
+  --av-sys-color-success-fill-edge: #b9d0c6;
+  --av-sys-color-success-soft: #5e8a7a;
+  --av-sys-color-success-wash: #eef4f1;
+  --av-sys-color-success-edge: #cfe0d8;
+  --av-sys-color-success-on: #14261f;
+
+  --av-sys-color-warning-base: #b8860b;
+  --av-sys-color-warning-strong: #9a7009;
+  --av-sys-color-warning-soft: #8a6208;
+  --av-sys-color-warning-wash: #fbf3e0;
+  --av-sys-color-warning-edge: #ecd9a8;
+  --av-sys-color-warning-on: #241a00;
+
+  --av-sys-color-danger-base: #c3453f;
+  --av-sys-color-danger-strong: #a5332e;
+  --av-sys-color-danger-soft: #b23a34;
+  --av-sys-color-danger-wash: #fdeeed;
+  --av-sys-color-danger-edge: #f2c9c6;
+  --av-sys-color-danger-on: #ffffff;
+  --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
+  --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
+
+  --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
+  --av-sys-color-scrim-subtle: rgba(38, 36, 30, 0.18);
+  --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
+
+  --av-sys-color-focus-default: var(--av-sys-color-brand-base);
+  --av-sys-color-focus-quiet: #c9b48f;
+
+  --av-sys-color-selection-background: rgba(210, 130, 44, 0.22);
+
+  --av-sys-color-scrollbar-thumb: #dad3c5;
+
+  --av-sys-color-shimmer-default: rgba(45, 38, 30, 0.05);
+
+  --av-sys-color-syntax-plain: #24231e;
+  --av-sys-color-syntax-comment: #8a857a;
+  --av-sys-color-syntax-punctuation: #5c5850;
+  --av-sys-color-syntax-tag: #b3441c;
+  --av-sys-color-syntax-number: #9a5518;
+  --av-sys-color-syntax-string: #6a3fb5;
+  --av-sys-color-syntax-operator: #3d3a33;
+  --av-sys-color-syntax-keyword: #a8380f;
+  --av-sys-color-syntax-function: #0a6ba8;
+  --av-sys-color-syntax-variable: #8a6208;
+
+  --av-sys-color-person-1: #2f6f9e;
+  --av-sys-color-person-2: #7a4a91;
+  --av-sys-color-person-3: #2f7d5c;
+  --av-sys-color-person-4: #9a5f2a;
+  --av-sys-color-person-5: #4f4a9e;
+  --av-sys-color-person-6: #9b4550;
+
+  --av-sys-elevation-shadow-sm: none;
+  --av-sys-elevation-shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
+  --av-sys-elevation-shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
+  --av-sys-elevation-shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
+  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
+  --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
+
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(210, 130, 44, 0.32);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(210, 130, 44, 0.14);
+  --av-sys-focus-ring-brand: 0 0 0 2px rgba(210, 130, 44, 0.3);
+
+  --av-sys-size-radius-xs: 2px;
+  --av-sys-size-radius-sm: 3px;
+  --av-sys-size-radius-md: 4px;
+  --av-sys-size-radius-lg: 6px;
+  --av-sys-size-radius-xl: 8px;
+  --av-sys-size-radius-pill: 999px;
+
+  --av-sys-size-border-hairline: 1px;
+
+  --av-sys-size-control-height: 36px;
+
+  --av-sys-space-pane-padding: 34px;
+
+  --av-sys-space-stack-gap: 58px;
+
+  --av-sys-space-row-gap: 5px;
+
+  --av-sys-space-group-gap: 60px;
+
+  --av-sys-space-block-gap: 28px;
+
+  --av-sys-space-prose-gap: 22px;
+
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-display: var(--av-sys-font-family-ui);
+  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+
+  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-prose: 16.5px;
+  --av-sys-font-size-row: 14.5px;
+  --av-sys-font-size-hint: 11px;
+  --av-sys-font-size-action: 14.5px;
+  --av-sys-font-size-meta: 10.5px;
+  --av-sys-font-size-author: 12.5px;
+  --av-sys-font-size-title: 15px;
+
+  --av-sys-font-leading-prose: 1.85;
+  --av-sys-font-leading-base: 1.75;
+
+  --av-sys-font-weight-strong: 450;
+  --av-sys-font-weight-heading: 480;
+  --av-sys-font-weight-emphasis: 500;
+
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.18em;
+  --av-sys-label-transform: uppercase;
+  --av-sys-label-weight: 500;
+
+  --av-cmp-pane-background: transparent;
+
+  --av-cmp-sidebar-background: transparent;
+  --av-cmp-sidebar-background-solid: #f4f0e8;
+  --av-cmp-sidebar-border: rgba(45, 38, 30, 0.11);
+  --av-cmp-sidebar-width: 320px;
+
+  --av-cmp-marker-inline-size: 2px;
+  --av-cmp-marker-radius: 2px;
+  --av-cmp-marker-slot: 12px;
+  --av-cmp-marker-inset-block: 9px;
+  --av-cmp-marker-glow: 0 0 10px rgba(210, 130, 44, 0.6);
+
+  --av-cmp-row-height: 46px;
+  --av-cmp-row-padding: 9px 10px;
+  --av-cmp-row-leading: 1.55;
+  --av-cmp-row-hint-gap: 7px;
+  --av-cmp-row-height-dense: 44px;
+  --av-cmp-row-background-hover: rgba(60, 48, 36, 0.045);
+  --av-cmp-row-background-selected: transparent;
+
+  --av-cmp-group-label-height: 34px;
+  --av-cmp-group-label-gap: 22px;
+
+  --av-cmp-bubble-background: transparent;
+  --av-cmp-bubble-border: transparent;
+  --av-cmp-bubble-padding: 0;
+
+  --av-cmp-composer-background: transparent;
+  --av-cmp-composer-border-color: transparent;
+  --av-cmp-composer-border-color-focus: transparent;
+  --av-cmp-composer-border-width: 0;
+  --av-cmp-composer-radius: 0;
+  --av-cmp-composer-shadow: none;
+  --av-cmp-composer-rule-color: rgba(45, 38, 30, 0.14);
+  --av-cmp-composer-rule-color-focus: rgba(210, 130, 44, 0.3);
+  --av-cmp-composer-padding: 20px 2px 6px;
+  --av-cmp-composer-send-background: transparent;
+  --av-cmp-composer-send-radius: var(--av-sys-size-radius-md);
+  --av-cmp-composer-send-foreground: var(--av-sys-color-brand-base);
+
+  --av-cmp-turn-align: flex-start;
+  --av-cmp-turn-margin: 0;
+  --av-cmp-turn-width: 100%;
+
+  --av-cmp-feed-width: 880px;
+  --av-cmp-feed-width-wide: 940px;
+  --av-cmp-feed-padding-y: 64px;
+  --av-cmp-feed-padding-x: 46px;
+  --av-cmp-feed-author-font-size: 12px;
+  --av-cmp-feed-author-font-weight: 470;
+
+  --av-cmp-tooltip-background: #2a241d;
+  --av-cmp-tooltip-foreground: #f7f3ec;
+
+  --av-cmp-toggle-track: #dad3c5;
+  --av-cmp-toggle-knob-off: #8d8375;
+
+  --av-cmp-connector-github-background: #f0efec;
+  --av-cmp-connector-github-foreground: #24292f;
+  --av-cmp-connector-google-background: #fbeeea;
+  --av-cmp-connector-google-foreground: #b4472a;
+  --av-cmp-connector-drive-background: #eaf5ee;
+  --av-cmp-connector-drive-foreground: #1a7a48;
+  --av-cmp-connector-slack-background: #eef2f7;
+  --av-cmp-connector-slack-foreground: #2f5b80;
+  --av-cmp-connector-linear-background: #f0eefa;
+  --av-cmp-connector-linear-foreground: #4b41a8;
+  --av-cmp-connector-webhook-background: #fbf1e8;
+  --av-cmp-connector-webhook-foreground: #97552a;
+  --av-cmp-connector-search-background: #edf3f8;
+  --av-cmp-connector-search-foreground: #2a5f85;
+  --av-cmp-connector-plug-background: #f4f3e8;
+  --av-cmp-connector-plug-foreground: #6c6a2c;
+}
+/* Airy Dark — Near-black, amber, and a great deal of room. */
+[data-theme='airy-dark'] {
   color-scheme: dark;
 
   --av-ref-color-neutral-1: #100d09;
@@ -585,7 +850,7 @@
 
   --av-cmp-sidebar-background: transparent;
   --av-cmp-sidebar-background-solid: #0c0a07;
-  --av-cmp-sidebar-border: #1f1a12;
+  --av-cmp-sidebar-border: rgba(239, 230, 218, 0.09);
   --av-cmp-sidebar-width: 320px;
 
   --av-cmp-marker-inline-size: 2px;
