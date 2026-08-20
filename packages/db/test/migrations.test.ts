@@ -273,6 +273,91 @@ describe("database migrations", () => {
     }
   });
 
+  it("lets the verified scrub cascade into work-stream-owned children", () => {
+    // The scrub deletes a workspace's rows once its object is verified. D1
+    // enforces foreign keys, so deleting `activities` cascades into
+    // `activity_suggestions`, whose fence predates the scrub and once admitted
+    // no phase past draining — which aborted activation after every route had
+    // already imported and verified.
+    const database = migrateFreshDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('scrub-user', 'scrub-subject', 'scrub@example.com', 'Scrub User',
+                '2026-08-19T00:00:00.000Z', '2026-08-19T00:00:00.000Z');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('scrub-workspace', 'Scrub Workspace', 'scrub-workspace', 'global',
+                'scrub-user', '2026-08-19T00:00:00.000Z', '2026-08-19T00:00:00.000Z');
+        INSERT INTO workstreams
+          (id, workspace_id, title, objective, origin_type, created_by_user_id,
+           harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+        VALUES ('scrub-workstream', 'scrub-workspace', 'Scrub', 'Objective', 'ad_hoc',
+                'scrub-user', 'completed', 1, '2026-08-19T00:00:00.000Z',
+                '2026-08-19T00:00:00.000Z', '2026-08-19T00:00:00.000Z');
+        INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, status, cursor_json, config_json,
+           created_at, updated_at, model_plugin_id)
+        VALUES ('scrub-slack', 'scrub-workspace', 'slack', 'workspace', NULL, 'T1',
+                'Slack', '[]', 'healthy', '{}', '{}', '2026-08-19T00:00:00.000Z',
+                '2026-08-19T00:00:00.000Z', 'plugin_slack_workspace');
+        INSERT INTO activities
+          (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+           event_type, occurred_at, received_at, title, dedupe_key, processing_status)
+        VALUES ('scrub-activity', 'scrub-workspace', 'scrub-slack', 'workspace', 'slack',
+                'event-scrub', 'message', '2026-08-19', '2026-08-19', 'Activity',
+                'dedupe-scrub', 'processed');
+        INSERT INTO activities
+          (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+           event_type, occurred_at, received_at, title, dedupe_key, processing_status)
+        VALUES ('scrub-activity-kept', 'scrub-workspace', 'scrub-slack', 'workspace', 'slack',
+                'event-kept', 'message', '2026-08-19', '2026-08-19', 'Kept',
+                'dedupe-kept', 'processed');
+        INSERT INTO activity_suggestions
+          (id, workspace_id, activity_id, workstream_id, confidence, reason, created_at)
+        VALUES ('scrub-suggestion', 'scrub-workspace', 'scrub-activity', 'scrub-workstream',
+                0.9, 'Matched', '2026-08-19T00:00:00.000Z'),
+               ('scrub-suggestion-kept', 'scrub-workspace', 'scrub-activity-kept',
+                'scrub-workstream', 0.8, 'Matched', '2026-08-19T00:00:00.000Z');
+      `);
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1,
+               updated_at = '2026-08-19T00:01:00.000Z'
+         WHERE id = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '2026-08-19T00:02:00.000Z'
+         WHERE id = 1;
+        UPDATE workstream_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workspace_product_authority_routes SET state = 'verified' WHERE generation = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_verified', updated_at = '2026-08-19T00:03:00.000Z'
+         WHERE id = 1;
+      `);
+
+      database.exec(`DELETE FROM activities WHERE id = 'scrub-activity'`);
+
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM activity_suggestions WHERE id = 'scrub-suggestion'`,
+      ).get()).toEqual({ count: 0 });
+      // Still refused once the region is open: the scrub is the one window in
+      // which these rows may go, not a general licence to write D1.
+      database.exec(`
+        UPDATE workstream_authority_routes SET state = 'active' WHERE generation = 1;
+        UPDATE workspace_product_authority_routes SET state = 'active' WHERE generation = 1;
+        UPDATE workstream_authority_control
+           SET phase = 'durable_object_open', serving_contract_version = 1,
+               updated_at = '2026-08-19T00:04:00.000Z'
+         WHERE id = 1;
+      `);
+      expect(() => database.exec(
+        `DELETE FROM activity_suggestions WHERE id = 'scrub-suggestion-kept'`,
+      )).toThrow(/workspace_do_authoritative/u);
+    } finally {
+      database.close();
+    }
+  });
+
   it("fences the maintenance cutover and leaves the workspace directory out of D1", () => {
     const database = migrateFreshDatabase();
     try {

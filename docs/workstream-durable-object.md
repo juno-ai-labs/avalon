@@ -958,6 +958,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The verified scrub can finish: cascades admitted, and one statement corrected
+
+**What changed:** Migration 0087 adds `maintenance_verified` to the 34 work-stream
+fences' delete triggers, matching what 0083 already grants the workspace
+fences. The activation scrub's `note_resource_deletion_outbox` delete is scoped
+through `resources` — that table is keyed by resource and has no workspace
+column — and moved ahead of the `resources` delete it now depends on.
+
+**Why:** Activation is the one step no earlier generation reached, so both
+defects were invisible until every route had imported and verified. D1 enforces
+foreign keys, so deleting a workspace's `activities`, `resources`, `notes`, and
+`connector_connections` cascades into work-stream-owned children such as
+`activity_suggestions` and `workstream_resources`. Those children carry the 0079
+fences, written before 0083 established the scrub as a legitimate deletion, so
+the cascade aborted with `workspace_do_authoritative` and quarantined the
+campaign at the finish line. The second defect was plain invalid SQL that only a
+workspace with no cascading rows ever reached.
+
+**What a future change has to respect:** the scrub deletes across both
+authorities at once. A new fence on any table reachable by cascade from a
+workspace-owned parent must admit `maintenance_verified` for deletes, or it
+will stop activation rather than the import — far later, and after the
+expensive work is already done. Inserts and updates stay refused from the
+moment import begins, and every fence still refuses deletes once the region is
+open, so D1 cannot become a second writable authority.
+
+**Considered and rejected:** deleting the cascade children explicitly before
+their parents (they carry the same fences, so it moves the abort rather than
+removing it), and letting activation tolerate a failed scrub (it would leave
+the region open with a populated D1 shadow of the authority that just moved).
+
 ### 2026-08-19 — The import reconciles rows the object mutated, and product alarms wait for the open
 
 **What changed:** Two halves of one rule — the frozen D1 snapshot is authority
