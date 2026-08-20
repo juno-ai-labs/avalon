@@ -45,7 +45,7 @@ import {
 import {
   launchBlockDashboardRefresh,
 } from "../services/block-dashboard-service";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
@@ -1132,7 +1132,36 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Wraps the run so no outcome is silent.
+   *
+   * Every branch below already decides something a member can see — an early
+   * settle, a recovered terminal outcome, a backoff — and until now most of
+   * them returned without a word. Twice during this incident the telemetry
+   * showed a run executing in a second and producing nothing, and there was no
+   * way to tell which branch had done it.
+   */
   private async executeAgentRun(input: WorkstreamWorkflowInput): Promise<{
+    status: WorkstreamHarnessResult["status"];
+    errorCode: string | null;
+    retryAt: number | null;
+  }> {
+    const startedAt = Date.now();
+    const result = await this.runAgentExecution(input);
+    logInfo(this.env, "agent_run_outcome", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      substream_id: input.substreamId ?? "0",
+      harness_run_id: input.harnessRunId,
+      status: result.status,
+      error_code: result.errorCode,
+      retry_at: result.retryAt,
+      duration_ms: Date.now() - startedAt,
+    });
+    return result;
+  }
+
+  private async runAgentExecution(input: WorkstreamWorkflowInput): Promise<{
     status: WorkstreamHarnessResult["status"];
     errorCode: string | null;
     retryAt: number | null;
@@ -1208,6 +1237,13 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (claim.state === "terminal") {
       try {
         const recovered = await this.loadTerminalOutcome(executionEnv, input, claim.status);
+        logWarn(this.env, "agent_run_adopted_terminal_attempt", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          harness_run_id: input.harnessRunId,
+          claim_status: claim.status,
+          recovered_status: recovered.status,
+        });
         return this.persistAndSettleAgentRun(executionEnv, input, recovered);
       } catch (error) {
         logWarn(this.env, "substream_agent_terminal_recovery_failed", {
