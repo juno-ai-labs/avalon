@@ -964,6 +964,48 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — Work-stream authority outranks the workspace router, and the resources view becomes selectable
+
+**What changed:** The workspace runtime router defers any statement that
+references a work-stream authority table, instead of claiming it because a
+workspace table also appears somewhere in the SQL. Schema v4 rebuilds
+`_runtime_resources` with qualified columns. The runtime SQL executor names
+the statement a SQLite error came from, `runWorkstreamHarness` logs
+`workstream_harness_run_failed` with the Bind failure detail its member-safe
+outcome strips, and the harness's own catch logs `workstream_harness_threw`
+with the real exception. `test/runtime-compat-views.test.ts` selects from
+every compat view.
+
+**Why:** Every harness run since the Global cutover failed in ~450 ms without
+reaching a model, with nothing logged. Two stacked defects: the harness wraps
+the workspace router *outside* the work-stream router, and the workspace
+matcher claimed any SQL naming any workspace table anywhere — so the
+transcript read (`FROM messages … JOIN resources …`) executed in WorkspaceDO,
+which has no `messages`. The work-stream object was always the right home: it
+carries compat views (`_runtime_users`, `_runtime_resources`) for exactly the
+non-owned halves of such joins. Fixing the routing then exposed the second
+defect: `_runtime_resources` read a bare `updated_at` over
+`workstream_resource_links CROSS JOIN workstream`, ambiguous since v1 —
+SQLite validates a view body on first use, and nothing had ever selected it.
+
+**Considered and rejected:** Splitting `listMessages` into per-authority
+queries — correct in principle, but the object's compat views exist precisely
+so cross-authority reads need no splitting, and a split fixes one statement
+while the routing defect kept every other mixed statement broken. Swapping
+the wrapper order at every `runWorkstreamHarness` call site — more churn for
+the same precedence rule, stated less explicitly.
+
+**Consequences:** A statement touching both authorities now runs in the
+work-stream object; the workspace object serves only statements that touch no
+work-stream table. The pipeline suite's boundary oracle is the Bind engine's
+member-safe sentence rather than the failure code, because both halves of
+this incident carried the same catch-all code. Every layer that converts an
+error into a member-safe shape now records what it stripped first — three of
+the four hours this took were spent making silent failures speak, and each
+speaking layer then named the next defect within minutes.
+
+
+
 ### 2026-08-20 — Timestamps round-trip exactly, and the pipeline is tested end to end
 
 **What changed:** Schema v3 rebuilds every runtime-compat trigger that converts

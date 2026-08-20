@@ -2882,6 +2882,20 @@ export async function runWorkstreamHarness(
   await streamDeltaBatcher.flush();
 
   const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
+  if (outcome.status !== "completed" && !stoppedByUser) {
+    // The member-safe terminal result deliberately strips this detail, so it
+    // must be recorded here or nowhere: a Bind run that fails before its first
+    // inference attempt leaves no other trace of why.
+    logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
+      request_id: input.harnessRunId,
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      outcome_status: outcome.status,
+      failure_code: outcome.failure?.code ?? null,
+      failure_kind: outcome.failure?.kind ?? null,
+      failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
+    });
+  }
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
     streamedText,

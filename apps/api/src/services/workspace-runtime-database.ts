@@ -4,6 +4,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
 import type { Env } from "../env";
+import { referencesWorkstreamAuthorityTable } from "./workstream-runtime-database";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -98,6 +99,15 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
 }));
 
 function localStatement(sql: string): boolean {
+  // Work-stream authority outranks this layer. The harness wraps the
+  // workspace router outside the work-stream router, so this matcher sees
+  // every statement first — and a transcript read like `FROM messages …
+  // JOIN resources` names a workspace table without belonging here. Claiming
+  // it executed it in WorkspaceDO, where `messages` does not exist, and every
+  // harness run since the cutover died on exactly that. The work-stream
+  // object carries compat views for the workspace-owned halves of such joins;
+  // this object carries none for the work-stream halves.
+  if (referencesWorkstreamAuthorityTable(sql)) return false;
   const localTables = WORKSPACE_LOCAL_TABLE_PATTERNS
     .filter(({ pattern }) => pattern.test(sql))
     .map(({ table }) => table);
