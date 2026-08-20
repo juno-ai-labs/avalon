@@ -28,6 +28,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
+import { inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
@@ -2249,24 +2250,51 @@ export class WorkspaceDO extends DurableObject<Env> {
     attachment: WorkspaceSocketAttachment,
     command: CreateMessageCommand,
   ): Promise<void> {
+    // A command arrives over an already-open socket, which the platform traces
+    // as its own invocation with no relationship to the HTTP request the
+    // desktop made to open it. `avalon.message.client_id` is what joins this
+    // trace to the composer that sent it: the desktop prints the same id, and
+    // the command result comes back keyed by it.
+    return inFlowSpan(this.env, "workstream.message.send", {
+      flow: "workstream_message_send",
+      component: "workspace_do",
+      identity: {
+        workspaceId: attachment.workspaceId,
+        workstreamId: command.workstreamId,
+        userId: attachment.userId,
+        substreamId: command.substreamId,
+      },
+      attributes: {
+        "avalon.transport": "workspace_socket",
+        "avalon.message.client_id": command.payload.clientMessageId,
+        "avalon.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
+      },
+    }, async (span) => {
     try {
-      const authority = await readWorkstreamAuthorityControl(this.env);
+      const authority = await span.step("workstream.message.authority_read", () =>
+        readWorkstreamAuthorityControl(this.env));
       if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
-      const auth = await this.sessionAuth(attachment);
+      const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
       if (!auth) {
+        span.setError("session_inactive");
         socket.close(1008, "Session no longer active");
         return;
       }
-      const result = await new WorkstreamObjectClient(
+      const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
         this.env,
         auth,
         command.workstreamId,
         command.substreamId,
+        true,
       ).createMessage({
         ...command.payload,
         telemetryOperationId: command.operationId,
+      }));
+      span.setAttributes({
+        "avalon.agent.invoked": result.agentInvoked,
+        "avalon.harness_run.id": result.harnessRunId,
       });
       socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
         type: "client_command_succeeded",
@@ -2274,6 +2302,7 @@ export class WorkspaceDO extends DurableObject<Env> {
         clientMessageId: command.payload.clientMessageId,
         ...result,
       })));
+      span.mark("workstream.message.respond");
     } catch (error) {
       const safe = error instanceof ApiError
         ? error
@@ -2299,7 +2328,10 @@ export class WorkspaceDO extends DurableObject<Env> {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }
+      span.setError(safe.code, safe.message);
+      span.setAttributes({ "http.response.status_code": safe.status });
     }
+    });
   }
 
   private applyDirectoryEnvelope(

@@ -965,6 +965,47 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The room opens custom spans for the work a person waits on
+
+**What changed:** `SubstreamAgent` opens named spans for the product operations
+on a person's critical path — `initialize`, `create_message`, `get`, and
+`messages` — and for socket acceptance, the subscription, and snapshot assembly.
+`WorkspaceDO` does the same for the `create_message` command. They are custom
+spans on Cloudflare's automatic tracing, so they are already children of the
+caller's span: a Durable Object call is a traced binding call, and everything
+inside it runs in the caller's async context. `handleProductRequest` takes a
+`traced` flag and nothing else — no trace id, no header.
+[`performance-tracing.md`](performance-tracing.md) owns the span names.
+
+**Why:** A slow work stream was indistinguishable from a slow room. The object's
+side of a create is a `product.initialize`, a run dispatch, a transcript read,
+and a broadcast, and none of them were timed; a subscription that spends two
+seconds assembling a snapshot was invisible entirely, because it arrives on an
+invocation with no request behind it.
+
+**Considered and rejected:** *Propagating a trace id into the object ourselves*,
+either as a field on `ProductRequestSchema` or as headers on the request
+`rpcRequest` synthesizes. Both were built and removed. The runtime already
+propagates context across a Durable Object call, so a hand-made id produced a
+second trace that never joined the first — and the schema field had the extra
+defect of being carried by the native-RPC door and not by `POST
+/internal/product`. *Holding a trace across the socket upgrade and the
+`subscribe` that follows.* Those are separate invocations and an isolate
+eviction between them is normal, so anything held in memory would be dropped
+silently on exactly the hibernation path most worth measuring. They are two
+traces joined by an `avalon.socket.connection_id` attribute instead.
+
+**Consequences:** An operation outside the three traced flows opens no spans, so
+tracing a fourth means naming its flow rather than reusing one. The upgrade and
+the subscription only meet through `avalon.socket.connection_id`, so anything
+that changes what a socket attachment carries must keep it. Span timing measures
+I/O and not CPU under workerd's pinned clock, so a future change that puts real
+computation inside the room will not show up in these numbers. Importing
+`cloudflare:workers` for `tracing` means a Node test of anything on these paths
+depends on the alias in `apps/api/test/helpers/cloudflare-workers.ts`.
+
+Shipped in #TBD.
+
 ### 2026-08-20 — The pre-cutover execution arms are removed from the product path
 
 **What changed:** Every phase split in `WorkstreamService` and

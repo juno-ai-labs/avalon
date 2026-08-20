@@ -598,7 +598,7 @@ describe("environment guardrails", () => {
           headers: {
             origin: "app://avalon",
             "access-control-request-method": "POST",
-            "access-control-request-headers": "authorization,content-type,x-avalon-operation-id",
+            "access-control-request-headers": "authorization,content-type,x-avalon-operation-id,x-request-id",
           },
         },
         createTestEnv({
@@ -612,6 +612,13 @@ describe("environment guardrails", () => {
       expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
       const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
       expect(allowedHeaders).toContain("x-avalon-operation-id");
+      // The desktop stamps `x-request-id` on every call so its performance
+      // traces name the same id the Worker's rows carry. A missing entry here
+      // is a blocked preflight, which reaches the renderer as a bare network
+      // error and never reaches a Worker log at all.
+      expect(allowedHeaders).toContain("x-request-id");
+      expect(response.headers.get("access-control-expose-headers")?.toLowerCase())
+        .toContain("x-request-id");
     },
   );
 
