@@ -131,18 +131,36 @@ jobs:
 
       # The symbolicator image compiles `minidump-stackwalk` from source, which
       # costs about three and a half minutes and depends on nothing in this
-      # repository. Build it on a cache-capable builder so the layer is fetched
-      # rather than rebuilt on every run.
+      # repository. `install: true` points the plain `docker build` the lane's
+      # own script runs at this cache-capable `docker-container` builder, so the
+      # warm-up below and that build share one BuildKit cache.
       - name: Use a cache-capable container builder
         if: matrix.name == 'crash-symbolicator-container'
         uses: docker/setup-buildx-action@v3
         with:
           install: true
 
+      # This step is the only thing that touches the shared cache: it imports
+      # the compiled layer, rebuilds it when the Dockerfile has moved, and
+      # exports it again. `type=cacheonly` keeps it to that — the image itself
+      # is produced by the build that needs it, resolving every layer from the
+      # builder's now-warm local cache.
+      #
+      # It has to be an action rather than a `docker buildx build` line. The
+      # `type=gha` backend authenticates with `ACTIONS_RUNTIME_TOKEN`, which the
+      # runner injects into JavaScript actions and never into a `run:` step, so
+      # driving the cache from the lane's script imported and exported nothing.
+      - name: Warm the symbolicator image cache
+        if: matrix.name == 'crash-symbolicator-container'
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api/crash-symbolicator
+          platforms: linux/amd64
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=crash-symbolicator
+          cache-to: type=gha,mode=max,scope=crash-symbolicator
+
       - name: Run ${{ matrix.name }}
-        env:
-          AVALON_CONTAINER_CACHE_FROM: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,scope=crash-symbolicator' || '' }}
-          AVALON_CONTAINER_CACHE_TO: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,mode=max,scope=crash-symbolicator' || '' }}
         run: ${{ matrix.command }}
 
   # `deploy` gates on this one job rather than on the matrix, so the lane list
@@ -231,6 +249,31 @@ jobs:
       - name: Apply the remote D1 migrations to Global
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @avalon/api db:migrate:remote
+
+      # Both regional deployments build the symbolicator image, and Wrangler
+      # drives that build itself with a fixed `docker build` line that takes no
+      # cache flags — so this job recompiled `minidump-stackwalk` from source,
+      # about three and a half minutes, on every release. It cannot be handed a
+      # cache, but it can be handed a warm builder: `install: true` points its
+      # `docker build` at the same `docker-container` builder the step below
+      # fills from the layers `checks` exported earlier in this run. Wrangler
+      # already passes `--load`, so its image still reaches the daemon's image
+      # store to be tagged and pushed.
+      #
+      # Nothing is exported here. The `crash-symbolicator-container` lane owns
+      # that scope, and it has always run before this job.
+      - name: Use a cache-capable container builder
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Warm the symbolicator image cache
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api/crash-symbolicator
+          platforms: linux/amd64
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=crash-symbolicator
 
       # EU precedes Global because Global binds named EU entrypoints.
       - name: Deploy the EU Worker
