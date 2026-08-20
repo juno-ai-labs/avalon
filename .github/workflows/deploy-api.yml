@@ -146,7 +146,20 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
+      # The symbolicator image compiles `minidump-stackwalk` from source, which
+      # costs about three and a half minutes and depends on nothing in this
+      # repository. Build it on a cache-capable builder so the layer is fetched
+      # rather than rebuilt on every run.
+      - name: Use a cache-capable container builder
+        if: matrix.name == 'crash-symbolicator-container'
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
       - name: Run ${{ matrix.name }}
+        env:
+          AVALON_CONTAINER_CACHE_FROM: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,scope=crash-symbolicator' || '' }}
+          AVALON_CONTAINER_CACHE_TO: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,mode=max,scope=crash-symbolicator' || '' }}
         run: ${{ matrix.command }}
 
   # `deploy` gates on this one job rather than on the matrix, so the lane list
