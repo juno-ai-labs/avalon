@@ -1,7 +1,6 @@
 import { asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
 import { asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
@@ -18,9 +17,16 @@ import {
   createMemoryTableTools,
   loadAutomationMemoryTableContext,
 } from "../src/services/memory-table-service";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
+import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000002");
 const MEMBER_ID = asUserId("00000000-0000-4000-8000-000000000003");
@@ -132,10 +138,30 @@ class FakeVectorIndex {
 }
 
 const openDatabases: DatabaseSync[] = [];
+/** Per-workstream object databases; run rows and run receipts live here. */
+const objectStores = new Map<string, DatabaseSync>();
 
 afterEach(() => {
+  objectStores.clear();
   for (const database of openDatabases.splice(0)) database.close();
 });
+
+/**
+ * The routed execution environment the harness hands a run's tools: run and
+ * workstream authority statements travel the runtime SQL port into the run's
+ * own object database, workspace memory tables stay regional.
+ */
+function routedEnv(env: Env, runInput: WorkstreamWorkflowInput): Env {
+  const store = objectStores.get(runInput.workstreamId);
+  if (!store) throw new Error(`no object store for ${runInput.workstreamId}`);
+  return withWorkstreamRuntimeDatabase(
+    env,
+    runInput.workspaceId,
+    runInput.workstreamId,
+    "0",
+    async (statements) => executeWorkstreamObjectSql(store, statements),
+  );
+}
 
 function fixture(): {
   database: DatabaseSync;
@@ -143,11 +169,8 @@ function fixture(): {
   ai: FakeAi;
   vector: FakeVectorIndex;
 } {
-  const database = new DatabaseSync(":memory:");
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    database.exec(readFileSync(new URL(fileName, migrationsDirectory), "utf8"));
-  }
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
       ('${OWNER_ID}', 'memory-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
@@ -189,23 +212,60 @@ function fixture(): {
        NULL, '${AUTOMATION_SUBSCRIPTION_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01'),
       ('${AUTOMATION_WORKSTREAM_TWO}', '${WORKSPACE_ID}', 'Automation two', 'Second run', 'automation',
        NULL, '${AUTOMATION_SUBSCRIPTION_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status,
-       attempt_id, attempt_number, lease_owner, lease_expires_at, heartbeat_at, created_at)
-    VALUES
-      ('${RUN_ONE}', '${WORKSPACE_ID}', '${WORKSTREAM_ONE}', 'test',
-       '{"type":"user","userId":"${OWNER_ID}"}', 'running', 'attempt-owner', 1,
-       'lease-owner', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01'),
-      ('${RUN_TWO}', '${WORKSPACE_ID}', '${WORKSTREAM_TWO}', 'test',
-       '{"type":"user","userId":"${MEMBER_ID}"}', 'running', 'attempt-member', 1,
-       'lease-member', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01'),
-      ('${AUTOMATION_RUN_ONE}', '${WORKSPACE_ID}', '${AUTOMATION_WORKSTREAM_ONE}', 'test',
-       '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}', 'running', 'attempt-auto-one', 1,
-       'lease-auto-one', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01'),
-      ('${AUTOMATION_RUN_TWO}', '${WORKSPACE_ID}', '${AUTOMATION_WORKSTREAM_TWO}', 'test',
-       '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}', 'running', 'attempt-auto-two', 1,
-       'lease-auto-two', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01');
   `);
+  // Since migration 0090 each run row lives only in its work stream's own
+  // object; the fixture opens the four objects and writes the runs through
+  // the same compat port the harness uses.
+  const runsByWorkstream: Array<[string, string, string, string, string]> = [
+    [WORKSTREAM_ONE, RUN_ONE, JSON.stringify({ type: "user", userId: OWNER_ID }), "attempt-owner", "lease-owner"],
+    [WORKSTREAM_TWO, RUN_TWO, JSON.stringify({ type: "user", userId: MEMBER_ID }), "attempt-member", "lease-member"],
+    [AUTOMATION_WORKSTREAM_ONE, AUTOMATION_RUN_ONE,
+      JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }), "attempt-auto-one", "lease-auto-one"],
+    [AUTOMATION_WORKSTREAM_TWO, AUTOMATION_RUN_TWO,
+      JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }), "attempt-auto-two", "lease-auto-two"],
+  ];
+  for (const [workstreamId, runId, principalJson, attemptId, leaseOwner] of runsByWorkstream) {
+    const store = testWorkstreamObjectStore();
+    openDatabases.push(store);
+    seedWorkstreamObjectRoot(store, { workstreamId, workspaceId: WORKSPACE_ID });
+    const directory = database.prepare(
+      "SELECT title, objective, origin_type, created_by_user_id, automation_subscription_id FROM workstreams WHERE id = ?",
+    ).get(workstreamId) as {
+      title: string;
+      objective: string;
+      origin_type: string;
+      created_by_user_id: string | null;
+      automation_subscription_id: string | null;
+    };
+    workstreamObjectRun(
+      store,
+      `INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         automation_subscription_id, harness_status, last_activity_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
+      workstreamId,
+      WORKSPACE_ID,
+      directory.title,
+      directory.objective,
+      directory.origin_type,
+      directory.created_by_user_id,
+      directory.automation_subscription_id,
+    );
+    workstreamObjectRun(
+      store,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+         attempt_id, attempt_number, lease_owner, lease_expires_at, heartbeat_at, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'running', ?, 1, ?, '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01')`,
+      runId,
+      WORKSPACE_ID,
+      workstreamId,
+      principalJson,
+      attemptId,
+      leaseOwner,
+    );
+    objectStores.set(workstreamId, store);
+  }
   const ai = new FakeAi();
   const vector = new FakeVectorIndex();
   return {
@@ -268,13 +328,15 @@ function toolContext(runInput: WorkstreamWorkflowInput, receipt: string) {
 }
 
 function memoryTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
-  const tool = createMemoryTools(env, runInput).find((candidate) => candidate.definition.name === name);
+  const tool = createMemoryTools(routedEnv(env, runInput), runInput)
+    .find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`missing tool ${name}`);
   return tool;
 }
 
 function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
-  const tool = createMemoryTableTools(env, runInput).find((candidate) => candidate.definition.name === name);
+  const tool = createMemoryTableTools(routedEnv(env, runInput), runInput)
+    .find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`missing tool ${name}`);
   return tool;
 }
@@ -282,11 +344,11 @@ function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
 describe("scoped agent memory", () => {
   it("derives the complete scope union and never exposes search scope selectors", async () => {
     const { database, env } = fixture();
-    const ownerScopes = await resolveMemoryAccess(env, input("owner"));
+    const ownerScopes = await resolveMemoryAccess(routedEnv(env, input("owner")), input("owner"));
     expect(ownerScopes.map((scope) => scope.kind)).toEqual(["workspace", "user", "workstream"]);
     expect(ownerScopes.find((scope) => scope.kind === "workspace")?.ownerId).toBe(WORKSPACE_ID);
 
-    const automationScopes = await resolveMemoryAccess(env, input("workspace", 1));
+    const automationScopes = await resolveMemoryAccess(routedEnv(env, input("workspace", 1)), input("workspace", 1));
     expect(automationScopes.map((scope) => scope.kind)).toEqual(["workspace", "automation"]);
 
     database.prepare(
@@ -294,13 +356,17 @@ describe("scoped agent memory", () => {
           SET scope = 'personal', owner_user_id = ?, execution_principal_json = ?
         WHERE id = ?`,
     ).run(OWNER_ID, JSON.stringify({ type: "user", userId: OWNER_ID }), AUTOMATION_SUBSCRIPTION_ID);
-    database.prepare("UPDATE harness_runs SET execution_principal_json = ? WHERE id = ?")
-      .run(JSON.stringify({ type: "user", userId: OWNER_ID }), AUTOMATION_RUN_ONE);
+    // A run's principal is fixed at admission and the compat surface cannot
+    // rewrite it; restate the fixture run the way a personal-automation
+    // admission would have recorded it.
+    objectStores.get(AUTOMATION_WORKSTREAM_ONE)!.prepare(
+      "UPDATE runs SET execution_principal_json = ? WHERE run_id = ?",
+    ).run(JSON.stringify({ type: "user", userId: OWNER_ID }), AUTOMATION_RUN_ONE);
     const personalAutomationInput = {
       ...input("workspace", 1),
       executionPrincipal: { type: "user" as const, userId: OWNER_ID },
     };
-    const personalAutomationScopes = await resolveMemoryAccess(env, personalAutomationInput);
+    const personalAutomationScopes = await resolveMemoryAccess(routedEnv(env, personalAutomationInput), personalAutomationInput);
     expect(personalAutomationScopes.map((scope) => scope.kind))
       .toEqual(["workspace", "user", "automation"]);
 
@@ -361,11 +427,11 @@ describe("scoped agent memory", () => {
     );
 
     const memberInput = input("member");
-    expect((await memorySearch(env, memberInput, "crimson")).results).toEqual([]);
-    expect((await memorySearch(env, memberInput, "zephyr")).results).toEqual([]);
-    expect((await memorySearch(env, memberInput, "release Thursday")).results)
+    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "crimson")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "zephyr")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "release Thursday")).results)
       .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
-    expect((await memorySearch(env, ownerInput, "obsolete chartreuse")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, ownerInput), ownerInput, "obsolete chartreuse")).results).toEqual([]);
 
     await expect(memoryTool(env, memberInput, "add").execute(
       { scopeKind: "workspace", text: "Members cannot write this", rationale: "Unauthorized" },
@@ -381,13 +447,13 @@ describe("scoped agent memory", () => {
       { scopeKind: "automation", text: "Use the crimson summary template", rationale: "Future runs need this" },
       toolContext(first, "add-automation"),
     );
-    const results = (await memorySearch(env, second, "crimson template")).results;
+    const results = (await memorySearch(routedEnv(env, second), second, "crimson template")).results;
     expect(results).toEqual([expect.objectContaining({
       memoryScopeId: (added.output as { memoryScopeId: string }).memoryScopeId,
       scopeKind: "automation",
     })]);
-    expect((await resolveMemoryAccess(env, first)).find((scope) => scope.kind === "automation")?.memoryScopeId)
-      .toBe((await resolveMemoryAccess(env, second)).find((scope) => scope.kind === "automation")?.memoryScopeId);
+    expect((await resolveMemoryAccess(routedEnv(env, first), first)).find((scope) => scope.kind === "automation")?.memoryScopeId)
+      .toBe((await resolveMemoryAccess(routedEnv(env, second), second)).find((scope) => scope.kind === "automation")?.memoryScopeId);
   });
 
   it("replays receipts and uses revision CAS for updates and invalidation", async () => {
@@ -441,7 +507,7 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "receipt-invalidate"),
     );
     expect(invalidated.output).toMatchObject({ revision: 3, invalidated: true });
-    expect((await memorySearch(env, runInput, "azure")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, runInput), runInput, "azure")).results).toEqual([]);
     expect(database.prepare(
       "SELECT invalidated_at, invalidation_reason, text FROM memory_items WHERE memory_item_id = ?",
     ).get(memoryItemId)).toMatchObject({
@@ -463,7 +529,7 @@ describe("scoped agent memory", () => {
     ).get((added.output as { memoryItemId: string }).memoryItemId)).toEqual({ status: "completed" });
     expect(await processMemoryIndexOutbox(env)).toBe(0);
 
-    const semantic = await memorySearch(env, runInput, "red");
+    const semantic = await memorySearch(routedEnv(env, runInput), runInput, "red");
     expect(semantic.retrievalMode).toBe("hybrid");
     expect(semantic.results).toEqual([expect.objectContaining({ text: "The report palette is crimson" })]);
 
@@ -473,10 +539,10 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "vector-update"),
     );
     expect(vector.vectors.has(`${memoryItemId}:1`)).toBe(true);
-    expect((await memorySearch(env, runInput, "red")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, runInput), runInput, "red")).results).toEqual([]);
 
     ai.fail = true;
-    const degraded = await memorySearch(env, runInput, "azure palette");
+    const degraded = await memorySearch(routedEnv(env, runInput), runInput, "azure palette");
     expect(degraded.retrievalMode).toBe("fts_only");
     expect(degraded.results).toEqual([expect.objectContaining({ revision: 2, text: "The report palette is azure" })]);
     expect(await processMemoryIndexOutbox(env)).toBe(0);
@@ -506,7 +572,7 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "snapshot-add"),
     );
     const first = await freezeRunMemoryContext(
-      env,
+      routedEnv(env, runInput),
       runInput,
       { attemptId: "attempt-owner", owner: "lease-owner" },
       "crimson dashboard",
@@ -516,15 +582,21 @@ describe("scoped agent memory", () => {
     database.prepare("UPDATE memory_items SET text = 'Changed after admission' WHERE memory_item_id = ?")
       .run(first.results[0]!.memoryItemId);
     const replay = await freezeRunMemoryContext(
-      env,
+      routedEnv(env, runInput),
       runInput,
       { attemptId: "attempt-owner", owner: "lease-owner" },
       "a different retry query",
     );
     expect(replay).toEqual(first);
-    expect(() => database.prepare(
+    // The frozen context is immutable through its only write surface: the
+    // compat view carries an insert trigger and nothing else, so a routed
+    // mutation is refused outright — the object-side successor to the dropped
+    // D1 `harness_run_memory_context_immutable` trigger.
+    expect(() => workstreamObjectRun(
+      objectStores.get(runInput.workstreamId)!,
       "UPDATE harness_run_memory_contexts SET query_text = 'mutated' WHERE harness_run_id = ?",
-    ).run(RUN_ONE)).toThrow(/harness_run_memory_context_immutable/u);
+      RUN_ONE,
+    )).toThrow(/cannot modify _runtime_run_memory_contexts/u);
   });
 
   it("shares automation tables across runs and queries only matching projected rows", async () => {

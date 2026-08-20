@@ -45,6 +45,7 @@ function fixture(): {
 } {
   const database = new DatabaseSync(":memory:");
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
   database.exec(`
@@ -120,11 +121,16 @@ function fixture(): {
     idFromName: vi.fn(() => ({ toString: () => "workstream-do-id" })),
     get: vi.fn(() => ({ controlBlockDashboard })),
   };
+  const workspaceNamespace = {
+    idFromName: vi.fn(() => ({ toString: () => "workspace-do-id" })),
+    get: vi.fn(() => ({ canReadWorkstream: vi.fn(async () => true) })),
+  };
   const env = createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: { prepare },
     WORKSTREAM_DOS: namespace,
+    WORKSPACE_DOS: workspaceNamespace,
   });
   return { database, env, requests };
 }

@@ -5,17 +5,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
 import { TerminalWorkstreamService } from "../src/services/terminal/workstream-state";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const W = asWorkspaceId("61000000-0000-4000-8000-000000000001");
 const S = "61000000-0000-4000-8000-000000000002";
 const U = asUserId("61000000-0000-4000-8000-000000000003");
 const C = "61000000-0000-4000-8000-000000000004";
-const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 function fixture() {
-  const database = migratedSqliteDatabase(); databases.push(database);
+  const database = preRetirementProductSqliteDatabase(); databases.push(database);
+  // Terminal state is served from the work stream's object once the authority
+  // is open; the D1 sandbox and repository copies were dropped.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'terminal-state', 'state@example.com', 'State', '2026-08-13', '2026-08-13');
@@ -37,14 +48,24 @@ function fixture() {
     VALUES ('${C}', '${W}', 'github', 'workspace', NULL, '1234', 'GitHub',
             '[]', 'plugin_github', 'healthy', '2026-08-13', '2026-08-13');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    // Visibility is answered by the WorkspaceDO directory after the cutover;
+    // the fixture member is the creator-participant, so it reads as visible.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { canReadWorkstream: async () => true },
+    }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => undefined) }),
     DAYTONA_API_KEY: "key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role: "member" };
-  return { database, env, auth, service: new TerminalWorkstreamService(env, auth) };
+  return { database, objectStore, env, auth, service: new TerminalWorkstreamService(env, auth) };
 }
 
 describe("Terminal work-stream state", () => {
@@ -57,20 +78,24 @@ describe("Terminal work-stream state", () => {
   });
 
   it("returns model-selected repository and lifecycle retention state", async () => {
-    const { database, service } = fixture();
-    database.prepare(
+    const { objectStore, service } = fixture();
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_terminal_repositories
        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
         base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
        VALUES (?, ?, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, ?, ?)`,
-    ).run(W, S, C, "a".repeat(40), `avalon/${S}`, U, "2026-08-13", "2026-08-13");
-    database.prepare(
+      W, S, C, "a".repeat(40), `avalon/${S}`, U, "2026-08-13", "2026-08-13",
+    );
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_sandboxes
        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
         authority_fingerprint, applied_network_revision, version, last_activity_at,
         expire_due_at, final_diff_resource_id, created_at, updated_at)
        VALUES (?, ?, 'stopped', 'state-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, NULL, ?, ?)`,
-    ).run(W, S, "2026-08-13T12:00:00.000Z", "2026-09-12T12:00:00.000Z", "2026-08-13T12:00:00.000Z", "2026-08-13T12:00:00.000Z");
+      W, S, "2026-08-13T12:00:00.000Z", "2026-09-12T12:00:00.000Z", "2026-08-13T12:00:00.000Z", "2026-08-13T12:00:00.000Z",
+    );
     await expect(service.get(S)).resolves.toMatchObject({
       state: "stopped", lastActivityAt: "2026-08-13T12:00:00.000Z", expiresAt: "2026-09-12T12:00:00.000Z",
       localFilesRetained: true,

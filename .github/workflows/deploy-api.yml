@@ -1,8 +1,10 @@
 name: Deploy Avalon API
 
 # Ordinary regional release, in the order docs/runbook.md requires:
-# validate both Wrangler configurations, apply the remote D1 migrations, deploy
-# EU, deploy Global, then call GET /health on both regions.
+# validate both Wrangler configurations, apply ordinary remote D1 migrations,
+# deploy EU, deploy Global, then call GET /health on both regions. The one
+# destructive product-schema retirement is detected from each region's pending
+# ledger and applied after that region has the compatible replacement Worker.
 #
 # The Global Worker holds named service bindings into EU entrypoints, so EU is
 # always deployed first. A release that introduces a brand-new cross-region
@@ -245,19 +247,37 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: List the pending remote migrations for EU
+        id: pending_eu
         if: env.DEPLOY_EU == 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote:list:eu
+        run: |
+          set -euo pipefail
+          pending="$(pnpm --filter @avalon/api db:migrate:remote:list:eu)"
+          echo "$pending"
+          if grep -Fq "0090_drop_legacy_product_tables.sql" <<< "$pending"; then
+            echo "worker_first=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: List the pending remote migrations for Global
+        id: pending_global
         if: env.DEPLOY_GLOBAL == 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote:list
+        run: |
+          set -euo pipefail
+          pending="$(pnpm --filter @avalon/api db:migrate:remote:list)"
+          echo "$pending"
+          if grep -Fq "0090_drop_legacy_product_tables.sql" <<< "$pending"; then
+            echo "worker_first=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Apply the remote D1 migrations to EU
-        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true'
+        if: >-
+          env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true' &&
+          steps.pending_eu.outputs.worker_first != 'true'
         run: pnpm --filter @avalon/api db:migrate:remote:eu
 
       - name: Apply the remote D1 migrations to Global
-        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
+        if: >-
+          env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true' &&
+          steps.pending_global.outputs.worker_first != 'true'
         run: pnpm --filter @avalon/api db:migrate:remote
 
       # Both regional deployments build the symbolicator image, and Wrangler
@@ -298,6 +318,25 @@ jobs:
       - name: Deploy the Global Worker
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @avalon/api deploy:global
+
+      # 0090 deletes columns and tables the previous Worker still names on hot
+      # creation paths. The replacement Worker deliberately supports both the
+      # through-0089 and final anchor shapes, so a failed migration leaves a
+      # healthy Worker on the old schema and a failed deploy leaves 0090
+      # unapplied. The pending remote ledger, rather than the triggering diff,
+      # controls this ordering so a superseded workflow or manual regional run
+      # cannot skip the safety barrier.
+      - name: Retire the D1 product schema in EU after the compatible Worker
+        if: >-
+          env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true' &&
+          steps.pending_eu.outputs.worker_first == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote:eu
+
+      - name: Retire the D1 product schema in Global after the compatible Worker
+        if: >-
+          env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true' &&
+          steps.pending_global.outputs.worker_first == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote
 
       - name: Verify regional health
         run: |

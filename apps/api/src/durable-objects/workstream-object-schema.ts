@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 5;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 9;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1149,7 +1149,99 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "absorb replayed durable message writes inside the insert trigger",
     statements: rebuiltMessagesInsertTrigger(),
   },
+  {
+    version: 6,
+    description: "keep the description-refresh ratchet across claims",
+    statements: rebuiltDescriptionRefreshInsertTrigger(),
+  },
+  {
+    version: 7,
+    description: "one child run per parent tool call",
+    statements: [
+      // D1 enforced `harness_runs_parent_tool_call_idx` (0027) and the inline
+      // child admission depends on it: its INSERT ends in ON CONFLICT DO
+      // NOTHING, and the zero-change result is what routes a replayed
+      // admission to the re-read branch that reuses the existing child — and
+      // its settled result. Without the index, a retried admission with a
+      // fresh child id simply inserted a second child through the port.
+      // Existing duplicates cannot be deleted here (tool_effects,
+      // elicitation_requests, and parts provenance reference runs without
+      // cascade), so every non-newest duplicate has its tool-call binding
+      // suffixed out of the way instead: the newest row is the id the
+      // parent's last admission returned, and a suffixed row still reads as
+      // an inline child, so the parent-loss reaper retires it normally. The
+      // newest row of each group is never rewritten, so the correlated scan
+      // is stable while the UPDATE walks the table.
+      `UPDATE runs SET parent_tool_call_id = parent_tool_call_id || ':superseded:' || run_id
+        WHERE parent_run_id IS NOT NULL AND parent_tool_call_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM runs newer
+             WHERE newer.parent_run_id = runs.parent_run_id
+               AND newer.parent_tool_call_id = runs.parent_tool_call_id
+               AND newer.run_id != runs.run_id
+               AND (newer.created_at > runs.created_at
+                 OR (newer.created_at = runs.created_at AND newer.run_id > runs.run_id))
+          )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS runs_parent_tool_call_uq
+         ON runs(parent_run_id, parent_tool_call_id)
+         WHERE parent_run_id IS NOT NULL AND parent_tool_call_id IS NOT NULL`,
+    ],
+  },
+  {
+    version: 8,
+    description: "carry the replan columns through the tool-invocations update trigger",
+    statements: rebuiltToolInvocationsUpdateTrigger(),
+  },
+  {
+    version: 9,
+    description: "exempt block-dashboard runs from the single-mutating-run constraint",
+    statements: [
+      // The harness claim deliberately admits a block-dashboard run beside a
+      // running interactive run — its claim UPDATE skips the NOT EXISTS fence
+      // entirely for that origin — but both top-level runs sit on substream
+      // '0', so `runs_mutating_substream_uq` turned the second claim into a
+      // UNIQUE violation thrown through the port instead of the zero-change
+      // result the claim's busy branch is written to absorb. The index now
+      // encodes the same exemption the claim SQL does; block runs' own
+      // concurrency stays governed by the claim predicates, as it was on D1
+      // (which had no equivalent index at all).
+      `DROP INDEX IF EXISTS runs_mutating_substream_uq`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS runs_mutating_substream_uq
+         ON runs(substream_id)
+         WHERE status IN ('running', 'waiting', 'steering')
+           AND origin != 'block_dashboard_block'`,
+    ],
+  },
 ];
+
+/**
+ * Rebuilds `_runtime_description_refreshes_insert` so a claim does not zero
+ * the keep ratchet.
+ *
+ * The claim INSERT names no `consecutive_keeps`; the trigger coalesced the
+ * absent value to 0 and its conflict arm then wrote that 0 over the standing
+ * count, so keeps could never exceed one and the 24/48-hour rest tiers were
+ * unreachable. The legacy D1 claim upsert never touched the column — this
+ * restores that contract: an incoming NULL preserves the standing value, an
+ * explicit value (the settle path's report) lands as written.
+ *
+ * Derived from the frozen v1 body with v3's rounding applied, so the versions
+ * cannot drift.
+ */
+function rebuiltDescriptionRefreshInsertTrigger(): string[] {
+  const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_description_refreshes_insert"));
+  if (!source) throw new Error("description refresh insert trigger not found in compat schema");
+  const rounded = source.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+  const anchor = `          consecutive_keeps = CASE WHEN excluded.decision = 'authored'
+            THEN description_refresh_state.consecutive_keeps ELSE excluded.consecutive_keeps END,`;
+  if (!rounded.includes(anchor)) throw new Error("description refresh trigger shape changed");
+  const patched = rounded.replace(anchor, `          consecutive_keeps = CASE
+            WHEN excluded.decision = 'authored' OR NEW.consecutive_keeps IS NULL
+            THEN description_refresh_state.consecutive_keeps
+            ELSE excluded.consecutive_keeps END,`);
+  return ["DROP TRIGGER IF EXISTS _runtime_description_refreshes_insert", patched];
+}
 
 /**
  * Rebuilds `_runtime_messages_insert` so a replayed durable write is absorbed.
@@ -1189,6 +1281,41 @@ function rebuiltMessagesInsertTrigger(): string[] {
          updated_at = excluded.updated_at
        WHERE parts.message_type = 'tool';`);
   return ["DROP TRIGGER IF EXISTS _runtime_messages_insert", patched];
+}
+
+/**
+ * Rebuilds `_runtime_tool_invocations_update` so a replan lands whole.
+ *
+ * `replanCompletedReadReceipt` rebinds a settled read receipt to the call that
+ * landed on its coordinates: it rewrites tool_name, connection_id, input_hash,
+ * input_json, the execution plan pair, and the idempotency key alongside the
+ * status flip. The v1 trigger carried only the status/output/error columns, so
+ * the port dropped the rebind columns on the floor while the statement still
+ * counted as a change — the receipt then described the old call under the new
+ * plan hash. The trigger now maps every column the runtime's UPDATE statements
+ * write; a view UPDATE that does not mention a column passes its old value
+ * through NEW, so the added arms are identity writes for every other caller.
+ *
+ * Derived from the frozen v1 body with v3's rounding applied, so the versions
+ * cannot drift.
+ */
+function rebuiltToolInvocationsUpdateTrigger(): string[] {
+  const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_tool_invocations_update"));
+  if (!source) throw new Error("tool invocations update trigger not found in compat schema");
+  const rounded = source.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+  const anchor = `       UPDATE tool_effects SET
+         status = CASE NEW.status WHEN 'pending' THEN 'admitted' WHEN 'started' THEN 'executing' ELSE NEW.status END,`;
+  if (!rounded.includes(anchor)) throw new Error("tool invocations update trigger shape changed");
+  const patched = rounded.replace(anchor, `${anchor}
+         tool_name = NEW.tool_name,
+         connection_id = NEW.connection_id,
+         request_hash = NEW.input_hash,
+         input_json = COALESCE(NEW.input_json, '{}'),
+         execution_plan_hash = NEW.execution_plan_hash,
+         execution_plan_json = NEW.execution_plan_json,
+         provider_idempotency_key = NEW.provider_idempotency_key,`);
+  return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_update", patched];
 }
 
 /**

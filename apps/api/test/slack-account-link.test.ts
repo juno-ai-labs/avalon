@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
@@ -362,7 +362,7 @@ async function seedChallenge(
 }
 
 async function seededDatabase(): Promise<DatabaseSync> {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   const encrypted = await encryptString(
     JSON.stringify({ botAccessToken: "xoxb-test" }),

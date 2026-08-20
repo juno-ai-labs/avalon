@@ -25,11 +25,16 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
+import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
+
+beforeAll(async () => {
+  await seedOpenWorkstreamAuthority(env.DB);
+});
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000002a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000002a2");

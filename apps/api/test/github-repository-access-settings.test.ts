@@ -10,6 +10,13 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000041";
@@ -91,15 +98,8 @@ describe("GitHub repository access settings", () => {
          harness_status, last_activity_at, created_at, updated_at)
       VALUES ('00000000-0000-7000-8000-000000000044', '${WORKSPACE_ID}', 'Terminal',
               'Terminal', 'ad_hoc', '${USER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO workstream_terminal_repositories
-        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
-         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
-         created_at, updated_at)
-      VALUES ('${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000044', '${CONNECTION_ID}',
-              101, 'with-avalon/avalon', 'main', '${"a".repeat(40)}',
-              'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
-              '${USER_ID}', '2026-01-01', '2026-01-01');
     `);
+    const objectStore = selectedRepositoryObject("00000000-0000-7000-8000-000000000044");
 
     const updated = await service.updateGitHubRepositoryAccess(CONNECTION_ID, {
       expectedRevision: 0,
@@ -144,9 +144,14 @@ describe("GitHub repository access settings", () => {
     expect(database.prepare(
       "SELECT action FROM audit_events WHERE target_id = ? ORDER BY created_at DESC LIMIT 1",
     ).get(CONNECTION_ID)).toEqual({ action: "connector.github_repository_access.updated" });
-    expect(database.prepare(
+    // Post-cutover the object-local selection is immutable provenance: the
+    // policy change does not fan out to it, and every bootstrap rechecks the
+    // connector policy instead of trusting this mounted credential expiry.
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
-    ).get(CONNECTION_ID)).toEqual({ read_token_expires_at: null });
+      CONNECTION_ID,
+    )).toEqual({ read_token_expires_at: "2099-01-01T00:00:00.000Z" });
   });
 
   it("rejects stale revisions and repository identities absent from the current App installation", async () => {
@@ -178,45 +183,6 @@ describe("GitHub repository access settings", () => {
     })).rejects.toMatchObject({ status: 422, code: "github_repository_identity_changed" });
   });
 
-  it("rolls back a policy change when mounted Terminal credential invalidation fails", async () => {
-    const database = migratedDatabase();
-    await seedConnection(database);
-    database.exec(`
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('00000000-0000-7000-8000-000000000045', '${WORKSPACE_ID}', 'Terminal',
-              'Terminal', 'ad_hoc', '${USER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO workstream_terminal_repositories
-        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
-         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
-         created_at, updated_at)
-      VALUES ('${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000045', '${CONNECTION_ID}',
-              101, 'with-avalon/avalon', 'main', '${"a".repeat(40)}',
-              'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
-              '${USER_ID}', '2026-01-01', '2026-01-01');
-      CREATE TRIGGER reject_terminal_credential_invalidation
-      BEFORE UPDATE OF read_token_expires_at ON workstream_terminal_repositories
-      BEGIN
-        SELECT RAISE(ABORT, 'invalidation failed');
-      END;
-    `);
-    const service = new ConnectionService(environment(database), authorization());
-
-    await expect(service.updateGitHubRepositoryAccess(CONNECTION_ID, {
-      expectedRevision: 0,
-      mode: "all_repositories",
-      defaultRemoteAccess: "read_only",
-      repositories: [],
-    })).rejects.toThrow("invalidation failed");
-    expect(JSON.parse(String(database.prepare(
-      "SELECT config_json FROM connector_connections WHERE id = ?",
-    ).get(CONNECTION_ID)?.config_json))).toEqual({ installationId: "9001" });
-    expect(database.prepare(
-      "SELECT read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
-    ).get(CONNECTION_ID)).toEqual({ read_token_expires_at: "2099-01-01T00:00:00.000Z" });
-  });
-
   it("updates only the repository-policy subtree when another connector field changes concurrently", async () => {
     const database = migratedDatabase();
     await seedConnection(database);
@@ -244,7 +210,7 @@ describe("GitHub repository access settings", () => {
     });
   });
 
-  it("revokes selected Terminal state when its GitHub connection is disabled", async () => {
+  it("disables the connection every bootstrap rechecks, leaving object-local Terminal provenance untouched", async () => {
     const database = migratedDatabase();
     await seedConnection(database);
     database.exec(`
@@ -253,21 +219,23 @@ describe("GitHub repository access settings", () => {
          harness_status, last_activity_at, created_at, updated_at)
       VALUES ('00000000-0000-7000-8000-000000000046', '${WORKSPACE_ID}', 'Terminal',
               'Terminal', 'ad_hoc', '${USER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO workstream_terminal_repositories
-        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
-         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
-         created_at, updated_at)
-      VALUES ('${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000046', '${CONNECTION_ID}',
-              101, 'with-avalon/avalon', 'main', '${"a".repeat(40)}',
-              'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
-              '${USER_ID}', '2026-01-01', '2026-01-01');
     `);
+    const objectStore = selectedRepositoryObject("00000000-0000-7000-8000-000000000046");
 
     await new ConnectionService(environment(database), authorization()).disable(CONNECTION_ID);
 
+    // Post-cutover, disabling no longer fans a revocation out to every
+    // SubstreamAgent: the object row is immutable provenance and every
+    // bootstrap rechecks the connector, which is now disabled and stripped of
+    // credentials — the state that makes the selection unusable.
     expect(database.prepare(
+      "SELECT status, encrypted_credentials FROM connector_connections WHERE id = ?",
+    ).get(CONNECTION_ID)).toEqual({ status: "disabled", encrypted_credentials: null });
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
-    ).get(CONNECTION_ID)).toEqual({ state: "revoked", read_token_expires_at: null });
+      CONNECTION_ID,
+    )).toEqual({ state: "selected", read_token_expires_at: "2099-01-01T00:00:00.000Z" });
   });
 
   it("lets members inspect workspace policy but reserves changes for administrators", async () => {
@@ -377,9 +345,34 @@ function migratedDatabase(): DatabaseSync {
   database.exec("PRAGMA foreign_keys = ON");
   const migrations = new URL("../../../packages/db/migrations/", import.meta.url);
   for (const fileName of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(new URL(fileName, migrations), "utf8"));
   }
+  openWorkstreamAuthorityForTest(database);
   return database;
+}
+
+/** A work stream's object carrying a selected Terminal repository. */
+function selectedRepositoryObject(workstreamId: string): DatabaseSync {
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: WORKSPACE_ID });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstream_terminal_repositories
+       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+        base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
+        created_at, updated_at)
+     VALUES (?, ?, ?, 101, 'with-avalon/avalon', 'main', ?,
+             'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
+             ?, '2026-01-01', '2026-01-01')`,
+    WORKSPACE_ID,
+    workstreamId,
+    CONNECTION_ID,
+    "a".repeat(40),
+    USER_ID,
+  );
+  return objectStore;
 }
 
 function jsonResponse(value: unknown): Response {

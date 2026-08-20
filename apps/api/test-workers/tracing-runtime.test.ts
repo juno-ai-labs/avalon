@@ -72,11 +72,14 @@ describe("custom spans on the Workers runtime", () => {
 
     const flow = rows.find((row) => row["event"] === "perf_flow");
     expect(flow).toMatchObject({ flow: "workstream_create", component: "api", workspace_id: "workspace-1" });
-    // Durations are not asserted: workerd pins `Date.now()` across a
-    // synchronous run, so every step here legitimately measures zero.
-    expect(Object.keys(flow?.["steps"] as Record<string, number>)).toEqual([
+    // Durations are not asserted: workerd usually pins `Date.now()` across a
+    // synchronous run, but a full suite can advance the clock before the first
+    // step and legitimately record that positive gap as `unattributed`.
+    const steps = flow?.["steps"] as Record<string, number>;
+    expect(Object.keys(steps).filter((name) => name !== "unattributed")).toEqual([
       "workstream.create.receipt.reserve",
       "workstream.create.object.initialize",
     ]);
+    if (steps["unattributed"] !== undefined) expect(steps["unattributed"]).toBeGreaterThan(0);
   });
 });

@@ -327,6 +327,7 @@ async function seededDatabase(): Promise<DatabaseSync> {
   databases.push(database);
   database.exec("PRAGMA foreign_keys = ON");
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
   const encrypted = await encryptString(

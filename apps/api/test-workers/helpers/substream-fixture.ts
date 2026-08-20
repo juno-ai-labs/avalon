@@ -16,6 +16,27 @@ export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1"
 export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");
 export const USER_ID = asUserId("00000000-0000-7000-8000-0000000004a3");
 
+/** Declare the production authority state required by all run ingress. */
+export async function seedOpenWorkstreamAuthority(database: D1Database): Promise<void> {
+  await database.batch([
+    database.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
+      id INTEGER PRIMARY KEY,
+      phase TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL
+    )`),
+    database.prepare(`INSERT INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)
+      ON CONFLICT(id) DO UPDATE SET
+        phase = excluded.phase,
+        generation = excluded.generation,
+        required_serving_contract_version = excluded.required_serving_contract_version,
+        serving_contract_version = excluded.serving_contract_version`),
+  ]);
+}
+
 /** A dispatch payload that satisfies `WorkstreamWorkflowInputSchema`. */
 export function runInput(runId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
