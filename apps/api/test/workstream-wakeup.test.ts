@@ -1,3 +1,4 @@
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
@@ -22,10 +23,10 @@ import {
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
-const USER_ID = "00000000-0000-4000-8000-000000000000";
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
-const HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000003";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
+const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
 
 class SqliteD1Statement {
   private values: unknown[] = [];

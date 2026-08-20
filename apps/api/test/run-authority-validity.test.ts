@@ -1,3 +1,4 @@
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,10 +12,10 @@ import {
   createTestEnv,
 } from "./helpers/cloudflare-test";
 
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const RUN_ID = "00000000-0000-4000-8000-000000000003";
-const USER_ID = "00000000-0000-4000-8000-000000000004";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000005";
 const ACTIVITY_ID = "00000000-0000-4000-8000-000000000006";
 const CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
@@ -130,7 +131,7 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
-    harnessRunId: "00000000-0000-4000-8000-000000000007",
+    harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000007"),
     triggerMessageId: null,
     automationSubscriptionId: SUBSCRIPTION_ID,
     activityId,

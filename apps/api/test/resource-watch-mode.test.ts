@@ -1,10 +1,11 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const userId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const userId = asUserId("00000000-0000-7000-8000-000000000002");
 const workstreamId = "00000000-0000-7000-8000-000000000003";
 const resourceId = "00000000-0000-7000-8000-000000000004";
 const connectionId = "00000000-0000-7000-8000-000000000005";

@@ -1,3 +1,4 @@
+import type { UserId, WorkspaceId } from '@avalon/contracts';
 import type {
   TelemetryEventName,
   TelemetryEventProperties,
@@ -64,8 +65,8 @@ export function resourceTelemetryEventId(resourceId: string, namespace: number):
 }
 
 interface ProductTelemetryInput<TName extends TelemetryEventName> {
-  workspaceId: string;
-  userId?: string;
+  workspaceId: WorkspaceId;
+  userId?: UserId;
   name: TName;
   properties: TelemetryEventProperties<TName>;
   operationId: string;

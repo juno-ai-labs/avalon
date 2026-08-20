@@ -1,8 +1,13 @@
 import {
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
-  IdSchema,
+  UserIdSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
+  asBlockId,
+  asWorkspaceId,
+  asWorkstreamId,
   WorkstreamControlMetadataSchema,
   WorkstreamControlSocketClientEventSchema,
   WorkstreamControlSocketEventSchema,
@@ -93,9 +98,9 @@ interface BlockDashboardBlockRunRow extends Record<string, SqlStorageValue> {
 }
 
 const WorkstreamSocketIdentitySchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  userId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
@@ -1203,9 +1208,9 @@ export class WorkstreamDO extends DurableObject<Env> {
         metadata.workspace_id,
         blockDashboardAgentName(
           this.env.AVALON_REGION,
-          metadata.workspace_id,
-          metadata.workstream_id,
-          blockId,
+          asWorkspaceId(metadata.workspace_id),
+          asWorkstreamId(metadata.workstream_id),
+          asBlockId(blockId),
         ),
       );
       await stub.revalidateViewerAccess(BlockDashboardSocketRetractionRequestSchema.parse({
@@ -1349,8 +1354,8 @@ export class WorkstreamDO extends DurableObject<Env> {
         metadata.workspace_id,
         substreamAgentName(
           this.env.AVALON_REGION,
-          metadata.workspace_id,
-          metadata.workstream_id,
+          asWorkspaceId(metadata.workspace_id),
+          asWorkstreamId(metadata.workstream_id),
         ),
       );
       const response = await stub.requestBlockDashboardRefresh(request);
@@ -2069,7 +2074,7 @@ export class WorkstreamDO extends DurableObject<Env> {
         this.env,
         this.env.WORKSPACE_DOS,
         metadata.workspace_id,
-        workspaceDOName(this.env.AVALON_REGION, metadata.workspace_id),
+        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
       );
       const result = WorkspaceDirectoryApplyResultSchema.parse(
         await workspace.applyWorkstreamDirectoryEffects({

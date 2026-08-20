@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { NormalizedActivitySchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -18,7 +19,7 @@ import {
   connectorCapabilitySupportsScope,
 } from "./types";
 
-const AVALON_WORKSPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const AVALON_WORKSPACE_ID = asWorkspaceId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
 const AVALON_CONNECTION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("Linear connector", () => {
@@ -252,14 +253,14 @@ describe("Linear connector", () => {
     const connection = personalLinearConnection([LinearCapabilities.read]);
     await expect(adapter.executeTool("list_teams", {}, {
       connection,
-      principal: { type: "user", userId: "avalon-user-1" },
+      principal: { type: "user", userId: asUserId("7088fd6d-1db0-4f5a-86ca-3978d96e0d47") },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ summary: "Listed Linear teams" });
     expect(graphqlCalls).toBe(1);
 
     await expect(adapter.executeTool("list_teams", {}, {
       connection,
-      principal: { type: "user", userId: "another-user" },
+      principal: { type: "user", userId: asUserId("c823c5e4-dcc7-4a16-8856-3db84d0efb17") },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/another principal/i);
     await expect(adapter.executeTool("list_teams", {}, {
@@ -613,7 +614,7 @@ describe("Linear connector", () => {
       verifiedLinearEvent("Issue", { id: "issue-1", identifier: "AVA-1" }),
     )).toMatchObject({
       connectionScope: "personal",
-      connectionOwnerUserId: "avalon-user-1",
+      connectionOwnerUserId: "7088fd6d-1db0-4f5a-86ca-3978d96e0d47",
       eventType: "linear.issue.remove",
     });
     expect(() => normalizeLinearWebhook(
@@ -862,7 +863,7 @@ function personalLinearConnection(grantedScopes: string[]): AuthorizedConnectorC
   return authorizedConnection({
     ...linearConnection(grantedScopes),
     scope: "personal",
-    ownerUserId: "avalon-user-1",
+    ownerUserId: "7088fd6d-1db0-4f5a-86ca-3978d96e0d47",
     credentials: {
       ...linearConnection(grantedScopes).credentials,
       oauthActor: "user",

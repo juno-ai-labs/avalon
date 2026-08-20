@@ -1,5 +1,5 @@
 import { slackApi } from "@avalon/connectors";
-import { workstreamCanonicalUrl } from "@avalon/contracts";
+import { asWorkspaceId, workstreamCanonicalUrl } from "@avalon/contracts";
 import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -187,7 +187,7 @@ async function loadDurableObjectStaleUnfurls(
       env,
       env.WORKSPACE_DOS,
       workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
     const ids = [...idSet];
     for (let offset = 0; offset < ids.length; offset += 250) {

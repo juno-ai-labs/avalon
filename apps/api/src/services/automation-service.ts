@@ -1,6 +1,9 @@
 import { newId, nowIso } from "@avalon/db";
-import { AutomationDraftStateSchema } from "@avalon/contracts";
+import { AutomationDraftStateSchema, asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
 import type {
+  HarnessRunId,
+  WorkspaceId,
+  WorkstreamId,
   AutomationCompilerMessage,
   AutomationDeliveryTargetType,
   AutomationDraft,
@@ -96,8 +99,8 @@ interface ValidatedConnectorBindings {
 
 interface IdempotentAutomationRun {
   runId: string;
-  workstreamId: string;
-  harnessRunId: string | null;
+  workstreamId: WorkstreamId;
+  harnessRunId: HarnessRunId | null;
   workflowInstanceId: string | null;
   runStatus: string;
   harnessStatus: string | null;
@@ -1487,7 +1490,7 @@ export class AutomationService {
       if (existing) {
         await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
         await this.recordRunCreationTelemetry(existing.workstream_id, triggerType);
-        return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+        return { runId: existing.run_id, workstreamId: asWorkstreamId(existing.workstream_id), reused: true };
       }
     }
     if (idempotencyKey) {
@@ -1500,8 +1503,8 @@ export class AutomationService {
       }
     }
     const runId = newId();
-    const workstreamId = newId();
-    const harnessRunId = newId();
+    const workstreamId = asWorkstreamId(newId());
+    const harnessRunId = asHarnessRunId(newId());
     const triggerMessageId = openingInput ? newId() : null;
     const at = nowIso();
     // Copied onto the run's work stream rather than looked up through the
@@ -1656,7 +1659,7 @@ export class AutomationService {
         if (existing) {
           await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
           await this.recordRunCreationTelemetry(existing.workstream_id, triggerType);
-          return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+          return { runId: existing.run_id, workstreamId: asWorkstreamId(existing.workstream_id), reused: true };
         }
       }
       if (idempotencyKey && isConstraintError(error)) {
@@ -1739,8 +1742,8 @@ export class AutomationService {
       ]);
       return {
         runId: run.run_id,
-        workstreamId: run.workstream_id,
-        harnessRunId: harness?.id ?? null,
+        workstreamId: asWorkstreamId(run.workstream_id),
+        harnessRunId: harness?.id ? asHarnessRunId(harness.id) : null,
         workflowInstanceId: harness?.workflow_instance_id ?? run.run_workflow_instance_id,
         runStatus: run.run_status,
         harnessStatus: harness?.status ?? null,
@@ -1774,8 +1777,8 @@ export class AutomationService {
     if (!row) return null;
     return {
       runId: row.run_id,
-      workstreamId: row.workstream_id,
-      harnessRunId: row.harness_run_id,
+      workstreamId: asWorkstreamId(row.workstream_id),
+      harnessRunId: row.harness_run_id === null ? null : asHarnessRunId(row.harness_run_id),
       workflowInstanceId: row.harness_workflow_instance_id ?? row.run_workflow_instance_id,
       runStatus: row.run_status,
       harnessStatus: row.harness_status,
@@ -2170,7 +2173,7 @@ export class AutomationService {
 export async function runAutomationFromInboundEmail(
   env: Env,
   input: {
-    workspaceId: string;
+    workspaceId: WorkspaceId;
     automationSubscriptionId: string;
     opening: InboundAutomationOpeningInput;
   },
@@ -2186,7 +2189,7 @@ export async function runAutomationFromInboundEmail(
     template_owner_user_id: string;
   }>();
   if (!subscription) throw new ApiError(404, "automation_not_found", "Automation not found");
-  const userId = subscription.owner_user_id ?? subscription.template_owner_user_id;
+  const userId = asUserId(subscription.owner_user_id ?? subscription.template_owner_user_id);
   const auth: AuthContext = {
     sessionId: `inbound-email:${input.opening.resendEmailId}`,
     userId,

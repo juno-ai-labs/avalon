@@ -1,4 +1,4 @@
-import type { Message, Region } from "@avalon/contracts";
+import { asWorkspaceId, type Message, type Region } from "@avalon/contracts";
 import { newId } from "@avalon/db";
 import { z } from "zod";
 import type { Env } from "../env";
@@ -787,7 +787,7 @@ export class ResendRegionalEmailService {
       await this.renewAutomationLease(input, leaseToken);
       const structuredContent = inboundStructuredContent(input.resendEmailId, email, resourceId);
       const run = await runAutomationFromInboundEmail(this.env, {
-        workspaceId: input.workspaceId,
+        workspaceId: asWorkspaceId(input.workspaceId),
         automationSubscriptionId: input.automationSubscriptionId,
         opening: {
           resendEmailId: input.resendEmailId,

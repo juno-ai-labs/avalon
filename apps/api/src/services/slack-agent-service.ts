@@ -20,6 +20,8 @@ import {
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
+  asUserId,
+  asWorkspaceId,
   isWorkstreamId,
   parseWorkstreamLink,
   workstreamCanonicalUrl,
@@ -1855,7 +1857,7 @@ export class SlackAgentService {
           const externalIdentity = actor
             ? { actor }
             : await this.externalSlackActor(token, connection.workspace_id, teamId, slackUserId);
-          const workspaceService = new SlackWorkspaceWorkstreamService(this.env, connection.workspace_id);
+          const workspaceService = new SlackWorkspaceWorkstreamService(this.env, asWorkspaceId(connection.workspace_id));
           const externalInput = {
             actor: externalIdentity.actor,
             text: requestedPrompt,
@@ -1948,7 +1950,7 @@ export class SlackAgentService {
           scope,
           ...(originResource ? { originResource } : {}),
         }, input.slackOrigin, input.slackSearchAuthorization)
-      : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
+      : await new SlackWorkspaceWorkstreamService(this.env, asWorkspaceId(input.connection.workspace_id)).create({
           actor: ExternalActorSchema.parse(input.actor),
           objective: input.prompt.slice(0, 4_000),
           text: input.prompt,
@@ -1956,7 +1958,7 @@ export class SlackAgentService {
           // The Slack member is not a linked Avalon identity, but when the
           // installation resolves them to a workspace member the work stream
           // is theirs rather than ownerless.
-          creatorUserId: input.matchedWorkspaceUserId,
+          creatorUserId: input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
           participantUserIds: audienceUserIds,
           scope,
           slackOrigin: input.slackOrigin,
@@ -2976,7 +2978,7 @@ export class SlackAgentService {
       this.env,
       this.env.WORKSPACE_DOS,
       workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
   }
 
@@ -3016,7 +3018,7 @@ export class SlackAgentService {
       granted_scopes_json: String(row.granted_scopes_json),
       status: String(row.status),
     };
-    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
+    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
   }
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {

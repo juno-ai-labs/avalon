@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
@@ -44,7 +45,7 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
       env,
       env.WORKSPACE_DOS,
       transition.workspace_id,
-      workspaceDOName(env.AVALON_REGION, transition.workspace_id),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(transition.workspace_id)),
     );
     const access = await workspace.resourceAccess({
       workspaceId: transition.workspace_id,

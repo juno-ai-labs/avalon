@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,8 +8,8 @@ import { __workOpportunityTesting, WorkOpportunityService } from "../src/service
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const userOne = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const userOne = asUserId("00000000-0000-7000-8000-000000000002");
 const userTwo = "00000000-0000-7000-8000-000000000003";
 const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
 const databases: DatabaseSync[] = [];

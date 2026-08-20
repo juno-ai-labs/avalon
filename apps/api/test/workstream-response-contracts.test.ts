@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { MessageSchema, WorkstreamContextSchema } from "@avalon/contracts";
 import { z } from "zod";
 import { Hono } from "hono";
@@ -24,8 +25,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  * else, and its rows only exist once a work stream has run the agent — so an
  * empty-result test exercises none of the mapping.
  */
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
-const USER = "00000000-0000-7000-8000-000000000002";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const USER = asUserId("00000000-0000-7000-8000-000000000002");
 const WORKSTREAM = "00000000-0000-7000-8000-000000000003";
 const RUN = "00000000-0000-7000-8000-000000000004";
 const TOOL_CALL = "00000000-0000-7000-8000-000000000006";

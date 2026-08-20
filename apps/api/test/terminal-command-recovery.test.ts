@@ -1,14 +1,15 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { HarnessPlugin, HarnessToolContext } from "@avalon/agent-harness";
 import { describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
 const context: HarnessToolContext = {
-  workspaceId: "workspace",
+  workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
   workstreamId: "workstream",
   harnessRunId: "run",
   toolCallId: "call",
-  executionPrincipal: { type: "workspace", workspaceId: "workspace" },
+  executionPrincipal: { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
   signal: new AbortController().signal,
 };
 

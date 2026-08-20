@@ -26,6 +26,8 @@ import {
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { asSubstreamId } from "@avalon/contracts";
+
 import { substreamAgentName } from "../src/durable-objects/names";
 import {
   WORKSPACE_ID,
@@ -48,7 +50,7 @@ let unique = 0;
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, `lifecycle-${unique}`),
+    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`)),
   ));
 }
 

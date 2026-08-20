@@ -23,10 +23,12 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+
 import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
 
-const WORKSPACE_ID = "00000000-0000-7000-8000-0000000005a1";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000005a2";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000005a1");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000005a2");
 const USER_ID = "00000000-0000-7000-8000-0000000005a3";
 const SESSION_ID = "00000000-0000-7000-8000-0000000005a4";
 

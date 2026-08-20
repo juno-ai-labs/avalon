@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { linkAnonymousTelemetry } from '../src/telemetry/identity-link';
@@ -19,7 +20,7 @@ describe('PostHog profile job delivery', () => {
     const database = migratedSqliteDatabase();
     database.prepare(`INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
-      VALUES ('user-1', 'google-1', 'ada@example.com', 'Ada', ?, ?, 1)`)
+      VALUES ('00000000-0000-4000-8000-000000000001', 'google-1', 'ada@example.com', 'Ada', ?, ?, 1)`)
       .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'test-key',
@@ -28,7 +29,7 @@ describe('PostHog profile job delivery', () => {
     const capability = (await new TelemetryBootstrapService(env).bootstrap(
       '018f22f2-4c22-7abc-8def-0123456789ab', 'US',
     )).capability;
-    await linkAnonymousTelemetry(env, { userId: 'user-1', workspaceId: null, region: 'global' }, capability);
+    await linkAnonymousTelemetry(env, { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' }, capability);
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetch);
 
@@ -51,12 +52,12 @@ describe('PostHog profile job delivery', () => {
     const database = migratedSqliteDatabase();
     database.prepare(`INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled, analytics_person_id)
-      VALUES ('user-1', 'google-1', 'ada@example.com', 'Ada', ?, ?, 0, 'person-1')`)
+      VALUES ('00000000-0000-4000-8000-000000000001', 'google-1', 'ada@example.com', 'Ada', ?, ?, 0, 'person-1')`)
       .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
     database.prepare(`INSERT INTO telemetry_profile_jobs
       (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
        properties_json, version, state, created_at, delete_at)
-      VALUES ('job-1', 'user-1', 'person_profile', 'person-1', NULL, '{}', 1, 'pending', ?, ?)`)
+      VALUES ('job-1', '00000000-0000-4000-8000-000000000001', 'person_profile', 'person-1', NULL, '{}', 1, 'pending', ?, ?)`)
       .run('2026-08-12T20:00:00.000Z', '2026-11-10T20:00:00.000Z');
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',

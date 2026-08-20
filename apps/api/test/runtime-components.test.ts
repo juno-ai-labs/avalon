@@ -1,3 +1,4 @@
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
@@ -93,8 +94,12 @@ describe("runtime component invariants", () => {
   });
 
   it("uses a region/workspace/work-stream stable room name", () => {
-    expect(substreamAgentName("eu", "workspace-id", "workstream-id")).toBe(
-      "eu:workspace-id:workstream-id"
+    expect(substreamAgentName(
+      "eu",
+      asWorkspaceId("00000000-0000-4000-8000-00000000000a"),
+      asWorkstreamId("00000000-0000-4000-8000-00000000000b"),
+    )).toBe(
+      "eu:00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-00000000000b"
     );
     expect(workspaceSchedulerName("global", "workspace-id")).toBe("global:workspace-id");
   });

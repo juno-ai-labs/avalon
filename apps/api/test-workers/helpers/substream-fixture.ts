@@ -10,9 +10,11 @@
  * fix when the schema moves.
  */
 
-export const WORKSPACE_ID = "00000000-0000-7000-8000-0000000004a1";
-export const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000004a2";
-export const USER_ID = "00000000-0000-7000-8000-0000000004a3";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+
+export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1");
+export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");
+export const USER_ID = asUserId("00000000-0000-7000-8000-0000000004a3");
 
 /** A dispatch payload that satisfies `WorkstreamWorkflowInputSchema`. */
 export function runInput(runId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {

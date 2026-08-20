@@ -1,4 +1,4 @@
-import type { StructuredFailureDetail, WorkstreamWorkflowInput } from "@avalon/contracts";
+import { asHarnessRunId, asWorkspaceId, asWorkstreamId, type HarnessRunId, type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@avalon/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 
@@ -61,7 +61,7 @@ export type InlineChildAdmission =
 export interface AdmitInlineChildOptions extends Partial<AttemptIdentity> {
   parentToolCallId: string;
   objective: string;
-  childHarnessRunId?: string;
+  childHarnessRunId?: HarnessRunId;
   maxChainRuns?: number;
   maxActiveWorkspaceChildren?: number;
   maxDepth?: number;
@@ -403,7 +403,7 @@ export async function admitInlineChildAttempt(
   );
   const maxDepth = Math.max(1, Math.min(16, Math.trunc(options.maxDepth ?? 2)));
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const childHarnessRunId = options.childHarnessRunId ?? uuidV7();
+  const childHarnessRunId = options.childHarnessRunId ?? asHarnessRunId(uuidV7());
   const attemptId = options.attemptId ?? uuidV7();
   const owner = options.owner ?? `inline-child:${childHarnessRunId}:${attemptId}`;
   const objectiveHash = await sha256Hex(options.objective);
@@ -553,9 +553,9 @@ export async function admitInlineChildAttempt(
       throw new Error("inline_child_objective_mismatch");
     }
     const childInput = {
-      workspaceId: existing.workspace_id,
-      workstreamId: existing.workstream_id,
-      harnessRunId: existing.id,
+      workspaceId: asWorkspaceId(existing.workspace_id),
+      workstreamId: asWorkstreamId(existing.workstream_id),
+      harnessRunId: asHarnessRunId(existing.id),
     };
     if (existing.terminalized_at || TERMINAL_STATUSES.has(existing.status)) {
       const outcome = await parseVerifiedInlineChildResult(
@@ -751,9 +751,9 @@ export async function loadInlineChildResult(
     }>();
   if (!row) return { state: "missing" };
   const childInput = {
-    workspaceId: row.workspace_id,
-    workstreamId: row.workstream_id,
-    harnessRunId: row.id,
+    workspaceId: asWorkspaceId(row.workspace_id),
+    workstreamId: asWorkstreamId(row.workstream_id),
+    harnessRunId: asHarnessRunId(row.id),
   };
   if (!row.terminalized_at && !TERMINAL_STATUSES.has(row.status)) {
     return { state: "running", childInput, leaseExpiresAt: row.lease_expires_at };

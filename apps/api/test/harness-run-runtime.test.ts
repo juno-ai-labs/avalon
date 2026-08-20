@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { runHarness, type HarnessTool } from "@avalon/agent-harness";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type HarnessRunId } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -33,10 +34,10 @@ import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
-const RUN_ONE = "00000000-0000-4000-8000-000000000003";
-const RUN_TWO = "00000000-0000-4000-8000-000000000004";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
+const RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000003");
+const RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000004");
 
 class SqliteD1Statement {
   private values: unknown[] = [];
@@ -127,7 +128,7 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function input(harnessRunId: string) {
+function input(harnessRunId: HarnessRunId) {
   return { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, harnessRunId };
 }
 
@@ -260,8 +261,8 @@ describe("durable harness attempt runtime", () => {
   it("runs HyperSight blocks beside each other and beside the single interactive executor", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
-    const runThree = "00000000-0000-4000-8000-000000000005";
-    const runFour = "00000000-0000-4000-8000-000000000006";
+    const runThree = asHarnessRunId("00000000-0000-4000-8000-000000000005");
+    const runFour = asHarnessRunId("00000000-0000-4000-8000-000000000006");
     sqlite.database.exec(`
       UPDATE harness_runs SET origin = 'block_dashboard_block', status = 'scheduled';
       UPDATE workstreams SET harness_status = 'idle' WHERE id = '${WORKSTREAM_ID}';
@@ -756,7 +757,7 @@ describe("durable harness attempt runtime", () => {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       harnessRunId: RUN_ONE,
-      executionPrincipal: { type: "user", userId: "user-runtime" },
+      executionPrincipal: { type: "user", userId: asUserId("00000000-0000-4000-8000-00000000000a") },
       systemPrompt: "Exercise the durable inference ledger.",
       messages: [{ role: "user", content: "Use the read tool, then finish." }],
       corePlugins: [{
@@ -1997,7 +1998,7 @@ describe("inline child-run durability", () => {
   it("keeps ordinary elicitation continuations in the normal queue", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
-    const continuationId = "00000000-0000-4000-8000-000000000005";
+    const continuationId = asHarnessRunId("00000000-0000-4000-8000-000000000005");
     sqlite.database.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json,
@@ -2049,7 +2050,7 @@ describe("inline child-run durability", () => {
       {
         parentToolCallId: "tool-child-scope",
         objective: "Read the authorized document metadata",
-        childHarnessRunId: "child-scope",
+        childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000101"),
         attemptId: "attempt-child-scope",
         owner: "owner-child-scope",
       },
@@ -2122,7 +2123,7 @@ describe("inline child-run durability", () => {
     const options = {
       parentToolCallId: "tool-replay",
       objective: "Summarize the two read-only findings",
-      childHarnessRunId: "child-replay",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000102"),
       attemptId: "attempt-child-replay",
       owner: "owner-child-replay",
     };
@@ -2133,7 +2134,7 @@ describe("inline child-run durability", () => {
       .toMatchObject({ state: "busy", childInput: first.childInput });
     expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       ...options,
-      childHarnessRunId: "ignored-child-id",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-0000000001f1"),
       attemptId: "another-attempt",
       owner: "another-owner",
     })).toMatchObject({ state: "busy", childInput: first.childInput });
@@ -2181,7 +2182,7 @@ describe("inline child-run durability", () => {
       .toEqual({ state: "replay", childInput: first.childInput, outcome });
     expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       ...options,
-      childHarnessRunId: "another-ignored-child-id",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-0000000001f2"),
       attemptId: "attempt-after-completion",
       owner: "owner-after-completion",
     })).toEqual({ state: "replay", childInput: first.childInput, outcome });
@@ -2198,7 +2199,7 @@ describe("inline child-run durability", () => {
     const options = {
       parentToolCallId: "tool-child-takeover",
       objective: "Resume the same durable investigation",
-      childHarnessRunId: "child-takeover",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000103"),
       attemptId: "attempt-child-takeover",
       owner: "owner-child-obsolete",
     };
@@ -2262,7 +2263,7 @@ describe("inline child-run durability", () => {
     const firstOptions = {
       parentToolCallId: "tool-expired-at-capacity",
       objective: "Resume only when a child slot is available",
-      childHarnessRunId: "child-expired-at-capacity",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000104"),
       attemptId: "attempt-expired-at-capacity",
       owner: "owner-expired-at-capacity",
       maxActiveWorkspaceChildren: 1,
@@ -2282,7 +2283,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-live-capacity-holder",
       objective: "Occupy the only workspace child slot",
-      childHarnessRunId: "child-live-capacity-holder",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000105"),
       attemptId: "attempt-live-capacity-holder",
       owner: "owner-live-capacity-holder",
       maxActiveWorkspaceChildren: 1,
@@ -2310,7 +2311,7 @@ describe("inline child-run durability", () => {
       admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
         parentToolCallId: "tool-parallel-one",
         objective: "Investigate source one",
-        childHarnessRunId: "child-parallel-one",
+        childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000106"),
         attemptId: "attempt-parallel-one",
         owner: "owner-parallel-one",
         maxChainRuns: 64,
@@ -2319,7 +2320,7 @@ describe("inline child-run durability", () => {
       admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
         parentToolCallId: "tool-parallel-two",
         objective: "Investigate source two",
-        childHarnessRunId: "child-parallel-two",
+        childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000107"),
         attemptId: "attempt-parallel-two",
         owner: "owner-parallel-two",
         maxChainRuns: 64,
@@ -2338,7 +2339,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-parallel-overflow",
       objective: "Investigate source three",
-      childHarnessRunId: "child-parallel-overflow",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000108"),
       attemptId: "attempt-parallel-overflow",
       owner: "owner-parallel-overflow",
       maxChainRuns: 64,
@@ -2356,7 +2357,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-parallel-after-slot",
       objective: "Investigate source three",
-      childHarnessRunId: "child-parallel-after-slot",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000109"),
       attemptId: "attempt-parallel-after-slot",
       owner: "owner-parallel-after-slot",
       maxChainRuns: 64,
@@ -2371,7 +2372,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(chainSqlite.binding, input(RUN_ONE), chainParentLease, {
       parentToolCallId: "tool-chain-one",
       objective: "Use the only chain slot",
-      childHarnessRunId: "child-chain-one",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010a"),
       attemptId: "attempt-chain-one",
       owner: "owner-chain-one",
       maxChainRuns: 2,
@@ -2380,7 +2381,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(chainSqlite.binding, input(RUN_ONE), chainParentLease, {
       parentToolCallId: "tool-chain-overflow",
       objective: "Exceed the chain budget",
-      childHarnessRunId: "child-chain-overflow",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010b"),
       attemptId: "attempt-chain-overflow",
       owner: "owner-chain-overflow",
       maxChainRuns: 2,
@@ -2393,7 +2394,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(depthSqlite.binding, input(RUN_ONE), depthParentLease, {
       parentToolCallId: "tool-depth-one",
       objective: "Create the first level",
-      childHarnessRunId: "child-depth-one",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010c"),
       attemptId: "attempt-depth-one",
       owner: "owner-depth-one",
       maxDepth: 2,
@@ -2411,7 +2412,7 @@ describe("inline child-run durability", () => {
     expect(await admitInlineChildAttempt(depthSqlite.binding, child.childInput, child.lease, {
       parentToolCallId: "tool-depth-overflow",
       objective: "Attempt a disallowed second level",
-      childHarnessRunId: "child-depth-overflow",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010d"),
       attemptId: "attempt-depth-overflow",
       owner: "owner-depth-overflow",
       maxDepth: 1,
@@ -2426,7 +2427,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-cancel",
       objective: "Wait for cancellation",
-      childHarnessRunId: "child-cancel",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010e"),
       attemptId: "attempt-child-cancel",
       owner: "owner-child-cancel",
     });
@@ -2476,7 +2477,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-parent-lease-loss",
       objective: "Must stop when the parent loses ownership",
-      childHarnessRunId: "child-parent-lease-loss",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-00000000010f"),
       attemptId: "attempt-parent-lease-loss",
       owner: "owner-parent-lease-loss",
     });
@@ -2524,7 +2525,7 @@ describe("inline child-run durability", () => {
     const options = {
       parentToolCallId: "tool-stale-live-parent",
       objective: "Resume after a child executor disappears",
-      childHarnessRunId: "child-stale-live-parent",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000110"),
       attemptId: "attempt-child-stale-live-parent",
       owner: "owner-child-stale-live-parent",
     };
@@ -2589,7 +2590,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-stale-child",
       objective: "Become stale",
-      childHarnessRunId: "child-stale",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000111"),
       attemptId: "attempt-child-stale",
       owner: "owner-child-stale",
     });
@@ -2655,7 +2656,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-cancelled-child-cleanup",
       objective: "Stop after cancellation",
-      childHarnessRunId: "child-cancelled-cleanup",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000112"),
       attemptId: "attempt-child-cancelled-cleanup",
       owner: "owner-child-cancelled-cleanup",
     });
@@ -2691,7 +2692,7 @@ describe("inline child-run durability", () => {
     const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
       parentToolCallId: "tool-child-reaper-race",
       objective: "Win the cleanup race",
-      childHarnessRunId: "child-reaper-race",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000113"),
       attemptId: "attempt-child-reaper-race",
       owner: "owner-child-reaper-race",
     });

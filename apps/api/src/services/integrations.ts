@@ -53,6 +53,11 @@ import {
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   readStructuredFailure,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type UserId,
+  type WorkspaceId,
   type AddressingClassification,
   type AutomationDraft,
   type HarnessFailureCode,
@@ -1337,8 +1342,8 @@ export async function compileAutomationDraft(
     currentDraft?: AutomationDraft | null;
     defaultTimezones: { personal: string; workspace: string };
     requestId: string;
-    workspaceId: string;
-    userId: string;
+    workspaceId: WorkspaceId;
+    userId: UserId;
     onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
     signal?: AbortSignal;
   },
@@ -1439,8 +1444,8 @@ export async function compileAutomationDraft(
 
 async function loadAutomationCreatorPluginCatalog(
   env: Env,
-  workspaceId: string,
-  userId: string,
+  workspaceId: WorkspaceId,
+  userId: UserId,
 ): Promise<AutomationCreatorPluginCatalogEntry[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM connector_connections
@@ -1560,7 +1565,7 @@ async function loadAutomationCreatorPluginCatalog(
 
 async function executeAutomationCreatorConnectorTool(
   env: Env,
-  input: { workspaceId: string; userId: string },
+  input: { workspaceId: WorkspaceId; userId: UserId },
   frozen: FrozenConnectorPlugin,
   toolName: string,
   capability: string,
@@ -1590,7 +1595,7 @@ async function executeAutomationCreatorConnectorTool(
 
 async function loadAutomationCreatorConnectionContext(
   env: Env,
-  input: { workspaceId: string; userId: string },
+  input: { workspaceId: WorkspaceId; userId: UserId },
   frozen: FrozenConnectorPlugin,
   capability: string,
   signal: AbortSignal,
@@ -1623,7 +1628,7 @@ async function loadAutomationCreatorConnectionContext(
 
 async function assertAutomationCreatorConnectionAuthorized(
   env: Env,
-  input: { workspaceId: string; userId: string },
+  input: { workspaceId: WorkspaceId; userId: UserId },
   frozen: FrozenConnectorPlugin,
   capability: string,
 ): Promise<Record<string, unknown>> {
@@ -1659,7 +1664,7 @@ async function assertAutomationCreatorConnectionAuthorized(
 
 export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
   const authority = await readWorkstreamAuthorityControl(env);
-  const substreamId = input.substreamId ?? "0";
+  const substreamId = input.substreamId ?? asSubstreamId("0");
   const instanceId = authority.phase === "durable_object_open"
     ? `substream-agent:${substreamId}:${input.harnessRunId}`
     : `workstream-${input.harnessRunId}`;
@@ -1820,9 +1825,9 @@ export async function publishWorkstreamEvent(
       env,
       env.SUBSTREAM_AGENTS,
       workspaceId,
-      substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+      substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
     );
-    const response = await agent.publishEvent({ workspaceId, workstreamId, event });
+    const response = await agent.publishEvent({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId), event });
     // A room that answered `409 room_identity_mismatch` or rejected the frame
     // as `invalid_event` did not deliver it, and says so in the status rather
     // than by throwing.
@@ -1845,9 +1850,9 @@ export async function publishPersonalWorkstreamEvent(
       env,
       env.SUBSTREAM_AGENTS,
       workspaceId,
-      substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+      substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
     );
-    await agent.publishEvent({ workspaceId, workstreamId, event, audienceUserId: userId });
+    await agent.publishEvent({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId), event, audienceUserId: userId });
   } catch {
     // Personal realtime delivery is recoverable from the canonical preference endpoint.
   }
@@ -4047,7 +4052,7 @@ async function loadConnectorTriggerContext(
       env,
       env.WORKSPACE_DOS,
       workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
     const event = WorkspaceConnectorEventSchema.nullable().parse(
       await workspace.connectorEvent({ workspaceId, eventId }),

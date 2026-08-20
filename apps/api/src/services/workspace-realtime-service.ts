@@ -1,5 +1,6 @@
 import {
   WorkspaceSyncTopicSchema,
+  asWorkspaceId,
   type WorkspaceSyncTopic,
 } from "@avalon/contracts";
 
@@ -23,7 +24,7 @@ export async function publishWorkspaceSync(
     env,
     env.WORKSPACE_DOS,
     workspaceId,
-    workspaceDOName(env.AVALON_REGION, workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
     placementAffinity,
   );
   return workspace.publishSync(unique, workspaceId, placementAffinity);

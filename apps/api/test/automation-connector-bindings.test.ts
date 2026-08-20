@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -6,8 +7,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "user-1",
-  workspaceId: "workspace-1",
+  userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+  workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
   region: "global",
   role: "member",
 };
@@ -46,12 +47,12 @@ describe("automation activity connector bindings", () => {
   it("does not revalidate grandfathered slotless activity metadata during instruction edits", async () => {
     const row = {
       id: "automation-1",
-      workspace_id: "workspace-1",
+      workspace_id: "668953d2-25f2-44fd-8d72-1e8cf024a277",
       scope: "personal",
-      owner_user_id: "user-1",
+      owner_user_id: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
       template_id: "template-1",
       template_version_id: "version-1",
-      template_owner_user_id: "user-1",
+      template_owner_user_id: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
       latest_version_number: 1,
       overview: "Legacy automation",
       instructions: "Old instructions",
@@ -123,7 +124,7 @@ describe("automation activity connector bindings", () => {
       status: 422,
       code: "activity_trigger_connection_required",
     });
-    expect(bind).toHaveBeenCalledWith("workspace-1", "plugin_github");
+    expect(bind).toHaveBeenCalledWith("668953d2-25f2-44fd-8d72-1e8cf024a277", "plugin_github");
   });
 
   it("rejects invented events and undeclared filters for an exact source slot", async () => {
@@ -167,7 +168,7 @@ describe("automation activity connector bindings", () => {
       status: 422,
       code: "invalid_activity_filter",
     });
-    expect(bind).toHaveBeenCalledWith("workspace-1", "plugin_google");
+    expect(bind).toHaveBeenCalledWith("668953d2-25f2-44fd-8d72-1e8cf024a277", "plugin_google");
   });
 
   it("requires source-bound semantic triggers to declare one exact event", async () => {
@@ -175,7 +176,7 @@ describe("automation activity connector bindings", () => {
       id: "connection-google",
       connector_type: "google",
       scope: "personal",
-      owner_user_id: "user-1",
+      owner_user_id: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
       status: "healthy",
     });
     const bind = vi.fn(() => ({ first }));

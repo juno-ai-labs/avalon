@@ -964,6 +964,39 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — The object creation path schedules the first naming pass
+
+**What changed:** `WorkstreamObjectCreationService.create` now schedules
+`nameWorkstream` against the routed runtime environment after the create
+response, deferred through the route's `waitUntil` plumbing exactly as the
+legacy service documents; a caller with no deferral gets the call awaited.
+Failures log `workstream_first_naming_failed`. Both runtime SQL executors now
+name the statement a SQLite error came from.
+
+**Why:** The legacy creation path's `nameInBackground` never migrated, so
+every post-cutover work stream kept its provisional title in `naming` forever
+— the sidebar skeleton shimmer that never resolves, visible in every
+screenshot of the incident. The run-settlement repair pass could not rescue
+it: it is gated on a five-message transcript that a short work stream never
+reaches. The routed environment matters because `advanceTitle` writes
+`workstreams`, which post-cutover lives behind the runtime router. Found by
+the local end-to-end campaign — thirty of forty campaign work streams stuck
+in `naming` — not by any unit suite, because the defect is an *absence* at a
+service seam.
+
+**Considered and rejected:** Settling in the run-settlement pass regardless of
+message count — it would spend the one automatic retry the naming design
+grants on every two-message work stream. A workerd-level test — the seam is
+the creation service, above the object; coverage lives in the live-stack
+campaign's `happy_title_settles` lane instead, and the vacuous object-level
+test that appeared to cover it was removed rather than kept for show.
+
+**Consequences:** New work streams settle their title on creation, `naming`
+means what it says again, and a naming failure is a logged event rather than
+a permanent shimmer.
+
+
+
 ### 2026-08-20 — The messages trigger absorbs replayed durable writes
 
 **What changed:** Schema v5 rebuilds `_runtime_messages_insert` with a second

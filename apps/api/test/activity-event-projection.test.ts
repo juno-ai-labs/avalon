@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,7 +14,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const { projectActivityEvent } = __testing;
 
-const WORKSPACE = "00000000-0000-7000-8000-000000000001";
+const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const MEMBER_A = "00000000-0000-7000-8000-000000000002";
 const MEMBER_B = "00000000-0000-7000-8000-000000000003";
 const CONNECTION = "00000000-0000-7000-8000-000000000004";
@@ -63,7 +64,8 @@ function seededDatabase(): DatabaseSync {
 function activity(overrides: Record<string, unknown> = {}) {
   return {
     id: "00000000-0000-7000-8000-0000000000a1",
-    workspace_id: WORKSPACE,
+    // Deliberately widened: the row type carries a plain string column.
+    workspace_id: WORKSPACE as string,
     workspace_region: "global",
     connection_id: CONNECTION,
     connector_type: "slack",

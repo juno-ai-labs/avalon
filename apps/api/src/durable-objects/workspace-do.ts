@@ -1,6 +1,8 @@
 import {
   IdSchema,
+  UserIdSchema,
   WORKSPACE_SYNC_TOPICS,
+  WorkspaceIdSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
@@ -207,8 +209,8 @@ function workspaceMutationTarget(sql: string): string | null {
 }
 
 const SocketIdentitySchema = z.object({
-  workspaceId: IdSchema,
-  userId: IdSchema,
+  workspaceId: WorkspaceIdSchema,
+  userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),

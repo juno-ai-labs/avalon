@@ -3,13 +3,13 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
-import type { BlockDashboard, BlockDashboardBlockRun } from "@avalon/contracts";
+import { asWorkspaceId, type BlockDashboard, type BlockDashboardBlockRun } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { BlockDashboardService, launchBlockDashboardRefresh } from "../src/services/block-dashboard-service";
 import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000401";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000401");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000402";
 const OWNER_ID = "00000000-0000-4000-8000-000000000403";
 const MEMBER_ID = "00000000-0000-4000-8000-000000000404";

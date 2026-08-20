@@ -1,4 +1,5 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
+import { asWorkspaceId } from "@avalon/contracts";
 import {
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
@@ -365,7 +366,7 @@ export function createTerminalRepositorySelector(
         executionPrincipal: context.executionPrincipal,
       });
       await emitProductUsageTelemetry(env, {
-        workspaceId: context.workspaceId,
+        workspaceId: asWorkspaceId(context.workspaceId),
         userId: context.executionPrincipal.userId,
         name: "terminal_workspace_terminal",
         properties: {

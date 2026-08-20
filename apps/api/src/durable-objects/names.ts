@@ -1,12 +1,16 @@
-import type { Region } from "@avalon/contracts";
+import type { BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@avalon/contracts";
 
 /** One regional workspace control object. */
-export function workspaceDOName(region: Region, workspaceId: string): string {
+export function workspaceDOName(region: Region, workspaceId: WorkspaceId): string {
   return `${region}:${workspaceId}`;
 }
 
 /** One non-agent control object for each work stream. */
-export function workstreamDOName(region: Region, workspaceId: string, workstreamId: string): string {
+export function workstreamDOName(
+  region: Region,
+  workspaceId: WorkspaceId,
+  workstreamId: WorkstreamId,
+): string {
   return `${region}:${workspaceId}:${workstreamId}`;
 }
 
@@ -21,9 +25,9 @@ export function workstreamDOName(region: Region, workspaceId: string, workstream
  */
 export function substreamAgentName(
   region: Region,
-  workspaceId: string,
-  workstreamId: string,
-  substreamId = "0",
+  workspaceId: WorkspaceId,
+  workstreamId: WorkstreamId,
+  substreamId: SubstreamId | "0" = "0",
 ): string {
   const workstreamName = workstreamDOName(region, workspaceId, workstreamId);
   return substreamId === "0" ? workstreamName : `${workstreamName}:${substreamId}`;
@@ -32,9 +36,9 @@ export function substreamAgentName(
 /** One durable Bind-loop owner for each stable HyperSight block. */
 export function blockDashboardAgentName(
   region: Region,
-  workspaceId: string,
-  workstreamId: string,
-  blockId: string,
+  workspaceId: WorkspaceId,
+  workstreamId: WorkstreamId,
+  blockId: BlockId,
 ): string {
   return `${workstreamDOName(region, workspaceId, workstreamId)}:block-dashboard:${blockId}`;
 }

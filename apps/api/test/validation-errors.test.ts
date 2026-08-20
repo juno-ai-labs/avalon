@@ -106,8 +106,8 @@ describe("public validation errors", () => {
         headers: {
           "content-type": "application/json",
           "x-request-id": requestId,
-          "x-avalon-dev-user-id": "user-x",
-          "x-avalon-dev-workspace-id": "workspace-x",
+          "x-avalon-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
+          "x-avalon-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
         },
         body: JSON.stringify({ scope: "personal", capabilities: ["x.read"] }),
       },

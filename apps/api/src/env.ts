@@ -1,6 +1,6 @@
 import { AvalonUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
-import type { Region } from "@avalon/contracts";
+import type { Region, UserId, WorkspaceId } from "@avalon/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
@@ -172,14 +172,14 @@ export interface Env {
 
 export interface IdentityAuthContext {
   sessionId: string;
-  userId: string;
-  workspaceId: string | null;
+  userId: UserId;
+  workspaceId: WorkspaceId | null;
   region: Region;
   role: "owner" | "admin" | "member" | null;
 }
 
 export interface AuthContext extends IdentityAuthContext {
-  workspaceId: string;
+  workspaceId: WorkspaceId;
   role: "owner" | "admin" | "member";
 }
 

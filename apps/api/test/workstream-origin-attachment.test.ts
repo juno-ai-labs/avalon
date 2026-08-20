@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,8 +51,8 @@ import {
 } from "../src/services/workstream-origin-resource";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const memberId = "00000000-0000-7000-8000-000000000002";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const memberId = asUserId("00000000-0000-7000-8000-000000000002");
 const connectionId = "00000000-0000-7000-8000-000000000003";
 const strangerId = "00000000-0000-7000-8000-000000000004";
 const templateId = "00000000-0000-7000-8000-000000000005";

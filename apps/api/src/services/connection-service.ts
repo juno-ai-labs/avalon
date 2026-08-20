@@ -30,6 +30,7 @@ import type {
   UpdateGitHubRepositoryAccessSettings,
   Scope,
 } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import type { z } from "zod";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
@@ -2650,8 +2651,8 @@ export class ConnectionService {
         : row.error_code === 'oauth_attempt_expired' ? 'unavailable' : 'failed';
     const auth: IdentityAuthContext = {
       sessionId: `telemetry:${row.id}`,
-      userId: row.user_id,
-      workspaceId: row.workspace_id,
+      userId: asUserId(row.user_id),
+      workspaceId: asWorkspaceId(row.workspace_id),
       region: this.env.AVALON_REGION,
       role: null,
     };

@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { RunHarnessInput } from "@avalon/agent-harness";
 import type { AuthContext } from "../src/env";
@@ -6,8 +7,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
-  userId: "00000000-0000-4000-8000-000000000011",
-  workspaceId: "00000000-0000-4000-8000-000000000012",
+  userId: asUserId("00000000-0000-4000-8000-000000000011"),
+  workspaceId: asWorkspaceId("00000000-0000-4000-8000-000000000012"),
   region: "global",
   role: "member",
 };

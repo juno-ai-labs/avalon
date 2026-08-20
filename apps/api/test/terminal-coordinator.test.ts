@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import type { HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,7 +13,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
 const RUN_ID = "00000000-0000-4000-8000-000000000003";
-const USER_ID = "00000000-0000-4000-8000-000000000004";
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
 
 const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 
@@ -164,7 +165,7 @@ describe("Terminal sandbox coordinator", () => {
       VALUES ('other-user', 'other-terminal-user', 'other@example.com', 'Other', '2026-08-13', '2026-08-13');
     `);
 
-    await expect(coordinator.acquire(context("other-user"))).resolves.toMatchObject({
+    await expect(coordinator.acquire(context(asUserId("00000000-0000-4000-8000-000000000005")))).resolves.toMatchObject({
       providerSandboxId: "sandbox-2",
       generation: 2,
     });

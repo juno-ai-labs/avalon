@@ -1,3 +1,5 @@
+import { asUserId } from "@avalon/contracts";
+import { asWorkspaceId } from "@avalon/contracts";
 import { NormalizedActivitySchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -16,8 +18,8 @@ import {
 const INTEGRATION_ID = "11111111-1111-4111-8111-111111111111";
 const NOTION_WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const BOT_ID = "33333333-3333-4333-8333-333333333333";
-const AVALON_USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const AVALON_WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const AVALON_USER_ID = asUserId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+const AVALON_WORKSPACE_ID = asWorkspaceId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 const AVALON_CONNECTION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 describe("Notion connector", () => {

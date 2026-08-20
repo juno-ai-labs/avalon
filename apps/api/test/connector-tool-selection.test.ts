@@ -1,3 +1,4 @@
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { runHarness, type HarnessEvent } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,16 +8,16 @@ import { __integrationTesting } from "../src/services/integrations";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
-const HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000003";
-const USER_ID = "00000000-0000-4000-8000-000000000004";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
+const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
 const OTHER_USER_ID = "00000000-0000-4000-8000-000000000005";
 const WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000006";
 const OWNER_CONNECTION_ID = "00000000-0000-4000-8000-000000000007";
 const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
-const CHILD_HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000012";
+const CHILD_HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000012");
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",

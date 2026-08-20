@@ -1,5 +1,17 @@
 import { jwtVerify, SignJWT } from "jose";
 import {
+  asBlockId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type BlockId,
+  type SubstreamId,
+  type UserId,
+  type WorkspaceId,
+  type WorkstreamId,
+} from "@avalon/contracts";
+import {
   offersSocketTicketSubprotocol,
   socketTicketFromProtocols,
   SOCKET_TICKET_SUBPROTOCOL,
@@ -22,10 +34,10 @@ const encoder = new TextEncoder();
 
 interface SocketClaims {
   sessionId: string;
-  userId: string;
-  workspaceId: string;
-  workstreamId: string;
-  substreamId: string;
+  userId: UserId;
+  workspaceId: WorkspaceId;
+  workstreamId: WorkstreamId;
+  substreamId: SubstreamId;
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
@@ -33,24 +45,24 @@ interface SocketClaims {
 
 interface WorkspaceSocketClaims {
   sessionId: string;
-  userId: string;
-  workspaceId: string;
+  userId: UserId;
+  workspaceId: WorkspaceId;
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
 }
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
-  workstreamId: string;
+  workstreamId: WorkstreamId;
 }
 
 interface BlockDashboardBlockSocketClaims extends WorkstreamControlSocketClaims {
-  blockId: string;
+  blockId: BlockId;
 }
 
 export interface TranscriptionSocketClaims {
-  userId: string;
-  workspaceId: string;
+  userId: UserId;
+  workspaceId: WorkspaceId;
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
@@ -124,10 +136,10 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
     ) throw new Error("Incomplete socket claims");
     return {
       sessionId: payload.sid,
-      userId: payload.sub,
-      workspaceId: payload.wid,
-      workstreamId: payload.wsid,
-      substreamId: payload.ssid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
+      workstreamId: asWorkstreamId(payload.wsid),
+      substreamId: asSubstreamId(payload.ssid),
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
@@ -153,8 +165,8 @@ export async function verifyWorkspaceSocketTicket(
     ) throw new Error("Incomplete workspace socket claims");
     return {
       sessionId: payload.sid,
-      userId: payload.sub,
-      workspaceId: payload.wid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
@@ -229,10 +241,10 @@ export async function verifyBlockDashboardBlockSocketTicket(
     ) throw new Error("Incomplete HyperSight block socket claims");
     return {
       sessionId: payload.sid,
-      userId: payload.sub,
-      workspaceId: payload.wid,
-      workstreamId: payload.wsid,
-      blockId: payload.bid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
+      workstreamId: asWorkstreamId(payload.wsid),
+      blockId: asBlockId(payload.bid),
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
@@ -258,9 +270,9 @@ export async function verifyWorkstreamControlSocketTicket(
     ) throw new Error("Incomplete workstream control socket claims");
     return {
       sessionId: payload.sid,
-      userId: payload.sub,
-      workspaceId: payload.wid,
-      workstreamId: payload.wsid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
+      workstreamId: asWorkstreamId(payload.wsid),
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
@@ -297,8 +309,8 @@ export async function verifyTranscriptionSocketTicket(
       typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
     ) throw new Error("Incomplete transcription socket claims");
     return {
-      userId: payload.sub,
-      workspaceId: payload.wid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,

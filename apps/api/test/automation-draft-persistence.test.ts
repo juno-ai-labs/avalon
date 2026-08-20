@@ -1,3 +1,4 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,9 +38,9 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 import { AutomationService } from "../src/services/automation-service";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
-const workspaceId = "00000000-0000-7000-8000-000000000001";
-const userId = "00000000-0000-7000-8000-000000000002";
-const otherUserId = "00000000-0000-7000-8000-000000000003";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const userId = asUserId("00000000-0000-7000-8000-000000000002");
+const otherUserId = asUserId("00000000-0000-7000-8000-000000000003");
 
 const auth: AuthContext = {
   sessionId: "session-1",

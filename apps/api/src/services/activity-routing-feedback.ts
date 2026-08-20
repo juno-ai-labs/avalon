@@ -1,3 +1,5 @@
+import type { WorkspaceId } from "@avalon/contracts";
+
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -133,7 +135,7 @@ export interface SuggestionAdmission {
  */
 export async function suggestionAdmission(
   env: Env,
-  input: { workspaceId: string; provider: string; eventType: string; declaredFloor: number },
+  input: { workspaceId: WorkspaceId; provider: string; eventType: string; declaredFloor: number },
   now: Date = new Date(),
 ): Promise<SuggestionAdmission> {
   const since = new Date(now.getTime() - EVENT_TYPE_WINDOW_MS).toISOString();

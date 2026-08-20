@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
@@ -10,7 +11,7 @@ import type { FirecrawlError } from "../src/lib/firecrawl";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
 const HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000003";
 

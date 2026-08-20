@@ -271,14 +271,14 @@ describe('telemetry HTTP bounds', () => {
     const database = migratedSqliteDatabase();
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('user-1', 'google-1', 'user@example.com', 'User',
+      VALUES ('00000000-0000-7000-8000-0000000000d1', 'google-1', 'user@example.com', 'User',
               '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
       INSERT INTO workspaces
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-1', 'Workspace', 'workspace', 'global', 'user-1',
+      VALUES ('00000000-0000-7000-8000-0000000000d2', 'Workspace', 'workspace', 'global', '00000000-0000-7000-8000-0000000000d1',
               '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-      VALUES ('workspace-1', 'user-1', 'owner', 'active', '2026-08-01T00:00:00.000Z');
+      VALUES ('00000000-0000-7000-8000-0000000000d2', '00000000-0000-7000-8000-0000000000d1', 'owner', 'active', '2026-08-01T00:00:00.000Z');
     `);
     const environment = createTestEnv({
       AVALON_REGION: 'global', APP_ENV: 'development', AVALON_DEV_AUTH: 'true',
@@ -302,8 +302,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': 'user-1',
-        'x-avalon-dev-workspace-id': 'workspace-1',
+        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body,
     }, environment);
@@ -316,8 +316,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': 'user-1',
-        'x-avalon-dev-workspace-id': 'workspace-1',
+        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
         schema: 'com.avalon.telemetry.event', schemaVersion: 1,
@@ -338,8 +338,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': 'user-1',
-        'x-avalon-dev-workspace-id': 'workspace-1',
+        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
         schema: 'com.avalon.telemetry.event', schemaVersion: 1,

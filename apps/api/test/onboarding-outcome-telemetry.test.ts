@@ -1,3 +1,4 @@
+import { asUserId } from "@avalon/contracts";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { HonoAppEnv, IdentityAuthContext } from '../src/env';
@@ -6,7 +7,7 @@ import { onboardingRoutes } from '../src/routes/onboarding';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
-const userId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1';
+const userId = asUserId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1');
 const operationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2';
 const existingWorkspaceId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3';
 const auth: IdentityAuthContext = {

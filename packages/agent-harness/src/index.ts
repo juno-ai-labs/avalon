@@ -11,7 +11,8 @@ import type {
 } from "@avalon/contracts";
 import {
   AddressingClassificationSchema,
-  AutomationDraftSchema
+  AutomationDraftSchema,
+  asUserId
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
@@ -1608,7 +1609,7 @@ export async function compileAutomation(input: {
     harnessRunId: crypto.randomUUID(),
     executionPrincipal: {
       type: "user",
-      userId: input.userId ?? "00000000-0000-7000-8000-000000000003",
+      userId: asUserId(input.userId ?? "00000000-0000-7000-8000-000000000003"),
     },
     systemPrompt: String(rendered[0]?.content ?? ""),
     messages: [

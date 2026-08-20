@@ -1,3 +1,5 @@
+import { asUserId } from "@avalon/contracts";
+import { asWorkspaceId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -6,9 +8,9 @@ import { TerminalSettingsService } from "../src/services/terminal/settings";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const W = "50000000-0000-4000-8000-000000000001";
+const W = asWorkspaceId("50000000-0000-4000-8000-000000000001");
 const S = "50000000-0000-4000-8000-000000000002";
-const U = "50000000-0000-4000-8000-000000000003";
+const U = asUserId("50000000-0000-4000-8000-000000000003");
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
