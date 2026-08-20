@@ -17,6 +17,8 @@ export function migratedSqliteDatabase(): DatabaseSync {
 
 /** The narrow slice of the D1 surface the services under test use. */
 export function sqliteD1(database: DatabaseSync): D1Database {
+  let tail: Promise<void> = Promise.resolve();
+  let depth = 0;
   const prepare = (sql: string) => {
     let values: unknown[] = [];
     const statement = {
@@ -47,17 +49,35 @@ export function sqliteD1(database: DatabaseSync): D1Database {
     // a pair written to be all-or-nothing is only all-or-nothing here if the
     // shim rolls back too. Replaying the statements in a loop would let a test
     // pass over a half-applied batch that production would never produce.
+    //
+    // Batches are serialized behind one promise chain, and nested ones use a
+    // savepoint rather than BEGIN. Both exist because production runs batches
+    // concurrently — the migration campaign scrubs several workspaces at once,
+    // each ending in a batch — while this shim holds a single connection, on
+    // which a second BEGIN throws "cannot start a transaction within a
+    // transaction". Without this the concurrent path simply could not be
+    // tested, which is why it went untested.
     async batch<T>(statements: D1PreparedStatement[]) {
-      const results: D1Result<unknown>[] = [];
-      database.exec("BEGIN");
-      try {
-        for (const statement of statements) results.push(await statement.run());
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-      return createTestD1Results<T>(results);
+      const run = async () => {
+        const results: D1Result<unknown>[] = [];
+        const nested = depth > 0;
+        const savepoint = `d1_batch_${depth}`;
+        depth += 1;
+        database.exec(nested ? `SAVEPOINT ${savepoint}` : "BEGIN");
+        try {
+          for (const statement of statements) results.push(await statement.run());
+          database.exec(nested ? `RELEASE ${savepoint}` : "COMMIT");
+        } catch (error) {
+          database.exec(nested ? `ROLLBACK TO ${savepoint}` : "ROLLBACK");
+          throw error;
+        } finally {
+          depth -= 1;
+        }
+        return createTestD1Results<T>(results);
+      };
+      const queued = tail.then(run, run);
+      tail = queued.then(() => undefined, () => undefined);
+      return queued;
     },
   });
 }
