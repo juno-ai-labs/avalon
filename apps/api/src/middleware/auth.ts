@@ -91,9 +91,21 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (claims.region !== c.env.AVALON_REGION) {
     throw new ApiError(409, "region_mismatch", "The session belongs to a different data region");
   }
+  // The two analytics surrogates are selected here rather than looked up
+  // anywhere else. `workspaces` is already joined, and `users` is one primary
+  // key away, so both arrive on a query this request was making regardless —
+  // no second round trip, no cache to invalidate, and no copy of identity data
+  // outside the region's own database. See `docs/performance-tracing.md`.
+  //
+  // Both joins are LEFT joins so that a diagnostic can never decide an
+  // authentication. A session without its user row is unreachable while the
+  // foreign key holds, but the cost of being wrong about that is a signed-out
+  // member, and the cost of the defence is nothing.
   const session = await c.env.DB.prepare(
-    `SELECT s.workspace_id, m.role, w.region AS workspace_region
+    `SELECT s.workspace_id, m.role, w.region AS workspace_region,
+            u.analytics_person_id, w.analytics_workspace_id
      FROM sessions s
+     LEFT JOIN users u ON u.id = s.user_id
      LEFT JOIN workspace_members m
        ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id AND m.status = 'active'
      LEFT JOIN workspaces w ON w.id = s.workspace_id
@@ -105,6 +117,8 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
       workspace_id: string | null;
       role: "owner" | "admin" | "member" | null;
       workspace_region: string | null;
+      analytics_person_id: string | null;
+      analytics_workspace_id: string | null;
     }>();
   if (!session || session.workspace_id !== claims.workspaceId) {
     throw new ApiError(401, "session_revoked", "The session is no longer active");
@@ -115,6 +129,8 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
   return {
     ...claims,
     role: session.role,
+    analyticsPersonId: session.analytics_person_id,
+    analyticsWorkspaceId: session.analytics_workspace_id,
   };
 }
 

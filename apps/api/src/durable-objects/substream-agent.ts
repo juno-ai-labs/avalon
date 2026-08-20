@@ -53,6 +53,7 @@ import {
 } from "../services/block-dashboard-service";
 import { logError, logInfo, logWarn } from "../observability/logger";
 import {
+  identityAttributes,
   inFlowSpan,
   noFlowSpan,
   type FlowSpan,
@@ -213,6 +214,16 @@ function productRequestFlow(operation: SubstreamProductRequest["operation"]): Pe
     case "get": case "messages": case "context": return "workstream_open";
     default: return null;
   }
+}
+
+/**
+ * What a socket's authorization query answers with. The analytics column is
+ * absent on the development path, which selects only the role — optional here
+ * rather than nullable so that shape stays legal.
+ */
+interface AuthRoleRow {
+  role: AuthContext["role"];
+  analytics_workspace_id?: string | null;
 }
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
@@ -852,6 +863,14 @@ export class SubstreamAgent extends DurableObject<Env> {
       span.setError("session_revoked");
       return jsonResponse({ error: "session_revoked" }, 401);
     }
+    // Set once the object's own session query has answered, rather than taken
+    // from the caller: a correlation value that arrives from outside is one the
+    // object would have to decide whether to trust, for something it resolves
+    // anyway. Only the workspace surrogate — see `socketAuth` for why the
+    // person surrogate stays on the Worker's side of the boundary.
+    span.setAttributes(identityAttributes({
+      analyticsWorkspaceId: current.analyticsWorkspaceId,
+    }));
     try {
       if (parsed.data.operation === "initialize") {
         const input = parsed.data.input;
@@ -1936,9 +1955,15 @@ export class SubstreamAgent extends DurableObject<Env> {
         attachment.workspaceId,
         attachment.userId,
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>()
+      ).first<AuthRoleRow>()
       : await this.env.DB.prepare(
-        `SELECT member.role
+        // The workspace surrogate rides this query because `workspaces` is
+        // already joined — a socket that authorizes itself also learns what
+        // PostHog knows the workspace as, at no extra round trip. The *person*
+        // surrogate is deliberately not fetched here: it would mean joining
+        // `users` from a Durable Object, and no diagnostic is worth widening
+        // what a socket's authorization depends on.
+        `SELECT member.role, workspace.analytics_workspace_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -1955,7 +1980,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         this.env.AVALON_REGION,
         new Date().toISOString(),
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>();
+      ).first<AuthRoleRow>();
     if (!role) return null;
     return {
       sessionId: attachment.sessionId!,
@@ -1963,6 +1988,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       workspaceId: attachment.workspaceId,
       region: this.env.AVALON_REGION,
       role: role.role,
+      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     };
   }
 
