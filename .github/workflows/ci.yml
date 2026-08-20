@@ -75,9 +75,18 @@ jobs:
 
       # This step is the only thing that touches the shared cache: it imports
       # the compiled layer, rebuilds it when the Dockerfile has moved, and
-      # exports it again. `type=cacheonly` keeps it to that — the image itself
-      # is produced by the build that needs it, resolving every layer from the
-      # builder's now-warm local cache.
+      # exports it again. The build that follows names no cache and resolves
+      # every layer from the builder's now-warm local cache.
+      #
+      # `load: true` is what makes that possible, and it is not incidental. A
+      # remote cache import is lazy: it resolves cache keys without fetching the
+      # layers behind them, and BuildKit keeps that only for the solve it was
+      # imported for. A `type=cacheonly` warm-up therefore left nothing a later,
+      # separate `docker build` could reuse — it reported every vertex CACHED in
+      # 2.4s and the lane then recompiled the crate from scratch anyway.
+      # Materializing the image forces the layers down and into the builder's
+      # local cache, which is the state the next build actually hits. The tag is
+      # a side effect; nothing consumes it.
       #
       # It has to be an action rather than a `docker buildx build` line. The
       # `type=gha` backend authenticates with `ACTIONS_RUNTIME_TOKEN`, which the
@@ -89,7 +98,8 @@ jobs:
         with:
           context: apps/api/crash-symbolicator
           platforms: linux/amd64
-          outputs: type=cacheonly
+          load: true
+          tags: avalon-crash-symbolicator:warm
           cache-from: type=gha,scope=crash-symbolicator
           cache-to: type=gha,mode=max,scope=crash-symbolicator
 
