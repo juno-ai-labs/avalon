@@ -44,7 +44,6 @@ import {
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryFeedbackRequestSchema,
   WorkspaceDirectoryFeedbackResultSchema,
-  WorkspaceDirectoryImportPinsRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
@@ -73,7 +72,6 @@ import {
   type WorkspaceDirectoryExistsRequest,
   type WorkspaceDirectoryFeedbackRequest,
   type WorkspaceDirectoryFeedbackResult,
-  type WorkspaceDirectoryImportPinsRequest,
   type WorkspaceDirectoryListRequest,
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
@@ -1933,56 +1931,6 @@ export class WorkspaceDO extends DurableObject<Env> {
     return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
       directoryWorkstream(row, request.workspaceId)
     )) };
-  }
-
-  /** Maintenance-only import of the existing per-user pin order. */
-  async importWorkstreamPins(input: WorkspaceDirectoryImportPinsRequest): Promise<number> {
-    await this.initialized;
-    const request = WorkspaceDirectoryImportPinsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (!["maintenance_importing", "maintenance_verified"].includes(authority.phase)) {
-      throw new Error("workspace_directory_pin_import_phase_mismatch");
-    }
-    if (!this.state.storage.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM workspace_workstream_directory WHERE workstream_id = ?`,
-      request.workstreamId,
-    ).toArray()[0]) throw new Error("workspace_directory_pin_import_workstream_missing");
-    const now = Date.now();
-    this.state.storage.transactionSync(() => {
-      for (const pin of request.pins) {
-        const existing = this.state.storage.sql.exec<{ one: number }>(
-          `SELECT 1 AS one FROM workspace_workstream_pins
-            WHERE user_id = ? AND workstream_id = ?`,
-          pin.userId,
-          request.workstreamId,
-        ).toArray().length === 1;
-        if (!existing) {
-          const count = this.state.storage.sql.exec<{ count: number }>(
-            `SELECT COUNT(*) AS count FROM workspace_workstream_pins WHERE user_id = ?`,
-            pin.userId,
-          ).one().count;
-          if (count >= MAX_WORKSPACE_PINS_PER_USER) {
-            throw new Error("workstream_pin_import_limit_exceeded");
-          }
-        }
-        this.state.storage.sql.exec(
-          `INSERT INTO workspace_workstream_pins
-             (user_id, workstream_id, position, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(user_id, workstream_id) DO UPDATE SET
-             position = excluded.position, created_at = excluded.created_at,
-             updated_at = excluded.updated_at`,
-          pin.userId,
-          request.workstreamId,
-          pin.position,
-          epoch(pin.createdAt),
-          epoch(pin.updatedAt),
-        );
-      }
-      if (request.pins.length > 0) this.advanceDirectoryVersion(now);
-    });
-    return request.pins.length;
   }
 
   async notificationDirectoryState(
