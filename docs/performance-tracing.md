@@ -76,9 +76,31 @@ from.
 ### A flow span also lands in Workers Logs
 
 `inFlowSpan` is `inSpan` plus two things: it stamps the flow and identity
-attributes that every nested span then sits beneath, and it accumulates each
-`step`'s duration so the flow **also** emits one `perf_flow` log row carrying
-the whole breakdown, its `slowest_step`, and the identity.
+attributes on the root, and it accumulates each `step`'s duration so the flow
+**also** emits one `perf_flow` log row carrying the whole breakdown, its
+`slowest_step`, and the identity.
+
+Two properties of `step` decide how a flow has to be written:
+
+- **A step's duration is measured from the end of the previous step**, not from
+  its own `inSpan`. Anything awaited *between* two steps is charged to the later
+  one. Every awaited call inside a flow therefore belongs inside a step — an
+  unstepped `await` does not go unmeasured, it silently inflates its neighbour
+  and makes `slowest_step` name the wrong thing.
+- **`avalon.flow` and `avalon.component` are repeated onto every step span.**
+  OpenTelemetry does not inherit attributes from a parent, so a step span
+  without them cannot be filtered or grouped by the flow it belongs to. The
+  identity attributes are deliberately not repeated: they are many, the step
+  already shares the root's trace, and `perf_flow` carries every step's duration
+  beside the identity, which is the path built for aggregating across requests.
+
+**One person opening a work stream produces about eight of these rows, not
+one.** A flow is per component invocation, and an open crosses the detail read,
+the transcript read, the socket ticket, the socket upgrade, the room's accept,
+its subscribe, and its `get` and `messages` calls. All unconditional, both
+regions, at `LOG_LEVEL: "info"`. The one-row-per-flow decision below is still
+the right one — per *step* would be roughly forty — but eight is the number to
+budget against before enabling an OTLP export.
 
 That row is not a duplicate of the trace. A trace answers *what happened in this
 one invocation* and is read in a trace UI or at the OTLP destination; the row
@@ -338,6 +360,15 @@ This module owns latency diagnosis for the three named flows and nothing else.
   would need `first-primary` or bookmark-based consistency, which gives back
   much of what replication buys. Treat it as a decision with a security
   argument in it, not a configuration change.
+- **A `workstream_open` trace is not always a completed open.** The renderer
+  closes the trace on the first valid server frame and records which one it was
+  as `outcome`. A `snapshot` means the screen filled; a `resync_required` means
+  the server sent the client to HTTP instead, closing the socket and deferring
+  reconciliation to the next connect, which this trace does not cover. The
+  durations are therefore only comparable within one outcome — **filter
+  `outcome = snapshot` before reading a percentile.** Making the trace span the
+  reconnect would mean a renderer trace that outlives its socket, which is a
+  larger change than this one.
 - **Retention is the platform's.** Nothing here is durable, and a flow
   investigated a month later has no trace and no rows.
 - **The desktop's lines are lost on quit.** They live in the renderer's console
@@ -438,6 +469,67 @@ project would require a new recorded decision. A trace export configured without
 noticing would route around that boundary rather than change it.
 
 ## Changelog
+
+### 2026-08-20 — Review pass: the step accounting, and four things it hid
+
+**What changed:** `step` now closes the gap since the previous step as an
+explicit `unattributed` entry before starting its own measurement. It used to
+measure from the previous step's end, so anything awaited *between* two steps
+was billed to the later one — a fast step could be named `slowest_step` at the
+cost of its slow neighbour, while its own span recorded the truth. `mark` keeps
+the old accounting on purpose: it exists to name work that has already happened.
+
+Three call sites were mismeasuring because of it, and are fixed independently
+so they read correctly rather than as a named gap:
+`SubstreamAgent.acceptSocketInSpan` no longer reads the workstream authority
+control twice; `sendSnapshot` gives `socketAuth` its own step; and the create
+service's `durableObjectStubForWorkspace` calls now surface as `unattributed`
+rather than inflating the step after them.
+
+Also in this pass: `avalon.snapshot.bytes` reports UTF-8 bytes rather than
+`String.length`, carried in a variable so the trim loop encodes once per
+iteration instead of twice; `step` repeats `avalon.flow` and `avalon.component`
+onto each child span, because OpenTelemetry does not inherit attributes and a
+step that lacks them cannot be grouped by its flow; the renderer's create trace
+reports `navigation_requested` rather than `navigated` and ends a superseded
+trace instead of orphaning it; the renderer no longer logs query-string values;
+and `test-workers/tracing-runtime.test.ts` pins `tracing.enterSpan` against the
+real runtime.
+
+**Why:** Review found them, and most were the instrumentation lying about the
+thing it exists to measure — the PR's own framing is "the create took four
+seconds and 3.1 of them were the authority read", which the step accounting
+could not actually support. `encoded.length` counts UTF-16 code units against a
+cap measured in UTF-8, so any non-ASCII transcript under-reported exactly the
+frames most likely to trip it. And every tracing test ran against the
+`cloudflare:workers` stub, which `AGENTS.md` reserves for what cannot run on
+workerd — custom spans can, so the whole feature rested on an import no test
+resolved for real, on an API in open beta.
+
+The duplicated authority read was not only a measurement defect: it is an
+uncached D1 round trip, so every socket accept paid two to save header parsing
+on the maintenance path.
+
+**Considered and rejected:** *Repeating the identity attributes onto every step
+span too*, which review also asked for. The root of the same trace carries them
+and `perf_flow` carries them beside every step duration, so the cost would be
+paid per span for something already available twice. *Keeping the renderer's
+create trace open until the destination screen commits.* The surface is
+optimistic — the work stream appears on the keystroke — so the person's wait
+ended long before `navigate`, and holding a renderer trace across a route commit
+to measure a screen they already have buys nothing; the label was the part that
+was wrong. *Making `workstream_open` span a reconnect* after a
+`resync_required`, which would mean a renderer trace outliving its socket; the
+`outcome` attribute names which frame arrived instead, and the limitation is
+recorded under **Failure modes and limits**.
+
+**Consequences:** A step's number is now its own, so `slowest_step` can be
+trusted — but a flow with unstepped awaits will show an `unattributed` entry,
+and that entry is a bug report about the instrumentation rather than a finding
+about the code. `avalon.snapshot.bytes` is not comparable across this change for
+non-ASCII transcripts; earlier values read low.
+
+Shipped in #203.
 
 ### 2026-08-20 — Spans carry the analytics surrogates, read on the auth query
 

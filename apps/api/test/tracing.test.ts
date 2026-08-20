@@ -81,9 +81,11 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
   });
 
   it("also lands the flow in Workers Logs as one row naming the slowest step", async () => {
-    // One step per `Date.now()` the flow makes: opening it, closing each of the
-    // two steps, and the total at the end.
-    clock(0, 40, 250, 0);
+    // One delta per `Date.now()` the flow makes: opening it, then per step the
+    // gap check on entry and the close on exit, then the total at the end. The
+    // gaps are zero here — this flow awaits nothing between its steps, which is
+    // what the two 0s in the middle say.
+    clock(0, 0, 40, 0, 250, 0);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await inFlowSpan(envAt("info"), "workstream.create", {
@@ -276,5 +278,75 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     expect(recordedSpans()[0]?.attributes).toMatchObject({ "avalon.auth.duration_ms": 42 });
     expect(rows(info).find((row) => row.event === "perf_flow"))
       .toMatchObject({ "avalon.auth.duration_ms": 42 });
+  });
+
+  it("repeats the flow onto each step span, which does not inherit it", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await inFlowSpan(envAt("info"), "workstream.create", {
+      flow: "workstream_create",
+      component: "api",
+      identity: { workspaceId: "workspace-1" },
+    }, async (span) => {
+      await span.step("workstream.create.receipt.reserve", async () => undefined);
+    });
+
+    // OpenTelemetry does not inherit attributes from a parent, so a step span
+    // that omitted these could not be filtered or grouped by its flow.
+    const step = recordedSpans().find((s) => s.name === "workstream.create.receipt.reserve");
+    expect(step?.attributes).toMatchObject({
+      "avalon.flow": "workstream_create",
+      "avalon.component": "api",
+    });
+    // Identity stays on the root: it is many attributes, the step shares the
+    // root's trace, and `perf_flow` carries every step beside the identity.
+    expect(Object.keys(step?.attributes ?? {})).not.toContain("avalon.workspace.id");
+  });
+
+  it("charges work between two steps to `unattributed`, not to the next step", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    await inFlowSpan(envAt("info"), "workstream.create", {
+      flow: "workstream_create",
+      component: "api",
+    }, async (span) => {
+      await span.step("fast_step", async () => { now += 5; });
+      now += 3_000; // an awaited call nobody wrapped in a step
+      await span.step("also_fast_step", async () => { now += 10; });
+    });
+
+    const row = rows(info).find((entry) => entry.event === "perf_flow");
+    // The whole point: `also_fast_step` is 10, not 3010, and the 3000ms it used
+    // to absorb is named rather than hidden inside its neighbour.
+    expect(row).toMatchObject({
+      steps: { fast_step: 5, unattributed: 3_000, also_fast_step: 10 },
+      slowest_step: "unattributed",
+      duration_ms: 3_015,
+    });
+  });
+
+  it("keeps the step breakdown summing to the flow duration", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    await inFlowSpan(envAt("info"), "workstream.create", {
+      flow: "workstream_create",
+      component: "api",
+    }, async (span) => {
+      await span.step("one", async () => { now += 7; });
+      now += 11;
+      await span.step("two", async () => { now += 13; });
+      now += 3;
+    });
+
+    const row = rows(info).find((entry) => entry.event === "perf_flow");
+    const steps = row?.steps as Record<string, number>;
+    // The trailing 3ms after the last step is not in any step, so the parts
+    // sum to the total only if the reader knows that. They must never exceed it.
+    expect(Object.values(steps).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(row?.duration_ms as number);
+    expect(steps["two"]).toBe(13);
   });
 });

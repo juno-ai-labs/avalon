@@ -2175,14 +2175,13 @@ export class SubstreamAgent extends DurableObject<Env> {
   }
 
   private async acceptSocketInSpan(request: Request, url: URL, span: FlowSpan): Promise<Response> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (!acceptsNewWorkstreamWork(authority)) {
-      return jsonResponse({
-        error: "workstream_maintenance",
-        phase: authority.phase,
-        generation: authority.generation,
-      }, 503);
-    }
+    // The authority control is read once, below, after the identity is parsed.
+    // It used to be read here as well, to refuse a socket during maintenance
+    // before parsing anything — but the read is an uncached D1 round trip and
+    // the second one repeats the same check milliseconds later, so the pair
+    // cost every socket accept an extra round trip to save header parsing on
+    // the rare maintenance path. It also charged that first wait to whichever
+    // step closed next, which is how it was found.
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return jsonResponse({ error: "websocket_upgrade_required" }, 426);
     }
@@ -2782,7 +2781,12 @@ export class SubstreamAgent extends DurableObject<Env> {
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const workstream = await span.step("workstream.room.snapshot.detail", () =>
         this.loadSnapshot(workspaceId, workstreamId, attachment.userId));
-      const auth = await this.socketAuth(attachment);
+      // Its own step: this is an awaited D1 round trip, and a step's duration is
+      // measured from the end of the previous one, so leaving it unstepped
+      // charged the authorization wait to the transcript read below and made
+      // `slowest_step` name the wrong thing.
+      const auth = await span.step("workstream.room.snapshot.session_auth", () =>
+        this.socketAuth(attachment));
       if (!auth) throw new Error("Snapshot viewer is no longer authorized");
       const canonicalFeed = await span.step("workstream.room.snapshot.transcript", () =>
         this.product.messages(auth, 250));
@@ -2809,16 +2813,20 @@ export class SubstreamAgent extends DurableObject<Env> {
         });
       let event = buildEvent();
       let encoded = JSON.stringify(event);
+      // Carried rather than recomputed: the cap, the trim loop, and the
+      // reported size are all about UTF-8 bytes, and encoding once per
+      // iteration replaces the two full encodes the loop used to do per trim.
+      let encodedBytes = textEncoder.encode(encoded).byteLength;
       let trims = 0;
-      while (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES
-        && messageFeed.items.length > 1) {
+      while (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES && messageFeed.items.length > 1) {
         messageFeed.items.shift();
         messageFeed.nextCursor = String(messageFeed.items[0]!.sequenceNumber);
         event = buildEvent();
         encoded = JSON.stringify(event);
+        encodedBytes = textEncoder.encode(encoded).byteLength;
         trims += 1;
       }
-      if (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES) {
+      if (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES) {
         throw new Error("substream_snapshot_frame_too_large");
       }
       span.mark("workstream.room.snapshot.encode");
@@ -2826,7 +2834,9 @@ export class SubstreamAgent extends DurableObject<Env> {
       // transcript that overshoots the cap is a cost that only shows up as this
       // count beside the byte size.
       span.setAttributes({
-        "avalon.snapshot.bytes": encoded.length,
+        // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
+        // non-ASCII transcript under-reported against a cap measured in UTF-8.
+        "avalon.snapshot.bytes": encodedBytes,
         "avalon.snapshot.message_count": messageFeed.items.length,
         "avalon.snapshot.trims": trims,
       });

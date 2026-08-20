@@ -642,6 +642,24 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
   };
 }
 
+/**
+ * A request path with every query *value* dropped, keeping the parameter names.
+ *
+ * A path is diagnostic and goes to the renderer's console and log file, but a
+ * query string is caller data: `/auth/invitations/preview?token=…` carries a
+ * bearer invitation token, and `/resources?q=…` carries whatever someone typed
+ * into a search box. Keeping the names says which parameters were sent, which
+ * is what a latency trace actually needs, and keeping none of the values means
+ * there is no list of sensitive keys to maintain and get wrong later.
+ */
+export function redactQuery(path: string): string {
+  const separator = path.indexOf('?');
+  if (separator === -1) return path;
+  const names = new URLSearchParams(path.slice(separator + 1));
+  const keys = [...new Set([...names.keys()])];
+  return keys.length === 0 ? path.slice(0, separator) : `${path.slice(0, separator)}?${keys.join(',')}`;
+}
+
 export class AvalonApi {
   private readonly drafts = new Map<string, DraftState>();
   private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
@@ -756,8 +774,9 @@ export class AvalonApi {
       const durationMs = Math.round(
         (typeof performance === 'undefined' ? Date.now() : performance.now()) - startedAt,
       );
-      logDebug('perf', `http ${method} ${path} ${status} ${durationMs}ms`, {
-        method, path, status, durationMs, requestId: id,
+      const safePath = redactQuery(path);
+      logDebug('perf', `http ${method} ${safePath} ${status} ${durationMs}ms`, {
+        method, path: safePath, status, durationMs, requestId: id,
       });
     }
   }
