@@ -1286,6 +1286,14 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
       .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM digest_schedules WHERE workspace_id = ?`).bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM resource_watches WHERE workspace_id = ?`).bind(route.workspace_id),
+    // Keyed by resource, with no workspace column of its own, so it has to be
+    // scoped through `resources` — and therefore emptied before the rows it
+    // joins to are gone. Deleting note/resource rows fires the old R2 cleanup
+    // triggers; those receipts refer to objects WorkspaceDO now owns and must
+    // never run.
+    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox WHERE resource_id IN
+      (SELECT id FROM resources WHERE workspace_id = ?)`)
+      .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM resources WHERE workspace_id = ?`).bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ?`)
       .bind(route.workspace_id),
@@ -1313,10 +1321,6 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
     env.DB.prepare(`DELETE FROM connector_oauth_attempts WHERE workspace_id = ?`)
       .bind(route.workspace_id),
     env.DB.prepare(`DELETE FROM connector_connections WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    // Deleting note/resource rows fires the old R2 cleanup triggers. Those
-    // receipts refer to objects now owned by WorkspaceDO and must never run.
-    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox WHERE workspace_id = ?`)
       .bind(route.workspace_id),
     env.DB.prepare(
       `DELETE FROM work_opportunity_snapshots WHERE opportunity_id IN (${opportunityIds})`,
