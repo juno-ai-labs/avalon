@@ -103,7 +103,7 @@ all mocked, the test covers the wiring of the mocks.
 ```ts
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -112,9 +112,24 @@ beforeEach(async () => {
 });
 ```
 
-- **`await reset()` in `beforeEach`.** Durable Object and D1 state persists
-  between tests in the same file otherwise, and the second test starts depending
-  on the first having run.
+- **`env` and the Worker come from `cloudflare:workers`.** `cloudflare:test`
+  still exports `env` and `SELF`, and both are deprecated as of
+  `@cloudflare/vitest-pool-workers` 0.21: use `env` and
+  `exports.default.fetch()` from `cloudflare:workers` instead. Everything else —
+  `reset`, `runInDurableObject`, `runDurableObjectAlarm`, `evictDurableObject`,
+  `listDurableObjectIds`, `createExecutionContext` — stays on `cloudflare:test`.
+- **`await reset()` between tests.** Storage isolation is per *file*, not per
+  test: Cloudflare gives each test file its own storage environment, and within
+  one file the second test inherits whatever the first wrote. Cloudflare's
+  example puts `reset()` in `afterEach`; `beforeEach` is equivalent and is what
+  `durable-object-runtime.test.ts` does.
+- **Know what `reset()` does and does not reach.** It deletes all data from
+  every attached binding, and for D1 that includes the *schema* — measured here,
+  154 tables before the call and none after. Durable Object storage survives it,
+  which is why `agent-run-lifecycle.test.ts` and
+  `agent-run-dispatch-reliability.test.ts` take a fresh object id per test
+  instead of resetting. `abortAllDurableObjects()` resets instances while keeping
+  their persisted data, which is what an eviction test wants.
 - **Bindings come from `apps/api/wrangler.test.jsonc`**, not from the production
   configs. A new Durable Object class needs both a binding and its name in the
   `new_sqlite_classes` migration tag, or the object has no SQLite storage.
@@ -123,13 +138,20 @@ beforeEach(async () => {
   this in its `seedOpenAuthority` helper. Declare only the columns the behavior
   reads, and check them against `packages/db/migrations`, because this suite will
   not notice that the real table moved. A test *about* a query belongs on rung 2,
-  where the migrations are applied for real.
-- **`SELF.fetch` reaches the real Hono app**, but `wrangler.test.jsonc` declares
-  a subset of the env contract, so any route currently answers `503`
-  `env_contract_failed` with the missing keys listed. Route-level tests on
-  workerd are possible — add the vars and bindings that log names to
-  `wrangler.test.jsonc` first. Never relax `src/env.ts` to make a test pass; the
-  contract is what stops a half-configured Worker serving traffic.
+  where the migrations are applied for real. Applying them here instead is
+  possible and has been tried — see
+  [Worth doing, not done](#worth-doing-not-done) for what it costs and what
+  breaks.
+- **`exports.default.fetch()` reaches the real Hono app**, but
+  `wrangler.test.jsonc` declares a subset of the env contract, so any route
+  currently answers `503` `env_contract_failed` with the missing keys listed.
+  Route-level tests on workerd are possible — add the vars and bindings that log
+  names to `wrangler.test.jsonc` first. Never relax `src/env.ts` to make a test
+  pass; the contract is what stops a half-configured Worker serving traffic.
+- **The first call into the Worker costs about 14 seconds** while its module
+  graph is instantiated; later calls in the same file take milliseconds. That
+  overruns Vitest's 5-second default and reads as a hang, so give the first
+  route-level test in a file an explicit `timeout`.
 - **One file at a time** needs the config named, and the path is
   package-relative:
   `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts test-workers/<file>.test.ts`.
@@ -138,7 +160,7 @@ beforeEach(async () => {
   addresses on a completely green run. Read the summary line, and capture the
   output to a file as [AGENTS.md](../AGENTS.md#capturing-command-output) requires
   rather than judging it through a truncating pipe.
-- **Budget about 25 seconds** for the whole suite from cold; most of that is
+- **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
 ## Prove the test can fail
@@ -197,6 +219,117 @@ one. Several schemas refine on the version nibble (`value[14] === "7"` in
 `packages/contracts/src/index.ts` and `telemetry.ts`), so a `test-id` placeholder
 fails validation for a reason that has nothing to do with the behavior under
 test.
+
+## Advisements, to-dos, and traps from Cloudflare's own docs
+
+Checked against Cloudflare's [Vitest integration
+documentation](https://developers.cloudflare.com/workers/testing/vitest-integration/)
+on 2026-08-20, against `@cloudflare/vitest-pool-workers` 0.21.3 as installed.
+Nothing here is blocking; each item is either a rule to follow when you next
+touch this area or a change worth making that has not been made.
+
+### Follow these when writing a workerd test
+
+- **Settle `waitUntil` work before asserting.** A handler called directly needs
+  `const ctx = createExecutionContext()` and `await waitOnExecutionContext(ctx)`
+  before the assertions, or the test observes the state *before* the deferred
+  work ran. That race is exactly the kind of intermittent failure
+  [the flaky-test rule](../AGENTS.md#flaky-tests) forbids leaving in place.
+  Queue consumers have the equivalent: `createMessageBatch()` plus
+  `getQueueResult(batch, ctx)`, which reports ack/retry state *and* waits.
+  `createScheduledController()` is the same thing for a cron handler — relevant
+  to `WorkspaceScheduler` and the `ACTIVITY_QUEUE` paths, neither of which is
+  currently driven through those helpers.
+- **Per-file storage isolation has preconditions.** Cloudflare documents that
+  isolation only holds if every storage operation is awaited, response bodies
+  from `fetch()` and `R2.get()` are fully consumed, and non-primitive RPC
+  returns are held with `using`. A dangling promise or an unread body leaks
+  state into the next file and surfaces as a flake somewhere else.
+- **Mock outbound HTTP with `fetchMock`, not by replacing `globalThis.fetch`.**
+  The documented recipes are `fetchMock` (an undici `MockAgent`) or MSW; both
+  leave the runtime's request path intact, where a swapped global does not and
+  will not catch a malformed `Request`.
+- **`additionalExports`** in the pool options is the escape hatch when the pool
+  cannot infer a Durable Object or entrypoint class through a build indirection.
+  Reach for it before restructuring production code to be testable.
+- **Do not enable the `remoteBindings` pool option.** It makes tests reach real
+  Cloudflare resources; CI has no credentials for that, and the failure mode is
+  a suite that depends on account state.
+
+### Known issues that will otherwise look like our bugs
+
+- **WebSockets in a Durable Object are not supported under per-file storage
+  isolation.** Cloudflare's documented workaround is
+  `--max-workers=1 --no-isolate`. `durable-object-runtime.test.ts` exercises
+  hibernating sockets and passes today, and the `disconnected: other end of
+  WebSocketPipe was destroyed` line on a green run comes from this area. If a
+  socket test in `test-workers/` ever starts failing intermittently, this is the
+  documented cause and that flag pair is the documented fix — not a `retry`.
+- **Vitest's fake timers do not reach the KV, R2, and cache simulators.** You
+  cannot expire a KV key by advancing fake time; alarms have
+  `runDurableObjectAlarm` precisely because the clock is not the lever.
+- **Coverage on this suite must use Istanbul.** V8 coverage is unsupported in
+  the Workers pool; `apps/api/vitest.config.ts` configures coverage for the Node
+  suite only, and adding it to `vitest.workers.config.ts` means setting
+  `provider: "istanbul"`.
+- **Dynamic `import()` does not work inside a `fetch` handler or a Durable
+  Object event handler** under the pool. Static imports at module scope do.
+- **The pool pins the Vitest versions it supports** (`assertCompatibleVitestVersion`
+  runs at startup). `@cloudflare/vitest-pool-workers` is `latest` in
+  `apps/api/package.json` and `vitest` is `latest` through the
+  `pnpm-workspace.yaml` catalog, so a Vitest major can arrive ahead of pool
+  support and the failure is at startup rather than in a test; the package ships
+  a codemod at
+  `dist/codemods/vitest-v3-to-v4.mjs` for the last such migration, and the
+  configuration API itself was rearchitected onto the `cloudflareTest()` plugin
+  in 0.13 — a config found online using `test.poolOptions.workers` predates it.
+
+### Worth doing, not done
+
+- **Apply the real D1 migrations in `test-workers/` instead of hand-written
+  `CREATE TABLE`s.** Cloudflare's recipe reads them in Node and applies them
+  inside the runtime:
+
+  ```ts
+  // vitest.workers.config.ts
+  cloudflareTest(async () => ({
+    wrangler: { configPath: "./wrangler.test.jsonc" },
+    miniflare: { bindings: { TEST_MIGRATIONS: await readD1Migrations(migrationsPath) } },
+  }))
+  // test-workers/helpers/apply-migrations.ts, named in test.setupFiles
+  await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+  ```
+
+  Tried here on 2026-08-20 against `32f1c40`, and the result is worth having
+  before someone tries it again. The mechanics work: all 154 tables from
+  `packages/db/migrations` apply, `readD1Migrations` is exported from the package
+  root in 0.21.3 rather than the `/config` subpath the prose still names, and the
+  whole suite stays green. But a green suite is not evidence the tests ran
+  against the real schema, and here they mostly did not — **`reset()` drops the
+  D1 schema**, so in `durable-object-runtime.test.ts` and
+  `message-to-output-pipeline.test.ts` the migrations are undone by the first
+  `beforeEach` and the hand-written `CREATE TABLE`s go on running against an
+  empty database exactly as before. Only the two files that never reset —
+  `agent-run-lifecycle.test.ts` and `agent-run-dispatch-reliability.test.ts` —
+  actually see it. Adopting the recipe therefore means applying the migrations
+  *after* each reset rather than once in a setup file, and it costs about 14
+  seconds per test file either way.
+
+  One more thing that run turned up: against the previous base, the same
+  experiment failed `agent-run-lifecycle.test.ts` →
+  *"resumes an admitted run after the object is evicted before it starts"*, which
+  settled with `agent_run_settlement_failed` and scheduled no wake-up once real
+  tables existed. It passes on `32f1c40`, consistent with the trigger-rounding
+  fix that landed there — a run stuck behind a `terminalized_at` guard is the
+  same symptom. Worth remembering that the hand-rolled schema hid a real bug
+  from this suite for as long as it stood in.
+- **Consider Wrangler's `createTestHarness()` for the smoke check.** Cloudflare
+  now ships an integration harness in the `wrangler` package that starts
+  production Worker builds behind their configured HTTP routes and works with any
+  Node test runner. `scripts/smoke-local.mjs` currently requires a human to have
+  started `pnpm dev:api:local` first, which is why it is not in CI; a harness
+  could run both regional Workers in-process and make the smoke check a gate
+  rather than a manual step.
 
 ## Recording what you covered
 
