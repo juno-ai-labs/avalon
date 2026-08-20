@@ -26,6 +26,7 @@ describe('uploaded attachment drafts', () => {
     const environment = createTestEnv({
       AVALON_REGION: 'global',
       MAX_ATTACHMENT_BYTES: '25000000',
+      ATTACHMENT_SCAN_ENFORCEMENT: 'disabled',
       DB: sqliteD1(database),
       PAYLOADS: {
         async put(key: string) { stored.add(key); },
@@ -71,6 +72,7 @@ describe('uploaded attachment drafts', () => {
     const environment = createTestEnv({
       AVALON_REGION: 'global',
       MAX_ATTACHMENT_BYTES: '25000000',
+      ATTACHMENT_SCAN_ENFORCEMENT: 'disabled',
       DB: sqliteD1(database),
       PAYLOADS: {
         async put(key: string) { stored.add(key); },
@@ -254,7 +256,14 @@ function attachmentDatabase(): DatabaseSync {
       model_content_claimed_at TEXT, model_content_claim_id TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
+      scan_status TEXT, scan_completed_at TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE attachment_scan_verdicts (
+      workspace_id TEXT NOT NULL, content_sha256 TEXT NOT NULL, verdict TEXT NOT NULL,
+      findings_json TEXT NOT NULL, provider TEXT NOT NULL, provider_file_id TEXT,
+      content_length INTEGER NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, content_sha256)
     );
     CREATE TABLE automation_subscriptions (id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT);
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT);

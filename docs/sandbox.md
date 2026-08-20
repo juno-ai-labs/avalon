@@ -30,6 +30,7 @@ be narrowed, the hosts Avalon actually reaches are:
 | `api.firecrawl.dev` | Agent web search and page reading |
 | `*.openai.azure.com` | Realtime dictation |
 | `api.resend.com` | Invitations and inbound work-stream email |
+| `api-us1.scanii.com`, `api-eu1.scanii.com` | Attachment malware scanning, per region |
 | `api.linear.app`, `slack.com`, `api.github.com`, `api.notion.com`, `www.googleapis.com`, `oauth2.googleapis.com` | Connectors |
 
 A local-only session — the common case — needs only the first two rows.

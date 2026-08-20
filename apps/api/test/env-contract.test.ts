@@ -50,6 +50,8 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     MAX_ATTACHMENT_BYTES: "25000000",
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     CONNECTOR_POLL_TIMEOUT_MS: "20000",
+    SCANII_API_KEY: "scanii-key",
+    SCANII_API_SECRET: "scanii-secret",
     ...overrides,
   });
 }
@@ -218,6 +220,29 @@ describe("environment contract", () => {
       "GOOGLE_OAUTH_CLIENT_ID is missing",
       "GOOGLE_OAUTH_CLIENT_SECRET is missing",
     ]);
+  });
+
+  it("requires the attachment scanner credentials in both regions", () => {
+    // Absent credentials are not a degraded feature. `enforce` is the default
+    // enforcement, so a deployed region without them answers 503 to every
+    // attachment upload while every other route stays healthy — a fault that is
+    // invisible until someone tries to attach a file.
+    for (const region of ["global", "eu"] as const) {
+      const env = productionEnv({
+        AVALON_REGION: region,
+        ...(region === "eu" ? { PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com" } : {}),
+      });
+      if (region === "eu") {
+        delete (env as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+        delete (env as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+      }
+      delete (env as Partial<Env>).SCANII_API_KEY;
+      delete (env as Partial<Env>).SCANII_API_SECRET;
+
+      let thrown: EnvContractError | undefined;
+      try { assertEnvContract(env); } catch (error) { thrown = error as EnvContractError; }
+      expect(thrown?.keys).toEqual(["SCANII_API_KEY is missing", "SCANII_API_SECRET is missing"]);
+    }
   });
 
   it("still requires the OpenRouter key in EU, which does use it", () => {

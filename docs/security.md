@@ -36,7 +36,7 @@ outside this document can break without their own tests failing.
 ### Trust boundaries
 
 The renderer, inbound internet, connector providers, monitored URLs, model
-output, and connector payloads are untrusted. The Electron main process and
+output, connector payloads, and uploaded files are untrusted. The Electron main process and
 regional Worker are trusted only within their narrow responsibilities. D1 and R2
 are canonical storage services, not authorization layers.
 
@@ -290,6 +290,23 @@ webhook signing secret must follow the same boundary; connectors with a
 developer-configured or authenticated secret exchange do not. The classification
 and implementation checklist live in
 [`connectors.md`](connectors.md#unsigned-webhook-subscription-handshakes).
+
+### Uploaded file scanning
+
+- Every file uploaded through `POST /resources/upload` is scanned for malware by
+  Scanii before it is written to R2. An infected file is refused with
+  `attachment_infected` (422); no object and no `resources` row is created.
+- Scanii is a **sub-processor of uploaded file contents** in both regions. The
+  request carries the bytes only — no workspace, user, or work-stream identifier,
+  and a neutral filename in place of the uploaded one.
+- Each region scans against its own Scanii endpoint, so EU workspace bytes are
+  scanned inside the EU.
+- Missing credentials fail closed: an unconfigured region under the default
+  `enforce` mode refuses every upload rather than accepting unscanned bytes.
+- Malware detection says nothing about the prompt-injection risk in document
+  text, which is what actually exploits the attachment path.
+  [`attachment-malware-scanning.md`](attachment-malware-scanning.md) owns this
+  boundary in full.
 
 ### Model boundary
 
@@ -608,6 +625,27 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-20 — Uploaded files are scanned before they are stored, by a new sub-processor
+
+**What changed:** `POST /resources/upload` now resolves a malware verdict from
+Scanii between MIME verification and the R2 write, and refuses an infected file
+outright. Uploaded files join the untrusted list above.
+
+**Why:** Avalon stored whatever bytes a person chose to upload and then fed them
+to OCR and the model. The alternatives considered — Cloudflare's WAF
+malicious-uploads detection, and self-hosted ClamAV in a Container — are compared
+in [`attachment-malware-scanning.md`](attachment-malware-scanning.md#changelog);
+the WAF option was rejected partly because its block is delivered by the edge
+without CORS headers, so the renderer could never tell the person *why* their
+file was refused.
+
+**What a future change has to respect:** this adds a third party that receives
+customer file contents, which is a disclosure obligation as well as an
+engineering one — the sub-processor list and the regional endpoint split are part
+of the control, not incidental to it. An unconfigured region fails closed on
+purpose; making it fail open would return the system to the state this change
+was made to leave.
 
 ### 2026-08-13 — A saved message is rendered outside the application's origin
 

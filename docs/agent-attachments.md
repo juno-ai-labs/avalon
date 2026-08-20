@@ -34,6 +34,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
+| `apps/api/src/services/attachment-malware-scan.ts` | Resolves the malware verdict that `upload()` gates on; owned by [`attachment-malware-scanning.md`](attachment-malware-scanning.md). |
 
 ## How it works
 
@@ -434,6 +435,29 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-20 — An upload must earn a malware verdict before it becomes a resource
+
+**What changed:** `ResourceService.upload` now resolves a Scanii verdict between
+MIME verification and the R2 write, and raises `attachment_infected` (422) for a
+malicious file. `resources` gains `scan_status` and `scan_completed_at`. The
+mechanism lives in
+[`attachment-malware-scanning.md`](attachment-malware-scanning.md); only its
+effect on this module is recorded here.
+
+**Why:** every consumer in this document — hydration, derivative extraction, the
+model-facing tools, the Terminal bridge — treated an uploaded original as
+trustworthy bytes, and nothing had ever checked. Placing the gate at creation
+rather than at each read means those consumers keep that assumption and it
+becomes true, instead of thirteen call sites each growing a check.
+
+**What a future change has to respect:** the scan precedes the `PAYLOADS.put`
+deliberately. The object reaper keys off a `resources` row, so an object written
+before its verdict is known and then rejected would be orphaned in the bucket
+with nothing to collect it. Any new path that accepts user file bytes — the
+Terminal import and connector fetches are the obvious candidates, and neither is
+scanned today — has to make the same ordering choice rather than assume this one
+covered it.
 
 ### 2026-08-18 — Resource authority moves into WorkspaceDO
 

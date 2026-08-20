@@ -50,6 +50,10 @@
     "WEB_SEARCH_MAX_RESULTS": "8",
     "WEB_FETCH_MAX_BYTES": "2000000",
     "MAX_ATTACHMENT_BYTES": "25000000",
+    // Dublin. EU workspace bytes are scanned inside the EU; see
+    // regionalization.md and attachment-malware-scanning.md.
+    "SCANII_API_BASE_URL": "https://api-eu1.scanii.com",
+    "ATTACHMENT_SCAN_ENFORCEMENT": "enforce",
     "WEBHOOK_REPLAY_WINDOW_SECONDS": "300",
     "PROVIDER_WEBHOOK_MAX_BYTES": "2000000",
     "INBOUND_EMAIL_MAX_BYTES": "5000000",

@@ -80,6 +80,7 @@ The same Worker source is deployed twice:
 | Notion connection ingress | one redirect URI and one webhook subscription, plus the Notion-workspace-to-region directory | authorization code and exact signed delivery forwarded through named Worker RPC; token exchange, credentials, and payloads stay in EU |
 | Work-stream email registry | one authoritative, case-insensitive reservation table for every region | no local allocator; reservations and status changes use the Global named RPC binding |
 | Terminal workspaces | independently gated Daytona target; regional D1/R2/GitHub App services | independently gated Daytona target; no Global fallback or bridge |
+| Attachment malware scanning | Scanii `api-us1.scanii.com` (Virginia) | Scanii `api-eu1.scanii.com` (Dublin); content submitted to a regional endpoint never leaves that region |
 
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload
 bodies. Every service receives a fixed regional dependency container; repositories
@@ -337,6 +338,24 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-20 — Attachment scanning uses one vendor without crossing the boundary
+
+**What changed:** each region scans uploaded files against its own Scanii
+endpoint, named as a per-region Worker variable rather than derived in code.
+
+**Why:** malware scanning needs an external processor, and the obvious reading of
+the V1 boundary is that one is not allowed. Scanii's regional endpoints are
+separate points of presence — content submitted to one never leaves that region —
+so the EU Worker can use the same vendor as Global without EU workspace bytes
+leaving the EU. Keeping the endpoint in `wrangler.eu.jsonc` rather than computing
+it from `AVALON_REGION` makes the residency choice visible in a diff, which is
+where a reviewer will look for it.
+
+**What a future change has to respect:** deriving the endpoint in code, or
+falling back to the Global endpoint when the EU one is unreachable, would move EU
+file contents to Virginia. The failure mode for an unreachable regional scanner
+is refusing the upload, never scanning it elsewhere.
 
 ### 2026-08-17 — Workspace routing persists west/east Durable Object affinity
 

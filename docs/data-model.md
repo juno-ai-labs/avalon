@@ -239,6 +239,14 @@ hash-checked RPCs rather than cross-object SQL joins.
   new row and queues the former pointer; resource deletion queues its current
   original and derivative, while detaching one relationship leaves shared
   resource objects intact.
+  Uploaded originals carry `scan_status` and `scan_completed_at`: an infected
+  upload is refused before the row is written, so the column describes only
+  stored files and never holds `'infected'`. Regional
+  `attachment_scan_verdicts` caches one malware verdict per
+  `(workspace_id, content_sha256)` and cascades with the workspace, so a
+  re-upload of the same bytes costs no second scan;
+  [`attachment-malware-scanning.md`](attachment-malware-scanning.md) owns its
+  reuse windows.
   Object-local `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
@@ -669,6 +677,26 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-20 — Uploaded originals record a malware verdict, cached by content hash
+
+**What changed:** `resources` gains `scan_status` and `scan_completed_at`, and
+regional D1 gains `attachment_scan_verdicts`, keyed
+`(workspace_id, content_sha256)` with a cascade to the workspace.
+
+**Why:** the upload path now refuses infected files, and a verdict is expensive
+enough — a synchronous round trip to an external scanner — that repeating it for
+identical bytes is waste. Hashing already happened for object identity, so the
+cache key was free.
+
+**Consequences:** the cache is deliberately scoped to the workspace rather than
+shared region-wide. A hash verdict is a property of the bytes and would dedupe
+further if it were global, but a table with no `workspace_id` sits outside the
+tenant-scrub cascade every other resource table lives inside, and identical bytes
+across two tenants is rare for private documents. Uniform deletion semantics were
+judged worth more than the extra hit rate. `scan_status` is `NULL` for every row
+predating the migration and for non-upload providers; a reader must not treat
+`NULL` as "scanned".
 
 ### 2026-08-19 — Object tables audited: retention, byte bounds, and promoted discriminators
 

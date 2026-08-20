@@ -58,6 +58,10 @@ Set these shared Worker secrets separately in each regional deployment:
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_REALTIME_DEPLOYMENT`
 - `FIRECRAWL_API_KEY`
+- `SCANII_API_KEY` and `SCANII_API_SECRET`; each region authenticates against its own Scanii endpoint
+  (`SCANII_API_BASE_URL` is a Worker variable, not a secret). Both are required in production and staging:
+  a region missing them refuses every attachment upload with 503, and `/health` reports the contract failure.
+  See [`attachment-malware-scanning.md`](attachment-malware-scanning.md#operations).
 - `RESEND_API_KEY`
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`

@@ -12,6 +12,7 @@ import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
+import { attachmentInfectedError, resolveAttachmentScan } from "./attachment-malware-scan";
 import {
   materializeAttachmentDerivative,
   ocrPdfWithWorkersAi,
@@ -227,6 +228,18 @@ export class ResourceService {
     const contentSha256 = await sha256Hex(bytes);
     const declaredMimeType = truncateUtf16Safe(file.type || "application/octet-stream", 160);
     const verifiedMimeType = verifyAttachmentMimeType(bytes, file.name, declaredMimeType);
+    const at = nowIso();
+    // Scan before the object is written. An infected upload must not exist in
+    // R2 even briefly: the reaper that would remove it runs off a `resources`
+    // row, and this path deliberately never writes one for a rejected file.
+    const scan = await resolveAttachmentScan(this.env, {
+      workspaceId: this.auth.workspaceId,
+      contentSha256,
+      contentLength: file.size,
+      bytes,
+      now: at,
+    });
+    if (scan.status === "infected") throw attachmentInfectedError(scan.findings);
     // A draft UUID may be reused after deletion. Make each original object key
     // generation-specific so an older image/conversion claim cannot publish
     // against a newly uploaded resource with the same UUID.
@@ -235,14 +248,14 @@ export class ResourceService {
       httpMetadata: { contentType: verifiedMimeType, contentDisposition: contentDisposition("attachment", file.name) },
       customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
     });
-    const at = nowIso();
     try {
       await this.env.DB.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
           content_sha256, model_content_status, metadata_json, last_hydrated_at,
-          uploaded_by_user_id, attachment_status, created_at, updated_at)
-         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?)`,
+          uploaded_by_user_id, attachment_status, scan_status, scan_completed_at,
+          created_at, updated_at)
+         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?, ?, ?)`,
       ).bind(
         id,
         this.auth.workspaceId,
@@ -258,6 +271,8 @@ export class ResourceService {
         JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
         at,
         this.auth.userId,
+        scan.status,
+        scan.status === "skipped" ? null : at,
         at,
         at,
       ).run();

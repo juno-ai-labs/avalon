@@ -100,6 +100,8 @@ export interface Env {
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
   FIRECRAWL_API_KEY?: string;
+  SCANII_API_KEY?: string;
+  SCANII_API_SECRET?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_NOTIFICATION_FROM_EMAIL?: string;
@@ -162,6 +164,9 @@ export interface Env {
   WEB_SEARCH_MAX_RESULTS: string;
   WEB_FETCH_MAX_BYTES: string;
   MAX_ATTACHMENT_BYTES: string;
+  ATTACHMENT_SCAN_ENFORCEMENT?: "enforce" | "permissive" | "disabled";
+  ATTACHMENT_SCAN_TIMEOUT_MS?: string;
+  SCANII_API_BASE_URL?: string;
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
   INBOUND_EMAIL_MAX_BYTES?: string;
@@ -294,6 +299,8 @@ const EnvContractSchema = z.object({
   INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
   AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR: numericString.optional(),
+  ATTACHMENT_SCAN_TIMEOUT_MS: numericString.optional(),
+  ATTACHMENT_SCAN_ENFORCEMENT: z.enum(["enforce", "permissive", "disabled"]).optional(),
 
   EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -301,6 +308,7 @@ const EnvContractSchema = z.object({
   NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   POSTHOG_HOST: HttpUrlSchema.optional(),
+  SCANII_API_BASE_URL: HttpUrlSchema.optional(),
 });
 
 /**
@@ -341,11 +349,22 @@ const EnvContractSchema = z.object({
  * configured`. That is the intended difference between a sandbox missing a key
  * and a deployment missing one; the probe still *answers*, which is the
  * distinction that matters.
+ *
+ * The Scanii pair belongs here for the inverse of OpenRouter's reason. Its
+ * absence is not a supported state that degrades a feature — `enforce` is the
+ * default enforcement, so a deployed region without the credentials rejects
+ * every attachment upload with 503 while every other route stays healthy. That
+ * is a fault the deployment must be stopped for, and it is invisible from the
+ * outside until someone tries to attach a file. Local development sets
+ * `ATTACHMENT_SCAN_ENFORCEMENT=disabled` instead, which is why this is a
+ * production-only requirement rather than a schema-level one.
  */
 const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
   { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
   { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
+  { key: "SCANII_API_KEY", regions: ["global", "eu"] },
+  { key: "SCANII_API_SECRET", regions: ["global", "eu"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
@@ -451,6 +470,7 @@ export function numericEnv(
     | "WEB_SEARCH_MAX_RESULTS"
     | "WEB_FETCH_MAX_BYTES"
     | "MAX_ATTACHMENT_BYTES"
+    | "ATTACHMENT_SCAN_TIMEOUT_MS"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
     | "PROVIDER_WEBHOOK_MAX_BYTES"
     | "INBOUND_EMAIL_MAX_BYTES"

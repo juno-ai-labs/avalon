@@ -27,6 +27,10 @@ const workerKeys = [
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
+  "SCANII_API_KEY",
+  "SCANII_API_SECRET",
+  "SCANII_API_BASE_URL",
+  "ATTACHMENT_SCAN_ENFORCEMENT",
   "TERMINAL_REGION_CAPABILITY",
   "DAYTONA_API_KEY",
   "DAYTONA_API_URL",
@@ -93,6 +97,12 @@ const regionalizableKeys = [
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
+  // Each region scans against its own Scanii endpoint, so a developer
+  // exercising a real scan supplies SCANII_API_BASE_URL_GLOBAL/_EU.
+  "SCANII_API_KEY",
+  "SCANII_API_SECRET",
+  "SCANII_API_BASE_URL",
+  "ATTACHMENT_SCAN_ENFORCEMENT",
   "TERMINAL_REGION_CAPABILITY",
   "DAYTONA_API_KEY",
   "DAYTONA_API_URL",
@@ -157,6 +167,9 @@ const safeDefaults = {
   WEB_SEARCH_MAX_RESULTS: "8",
   WEB_FETCH_MAX_BYTES: "2000000",
   MAX_ATTACHMENT_BYTES: "25000000",
+  // Local development holds no Scanii credentials, and an upload path that
+  // 503s without them would make attachments untestable offline.
+  ATTACHMENT_SCAN_ENFORCEMENT: "disabled",
   WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
   PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
   INBOUND_EMAIL_MAX_BYTES: "5000000",
