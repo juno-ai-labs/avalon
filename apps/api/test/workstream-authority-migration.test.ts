@@ -555,6 +555,14 @@ describe("the D1 to WorkspaceDO authority source", () => {
     ]) {
       expect(isTransientCampaignError(new Error(transient)), transient).toBe(true);
     }
+    // D1 sheds load with 7429 rather than failing the write; quarantining a
+    // healthy campaign for it is what generation 4 taught us not to do.
+    for (const transient of [
+      "D1_ERROR: D1 DB is overloaded. Requests queued for too long. [code: 7429]",
+      "D1 DB is overloaded. Requests queued for too long.",
+    ]) {
+      expect(isTransientCampaignError(new Error(transient)), transient).toBe(true);
+    }
     for (const terminal of [
       "workspace_product_import_conflict:work_opportunity_provenance_roots",
       "workspace_product_import_not_active",
