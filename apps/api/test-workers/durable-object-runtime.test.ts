@@ -256,13 +256,15 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(mismatched.status).toBe(409);
     expect(JSON.parse(mismatched.bodyJson)).toEqual({ error: "workstream_effect_identity_mismatch" });
-    // An epoch this object has never been established in is refused.
+    // A newer epoch is adopted, not refused: the metadata row is stamped once
+    // and never rewritten, so gating on it strands every effect a restarted
+    // campaign produces.
     const newer = await parent.receiveSubstreamEffects({
       substreamId: "0",
       envelopes: [{ ...common, messageId: "native-rpc-newer-epoch", generation: common.generation + 1 }],
     });
-    expect(newer.status).toBe(409);
-    expect(JSON.parse(newer.bodyJson)).toEqual({ error: "workstream_effect_identity_mismatch" });
+    expect(newer.status).toBe(200);
+    expect(JSON.parse(newer.bodyJson)).toEqual({ ok: true, accepted: 1 });
     // An earlier epoch is a replay, not a mismatch. A restarted maintenance
     // campaign moves an object's generation forward, and refusing these would
     // strand every effect already in flight — permanently, since the numbers
@@ -281,6 +283,9 @@ describe("Durable Objects in the Workers runtime", () => {
       }],
     });
     expect(establishedAtTwo.status).toBe(200);
+    // ...and an older one still applies afterwards, which is the case a
+    // restart actually produces: effects already in flight carry the epoch
+    // they were enqueued under.
     const replayedFromOne = await replayParent.receiveSubstreamEffects({
       substreamId: "0",
       envelopes: [{

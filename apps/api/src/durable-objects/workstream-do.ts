@@ -1429,21 +1429,27 @@ export class WorkstreamDO extends DurableObject<Env> {
         workstream_id: string;
         authority_generation: number;
       }>(`SELECT workspace_id, workstream_id, authority_generation FROM workstream_metadata WHERE id = 1`));
-      // Identity is the workspace and work stream; the generation is an epoch,
-      // and an older one is not a mismatch. A child enqueues an effect stamped
-      // with the generation current at the time, and a maintenance campaign
-      // that restarts moves this object's generation forward — permanently
-      // stranding everything already in flight, because the numbers can never
-      // agree again. Replay is safe: the region admits no new work while a
-      // campaign runs, so a pending effect predates the drain and describes
-      // state the import reproduced, and `child_effect_receipts` below dedupes
-      // it regardless. A generation from the future is still refused, since
-      // that would mean an epoch this object has not been established in.
+      // Identity is the workspace and the work stream. The generation is an
+      // epoch that this row *follows*, not a gate: it is stamped once when the
+      // metadata is first created and never rewritten, while a child stamps
+      // every effect with whatever generation is current when it enqueues.
+      // Gating on equality therefore only ever held for a cutover that ran
+      // exactly once — any restart moved the child forward, left this row
+      // behind, and made every effect permanently unacceptable in one
+      // direction or the other. Effects are deduped by `child_effect_receipts`
+      // below, and no new work is admitted while a campaign runs, so accepting
+      // an effect from any epoch of the same work stream is safe; the row
+      // simply keeps up with the newest one it has seen.
       if (metadata && (
         metadata.workspace_id !== envelope.workspaceId
         || metadata.workstream_id !== envelope.workstreamId
-        || envelope.generation > metadata.authority_generation
       )) throw new Error("workstream_effect_identity_mismatch");
+      if (metadata && envelope.generation > metadata.authority_generation) {
+        this.state.storage.sql.exec(
+          `UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1`,
+          envelope.generation,
+        );
+      }
 
       const receipt = first(this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM child_effect_receipts WHERE substream_id = ? AND message_id = ?`,
