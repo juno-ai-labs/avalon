@@ -11,7 +11,8 @@ export interface DevicePreferences {
   workspaceName?: string;
   microphoneDeviceId?: string;
   /** Absent means the theme has never been chosen, which is not the same as
-   * having chosen `system`: only the latter survives a later change of default. */
+   * having chosen `system` mode: only the latter survives a change of default.
+   * A string here is the flat pre-family shape and is migrated on read. */
   theme?: ThemeChoice;
 }
 

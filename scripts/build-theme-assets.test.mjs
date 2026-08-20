@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   assetManifest,
+  defaultTheme,
   backdropDocument,
   customProperty,
   fontCacheId,
@@ -42,11 +43,21 @@ test('a token path becomes a namespaced custom property', () => {
   assert.equal(customProperty('cmp.sidebar.background-solid'), '--av-cmp-sidebar-background-solid');
 });
 
-// The dark theme is the default as well as a choice, so it is the block every
-// other theme's omissions fall through to.
-test('the dark theme is emitted as the document default', () => {
-  assert.equal(selectorFor('dark'), ":root,\n[data-theme='dark']");
-  assert.equal(selectorFor('airy'), "[data-theme='airy']");
+/**
+  * Exactly one theme is also `:root`, and it says so itself.
+  *
+  * The generator used to know that theme by name, which is one more thing a
+  * rename has to remember — and when `dark` became `neu` it did not.
+  */
+test('one theme declares itself the default, and is emitted as :root', () => {
+  const base = defaultTheme(themes);
+
+  assert.equal(selectorFor(base.id, themes), `:root,\n[data-theme='${base.id}']`);
+  for (const theme of themes.filter((candidate) => candidate.id !== base.id)) {
+    assert.equal(selectorFor(theme.id, themes), `[data-theme='${theme.id}']`);
+  }
+  assert.throws(() => defaultTheme(themes.map((theme) => ({ ...theme, default: false }))), /exactly one/u);
+  assert.throws(() => defaultTheme(themes.map((theme) => ({ ...theme, default: true }))), /exactly one/u);
 });
 
 test('every theme sets only tokens the registry declares', () => {
@@ -120,14 +131,14 @@ test('every registry group explains at least one token', () => {
  * same thing whatever the theme — so only colours are required.
  */
 test('every theme restates every colour the default theme names', () => {
-  const dark = themes.find((theme) => theme.id === 'dark');
-  const required = Object.keys(dark.tokens).filter((path) => {
-    const value = dark.tokens[path];
+  const base = defaultTheme(themes);
+  const required = Object.keys(base.tokens).filter((path) => {
+    const value = base.tokens[path];
     return registry.tokens[path].$type === 'color' && !String(value).startsWith('{');
   });
 
   assert.ok(required.length > 60, 'expected the default theme to name many colours');
-  for (const theme of themes.filter((candidate) => candidate.id !== 'dark')) {
+  for (const theme of themes.filter((candidate) => candidate.id !== defaultTheme(themes).id)) {
     const missing = required.filter((path) => !(path in theme.tokens));
     assert.deepEqual(missing, [], `${theme.id} inherits colours it should restate`);
   }
@@ -182,7 +193,7 @@ const asCss = (value) => {
       tokens: { 'sys.backdrop.image': { $type: 'gradient' } },
     },
     themes: [{
-      id: 'dark', name: 'D', description: 'd', appearance: 'dark',
+      id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       tokens: { 'sys.backdrop.image': value },
     }],
   };
@@ -294,7 +305,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
   const css = generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
     themes: [{
-      id: 'dark', name: 'D', description: 'd', appearance: 'dark',
+      id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist' },
     }],
   });
@@ -310,7 +321,7 @@ test('a bundled font that is not in the repository fails the build', () => {
   assert.throws(() => generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
     themes: [{
-      id: 'dark', name: 'D', description: 'd', appearance: 'dark',
+      id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [{ family: 'Ghost', src: { bundled: 'ghost.woff2' } }],
       tokens: { 'sys.font.family.ui': 'Ghost' },
     }],
@@ -320,7 +331,7 @@ test('a bundled font that is not in the repository fails the build', () => {
 test('the main process is told where to fetch a remote font from', () => {
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2', integrity: 'sha256-AAAA' } };
   const manifest = assetManifest([{
-    id: 'dark', name: 'D', description: 'd', appearance: 'dark', fonts: [remote], tokens: {},
+    id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true, fonts: [remote], tokens: {},
   }]);
 
   assert.match(manifest, new RegExp(`'${fontCacheId(remote.src.url)}': \\{`, 'u'));
@@ -334,13 +345,13 @@ test('the main process is told where to fetch a remote font from', () => {
  * name has to be written into it.
  */
 test('a backdrop document carries the whole theme it belongs to', () => {
-  const airy = themes.find((theme) => theme.id === 'airy');
-  assert.ok(airy?.backdrop, 'expected Airy to bring a backdrop document');
+  const air = themes.find((theme) => theme.id === 'air');
+  assert.ok(air?.backdrop, 'expected Air to bring a backdrop document');
 
-  const document = backdropDocument(airy, registry, resolvedTokens(airy, themes));
+  const document = backdropDocument(air, registry, resolvedTokens(air, themes));
 
   assert.match(document, /^<!doctype html>/u);
-  assert.ok(document.includes(airy.backdrop.html.trimEnd()), 'the theme markup is not in it');
+  assert.ok(document.includes(air.backdrop.html.trimEnd()), 'the theme markup is not in it');
   for (const path of Object.keys(registry.tokens)) {
     assert.ok(
       document.includes(`${customProperty(path)}:`),
@@ -355,8 +366,8 @@ test('a backdrop document carries the whole theme it belongs to', () => {
 });
 
 test('a backdrop that moves has to be able to stop', () => {
-  const airy = themes.find((theme) => theme.id === 'airy');
-  const html = airy?.backdrop?.html ?? '';
+  const air = themes.find((theme) => theme.id === 'air');
+  const html = air?.backdrop?.html ?? '';
   if (!/requestAnimationFrame/u.test(html)) return;
 
   assert.match(
@@ -367,7 +378,7 @@ test('a backdrop that moves has to be able to stop', () => {
 });
 
 /**
- * The two Airy variants light the same room, and their fields are not
+ * The two Air variants light the same room, and their fields are not
  * interchangeable.
  *
  * On paper an additive bloom is glare: it lightens a ground that is already
@@ -380,8 +391,8 @@ test('a backdrop that moves has to be able to stop', () => {
 test('the light field multiplies and the dark field does not', () => {
   const fieldOf = (id) => themes.find((theme) => theme.id === id)?.backdrop?.html ?? '';
 
-  assert.match(fieldOf('airy'), /mix-blend-mode: multiply/u);
-  assert.ok(!fieldOf('airy-dark').includes('mix-blend-mode'), 'the dark field adds light, it does not multiply');
+  assert.match(fieldOf('air'), /mix-blend-mode: multiply/u);
+  assert.ok(!fieldOf('air-dark').includes('mix-blend-mode'), 'the dark field adds light, it does not multiply');
 });
 
 /**
@@ -392,13 +403,13 @@ test('the light field multiplies and the dark field does not', () => {
  */
 test('every bloom carries the hue its reference gives it', () => {
   const expected = {
-    'airy-dark': [
+    'air-dark': [
       ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.32\)/u],
       ['cool', /rgba\(150, 178, 166, \.26\)/u],
       ['clay', /rgba\(196, 120, 86, \.2\)/u],
       ['ember', /rgba\(224, 132, 64, \.40\)/u],
     ],
-    airy: [
+    air: [
       ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.50\)/u],
       ['cool', /rgba\(112, 158, 141, \.42\)/u],
       ['clay', /rgba\(196, 120, 86, \.3\)/u],
@@ -420,8 +431,8 @@ test('every bloom carries the hue its reference gives it', () => {
  * furniture, different lamps. Anything that is not a colour has to agree, or
  * they are two designs that happen to share a name.
  */
-test('the Airy variants differ only in colour', () => {
-  const [light, dark] = ['airy', 'airy-dark'].map((id) => themes.find((theme) => theme.id === id));
+test('the Air variants differ only in colour', () => {
+  const [light, dark] = ['air', 'air-dark'].map((id) => themes.find((theme) => theme.id === id));
   const colourish = new Set(['color', 'gradient', 'shadow']);
 
   const structural = (theme) => Object.fromEntries(

@@ -654,10 +654,10 @@ function userDataDirectory(): string {
  * The appearance the last renderer reported, used for `backgroundColor` on
  * every window this process opens. It is read from the preference file at
  * startup so the very first window of a launch is already the right colour;
- * before that read completes it is the dark theme, which is what Avalon
- * shipped with.
+ * before that read completes it is Neu, the dark appearance Avalon shipped
+ * with.
  */
-let windowTheme: ResolvedTheme = 'dark';
+let windowTheme: ResolvedTheme = 'neu';
 
 function windowBackgroundColor(): string {
   return themeWindowBackground[windowTheme];

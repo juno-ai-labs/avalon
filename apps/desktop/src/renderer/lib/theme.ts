@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   defaultThemeChoice,
   resolveTheme,
+  type AppearanceMode,
   type ResolvedTheme,
   type ThemeChoice,
+  type ThemeFamily,
 } from '../../common/themes';
 import { readDevicePreferences, setDeviceTheme } from './device-preferences';
 import { desktopBridge, desktopServicesAvailable } from './platform';
@@ -19,6 +21,12 @@ import { desktopBridge, desktopServicesAvailable } from './platform';
  * The choice is stored on the device rather than on the account. An appearance
  * belongs to the screen it is being looked at, and a person who works on a
  * bright laptop and a dark desktop should not have to keep changing it back.
+ *
+ * A choice has two parts — the design and the lighting — and only the second
+ * follows the Mac. `data-theme` carries the appearance those two resolve to;
+ * `data-theme-family` and `data-theme-mode` carry the choice itself, so a
+ * surface that wants to say "System" can tell a deliberate dark from a system
+ * that happens to be resolving dark.
  */
 
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
@@ -45,6 +53,15 @@ export function readThemeChoice(): ThemeChoice {
   return readDevicePreferences().theme ?? defaultThemeChoice;
 }
 
+/** Changing one axis and leaving the other alone, which is what the picker does. */
+export function withFamily(choice: ThemeChoice, family: ThemeFamily): ThemeChoice {
+  return { ...choice, family };
+}
+
+export function withMode(choice: ThemeChoice, mode: AppearanceMode): ThemeChoice {
+  return { ...choice, mode };
+}
+
 export function resolvedThemeFor(choice: ThemeChoice): ResolvedTheme {
   return resolveTheme(choice, systemPrefersDark());
 }
@@ -59,18 +76,13 @@ function reportToMain(resolved: ResolvedTheme): void {
   void desktopBridge().setWindowTheme(resolved).catch(() => undefined);
 }
 
-/**
- * Stamps the resolved theme onto the document and announces it.
- *
- * The chosen theme is recorded beside the resolved one so that a surface which
- * wants to say "System" — the Settings picker does — can tell a deliberate
- * `dark` from a `system` that happens to be resolving dark.
- */
+/** Stamps the resolved appearance onto the document and announces it. */
 export function applyTheme(choice: ThemeChoice): ThemeState {
   const resolved = resolvedThemeFor(choice);
   const root = document.documentElement;
   root.dataset['theme'] = resolved;
-  root.dataset['themeChoice'] = choice;
+  root.dataset['themeFamily'] = choice.family;
+  root.dataset['themeMode'] = choice.mode;
   const state: ThemeState = { choice, resolved };
   reportToMain(resolved);
   for (const listener of listeners) listener(state);
@@ -94,18 +106,20 @@ export function persistThemeChoice(choice: ThemeChoice): ThemeState {
 }
 
 /**
- * Re-resolves `system` when the Mac changes appearance.
+ * Re-resolves the `system` mode when the Mac changes appearance.
  *
- * Only `system` listens: a person who asked for Airy has said what they want,
- * and following the platform anyway would be the bug this subscription looks
- * like a fix for. The returned function detaches the listener.
+ * The returned function detaches the listener.
  */
 export function watchSystemAppearance(): () => void {
   if (typeof window.matchMedia !== 'function') return () => undefined;
   const query = window.matchMedia(SYSTEM_DARK_QUERY);
   const handler = (): void => {
-    if (readThemeChoice() !== 'system') return;
-    applyTheme('system');
+    const choice = readThemeChoice();
+    // Only `system` listens: a person who asked for Light has said what they
+    // want. The *family* never follows the Mac — it is a taste, not a lighting
+    // condition — so a person on Air who is following the room stays on Air.
+    if (choice.mode !== 'system') return;
+    applyTheme(choice);
   };
   query.addEventListener('change', handler);
   return () => query.removeEventListener('change', handler);

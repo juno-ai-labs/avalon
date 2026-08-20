@@ -23,9 +23,9 @@
   src: url('../fonts/geist-mono-latin-variable.woff2') format('woff2');
 }
 
-/* Dark — Avalon's original low-light palette. */
+/* Neu — Avalon's original low-light palette. */
 :root,
-[data-theme='dark'] {
+[data-theme='neu'] {
   color-scheme: dark;
 
   /* The neutral ramp, ordered by contrast against the surface rather than by
@@ -391,8 +391,8 @@
   --av-cmp-connector-plug-background: #30302a;
   --av-cmp-connector-plug-foreground: #c2bd8a;
 }
-/* Airy — Warm paper, amber light, and a great deal of room. */
-[data-theme='airy'] {
+/* Air — Warm paper, amber light, and a great deal of room. */
+[data-theme='air'] {
   color-scheme: light;
 
   --av-ref-color-neutral-1: #f2eee6;
@@ -656,8 +656,8 @@
   --av-cmp-connector-plug-background: #f4f3e8;
   --av-cmp-connector-plug-foreground: #6c6a2c;
 }
-/* Airy Dark — Near-black, amber, and a great deal of room. */
-[data-theme='airy-dark'] {
+/* Air Dark — Near-black, amber, and a great deal of room. */
+[data-theme='air-dark'] {
   color-scheme: dark;
 
   --av-ref-color-neutral-1: #100d09;
@@ -921,8 +921,8 @@
   --av-cmp-connector-plug-background: #191509;
   --av-cmp-connector-plug-foreground: #c4b478;
 }
-/* Light — A warm near-white page with hairline rules. */
-[data-theme='light'] {
+/* Neu Light — A warm near-white page with hairline rules. */
+[data-theme='neu-light'] {
   color-scheme: light;
 
   --av-ref-color-neutral-1: #f4f2ed;

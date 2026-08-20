@@ -17,7 +17,7 @@ import {
   themeAssetSchemes,
 } from './theme-assets';
 
-const DOCUMENTS = { airy: '<!doctype html><html><body>orbs</body></html>' };
+const DOCUMENTS = { air: '<!doctype html><html><body>orbs</body></html>' };
 
 async function directory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'avalon-theme-fonts-'));
@@ -37,12 +37,12 @@ function ok(body: ArrayBuffer): Response {
 
 describe('backdrop documents', () => {
   it('serves the document a theme id names', () => {
-    expect(backdropDocumentFor(backdropUrl('airy'), DOCUMENTS)).toBe(DOCUMENTS.airy);
+    expect(backdropDocumentFor(backdropUrl('air'), DOCUMENTS)).toBe(DOCUMENTS.air);
   });
 
   it.each([
-    [`${backdropScheme}://theme/dark`, 'a theme with no backdrop'],
-    [`${backdropScheme}://elsewhere/airy`, 'another host on the scheme'],
+    [`${backdropScheme}://theme/neu`, 'a theme with no backdrop'],
+    [`${backdropScheme}://elsewhere/air`, 'another host on the scheme'],
     [`${backdropScheme}://theme/../../etc/passwd`, 'a traversal'],
     [`${backdropScheme}://theme/`, 'no theme at all'],
     ['app://avalon/index.html', "the renderer's own scheme"],
@@ -59,7 +59,7 @@ describe('backdrop documents', () => {
    * script would be running in the application's own origin.
    */
   it('permits painting and denies everything else', () => {
-    const response = backdropResponse(backdropUrl('airy'), DOCUMENTS);
+    const response = backdropResponse(backdropUrl('air'), DOCUMENTS);
     const policy = response.headers.get('content-security-policy') ?? '';
 
     expect(policy).toBe(BACKDROP_CONTENT_SECURITY_POLICY);
@@ -76,7 +76,7 @@ describe('backdrop documents', () => {
    * to leave the response alone.
    */
   it('is recognisable to the header handler that must skip it', () => {
-    expect(isBackdropUrl(backdropUrl('airy'))).toBe(true);
+    expect(isBackdropUrl(backdropUrl('air'))).toBe(true);
     expect(isBackdropUrl('app://avalon/index.html')).toBe(false);
   });
 

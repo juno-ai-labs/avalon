@@ -1,19 +1,29 @@
-import { themeDescriptions } from '../../common/themes';
-import { persistThemeChoice, useTheme } from '../lib/theme';
+import {
+  appearanceModeDescriptions,
+  familyAppearances,
+  themeFamilyDescriptions,
+} from '../../common/themes';
+import { persistThemeChoice, useTheme, withFamily, withMode } from '../lib/theme';
 
 /**
- * The Appearance control.
+ * The Appearance control, on two axes.
  *
- * Each option previews itself: the swatch is a miniature of the theme drawn
- * with that theme's own tokens, under `data-theme` on the swatch rather than on
- * the document. A preview built from hardcoded colours is a second copy of the
+ * The **mode** sits above the designs rather than beside them, because it is not
+ * one of them: it says which way round to run whichever design is chosen. As one
+ * flat list, `system` was a peer of Light and Dark and Airy — so following the
+ * Mac silently also chose Neu, and someone on Airy had no way to say "this
+ * design, but follow the room". Two rows say both things at once.
+ *
+ * Each family swatch previews *itself under the current mode*, drawn with that
+ * appearance's own tokens under `data-theme` on the swatch rather than on the
+ * document. A preview built from hardcoded colours is a second copy of the
  * palette and goes stale the first time a theme is retuned; this one cannot.
- *
- * The System option has no palette of its own, so it shows the appearance it
- * currently resolves to, which is the honest preview of what choosing it does.
  */
 export function ThemePicker(): React.JSX.Element {
   const { choice, resolved } = useTheme();
+  const lighting = resolved === familyAppearances[choice.family].dark ? 'dark' : 'light';
+  const familyLabel = themeFamilyDescriptions.find((family) => family.id === choice.family)?.label
+    ?? 'Neu';
 
   return (
     <div className="settings-theme-card">
@@ -23,40 +33,58 @@ export function ThemePicker(): React.JSX.Element {
           <small>Applies to every Avalon window on this Mac, and is remembered here rather than on your account.</small>
         </span>
       </div>
-      <div aria-label="Theme" className="settings-theme-shelf" role="radiogroup">
-        {themeDescriptions.map((theme) => {
-          const selected = choice === theme.id;
-          return (
-            <button
-              aria-checked={selected}
-              className="settings-theme-option"
-              key={theme.id}
-              onClick={() => persistThemeChoice(theme.id)}
-              role="radio"
-              title={theme.description}
-              type="button"
-            >
-              <span
-                aria-hidden="true"
-                className="settings-theme-swatch"
-                data-theme={theme.id === 'system' ? resolved : theme.id}
-              >
-                <span className="settings-theme-swatch-sidebar" />
-                <span className="settings-theme-swatch-surface">
-                  <span className="settings-theme-swatch-line" />
-                  <span className="settings-theme-swatch-line is-short" />
-                  <span className="settings-theme-swatch-accent" />
-                </span>
-              </span>
-              <span className="settings-theme-option-label">{theme.label}</span>
-            </button>
-          );
-        })}
+
+      <div aria-label="Appearance" className="settings-theme-modes" role="radiogroup">
+        {appearanceModeDescriptions.map((mode) => (
+          <button
+            aria-checked={choice.mode === mode.id}
+            className="settings-theme-mode"
+            key={mode.id}
+            onClick={() => persistThemeChoice(withMode(choice, mode.id))}
+            role="radio"
+            title={mode.description}
+            type="button"
+          >
+            {mode.label}
+          </button>
+        ))}
       </div>
+
+      <div aria-label="Theme" className="settings-theme-shelf" role="radiogroup">
+        {themeFamilyDescriptions.map((family) => (
+          <button
+            aria-checked={choice.family === family.id}
+            className="settings-theme-option"
+            key={family.id}
+            onClick={() => persistThemeChoice(withFamily(choice, family.id))}
+            role="radio"
+            title={family.description}
+            type="button"
+          >
+            <span
+              aria-hidden="true"
+              className="settings-theme-swatch"
+              // The appearance *this* family would show under the mode in force,
+              // so switching mode redraws both swatches rather than only the
+              // selected one — which is what makes the mode row legible.
+              data-theme={familyAppearances[family.id][lighting]}
+            >
+              <span className="settings-theme-swatch-sidebar" />
+              <span className="settings-theme-swatch-surface">
+                <span className="settings-theme-swatch-line" />
+                <span className="settings-theme-swatch-line is-short" />
+                <span className="settings-theme-swatch-accent" />
+              </span>
+            </span>
+            <span className="settings-theme-option-label">{family.label}</span>
+          </button>
+        ))}
+      </div>
+
       <p aria-live="polite" className="settings-theme-status">
-        {choice === 'system'
-          ? `Following this Mac, which is ${resolved === 'dark' ? 'dark' : 'light'} right now.`
-          : `${themeDescriptions.find((theme) => theme.id === choice)?.label ?? 'Dark'} is selected.`}
+        {choice.mode === 'system'
+          ? `${familyLabel}, following this Mac, which is ${lighting} right now.`
+          : `${familyLabel}, always ${choice.mode}.`}
       </p>
     </div>
   );

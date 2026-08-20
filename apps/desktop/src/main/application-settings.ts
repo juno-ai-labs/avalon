@@ -46,7 +46,7 @@ export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   productAnalyticsEnabled: true,
   productAnalyticsPreferenceVersion: 0,
   productAnalyticsPreferencePending: false,
-  windowTheme: 'dark',
+  windowTheme: 'neu',
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
@@ -88,7 +88,7 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
     productAnalyticsPreferencePending: candidate.productAnalyticsPreferencePending === true,
     // A file written before themes existed, or naming one this build removed,
     // means the appearance Avalon shipped with.
-    windowTheme: parseResolvedTheme(candidate.windowTheme) ?? 'dark',
+    windowTheme: parseResolvedTheme(candidate.windowTheme) ?? 'neu',
   };
 }
 

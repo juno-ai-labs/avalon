@@ -1576,6 +1576,49 @@ pre {
 .settings-theme-heading strong { display: block; font-size: 13px; }
 .settings-theme-heading small { color: var(--av-sys-color-text-muted); display: block; font-size: 11px; margin-top: 2px; }
 
+/* The lighting row, above the designs.
+ *
+ * A segmented control rather than a fourth swatch, because it is not one of
+ * them: it says which way round to run whichever design is chosen. The shape
+ * carries that — three joined cells read as one setting with three positions,
+ * where four separated swatches read as four alternatives. */
+.settings-theme-modes {
+  background: var(--av-sys-color-surface-subtle);
+  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-2);
+  border-radius: var(--av-sys-size-radius-lg);
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  padding: 2px;
+}
+
+.settings-theme-mode {
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-md);
+  color: var(--av-sys-color-text-muted);
+  font-size: 11.5px;
+  padding: 5px 14px;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.settings-theme-mode:hover { color: var(--av-sys-color-text-default); }
+
+.settings-theme-mode[aria-checked='true'] {
+  background: var(--av-sys-color-surface-raised);
+  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-4);
+  color: var(--av-sys-color-text-default);
+  font-weight: var(--av-sys-font-weight-emphasis);
+  /* The border is inside the padding, so the cell must give it back or the
+     selected segment grows by two pixels and nudges its neighbours. */
+  padding: 4px 13px;
+}
+
+.settings-theme-mode:focus-visible {
+  outline: 2px solid var(--av-sys-color-focus-default);
+  outline-offset: 1px;
+}
+
 .settings-theme-shelf {
   display: flex;
   flex-wrap: wrap;

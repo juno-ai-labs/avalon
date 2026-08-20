@@ -40,7 +40,7 @@ dotted keys, because flat keys diff cleanly and a nested tree does not:
 {
   "$schema": "../theme.schema.json",
   "id": "airy-dark",
-  "name": "Airy Dark",
+  "name": "Air Dark",
   "appearance": "dark",
   "description": "Near-black, amber, and a great deal of room.",
   "tokens": {
@@ -118,7 +118,7 @@ no flash at all bundles its font.
 
 ## A backdrop that moves
 
-Some backdrops are not values. Both Airy variants light the room with a field
+Some backdrops are not values. Both Air variants light the room with a field
 that orbits, and there is no `background-image` that orbits — it needs a clock
 and a frame loop. Rather
 than invent a declarative motion vocabulary that would cover that one case and
@@ -226,7 +226,7 @@ the neutral ramp — fills at the faint end, text at the strong end.
 `ref.color.line.1` … `.6` is the line ramp, and every border and outline draws
 from it.
 
-They were one ramp until Airy needed borders that all but disappear. A border
+They were one ramp until Air needed borders that all but disappear. A border
 and a faint fill sit at the same contrast level, so they shared a step: neutral
 step four was simultaneously the default border and the selected sidebar row's
 background, and making the border vanish took the selection with it. Separating
@@ -284,7 +284,7 @@ turning artwork into something a `url()` can carry.
 
 A navigation row carries one mark at its leading edge. Its **shape** is the
 theme's — `cmp.marker.*` — and its **colour** stays the row's state. Holding
-those two apart is what lets Airy flatten `cmp.row.background-selected` to
+those two apart is what lets Air flatten `cmp.row.background-selected` to
 `transparent` and mark selection with a line instead, without the navigation
 losing what the dot was saying: which stream needs an answer, and which one is
 running.
@@ -300,7 +300,7 @@ it could not express.
 The composer is built from one set of tokens either way. A card sets
 `cmp.composer.background`, `border-color` and `radius`; a rule sets those to
 nothing and gives `rule-color` a hairline, so the composer reads as a line the
-page rests on rather than a box floating over it. Airy takes the second.
+page rests on rather than a box floating over it. Air takes the second.
 
 `rule-color-focus` exists because of what the first shape hides: once the border
 is gone, the rule turning warm is the only thing left saying the field is live.
@@ -314,7 +314,7 @@ button reads as two surfaces disagreeing about which one the page is.
 `--av-cmp-sidebar-background` is a translucent tint rather than an opaque colour,
 so the backdrop and the light across it read through the navigation.
 
-A theme may take that to its conclusion. Airy sets the tint to `transparent` and
+A theme may take that to its conclusion. Air sets the tint to `transparent` and
 `--av-cmp-pane-background` to `transparent` as well, so it has **one ground**:
 the backdrop is the whole window, under the navigation and the message feed
 alike, broken only by `--av-cmp-sidebar-border`. The other themes keep an opaque
@@ -325,7 +325,7 @@ That fill is what the pane is *for*. It must never repaint the backdrop: the
 shell and the pane each carried a copy once, so that the opaque pane would still
 show the theme's light, and two copies of one gradient cannot be kept in
 register — `background-attachment: fixed` holds them together only while both
-elements are viewport-sized. A seam ran down the navigation's edge where Airy's
+elements are viewport-sized. A seam ran down the navigation's edge where Air's
 glow stopped and started again. A test names the only two elements allowed to
 paint `--av-sys-backdrop-image`: the shell, and the Settings miniature, which
 draws the *offered* theme's backdrop at swatch scale.
@@ -335,28 +335,45 @@ Two states translucency cannot serve have tokens of their own:
 | Token | Why it is not the tint |
 | --- | --- |
 | `--av-cmp-sidebar-background-solid` | The narrow-width drawer sits *over* the content. A see-through drawer shows the work stream through the navigation. |
-| `--av-cmp-sidebar-border` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Airy does. |
+| `--av-cmp-sidebar-border` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Air does. |
 
 Nothing drawn inside the sidebar may paint `--av-cmp-sidebar-background` again: the tint is
 already on the surface beneath it, and applying it twice is visibly darker. The
 account row at the foot of the navigation paints `transparent` for this reason.
 
-### The themes
+### The families
 
-`light` and `dark` are the two `system` resolves to. **`airy` and `airy-dark`
-are one theme at two brightnesses** — the same room, the same furniture,
-different lamps. Both are deliberate choices only; neither is what `system`
-resolves to.
+A theme choice has **two axes**. A *family* is a design; a *mode* is which way
+round to run it. They answer different questions — the family is a taste, the
+mode is a lighting condition that may change during the day — so the picker
+offers them as two rows rather than one list.
 
-What they share is structure, and a test enforces it: every token that is not a
-colour is identical between them. Prose at 1.85 leading, roughly double the
-vertical spacing, uppercase letterspaced micro-labels, a person's turn with no
-bubble at all, a 2px line where the other themes put a dot, and a composer that
-is a rule rather than a card.
+| Family | Light | Dark |
+| --- | --- | --- |
+| **Neu** — Avalon's original palette | `neu-light` | `neu` |
+| **Air** — amber light on a moving field | `air` | `air-dark` |
+
+`familyAppearances` in `common/themes.ts` is the whole coupling: adding a family
+is a row there and two theme files, and nothing else in either process learns a
+new name. A test asserts every family brings both halves and no appearance
+belongs to two families — a family missing one half is a family the mode row
+cannot switch.
+
+**The mode never changes the family.** `system` consults the Mac about the
+*lighting* only, so someone on Air who is following the room crosses between
+`air` and `air-dark` and is never handed Neu.
+
+### One design at two brightnesses
+
+Air's two appearances share more than a name: a test asserts that every token
+which is not a colour is identical between them. Prose at 1.85 leading, roughly
+double the vertical spacing, uppercase letterspaced micro-labels, a person's
+turn with no bubble, a 2px line where Neu puts a dot, and a composer that is a
+rule rather than a card.
 
 What differs is the palette and, in one place that matters, the *blending*:
 
-| | `airy` | `airy-dark` |
+| | `air` | `air-dark` |
 | --- | --- | --- |
 | Ground | `#f7f3ec` warm paper | `#100e0c` near-black |
 | Accent | `#d2822c` | `#e8a15c` |
@@ -367,8 +384,7 @@ The blending is not a detail. On paper an additive bloom is glare: it lightens a
 ground that is already near-white, so the orb reads as a blown-out patch rather
 than as colour. Multiplying darkens toward the pigment instead, which is how ink
 behaves on a page — and it is why the light field's alphas are roughly double
-the dark field's and still land softer. Copying one field into the other
-produces something that looks broken in a way that is hard to name.
+the dark field's and still land softer.
 
 Only the warm bloom follows the brand token. The reference writes that one as
 the accent and the other three as fixed hues, so a retint moves the light the
@@ -382,9 +398,15 @@ an account one: an appearance belongs to the screen it is being looked at, and a
 person who works on a bright laptop and a dark desktop should not have to keep
 changing it back.
 
-`system` — the default — resolves through `matchMedia('(prefers-color-scheme:
-dark)')`, and `watchSystemAppearance()` re-resolves it when the Mac changes.
-Only `system` listens. A person who asked for Airy has said what they want.
+It is stored as `{ family, mode }`. A record written by an earlier build holds a
+flat name instead — `airy`, `dark` — and `parseThemeChoice` migrates it, because
+a stored preference outlives the shape it was written in and a rename is not a
+reason to hand somebody a different design.
+
+The `system` mode — the default — resolves through
+`matchMedia('(prefers-color-scheme: dark)')`, and `watchSystemAppearance()`
+re-resolves it when the Mac changes. Only that mode listens: someone who pinned
+Dark has said what they want.
 
 ### The window background
 
@@ -439,6 +461,12 @@ next report.
   fetches. A stylesheet pointing at `https://` is a per-launch beacon.
 - **A row's mark keeps its state colour.** A theme may reshape it; a theme that
   recoloured it would be a theme that removed information.
+- **Every family brings both appearances, and no appearance belongs to two.**
+  A family missing one half is a family the mode row cannot switch — the row
+  would be there with a position that does nothing.
+- **The family never follows the Mac.** Only the lighting does. Switching
+  somebody out of the design they chose, at sunset, is the bug the flat list
+  made easy.
 - **The backdrop is painted once.** Only `.workspace-shell` and the Settings
   miniature may name `--av-sys-backdrop-image`; anything else that paints it
   draws a second copy of one gradient and shows a seam where the two disagree.
@@ -448,7 +476,7 @@ next report.
   and does it silently — it looks right in whichever theme it was written
   against. A test rejects any `border` or `outline` declaration naming `--av-ref-color-neutral-*`.
 - **A focus border stays visible in every theme.** `--av-ref-color-line-6` is the one step
-  Airy does not flatten; an invisible focus indicator is an accessibility defect,
+  Air does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
 - **No component reads a colour.** Two places would otherwise have to: the
   `prism-react-renderer` theme and the per-participant accent, both of which take
@@ -476,7 +504,7 @@ It deliberately does **not** theme two surfaces:
   document, not a screenshot of the app. See [`message-export.md`](message-export.md).
 - **The application icon** has its own light/dark pair driven by `nativeTheme` in
   the main process, and follows the Mac rather than the in-app theme. Choosing
-  Airy does not change the Dock icon.
+  Air does not change the Dock icon.
 
 The main process depends on this module only for `common/themes.ts`; it never
 reads a stylesheet.
@@ -498,8 +526,8 @@ reads a stylesheet.
   track turning green. This is the same trade every light-mode switch makes and
   it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
 - **A theme whose backdrop is a document previews as its floor.** The Settings
-  miniature draws `sys.backdrop.*`, and Airy's blooms live in its document rather
-  than in those tokens, so the Airy swatch is a flat ground. Mounting a live
+  miniature draws `sys.backdrop.*`, and Air's blooms live in its document rather
+  than in those tokens, so the Air swatch is a flat ground. Mounting a live
   frame per swatch would put four animation loops behind a preference pane to
   show a 92px thumbnail of one.
 - **Themes are not animated.** Switching repaints immediately, and the reported
@@ -530,11 +558,43 @@ None of this says whether a theme is *legible*. That needs a real window: run th
 client under Xvfb and read the screens, per
 [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it). Two of
 the defects fixed on the way in — a near-black label on a near-black fill in
-Airy, and Avalon's chartreuse mark on white — passed every assertion above.
+Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — Airy became two themes, and the light one multiplies
+### 2026-08-20 — A theme choice has two axes, and the appearances are named
+
+**What changed:** the picker was one flat list — System, Light, Dark, Airy, Airy
+Dark. It is now two: a lighting row (System / Light / Dark) above a row of
+designs (Neu / Air). A choice is `{ family, mode }`, and `familyAppearances`
+combines them into one of four appearances. The appearances were renamed to
+match what they are: `light`/`dark` became `neu-light`/`neu`, and `airy`/
+`airy-dark` became `air`/`air-dark`.
+
+**Why the flat list was wrong.** `system` was a peer of the designs, which made
+it mean two things at once — follow the Mac, *and* use Avalon's original
+palette. Someone on Air had no way to say "this design, but follow the room";
+picking System took the design away. Separating the axes says both things
+independently, and it is the shape that keeps working when a third family
+arrives: a flat list would have grown to seven entries, six of them pairs.
+
+**The family never follows the Mac.** Only the lighting does. That is the
+invariant the split exists to protect, and it has a test: a person on Air with
+the system mode crosses between `air` and `air-dark` at sunset and is never
+handed Neu.
+
+**Two smaller things fell out of it.** The generator used to know the default
+theme by name — `dark` — in four places, and the rename broke all four. A theme
+now declares `"default": true` in its own file and the generator reads it, so a
+future rename costs nothing. And a stored preference in the old flat shape is
+migrated on read rather than dropped: `airy` still means Air, which is the
+difference between a rename and a reset.
+
+**Consequences:** `data-theme-choice` on the document is gone, replaced by
+`data-theme-family` and `data-theme-mode`. Anything that wants to know whether
+`dark` is deliberate or a resolved `system` reads the mode.
+
+8-20 — Airy became two themes, and the light one multiplies
 
 **What changed:** the theme formerly called `airy` is now `airy-dark`, and
 `airy` is its light counterpart — warm paper, the same structure, the same four
