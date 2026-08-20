@@ -1020,10 +1020,51 @@ export class SubstreamAgent extends DurableObject<Env> {
       );
       if (!claim) return;
 
-      const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(claim.payload));
+      // Parsed inside the guard, not before it. A payload this build cannot
+      // validate — an older shape, a truncated write — used to throw straight
+      // out of the drain, leaving the row claimed and settling nothing: the
+      // lease lapses, the next alarm reclaims it, and it throws again forever.
+      // A dispatch nothing can decode is a failed run, not a reason to stop.
+      let input: WorkstreamWorkflowInput;
+      try {
+        input = WorkstreamWorkflowInputSchema.parse(JSON.parse(claim.payload));
+      } catch (error) {
+        logWarn(this.env, "agent_run_dispatch_undecodable", {
+          substream_id: this.externalSubstreamId(),
+          harness_run_id: claim.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+        settleAgentRunDispatch(
+          this.state.storage.sql,
+          SUBSTREAM_AGENT_RUN_DISPATCHES,
+          claim.id,
+          claim.leaseToken,
+          "failed",
+          "agent_run_dispatch_undecodable",
+          Date.now(),
+        );
+        continue;
+      }
       const identity = { workspaceId: input.workspaceId, workstreamId: input.workstreamId };
       try {
         if (claim.started) {
+          // A run whose executor is gone still holds the substream's single
+          // mutating slot, and the start below would fail against it — as the
+          // *new* run's failure, leaving the work stream permanently busy. Only
+          // a run reaches this code, so nothing else would ever clear it.
+          const abandoned = this.product.reapAbandonedSubstreamRuns(
+            input.substreamId ?? "0",
+            Date.now(),
+          );
+          if (abandoned.length > 0) {
+            logWarn(this.env, "workstream_abandoned_runs_reaped", {
+              workspace_id: input.workspaceId,
+              workstream_id: input.workstreamId,
+              substream_id: input.substreamId ?? "0",
+              harness_run_id: claim.id,
+              reaped_run_ids: abandoned,
+            });
+          }
           await this.product.recordWorkflowStarted(claim.id, `substream-agent:${claim.id}`);
           await this.publishLocalProductEvent(identity, {
             type: "harness_status_changed",
@@ -1059,6 +1100,20 @@ export class SubstreamAgent extends DurableObject<Env> {
             : "agent_loop_failed",
           message: "The Avalon harness could not complete this run",
         };
+        // Every way a run can fail arrives here, and until now none of them
+        // said anything: the run was marked failed, the dispatch settled, and
+        // the only trace was a status the member could not act on. A run that
+        // dies for a reason nobody records is indistinguishable from one that
+        // was never dispatched, which is most of why this took so long to find.
+        logWarn(this.env, "agent_run_execution_failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          substream_id: input.substreamId ?? "0",
+          harness_run_id: claim.id,
+          attempt: claim.attempt,
+          error_code: safe.code,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
         await this.product.recordWorkflowFailed(claim.id, safe).catch(() => undefined);
         settleAgentRunDispatch(
           this.state.storage.sql,

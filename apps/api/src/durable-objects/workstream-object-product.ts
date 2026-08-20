@@ -2504,6 +2504,45 @@ export class WorkstreamObjectProductService {
     };
   }
 
+  /**
+   * Terminalizes runs that hold the substream open with nothing behind them.
+   *
+   * `runs_mutating_substream_uq` permits one mutating run per substream, so a
+   * run left `running` by an executor that no longer exists makes every later
+   * run fail at `recordWorkflowStarted` — and the failure is the *new* run's,
+   * which is why the work stream reads as permanently busy. The migration
+   * produced exactly this: runs imported mid-flight whose Workflow instance did
+   * not come with them.
+   *
+   * A run is abandoned when no dispatch row is prepared to execute it. That is
+   * the whole test, and it is decidable from the rows: the dispatch ledger is
+   * the execution intent, so a mutating run without one is not going to run
+   * again no matter how long it is left alone. Reaping it is therefore safe
+   * even while another run legitimately executes, because that run has a
+   * dispatch.
+   */
+  reapAbandonedSubstreamRuns(substreamId: string, now: number): string[] {
+    return this.storage.sql.exec<{ run_id: string }>(
+      `UPDATE runs
+          SET status = 'failed', terminal_reason = 'failed',
+              error_json = ?,
+              completed_at = COALESCE(completed_at, ?), terminalized_at = ?, updated_at = ?
+        WHERE substream_id = ?
+          AND terminalized_at IS NULL
+          AND status IN ('running', 'waiting', 'steering')
+          AND run_id NOT IN (
+            SELECT run_id FROM agent_run_dispatches
+             WHERE state IN ('queued', 'running')
+          )
+        RETURNING run_id`,
+      JSON.stringify({
+        code: "workstream_run_abandoned",
+        message: "This run's executor did not survive; it was ended so the work stream could continue",
+      }),
+      now, now, now, substreamId,
+    ).toArray().map((row) => row.run_id);
+  }
+
   async recordWorkflowStarted(runId: string, instanceId: string): Promise<void> {
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
