@@ -40,7 +40,11 @@ import {
 } from "./helpers/substream-fixture";
 
 let unique = 0;
-/** A fresh object per test: this file never calls `reset()`, so a reused id would carry the last test's rows. */
+/**
+ * A fresh object per test: this file never calls `reset()`, so a reused id would
+ * carry the last test's rows. The counter is module-level for that reason — one
+ * per `describe` would restart at the same ids in every block.
+ */
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
