@@ -494,7 +494,28 @@ describe("the D1 to WorkspaceDO authority source", () => {
            SET phase = 'maintenance_verified', updated_at = '${AT}' WHERE id = 1;
       `);
 
-      const env = { DB: sqliteD1(database) } as never;
+      // D1 reports `meta.changes` as zero for a chunked `DELETE ... WHERE rowid
+      // IN (SELECT ...)`, which the local double does not reproduce. Zero it
+      // deliberately: a scrub that reads progress from it stops after one
+      // chunk per target and never empties anything.
+      const database1 = sqliteD1(database);
+      const env = {
+        DB: {
+          ...database1,
+          prepare: (sql: string) => {
+            const statement = database1.prepare(sql);
+            const wrap = (bound: typeof statement): typeof statement => ({
+              ...bound,
+              bind: (...values: unknown[]) => wrap(bound.bind(...values)),
+              run: async () => {
+                const result = await bound.run();
+                return { ...result, meta: { ...result.meta, changes: 0 } };
+              },
+            }) as typeof statement;
+            return wrap(statement);
+          },
+        },
+      } as never;
       const route = {
         workspace_id: "scrub-workspace",
         generation: 1,
