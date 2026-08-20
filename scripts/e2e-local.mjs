@@ -45,6 +45,24 @@ export function runOutcomeOracle(modelConfigured, terminal) {
   return { ok: true };
 }
 
+/**
+ * Whether the lane may run, given the Worker's provider state.
+ *
+ * The no-model oracle only proves "terminal and truthful" — it cannot catch a
+ * run that fails before the provider for the wrong reason, which is exactly
+ * the defect family this lane exists for. So a missing key is a refusal by
+ * default, and degrading is a choice a caller states, never a silent
+ * weakening the summary line has to be read carefully to notice.
+ */
+export function modelGateDecision(modelConfigured, allowNoModel) {
+  if (modelConfigured) return { run: true, degraded: false };
+  if (allowNoModel) return { run: true, degraded: true };
+  return {
+    run: false,
+    reason: "OpenRouter is not configured on the Worker. Add OPENROUTER_API_KEY to .env.local, run `pnpm env:sync`, restart `pnpm dev:api:local` — or pass --allow-no-model to run the degraded terminal-and-truthful oracles only.",
+  };
+}
+
 /** Interleaves lanes so load is realistic rather than phase-batched. */
 export function buildPlan(counts, lanes) {
   const plan = [];
@@ -77,8 +95,13 @@ async function main() {
   }
   const modelConfigured = health.checks?.openRouter?.ok === true
     && health.checks.openRouter.message === "configured";
-  if (!modelConfigured) {
-    console.log("OpenRouter is not configured; run oracles degrade to the terminal-and-truthful boundary.");
+  const gate = modelGateDecision(modelConfigured, Boolean(args["allow-no-model"]));
+  if (!gate.run) {
+    console.error(gate.reason);
+    process.exit(1);
+  }
+  if (gate.degraded) {
+    console.log("Running WITHOUT a model: oracles degrade to the terminal-and-truthful boundary.");
   }
 
   const session = await fetch(new URL("/auth/dev/session", BASE_URL), {
