@@ -308,7 +308,6 @@ describe("Durable Objects in the Workers runtime", () => {
         workstreamId: replayWorkstreamId,
         generation: 2,
         payloadHash: `${common.payloadHash.slice(0, -1)}f`,
-        effect: { ...common.effect, title: "Re-derived after import" },
       }],
     });
     expect(reused.status).toBe(200);
