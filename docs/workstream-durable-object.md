@@ -958,6 +958,29 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — An effect from an earlier epoch is a replay, not a mismatch
+
+**What changed:** `applyChildEnvelope` refuses a child effect whose generation
+is *newer* than the object's `authority_generation`, rather than any generation
+that differs from it. Workspace and work-stream identity are still matched
+exactly.
+
+**Why:** A child stamps each effect with the generation current when it was
+enqueued, and a maintenance campaign that restarts moves the parent's
+generation forward — so every effect already in flight became permanently
+unacceptable, since the two numbers can never agree again. Thirteen
+generations into the Global cutover, that stranded enough of them to fail
+activation across most of the fleet with
+`workstream_effect_identity_mismatch`. The guard was reading an epoch as an
+identity.
+
+**What a future change has to respect:** replay is safe here for a specific
+reason, not a general one. The region admits no new work while a campaign runs,
+so a pending effect predates the drain and describes state the import
+reproduced, and `child_effect_receipts` dedupes it by message and payload hash
+in any case. A future epoch stays refused, because that would mean an object
+being told about an authority it has never been established in.
+
 ### 2026-08-20 — A tick stops when it meets a large workspace
 
 **What changed:** The scrub tick ends after any sweep in which a route ran out
