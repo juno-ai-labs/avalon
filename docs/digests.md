@@ -446,9 +446,10 @@ pnpm exec tsx scripts/preview-digest-email.mjs            # the local D1
 pnpm exec tsx scripts/preview-digest-email.mjs --db /tmp/global.sqlite
 ```
 
-It prefers a digest that has actually been delivered to that person, and falls
-back to a sample body chosen to stress the template — a priority section, links,
-a blockquote, bold, and one bullet long enough to wrap. **Every visible change to
+It uses regional D1 only for active-member identity and renders a sample body
+chosen to stress the template — a priority section, a blockquote, bold, and one
+bullet long enough to wrap. Delivered bodies, schedules, and work-stream titles
+live in WorkspaceDO and are deliberately not queried from D1. **Every visible change to
 the template should be looked at here before it is called done**; a test proves
 the markup contains a string, not that the hierarchy reads.
 
@@ -609,6 +610,25 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-20 — The email preview stops querying retired D1 product tables
+
+**What changed:** The preview still uses D1 to enumerate real active members,
+but its body and work-stream labels are representative samples. It no longer
+queries `digest_deliveries` or product columns on `workstreams`, both of which
+are absent after migration 0090.
+
+**Why:** A visual fixture may read identity data without turning D1 back into a
+digest or directory serving surface. The old queries made the preview fail on
+the production schema after the authority cutover.
+
+**Considered and rejected:** Reading WorkspaceDO SQLite files directly. That
+would couple a template preview to local Miniflare object layout and would not
+work for a remote D1 export anyway.
+
+**Consequences:** The preview proves the real template with real recipient and
+workspace names, but not a previously delivered body. Product-content review
+must obtain that body through the product API or an explicit fixture.
 
 ### 2026-08-18 — Slack-only members still receive schedule repair
 

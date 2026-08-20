@@ -1,11 +1,14 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 
-import { createCloudflareTestBinding, createTestDurableObjectId } from "./cloudflare-test";
-
-const migrationsDirectory = fileURLToPath(new URL("../../../../packages/db/migrations/", import.meta.url));
+import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
+import {
+  rewriteWorkstreamRuntimeSql,
+  type WorkstreamRuntimeSqlResult,
+} from "../../src/durable-objects/workstream-runtime-sql";
+import { workstreamRuntimeDatabase } from "../../src/services/workstream-runtime-database";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./cloudflare-test";
+import { createTestSqlStorage } from "./sql-storage";
 
 /**
  * Walk the regional cutover ledger to `durable_object_open` the way the
@@ -13,15 +16,14 @@ const migrationsDirectory = fileURLToPath(new URL("../../../../packages/db/migra
  * simply UPDATE straight to the open phase — and then disarm the post-cutover
  * D1 fences.
  *
- * Disarming the fences is what lets one sqlite database stand in for both the
- * regional index and the object store: in production the runtime SQL port
- * carries object-owned statements to the WorkstreamDO's own SQLite, and the
- * fences exist to abort anything that leaks back to D1. A unit test that pairs
- * this helper with {@link testSubstreamAgentsBinding} routes those statements
- * through the same port into the same database, so the fences would only
- * re-refuse writes the port has already accepted. Tests that arm the fences on
- * purpose (to prove a statement does not leak) should build their own object
- * store instead, as `slack-thread-audience.test.ts` does.
+ * The fences exist to abort object-owned statements that leak back to D1. A
+ * unit test that pairs this helper with {@link testSubstreamAgentsBinding}
+ * carries those statements through the runtime SQL port into a real object
+ * database, so the fences would only re-refuse regional bookkeeping writes
+ * (`artifacts`, effect receipts) that production performs from inside the
+ * objects. Tests that arm the fences on purpose (to prove a statement does not
+ * leak) should skip this helper's disarm, as `slack-thread-audience.test.ts`
+ * does.
  */
 export function openWorkstreamAuthorityForTest(
   database: DatabaseSync,
@@ -48,25 +50,202 @@ export function openWorkstreamAuthorityForTest(
 }
 
 /**
- * A stand-in for the WorkstreamDO's own SQLite store, for paths that *create*
- * work streams: creation writes the regional identity anchor and the object's
- * product row under the same id, which only coexist in separate stores. It
- * reuses the regional migrations for table shapes (the authority ledger it
- * carries stays at `legacy_open`, so none of the post-cutover fences arm) and
- * skips foreign-key enforcement the way the object's own schema does — the
- * object holds no `users`/`workspaces` rows to satisfy them.
+ * The workerd-shaped SqlStorage adapter for an object database, one per
+ * DatabaseSync so cursor bookkeeping (`rowsWritten`) and the foreign-key
+ * pragma are applied exactly once.
+ */
+const objectSqlStorages = new WeakMap<DatabaseSync, SqlStorage>();
+
+function objectSqlStorage(database: DatabaseSync): SqlStorage {
+  let sql = objectSqlStorages.get(database);
+  if (!sql) {
+    sql = createTestSqlStorage(database);
+    objectSqlStorages.set(database, sql);
+  }
+  return sql;
+}
+
+/**
+ * A real WorkstreamDO object database: the object schema (normalized tables
+ * plus the `_runtime_*` compatibility views) applied over node:sqlite with
+ * workerd semantics, including enforced foreign keys. This is the store the
+ * runtime SQL port executes against in production; migration 0090 dropped the
+ * D1 copies of every table the port serves, so tests can no longer stand a
+ * migrated regional database in for it.
  *
- * The caller owns closing it, exactly like every other test database.
+ * The root identity row is not seeded here — {@link seedWorkstreamObjectRoot}
+ * does that, and {@link testSubstreamAgentsBinding} seeds lazily from the ids
+ * on each routed request. The caller owns closing the database, exactly like
+ * every other test database.
  */
 export function testWorkstreamObjectStore(): DatabaseSync {
-  const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
-  // The migrations turn enforcement back on for the regional database; the
-  // object's schema has no cross-authority foreign keys to satisfy.
-  database.exec("PRAGMA foreign_keys = OFF");
+  const database = new DatabaseSync(":memory:");
+  const sql = objectSqlStorage(database);
+  applyWorkstreamObjectSchema(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql,
+    }),
+    "durable-authority-test",
+    Date.parse("2026-01-02T00:00:00.000Z"),
+  );
   return database;
+}
+
+/**
+ * Give the object the identity root and main substream every routed statement
+ * requires: the compat views join `workstream` id = 1 for the workspace and
+ * workstream keys, and run rows hang off substream '0'. Mirrors the workerd
+ * fixture in `test-workers/helpers/substream-fixture.ts`, which cannot be
+ * imported from the node-side suite. Idempotent; an existing root is left
+ * untouched so identity mismatches surface instead of being overwritten.
+ */
+export function seedWorkstreamObjectRoot(
+  database: DatabaseSync,
+  ids: { workstreamId: string; workspaceId: string },
+  now = Date.parse("2026-01-02T00:00:00.000Z"),
+): void {
+  database.prepare(
+    `INSERT INTO workstream (
+       id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+       authority_mode, authority_generation, title, description, preview, scope,
+       exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+       unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+       source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+       created_at, last_people_activity_at, state_changed_at, updated_at
+     ) VALUES (
+       1, ?, ?, NULL, 0, 'global',
+       'authoritative', 1, 'Fixture', '', '', 'workspace',
+       'idle', 'seeded', 1, 1,
+       0, 0, 0,
+       0, 0, 0, 0,
+       ?, ?, ?, ?
+     ) ON CONFLICT(id) DO NOTHING`,
+  ).run(ids.workstreamId, ids.workspaceId, now, now, now, now);
+  database.prepare(
+    `INSERT INTO substreams
+       (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+     VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(now);
+  database.prepare(
+    `INSERT INTO substream_agent_identity (id, external_substream_id, created_at, updated_at)
+     VALUES (1, '0', ?, ?) ON CONFLICT(id) DO NOTHING`,
+  ).run(now, now);
+}
+
+export interface RuntimeStatement {
+  sql: string;
+  params: Array<string | number | null>;
+}
+
+/**
+ * Execute one runtime SQL port request against an object database — the same
+ * conversion `executeWorkstreamRuntimeSql` performs inside the Durable Object:
+ * each statement is rewritten onto the `_runtime_*` compatibility views, the
+ * batch commits atomically, and per-statement change counts come from the
+ * `_runtime_statement_changes` bookkeeping the view triggers maintain (a view
+ * write reports zero through the cursor, so `Math.max` with the trigger count
+ * is what production reports too).
+ */
+export function executeWorkstreamObjectSql(
+  database: DatabaseSync,
+  statements: RuntimeStatement[],
+): WorkstreamRuntimeSqlResult[] {
+  const sql = objectSqlStorage(database);
+  const results: WorkstreamRuntimeSqlResult[] = [];
+  database.exec("BEGIN");
+  try {
+    for (const statement of statements) {
+      sql.exec(`UPDATE _runtime_statement_changes SET changes = 0 WHERE id = 1`);
+      let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
+      try {
+        cursor = sql.exec<Record<string, SqlStorageValue>>(
+          rewriteWorkstreamRuntimeSql(statement.sql),
+          ...statement.params,
+        );
+      } catch (error) {
+        // The statement is the diagnosis, exactly as in production: without it
+        // a rewrite or compat-view defect surfaces as a bare SQLite error with
+        // no way to tell which of a batch's statements produced it.
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `workstream_runtime_statement_failed: ${reason} :: ${statement.sql.slice(0, 300)}`,
+          { cause: error },
+        );
+      }
+      const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
+      const counted = Number(
+        (sql.exec<{ changes: number }>(
+          `SELECT changes FROM _runtime_statement_changes WHERE id = 1`,
+        ).toArray()[0])?.changes ?? 0,
+      );
+      results.push({
+        columns: rows.length === 0 ? [] : Object.keys(rows[0]!),
+        rows,
+        changes: Math.max(cursor.rowsWritten, counted),
+      });
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+  return results;
+}
+
+/** Read rows from an object database in the legacy table vocabulary. */
+export function workstreamObjectAll<T extends Record<string, string | number | null>>(
+  database: DatabaseSync,
+  sql: string,
+  ...params: Array<string | number | null>
+): T[] {
+  return executeWorkstreamObjectSql(database, [{ sql, params }])[0]!.rows as T[];
+}
+
+/** First row (or null) from an object database in the legacy vocabulary. */
+export function workstreamObjectGet<T extends Record<string, string | number | null>>(
+  database: DatabaseSync,
+  sql: string,
+  ...params: Array<string | number | null>
+): T | null {
+  return (workstreamObjectAll<T>(database, sql, ...params)[0]) ?? null;
+}
+
+/** Run one legacy-vocabulary mutation against an object database. */
+export function workstreamObjectRun(
+  database: DatabaseSync,
+  sql: string,
+  ...params: Array<string | number | null>
+): { changes: number } {
+  const [result] = executeWorkstreamObjectSql(database, [{ sql, params }]);
+  return { changes: result!.changes };
+}
+
+/**
+ * The production work-stream runtime router bound to test databases: regional
+ * statements execute on the given D1 binding, object-owned statements travel
+ * the local-executor port into the object database — the exact classification
+ * and transport `workstreamRuntimeDatabase` gives the harness. Use this for
+ * code under test that takes a D1Database directly (the harness runtime, the
+ * terminal services); code that takes an Env goes through
+ * {@link testSubstreamAgentsBinding} instead.
+ */
+export function testWorkstreamRuntimeD1(
+  regional: D1Database,
+  objectStore: DatabaseSync,
+  ids: { workspaceId: string; workstreamId: string; substreamId?: string },
+): D1Database {
+  seedWorkstreamObjectRoot(objectStore, ids);
+  return workstreamRuntimeDatabase(
+    createTestEnv({ DB: regional }),
+    ids.workspaceId,
+    ids.workstreamId,
+    ids.substreamId ?? "0",
+    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+  );
 }
 
 export type RecordedDispatch = Record<string, unknown>;
@@ -124,48 +303,89 @@ interface SubstreamAgentsStubOptions {
   product?: Record<string, (request: Record<string, unknown>) => unknown>;
   /** Additional RPC methods merged onto the stub object. */
   extra?: Record<string, unknown>;
+  /**
+   * When the binding is built over the regional database, the per-workstream
+   * object databases it creates land here, keyed by workstream id, so a test
+   * can assert object state (through {@link workstreamObjectGet}) or close
+   * them. Ignored when the binding is built over an object store directly.
+   */
+  objectStores?: Map<string, DatabaseSync>;
+}
+
+function isWorkstreamObjectStore(database: DatabaseSync): boolean {
+  return database.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workstream'`,
+  ).get() !== undefined;
 }
 
 /**
- * A SUBSTREAM_AGENTS binding whose runtime SQL port executes against the given
- * sqlite database — the same conversion the Durable Object performs — and whose
- * run dispatch is recorded instead of executed. Pair with
+ * A SUBSTREAM_AGENTS binding whose runtime SQL port mirrors production truth:
+ * work-stream authority statements (the request carries a `workstreamId`)
+ * execute against a real object database — created by
+ * {@link testWorkstreamObjectStore} and root-seeded from the request ids, one
+ * per workstream, or the given database itself when it already is an object
+ * store — after the same identity and fence checks the Durable Object makes.
+ * Workspace-authority requests (no `workstreamId`) execute against the given
+ * through-0089 compatibility database so focused repository tests can preserve
+ * their frozen SQL dialect. That is a test fixture, not current regional D1.
+ * Run dispatch is recorded instead of executed. Pair with
  * {@link openWorkstreamAuthorityForTest}.
  */
 export function testSubstreamAgentsBinding(
   database: DatabaseSync,
   options: SubstreamAgentsStubOptions = {},
 ): DurableObjectNamespace {
+  const objectStoreMode = isWorkstreamObjectStore(database);
+  const stores = options.objectStores ?? new Map<string, DatabaseSync>();
+  const storeFor = (workstreamId: string, workspaceId: string): DatabaseSync => {
+    if (objectStoreMode) {
+      seedWorkstreamObjectRoot(database, { workstreamId, workspaceId });
+      return database;
+    }
+    let store = stores.get(workstreamId);
+    if (!store) {
+      store = testWorkstreamObjectStore();
+      stores.set(workstreamId, store);
+    }
+    seedWorkstreamObjectRoot(store, { workstreamId, workspaceId });
+    return store;
+  };
   const stub = {
     executeRuntimeSql: vi.fn((input: {
-      statements: Array<{ sql: string; params: Array<string | number | null> }>;
+      workspaceId: string;
+      workstreamId?: string;
+      statements: RuntimeStatement[];
     }) => {
-      const results: Array<{
-        columns: string[];
-        rows: Array<Record<string, string | number | null>>;
-        changes: number;
-      }> = [];
+      if (input.workstreamId !== undefined) {
+        const store = storeFor(input.workstreamId, input.workspaceId);
+        const identity = store.prepare(
+          `SELECT workstream_key, parent_workspace_key, authority_mode FROM workstream WHERE id = 1`,
+        ).get() as {
+          workstream_key: string;
+          parent_workspace_key: string;
+          authority_mode: string;
+        } | undefined;
+        if (
+          !identity
+          || identity.workstream_key !== input.workstreamId
+          || identity.parent_workspace_key !== input.workspaceId
+        ) throw new Error("workstream_runtime_identity_mismatch");
+        if (identity.authority_mode !== "authoritative") {
+          throw new Error("workstream_runtime_authority_fenced");
+        }
+        const results = executeWorkstreamObjectSql(store, input.statements);
+        return { status: 200, bodyJson: JSON.stringify({ results }) };
+      }
+      if (objectStoreMode) {
+        throw new Error("workspace runtime SQL routed to an object-store-backed binding");
+      }
+      // Workspace authority: those D1 tables were kept, so the migrated
+      // regional database is still the store the WorkspaceDO port serves.
+      const results: WorkstreamRuntimeSqlResult[] = [];
       database.exec("BEGIN");
       try {
         for (const { sql, params } of input.statements) {
-          // When one sqlite database stands in for both stores, the regional
-          // identity anchor (`INSERT OR IGNORE`, written by the bootstrap) and
-          // the object's own product row share an id that in production lives
-          // in two separate stores. Overlaying the anchor with the product
-          // row's columns is the state reads observe there — product reads are
-          // served by the object's copy — and an in-place upsert (never
-          // REPLACE, whose delete would cascade through dependents) keeps the
-          // rows that already reference the id.
-          const anchorOverlay = /^\s*INSERT INTO workstreams\s*\(([^)]+)\)/iu.exec(sql);
-          const effectiveSql = anchorOverlay
-            ? `${sql} ON CONFLICT(id) DO UPDATE SET ${anchorOverlay[1]!
-                .split(",")
-                .map((column) => column.trim())
-                .filter((column) => column !== "id")
-                .map((column) => `${column} = excluded.${column}`)
-                .join(", ")}`
-            : sql;
-          const statement = database.prepare(effectiveSql);
+          const statement = database.prepare(sql);
           if (/^\s*(?:SELECT|WITH)/iu.test(sql)) {
             const rows = statement.all(...params) as Array<Record<string, string | number | null>>;
             results.push({
@@ -181,8 +401,16 @@ export function testSubstreamAgentsBinding(
               changes: rows.length,
             });
           } else {
-            const run = statement.run(...params);
-            results.push({ columns: [], rows: [], changes: Number(run.changes) });
+            try {
+              const run = statement.run(...params);
+              results.push({ columns: [], rows: [], changes: Number(run.changes) });
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `workspace_runtime_statement_failed: ${reason} :: ${sql.slice(0, 300)}`,
+                { cause: error },
+              );
+            }
           }
         }
         database.exec("COMMIT");
@@ -202,7 +430,13 @@ export function testSubstreamAgentsBinding(
       options.roomEvents?.push(input.event);
       return { status: 204, bodyJson: "null" };
     }),
-    bootstrapRuntime: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
+    bootstrapRuntime: vi.fn((input: { workspaceId: string; workstreamId: string }) => {
+      // Production's bootstrap opens the object and writes its identity root;
+      // seeding here is that same admission, so a creation flow's first routed
+      // statement finds the root the way it would in the real object.
+      storeFor(input.workstreamId, input.workspaceId);
+      return { status: 200, bodyJson: "{}" };
+    }),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     handleProductRequest: vi.fn((request: { operation: string } & Record<string, unknown>) => {

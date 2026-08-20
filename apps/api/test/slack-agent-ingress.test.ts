@@ -5,7 +5,7 @@ import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
-import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 // The logger only reads the observability bindings off the environment.
@@ -699,7 +699,7 @@ describe("App Home task rows", () => {
   });
 
   it("leaves drafts out of the automations it lists", () => {
-    const database = migratedSqliteDatabase();
+    const database = preRetirementProductSqliteDatabase();
     const workspaceId = "00000000-0000-7000-8000-000000000001";
     const userId = "00000000-0000-7000-8000-000000000002";
     database.exec(`

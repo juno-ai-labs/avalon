@@ -5,8 +5,18 @@ import {
   clearFlagTargetingAttributeCache,
   loadFlagTargetingAttributes,
 } from "../src/services/flag-targeting-attributes";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  migratedSqliteDatabase,
+  preRetirementProductSqliteDatabase,
+  sqliteD1,
+} from "./helpers/sqlite-d1";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const OTHER_WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
@@ -77,7 +87,7 @@ function seedWorkstream(
 
 beforeEach(() => {
   clearFlagTargetingAttributeCache();
-  database = migratedSqliteDatabase();
+  database = preRetirementProductSqliteDatabase();
   seedUser(OWNER_ID, "ada@dogfood.example", "Ada Lovelace");
   seedUser(MEMBER_ID, "grace@customer.example", "Grace Hopper");
   seedUser(INVITED_ID, "alan@customer.example", "Alan Turing");
@@ -223,6 +233,68 @@ describe("flag targeting attributes", () => {
     });
   });
 
+  it("loads product targeting facts from WorkstreamDO after D1 retirement", async () => {
+    const regional = migratedSqliteDatabase();
+    const object = testWorkstreamObjectStore();
+    try {
+      regional.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('${MEMBER_ID}', 'current-member', 'grace@customer.example', 'Grace', '${NOW}', '${NOW}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('${WORKSPACE_ID}', 'Current', 'current', 'global', '${MEMBER_ID}', '${NOW}', '${NOW}');
+        INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+        VALUES ('${WORKSPACE_ID}', '${MEMBER_ID}', 'owner', 'active', '${NOW}');
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1,
+               serving_contract_version = required_serving_contract_version, updated_at = '${NOW}'
+         WHERE id = 1;
+        UPDATE workstream_authority_control SET phase = 'maintenance_importing', updated_at = '${NOW}' WHERE id = 1;
+        UPDATE workstream_authority_control SET phase = 'maintenance_verified', updated_at = '${NOW}' WHERE id = 1;
+        UPDATE workstream_authority_control SET phase = 'durable_object_open', updated_at = '${NOW}' WHERE id = 1;
+        INSERT INTO workstreams (id, workspace_id, do_identity_anchor)
+        VALUES ('${AD_HOC_WORKSTREAM}', '${WORKSPACE_ID}', 1);
+      `);
+      seedWorkstreamObjectRoot(object, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AD_HOC_WORKSTREAM,
+      });
+      workstreamObjectRun(
+        object,
+        `INSERT INTO workstreams (
+           id, workspace_id, title, objective, origin_type, created_by_user_id,
+           harness_status, last_activity_at, created_at, updated_at, scope
+         ) VALUES (?, ?, 'Ship it', '', 'ad_hoc', ?, 'idle', ?, ?, ?, 'workspace')`,
+        AD_HOC_WORKSTREAM,
+        WORKSPACE_ID,
+        MEMBER_ID,
+        NOW,
+        NOW,
+        NOW,
+      );
+      const env = createTestEnv({
+        DB: sqliteD1(regional),
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(object),
+        AVALON_REGION: "global",
+        APP_ENV: "production",
+        LOG_LEVEL: "error",
+      });
+
+      await expect(loadFlagTargetingAttributes(env, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AD_HOC_WORKSTREAM,
+      })).resolves.toMatchObject({
+        workstreamOrigin: "ad_hoc",
+        workstreamCreatedByUserId: MEMBER_ID,
+        workstreamCreatorEmailDomain: "customer.example",
+      });
+      expect((regional.prepare("PRAGMA table_info(workstreams)").all() as Array<{ name: string }>)
+        .map((column) => column.name)).toEqual(["id", "workspace_id", "do_identity_anchor"]);
+    } finally {
+      object.close();
+      regional.close();
+    }
+  });
+
   // The whole point of the boundary: a targeting rule gets the domain, which is
   // a cohort, and never the local part or the name, which are a person.
   //
@@ -299,7 +371,8 @@ describe("flag targeting attributes", () => {
         workstreamId: AD_HOC_WORKSTREAM,
       }),
     ).resolves.toMatchObject({ workstreamOrigin: "ad_hoc" });
-    expect(prepare).toHaveBeenCalledTimes(1);
+    // Authority control, object-owned facts, then regional creator identity.
+    expect(prepare).toHaveBeenCalledTimes(3);
   });
 
   it("reads each subject once and then serves the cached facts", async () => {
@@ -342,13 +415,19 @@ describe("flag targeting attributes", () => {
     const env = envWith(sqliteD1(database));
 
     await expect(
-      loadFlagTargetingAttributes(env, { workstreamId: UNWRITTEN_WORKSTREAM }),
-    ).resolves.toEqual({});
+      loadFlagTargetingAttributes(env, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: UNWRITTEN_WORKSTREAM,
+      }),
+    ).resolves.not.toHaveProperty("workstreamOrigin");
 
     seedWorkstream(UNWRITTEN_WORKSTREAM, { origin: "automation", createdByUserId: null });
 
     await expect(
-      loadFlagTargetingAttributes(env, { workstreamId: UNWRITTEN_WORKSTREAM }),
+      loadFlagTargetingAttributes(env, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: UNWRITTEN_WORKSTREAM,
+      }),
     ).resolves.toMatchObject({ workstreamOrigin: "automation" });
   });
 

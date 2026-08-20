@@ -50,7 +50,7 @@ The rest:
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the work stream's read-only pill applies to an id the closed set does not admit. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream being started, and the locked pill inside one that already exists. |
-| `apps/api/src/mappers/workstream.ts` | Where the stored pin is re-validated on the way out, so `modelOverride` on the wire is what the resolver would actually apply. |
+| `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
 
 ## How it works
@@ -923,6 +923,28 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-20 — Work-stream targeting follows the final authority boundary
+
+**What changed:** Work-stream flag attributes now load product facts such as
+title, origin, status, and creator id from the WorkstreamDO execution database,
+then resolve only the creator's email domain from regional identity D1. A
+final-schema test runs this path with the three-column regional work-stream
+anchor.
+
+**Why:** Migration 0090 removes product columns from regional D1. Keeping the
+old join would make every work-stream flag silently lose its targeting facts
+after deployment even though the authoritative object still had them.
+
+**Considered and rejected:** retaining product columns on the D1 anchor for
+flag evaluation. That would preserve a second read model and its synchronization
+burden for a latency-tolerant loader that already has an authority-aware object
+client.
+
+**Consequences:** Work-stream flag loads cross the authority boundary in two
+explicit reads: product state from WorkstreamDO, then optional creator identity
+from regional D1. Cache behavior and the three-read evaluation budget are
+unchanged.
 
 ### 2026-08-18 — The HyperSight model flag adopts its BlockDashboard role
 

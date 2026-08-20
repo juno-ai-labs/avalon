@@ -1,20 +1,38 @@
 import { asWorkspaceId } from "@avalon/contracts";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  workstreamObjectAll,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
 
 // The real launcher creates the `harness_runs` row the delivery then points at,
 // so the stub creates one too — without it the foreign key would be the only
-// thing these tests were exercising.
+// thing these tests were exercising. It admits the row the way the launcher
+// does since the cutover: through the routed execution environment, into the
+// work stream's own object. (Dynamic import because this callback is hoisted
+// above the module's imports.)
 const launchWorkstreamHarness = vi.hoisted(() => vi.fn(async (
   env: { DB: D1Database },
   input: { workspaceId: string; workstreamId: string },
 ) => {
+  const { withWorkstreamRuntimeDatabase: route } = await import("../src/services/workstream-runtime-database");
+  const routed = route(env as never, input.workspaceId, input.workstreamId);
   const id = crypto.randomUUID();
-  await env.DB.prepare(
+  await routed.DB.prepare(
     `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
      VALUES (?, ?, ?, 'scheduled_digest', '{"type":"user","userId":"00000000-0000-7000-8000-000000000002"}',
@@ -42,23 +60,92 @@ const SCHEDULE = "00000000-0000-7000-8000-000000000005";
 const PLANNED_FOR = "2026-08-11T16:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
+/** Per-workstream object databases the runtime SQL port opened, by id. */
+let objectStores = new Map<string, DatabaseSync>();
 afterEach(() => {
+  vi.unstubAllGlobals();
+  for (const store of objectStores.values()) store.close();
+  objectStores = new Map();
   for (const database of databases.splice(0)) database.close();
   launchWorkstreamHarness.mockClear();
 });
 
+/**
+ * The activity log moved into the WorkspaceDO's own storage with the cutover,
+ * and its semantics — audience filtering, the digestible subset, the window
+ * cap, target relations — are exactly what these tests exercise. So the three
+ * activity RPCs are served by a real `WorkspaceDO` over a real object-schema
+ * database rather than by a re-implementation whose bugs would be this file's
+ * own. Everything else on the WORKSPACE_DOS stub keeps the migrated D1
+ * database as its store, the way the runtime SQL port stub does.
+ */
+function workspaceActivityRpcs(database: DatabaseSync): Record<string, unknown> {
+  const doDatabase = new DatabaseSync(":memory:");
+  databases.push(doDatabase);
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    deleteAlarm: async () => undefined,
+    transactionSync: <T,>(body: () => T) => body(),
+    sql: createTestSqlStorage(doDatabase),
+  });
+  // The constructor registers the runtime-only websocket auto-response pair.
+  vi.stubGlobal("WebSocketRequestResponsePair", class {
+    constructor(readonly request: string, readonly response: string) {}
+  });
+  const workspaceDO = new WorkspaceDO(
+    createCloudflareTestBinding<DurableObjectState>({
+      id: createTestDurableObjectId("workspace-do"),
+      blockConcurrencyWhile: async <T,>(body: () => Promise<T>) => body(),
+      setWebSocketAutoResponse: () => undefined,
+      waitUntil: () => undefined,
+      storage,
+    }),
+    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
+  );
+  doDatabase.prepare(
+    `INSERT INTO workspace_identity
+       (id, workspace_id, region, placement_affinity, created_at, updated_at)
+     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
+  ).run(WORKSPACE);
+  return {
+    recordActivityEvent: (input: unknown) => workspaceDO.recordActivityEvent(input as never),
+    listActivityEvents: (input: unknown) => workspaceDO.listActivityEvents(input as never),
+    latestActivityEventCursor: (input: unknown) => workspaceDO.latestActivityEventCursor(input as never),
+  };
+}
+
 function envFor(database: DatabaseSync): Env {
+  objectStores = new Map();
   return createTestEnv({
     DB: sqliteD1(database),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: workspaceActivityRpcs(database) }),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
   });
 }
 
+/** The object of the one work stream the occurrence under test created. */
+function onlyObjectStore(): DatabaseSync {
+  const stores = [...objectStores.values()];
+  if (stores.length !== 1) throw new Error(`expected exactly one work-stream object, saw ${stores.length}`);
+  return stores[0]!;
+}
+
+function objectStoreFor(workstreamId: string): DatabaseSync {
+  const store = objectStores.get(workstreamId);
+  if (!store) throw new Error(`no work-stream object was opened for ${workstreamId}`);
+  return store;
+}
+
 function seededDatabase(enabled = 1): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // Every occurrence creates its work stream through the Durable-Object
+  // authority; open it before any product rows exist, as a fresh stack does.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
     VALUES ('${OWNER}', 'g-owner', 'owner@example.com', 'Owner', 'Europe/London', '2026-01-01', '2026-01-01'),
@@ -146,9 +233,10 @@ describe("firing a digest occurrence", () => {
     // digestible event instead would make every later occurrence re-scan the
     // three that were withheld, forever.
     expect(delivery).toEqual({ event_count: 1, cursor_through: 4 });
-    const brief = database.prepare(
+    const brief = workstreamObjectGet(
+      onlyObjectStore(),
       "SELECT text_content FROM messages WHERE message_type = 'system'",
-    ).get() as { text_content: string };
+    ) as { text_content: string };
     expect(brief.text_content).toContain("(1 item)");
     expect(brief.text_content).not.toContain("check run completed");
   });
@@ -191,12 +279,15 @@ describe("firing a digest occurrence", () => {
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
 
     // Two declarations, two questions: private is who may read it, machinery is
-    // whether it is listed.
-    expect(database.prepare("SELECT system_kind, scope FROM workstreams").get())
+    // whether it is listed. Both live in the work stream's own object since the
+    // cutover — the D1 row is only the identity anchor.
+    const store = onlyObjectStore();
+    expect(workstreamObjectGet(store, "SELECT system_kind, scope FROM workstreams"))
       .toEqual({ system_kind: "digest", scope: "personal" });
-    expect(database.prepare(
+    expect(workstreamObjectAll(
+      store,
       "SELECT user_id FROM workstream_participants WHERE removed_at IS NULL",
-    ).all()).toEqual([{ user_id: OWNER }]);
+    )).toEqual([{ user_id: OWNER }]);
   });
 
   it("gives the next occurrence a work stream of its own", async () => {
@@ -214,24 +305,26 @@ describe("firing a digest occurrence", () => {
     // Nothing carries between occurrences but the cursor. A shared work stream
     // would hand this run the previous digest as replayed assistant history,
     // unlabelled and uncheckable against a window the projector drops.
-    const workstreams = database.prepare(
-      "SELECT id, title FROM workstreams ORDER BY created_at",
-    ).all() as Array<{ id: string; title: string }>;
-    expect(workstreams).toHaveLength(2);
-    expect(workstreams[0]!.id).not.toBe(workstreams[1]!.id);
+    const deliveries = database.prepare(
+      "SELECT workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all() as Array<{ workstream_id: string }>;
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[0]!.workstream_id).not.toBe(deliveries[1]!.workstream_id);
+    // Each occurrence owns its own: one identity anchor per work stream in the
+    // regional index, and one object holding the product row.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 2 });
     // Titled by occurrence alone, in the recipient's own timezone, and short
     // enough that the sidebar's ellipsis does not eat the time — which is the
-    // only thing telling two occurrences on the same day apart.
-    expect(workstreams.map((row) => row.title)).toEqual([
+    // only thing telling two occurrences on the same day apart. The title is
+    // product state, so it lives on each object's root.
+    expect(deliveries.map(({ workstream_id }) => (workstreamObjectGet(
+      objectStoreFor(workstream_id),
+      "SELECT title FROM workstreams WHERE id = ?",
+      workstream_id,
+    ) as { title: string }).title)).toEqual([
       "Digest · 11 Aug · 5:00 PM",
       "Digest · 11 Aug · 9:00 PM",
     ]);
-    // Each occurrence owns its own, so settlement and the reaper-less growth
-    // story both have one place to look.
-    const deliveries = database.prepare(
-      "SELECT workstream_id FROM digest_deliveries ORDER BY planned_for",
-    ).all() as Array<{ workstream_id: string | null }>;
-    expect(deliveries.map((row) => row.workstream_id)).toEqual(workstreams.map((row) => row.id));
   });
 
   it("leaves the occurrence alone when the launch left a run executing", async () => {
@@ -246,7 +339,8 @@ describe("firing a digest occurrence", () => {
       launchEnv: { DB: D1Database },
       input: { workspaceId: string; workstreamId: string },
     ) => {
-      await launchEnv.DB.prepare(
+      const routed = withWorkstreamRuntimeDatabase(launchEnv as never, input.workspaceId, input.workstreamId);
+      await routed.DB.prepare(
         `INSERT INTO harness_runs
            (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
          VALUES (?, ?, ?, 'scheduled_digest', '{"type":"user","userId":"${OWNER}"}',
@@ -264,7 +358,8 @@ describe("firing a digest occurrence", () => {
     // the run still reading it.
     expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 1 });
+    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM messages"))
+      .toEqual({ count: 1 });
   });
 
   it("releases the work stream with the claim when the launch never happened", async () => {
@@ -278,10 +373,20 @@ describe("firing a digest occurrence", () => {
     })).rejects.toThrow("queue unavailable");
 
     // The scheduler's retry re-fires this occurrence, so a failed attempt must
-    // leave neither a claim nor the empty transcript it had already created.
+    // release the claim. The work stream cannot be deleted with it any more —
+    // a Durable Object identity cannot join the claim's transaction — so the
+    // release leaves the D1 anchor and archives the object root instead: a
+    // durable, unlistable tombstone, transcript and all.
     expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 0 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
+    const tombstone = workstreamObjectGet(
+      onlyObjectStore(),
+      "SELECT system_kind, archived_at FROM workstreams",
+    ) as { system_kind: string; archived_at: string | null };
+    expect(tombstone.system_kind).toBe("digest");
+    expect(tombstone.archived_at).not.toBeNull();
+    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM messages"))
+      .toEqual({ count: 1 });
   });
 
   it("digests each event exactly once across consecutive occurrences", async () => {

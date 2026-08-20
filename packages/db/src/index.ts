@@ -235,8 +235,9 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
         promptPreview: wakeupPromptPreview(String(row.next_pending_wakeup_prompt_prefix)),
       }
       : null,
-    // Nothing is pinned at the moment it is created, and this mapper has no
-    // viewer to ask anyway — the per-viewer read is in `mappers/workstream.ts`.
+    // Nothing is pinned at the moment it is created. Viewer-specific pin state
+    // is added by WorkspaceDO's directory response, not this object-local
+    // compatibility mapper.
     pinPosition: null
   };
 }
@@ -364,42 +365,15 @@ export interface CreateExternalMessageInput {
 
 export function createDatabase(db: D1DatabaseLike) {
   const workstreams = {
-    async list(workspaceId: string, limit = 100, before?: string): Promise<Workstream[]> {
-      const cursorClause = before ? "AND w.last_activity_at < ?" : "";
-      const statement = db.prepare(
-        `SELECT w.*, t.name AS origin_label,
-                next_wakeup.due_at AS next_pending_wakeup_at,
-                substr(
-                  next_wakeup.prompt,
-                  1,
-                  ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
-                ) AS next_pending_wakeup_prompt_prefix
-         FROM workstreams w
-         LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-         LEFT JOIN automation_templates t ON t.id = s.template_id
-         LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
-           SELECT wakeup.id FROM workstream_wakeups wakeup
-           WHERE wakeup.workspace_id = w.workspace_id
-             AND wakeup.workstream_id = w.id
-             AND wakeup.status = 'pending'
-           ORDER BY wakeup.due_at, wakeup.id
-           LIMIT 1
-         )
-         WHERE w.workspace_id = ? AND w.archived_at IS NULL ${cursorClause}
-         ORDER BY w.last_activity_at DESC
-         LIMIT ?`
-      );
-      const bound = before
-        ? statement.bind(workspaceId, before, Math.min(limit, 250))
-        : statement.bind(workspaceId, Math.min(limit, 250));
-      const result = await bound.all<Record<string, unknown>>();
-      return (result.results ?? []).map(toWorkstream);
-    },
-
     async get(workspaceId: string, id: string): Promise<Workstream | null> {
+      // Two statements by necessity: workstreams and wakeups are work-stream
+      // authority while the automation tables are workspace authority, and a
+      // single statement cannot span authorities through the runtime router.
+      // The origin label resolves separately, against whichever side of the
+      // router owns the automation tables for the handle in use.
       const row = await db
         .prepare(
-          `SELECT w.*, t.name AS origin_label,
+          `SELECT w.*,
                   next_wakeup.due_at AS next_pending_wakeup_at,
                   substr(
                     next_wakeup.prompt,
@@ -407,8 +381,6 @@ export function createDatabase(db: D1DatabaseLike) {
                     ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
                   ) AS next_pending_wakeup_prompt_prefix
            FROM workstreams w
-           LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-           LEFT JOIN automation_templates t ON t.id = s.template_id
            LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
              SELECT wakeup.id FROM workstream_wakeups wakeup
              WHERE wakeup.workspace_id = w.workspace_id
@@ -421,7 +393,21 @@ export function createDatabase(db: D1DatabaseLike) {
         )
         .bind(workspaceId, id)
         .first<Record<string, unknown>>();
-      return row ? toWorkstream(row) : null;
+      if (!row) return null;
+      let originLabel: string | null = null;
+      if (row.automation_subscription_id != null) {
+        const label = await db
+          .prepare(
+            `SELECT t.name AS origin_label
+             FROM automation_subscriptions s
+             JOIN automation_templates t ON t.id = s.template_id
+             WHERE s.id = ?`
+          )
+          .bind(row.automation_subscription_id)
+          .first<{ origin_label: string | null }>();
+        originLabel = label?.origin_label ?? null;
+      }
+      return toWorkstream({ ...row, origin_label: originLabel });
     },
 
     async create(input: CreateWorkstreamInput): Promise<{ workstream: Workstream; messageId: string }> {
@@ -486,25 +472,20 @@ export function createDatabase(db: D1DatabaseLike) {
             input.clientMessageId,
             input.workspaceId,
             workstreamId,
+            // The object's parts CHECK pairs actor JSON with author_type
+            // 'external' and requires NULL actor JSON on 'system'; the legacy
+            // D1 encoding ('system' + actor JSON) fails the compat view.
             input.openingAuthor.type === "human"
               ? "human"
-              : input.openingAuthor.type === "agent" ? "agent" : "system",
+              : input.openingAuthor.type === "agent"
+                ? "agent"
+                : input.openingAuthor.type === "external" ? "external" : "system",
             openingAuthorUserId,
             input.openingMessage,
             input.openingStructuredContent == null ? null : JSON.stringify(input.openingStructuredContent),
             at,
             externalActorJson,
           ),
-        ...(input.creatorUserId ? [
-          db
-            .prepare(
-              `INSERT INTO workstream_read_states
-               (workspace_id, workstream_id, user_id, read_through_sequence_number,
-                manual_unread_from_sequence_number, manual_unread_generation, updated_at)
-               VALUES (?, ?, ?, 1, NULL, 0, ?)`
-            )
-            .bind(input.workspaceId, workstreamId, input.creatorUserId, at),
-        ] : []),
         ...uniqueParticipants.map((userId) =>
           db
             .prepare(
@@ -526,6 +507,9 @@ export function createDatabase(db: D1DatabaseLike) {
       if (results.some((result) => !result.success)) {
         throw new RepositoryError("database_error", "Could not create work stream");
       }
+      // Deliberately no separate read-state insert. Object initialization
+      // creates the creator's authoritative attention row; the regional D1
+      // schema has no read-state table after migration 0090.
       const created = await workstreams.get(input.workspaceId, workstreamId);
       if (!created) throw new RepositoryError("database_error", "Created work stream was not readable");
       return { workstream: created, messageId };
@@ -582,7 +566,7 @@ export function createDatabase(db: D1DatabaseLike) {
            (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
             message_type, text_content, structured_content_json, sequence_number, created_at,
             external_actor_json)
-           SELECT ?, ?, ?, w.id, 'system', NULL, ?, ?, ?, w.next_sequence_number, ?, ?
+           SELECT ?, ?, ?, w.id, 'external', NULL, ?, ?, ?, w.next_sequence_number, ?, ?
            FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
            ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
         ).bind(

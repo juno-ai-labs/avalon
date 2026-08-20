@@ -25,7 +25,6 @@ import {
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const BlockDashboardResponseSchema = z.object({ blockDashboard: BlockDashboardSchema }).passthrough();
 const BlockDashboardPreferenceResponseSchema = z.object({
@@ -77,18 +76,7 @@ export async function loadBlockDashboard(
 
 /** Apply the same visibility rule as the work-stream product routes. */
 async function requireVisibleWorkstream(env: Env, auth: AuthContext, workstreamId: string): Promise<void> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  const visible = authority.phase === "durable_object_open"
-    ? await new WorkstreamDirectoryService(env, auth).visible(workstreamId)
-    : Boolean(await env.DB.prepare(
-      `SELECT 1 FROM workstreams workstream
-        WHERE workstream.id = ? AND workstream.workspace_id = ?
-          AND workstream.archived_at IS NULL
-          AND (workstream.scope = 'workspace' OR workstream.created_by_user_id = ?
-            OR EXISTS (SELECT 1 FROM workstream_participants participant
-                WHERE participant.workstream_id = workstream.id
-                  AND participant.user_id = ? AND participant.removed_at IS NULL))`,
-    ).bind(workstreamId, auth.workspaceId, auth.userId, auth.userId).first());
+  const visible = await new WorkstreamDirectoryService(env, auth).visible(workstreamId);
   if (!visible) throw new ApiError(404, "workstream_not_found", "Work stream not found");
 }
 

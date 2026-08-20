@@ -1741,6 +1741,160 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("owns per-user pin ordering in WorkspaceDO SQL", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const workstreamIds = [
+      WORKSTREAM_ID,
+      asWorkstreamId("00000000-0000-7000-8000-000000000106"),
+      asWorkstreamId("00000000-0000-7000-8000-000000000107"),
+    ];
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: workstreamIds.flatMap((workstreamId, index) => [
+        effectEnvelope({
+          kind: "directory_common",
+          title: `Pinned ${index + 1}`,
+          description: "WorkspaceDO pin fixture",
+          preview: "Authoritative directory",
+          scope: "workspace",
+          state: "idle",
+          systemKind: null,
+          lastActivityAt: `2026-08-17T2${index}:00:00.000Z`,
+          completedAt: null,
+          archivedAt: null,
+          originType: "ad_hoc",
+          createdByUserId: USER_ID,
+          latestAttentionOrdinal: 0,
+          unreadTrackingStartOrdinal: 0,
+          createdAt: "2026-08-17T19:00:00.000Z",
+          updatedAt: `2026-08-17T2${index}:00:00.000Z`,
+          resourceLinks: [],
+        }, `00000000-0000-7000-8000-${(0x280 + index).toString(16).padStart(12, "0")}`, 1, workstreamId),
+      ]),
+    });
+
+    await expect(stub.pinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamId: workstreamIds[2]!,
+    })).resolves.toMatchObject({ items: [{ id: workstreamIds[2], pinPosition: 0 }] });
+    await stub.pinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamId: workstreamIds[0]!,
+    });
+    const repeated = await stub.pinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamId: workstreamIds[2]!,
+    });
+    expect(repeated.items.map((item) => [item.id, item.pinPosition])).toEqual([
+      [workstreamIds[2], 0],
+      [workstreamIds[0], 1],
+    ]);
+
+    const reordered = await stub.reorderWorkstreamPins({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamIds: [workstreamIds[0]!, workstreamIds[1]!, workstreamIds[2]!],
+    });
+    expect(reordered.items.map((item) => [item.id, item.pinPosition])).toEqual([
+      [workstreamIds[0], 0],
+      [workstreamIds[2], 1],
+    ]);
+    const unpinned = await stub.unpinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamId: workstreamIds[0]!,
+    });
+    expect(unpinned.items.map((item) => [item.id, item.pinPosition]))
+      .toEqual([[workstreamIds[2], 0]]);
+
+    const otherUserId = asUserId("00000000-0000-7000-8000-000000000108");
+    await expect(stub.pinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: otherUserId,
+      workstreamId: workstreamIds[1]!,
+    })).resolves.toMatchObject({ items: [{ id: workstreamIds[1], pinPosition: 0 }] });
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    })).resolves.toMatchObject({
+      items: [
+        { id: workstreamIds[1], pinPosition: null },
+        { id: workstreamIds[0], pinPosition: null },
+        { id: workstreamIds[2], pinPosition: 0 },
+      ],
+    });
+  });
+
+  it("lists personal system work only for its participant and only on opt-in", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [
+        effectEnvelope({
+          kind: "directory_common",
+          title: "Digest fixture",
+          description: "Personal machinery",
+          preview: "Hidden by default",
+          scope: "personal",
+          state: "completed",
+          systemKind: "digest",
+          lastActivityAt: "2026-08-17T20:00:00.000Z",
+          completedAt: "2026-08-17T20:00:00.000Z",
+          archivedAt: null,
+          originType: "ad_hoc",
+          createdByUserId: USER_ID,
+          latestAttentionOrdinal: 0,
+          unreadTrackingStartOrdinal: 0,
+          createdAt: "2026-08-17T19:00:00.000Z",
+          updatedAt: "2026-08-17T20:00:00.000Z",
+          resourceLinks: [],
+        }, "00000000-0000-7000-8000-000000000290"),
+        effectEnvelope({
+          kind: "directory_user",
+          userId: USER_ID,
+          isParticipant: true,
+          unreadCount: 0,
+          youAreMentioned: false,
+          listable: true,
+          seenAttentionOrdinal: 0,
+          manualUnreadFromOrdinal: null,
+          manualUnreadGeneration: 0,
+          latestMentionAttentionOrdinal: 0,
+        }, "00000000-0000-7000-8000-000000000291"),
+      ],
+    });
+
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    })).resolves.toMatchObject({ items: [] });
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: true,
+    })).resolves.toMatchObject({ items: [{ id: WORKSTREAM_ID, systemKind: "digest" }] });
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: asUserId("00000000-0000-7000-8000-000000000108"),
+      limit: 20,
+      includeSystem: true,
+    })).resolves.toMatchObject({ items: [] });
+  });
+
   it("owns activity, opportunity provenance, and resolved suggestion state in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

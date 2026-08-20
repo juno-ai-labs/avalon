@@ -204,6 +204,9 @@ class ManualRunStatement {
       }
       return route as T;
     }
+    if (normalized.includes("FROM pragma_table_info('workstreams')")) {
+      return null;
+    }
     throw new Error(`Unexpected first() query: ${normalized}`);
   }
 
@@ -221,7 +224,8 @@ class ManualRunStatement {
 
   async run<T>(): Promise<D1Result<T>> {
     const normalized = this.normalizedSql();
-    if (normalized.startsWith("INSERT OR IGNORE INTO workstreams")
+    if ((normalized.startsWith("INSERT INTO workstreams") && normalized.includes("(id, workspace_id, do_identity_anchor)"))
+      || normalized.startsWith("INSERT OR IGNORE INTO workstreams")
       || normalized.startsWith("INSERT OR IGNORE INTO workstream_authority_routes")) {
       // The regional identity anchor and route the runtime bootstrap reserves;
       // product state lives behind the object port below.

@@ -16,7 +16,10 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
-import { withWorkstreamRuntimeDatabase } from "./workstream-runtime-database";
+import {
+  withWorkstreamRuntimeDatabase,
+  writeRegionalWorkstreamAnchorBatch,
+} from "./workstream-runtime-database";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
@@ -151,46 +154,28 @@ export class WorkstreamObjectCreationService {
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const email = await span.step("workstream.create.email_address.reserve", () => emailRouting.reserve(routeInput));
 
-    await span.step("workstream.create.d1_rows.write", () => this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT OR IGNORE INTO workstreams
-           (id, workspace_id, title, objective, origin_type, created_by_user_id,
-            planned_for, harness_status, next_sequence_number, last_activity_at,
-            created_at, updated_at, email_address, email_route_status,
-            latest_attention_sequence_number, unread_tracking_start_sequence_number,
-            scope, title_status, description_source, model_override, do_identity_anchor)
-         VALUES (?, ?, ?, '', 'ad_hoc', ?, NULL, 'idle', 1, ?, ?, ?, ?, 'active',
-                 0, 0, 'workspace', ?, ?, ?, 1)`,
-      ).bind(
-        receipt.workstream_id,
-        this.auth.workspaceId,
-        `[WorkstreamDO] ${receipt.workstream_id}`,
-        this.auth.userId,
-        at,
-        at,
-        at,
-        email.emailAddress,
-        body.title == null ? "naming" : "settled",
-        input.descriptionSource ?? "derived",
-        body.modelOverride ?? null,
-      ),
-      this.env.DB.prepare(
-        `INSERT OR IGNORE INTO workstream_authority_routes
-           (workspace_id, workstream_id, generation, object_name, state, stage_index,
-            source_cursor, source_fence_sequence, source_hash, target_hash,
-            row_counts_json, imported_at, verified_at, activated_at, updated_at)
-         VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
-                 '{}', ?, ?, NULL, ?)`,
-      ).bind(
-        this.auth.workspaceId,
-        receipt.workstream_id,
-        control.generation,
-        `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
-        at,
-        at,
-        at,
-      ),
-    ]));
+    await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
+      this.env,
+      { workspaceId: this.auth.workspaceId, workstreamId: receipt.workstream_id, at },
+      () => [
+        this.env.DB.prepare(
+          `INSERT OR IGNORE INTO workstream_authority_routes
+             (workspace_id, workstream_id, generation, object_name, state, stage_index,
+              source_cursor, source_fence_sequence, source_hash, target_hash,
+              row_counts_json, imported_at, verified_at, activated_at, updated_at)
+           VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
+                   '{}', ?, ?, NULL, ?)`,
+        ).bind(
+          this.auth.workspaceId,
+          receipt.workstream_id,
+          control.generation,
+          `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
+          at,
+          at,
+          at,
+        ),
+      ],
+    ));
 
     const created = await span.step("workstream.create.object.initialize", () => client.initialize({
       workspaceId: this.auth.workspaceId,

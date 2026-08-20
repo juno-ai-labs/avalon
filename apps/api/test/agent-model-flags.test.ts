@@ -15,7 +15,7 @@ import {
 import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
 import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 /**
@@ -72,7 +72,7 @@ const SEEDED_WORKSTREAM_ID = "wst-1";
 const openDatabases: DatabaseSync[] = [];
 
 function seededEnv(env: Env): Env {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   // Closed by `afterEach` rather than by the caller: a failing assertion throws
   // past any close at the end of a case and leaks the handle into the rest of
   // the file.

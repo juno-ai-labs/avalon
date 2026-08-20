@@ -1,13 +1,20 @@
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
+import type { WorkstreamRuntimeSqlResult } from "../src/durable-objects/workstream-runtime-sql";
 import {
   __workstreamRuntimeDatabaseTesting,
+  writeRegionalWorkstreamAnchorBatch,
   workstreamRuntimeDatabase,
 } from "../src/services/workstream-runtime-database";
-import { createTestEnv } from "./helpers/cloudflare-test";
-import type { WorkstreamRuntimeSqlResult } from "../src/durable-objects/workstream-runtime-sql";
-import { DatabaseSync } from "node:sqlite";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
+import {
+  migratedSqliteDatabase,
+  preRetirementProductSqliteDatabase,
+  sqliteD1,
+} from "./helpers/sqlite-d1";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000601";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000602";
@@ -58,6 +65,105 @@ describe("work-stream runtime database routing", () => {
       )).rejects.toThrow("workstream_runtime_cross_authority_transaction");
     } finally {
       underlying.close();
+    }
+  });
+
+  it("creates the same routing anchor before and after the destructive migration", async () => {
+    const at = "2026-08-20T00:00:00.000Z";
+    for (const [shape, database] of [
+      ["through-0089", preRetirementProductSqliteDatabase()],
+      ["final", migratedSqliteDatabase()],
+    ] as const) {
+      try {
+        database.exec(`
+          INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+          VALUES ('anchor-user', 'anchor-subject', 'anchor@example.com', 'Anchor', '${at}', '${at}');
+          INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+          VALUES ('${WORKSPACE_ID}', 'Anchor', 'anchor', 'global', 'anchor-user', '${at}', '${at}');
+        `);
+        openWorkstreamAuthorityForTest(database, at);
+        const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+        await writeRegionalWorkstreamAnchorBatch(
+          env,
+          { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, at },
+          () => [],
+        );
+
+        expect(database.prepare(
+          "SELECT id, workspace_id, do_identity_anchor FROM workstreams WHERE id = ?",
+        ).get(WORKSTREAM_ID), shape).toEqual({
+          id: WORKSTREAM_ID,
+          workspace_id: WORKSPACE_ID,
+          do_identity_anchor: 1,
+        });
+        if (shape === "through-0089") {
+          expect(database.prepare(
+            "SELECT title, objective FROM workstreams WHERE id = ?",
+          ).get(WORKSTREAM_ID)).toEqual({
+            title: `[WorkstreamDO] ${WORKSTREAM_ID}`,
+            objective: "",
+          });
+        } else {
+          expect((database.prepare("PRAGMA table_info(workstreams)").all() as Array<{ name: string }>)
+            .map((column) => column.name)).toEqual([
+            "id",
+            "workspace_id",
+            "do_identity_anchor",
+          ]);
+        }
+      } finally {
+        database.close();
+      }
+    }
+  });
+
+  it("retries the final anchor if 0090 commits between the shape probe and batch", async () => {
+    const at = "2026-08-20T00:00:00.000Z";
+    const database = preRetirementProductSqliteDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('anchor-user', 'anchor-subject', 'anchor@example.com', 'Anchor', '${at}', '${at}');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('${WORKSPACE_ID}', 'Anchor', 'anchor', 'global', 'anchor-user', '${at}', '${at}');
+      `);
+      openWorkstreamAuthorityForTest(database, at);
+      const underlying = sqliteD1(database);
+      let batchCalls = 0;
+      const racingDatabase = createTestD1Database({
+        prepare: underlying.prepare.bind(underlying),
+        batch: async (statements: D1PreparedStatement[]) => {
+          batchCalls += 1;
+          if (batchCalls === 1) {
+            database.exec(readFileSync(
+              new URL(
+                "../../../packages/db/migrations/0090_drop_legacy_product_tables.sql",
+                import.meta.url,
+              ),
+              "utf8",
+            ));
+          }
+          return underlying.batch(statements);
+        },
+      });
+      const env = createTestEnv({ DB: racingDatabase, AVALON_REGION: "global" });
+
+      await writeRegionalWorkstreamAnchorBatch(
+        env,
+        { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, at },
+        () => [],
+      );
+
+      expect(batchCalls).toBe(2);
+      expect(database.prepare(
+        "SELECT id, workspace_id, do_identity_anchor FROM workstreams WHERE id = ?",
+      ).get(WORKSTREAM_ID)).toEqual({
+        id: WORKSTREAM_ID,
+        workspace_id: WORKSPACE_ID,
+        do_identity_anchor: 1,
+      });
+    } finally {
+      database.close();
     }
   });
 });

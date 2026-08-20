@@ -7,6 +7,7 @@ import { enqueueActivityOpportunity } from "../src/services/work-opportunity-bat
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userOne = asUserId("00000000-0000-7000-8000-000000000002");
@@ -58,6 +59,7 @@ afterEach(() => {
 function migratedDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
   for (const file of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (file.startsWith("0090_")) break;
     database.exec(readFileSync(new URL(file, migrationsDirectory), "utf8"));
   }
   databases.push(database);
@@ -140,12 +142,17 @@ function insertOpportunityWorkstream(
      VALUES (?, ?, 'Handle the blocker', 'Handle the blocker', 'ad_hoc', ?, 'failed',
       2, ?, ?, ?, ?, 1, 'display-hash', 'execution-hash')
   `).run(workstreamId, workspaceId, userOne, at, at, at, opportunityId);
+  // The durable creation path leaves a completed create receipt keyed by the
+  // opportunity's client message id. Since the cutover the transcript row
+  // itself lives in the work stream's object; this receipt — not a D1
+  // transcript join — is how a failed start's recovery finds what was
+  // already created.
   database.prepare(`
-    INSERT INTO messages
-     (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-      text_content, sequence_number, created_at)
-     VALUES (?, ?, ?, ?, 'agent', 'text', 'Investigate and resolve the blocker.', 1, ?)
-  `).run(messageId, `opportunity:${opportunityId}:v1`, workspaceId, workstreamId, at);
+    INSERT INTO workstream_create_receipts
+      (workspace_id, creator_user_id, client_message_id, workstream_id, generation,
+       request_hash, state, message_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1, 'request-hash', 'completed', ?, ?, ?)
+  `).run(workspaceId, userOne, `opportunity:${opportunityId}:v1`, workstreamId, messageId, at, at);
 }
 
 describe("suggested-work aggregation", () => {
@@ -546,6 +553,11 @@ describe("suggested-work aggregation", () => {
   it("rolls a partially created work stream forward instead of making the opportunity claimable again", async () => {
     const database = migratedDatabase();
     seed(database);
+    // Starting an opportunity is a durable-path operation since the cutover:
+    // the workspace object owns the claim ledger, and this test asserts the
+    // contract with it — a launch failure after the work stream exists must
+    // complete the claim with what was created, never release it.
+    openWorkstreamAuthorityForTest(database);
     const opportunityId = "00000000-0000-7000-8000-000000000202";
     const workstreamId = "00000000-0000-7000-8000-000000000302";
     const messageId = "00000000-0000-7000-8000-000000000402";
@@ -554,7 +566,24 @@ describe("suggested-work aggregation", () => {
       insertOpportunityWorkstream(database, opportunityId, workstreamId, messageId);
       throw new Error("post_insert_launch_failure");
     });
-    const service = new WorkOpportunityService(environment(database), {
+    const complete = vi.fn<(input: Record<string, unknown>) => Promise<object>>(async () => ({}));
+    const releaseClaim = vi.fn(async () => ({}));
+    const env = createTestEnv({
+      DB: new D1Adapter(database),
+      APP_ENV: "development",
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          claimOpportunityStart: vi.fn(async () => ({
+            outcome: "claimed",
+            opportunity: database.prepare("SELECT * FROM work_opportunities WHERE id = ?").get(opportunityId),
+          })),
+          completeOpportunityStart: complete,
+          releaseOpportunityStart: releaseClaim,
+        },
+      }),
+    });
+    const service = new WorkOpportunityService(env, {
       sessionId: "session",
       userId: userOne,
       workspaceId,
@@ -564,31 +593,30 @@ describe("suggested-work aggregation", () => {
 
     await expect(service.start(opportunityId, 1, "durable-attempt")).rejects.toThrow("post_insert_launch_failure");
 
-    expect(database.prepare(`
-      SELECT status, created_workstream_id, created_message_id, start_idempotency_key
-      FROM work_opportunities WHERE id = ?
-    `).get(opportunityId)).toEqual({
-      status: "started",
-      created_workstream_id: workstreamId,
-      created_message_id: messageId,
-      start_idempotency_key: "durable-attempt",
+    // The recovery found the created work stream through its create receipt
+    // and rolled the claim forward to `started` with the durable ids; a
+    // release here would let a retry digest the same window twice.
+    expect(releaseClaim).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]![0]).toMatchObject({
+      workspaceId,
+      opportunityId,
+      idempotencyKey: "durable-attempt",
+      workstreamId,
+      messageId,
+      snapshotId: expect.any(String),
     });
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM work_opportunity_snapshots WHERE opportunity_id = ?",
-    ).get(opportunityId)).toEqual({ count: 1 });
   });
 
-  it("replays a concurrent start that uses the same idempotency key", async () => {
+  it("replays a start that reuses the idempotency key instead of creating a second work stream", async () => {
     const database = migratedDatabase();
     seed(database);
+    openWorkstreamAuthorityForTest(database);
     const opportunityId = "00000000-0000-7000-8000-000000000203";
     const workstreamId = "00000000-0000-7000-8000-000000000303";
     const messageId = "00000000-0000-7000-8000-000000000403";
     insertOpportunity(database, opportunityId);
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
     const create = vi.spyOn(WorkstreamService.prototype, "createFromOpportunity").mockImplementation(async () => {
-      await gate;
       insertOpportunityWorkstream(database, opportunityId, workstreamId, messageId);
       return {
         workstream: { id: workstreamId },
@@ -600,7 +628,33 @@ describe("suggested-work aggregation", () => {
       id: workstreamId,
       latestHarnessRunId: "run-one",
     } as never);
-    const service = new WorkOpportunityService(environment(database), {
+    // The workspace object's ledger arbitrates the race: the first attempt is
+    // admitted, and every later start carrying the same key is answered as a
+    // replay. The replay arrives without the created ids — the shape of an
+    // attempt that crashed between creating and recording — so resolving it
+    // exercises the receipt-based recovery rather than a stored answer.
+    let claimed = false;
+    const complete = vi.fn<(input: Record<string, unknown>) => Promise<object>>(async () => ({}));
+    const env = createTestEnv({
+      DB: new D1Adapter(database),
+      APP_ENV: "development",
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          claimOpportunityStart: vi.fn(async () => {
+            const opportunity = database.prepare("SELECT * FROM work_opportunities WHERE id = ?").get(opportunityId);
+            if (!claimed) {
+              claimed = true;
+              return { outcome: "claimed", opportunity };
+            }
+            return { outcome: "replay", opportunity };
+          }),
+          completeOpportunityStart: complete,
+          releaseOpportunityStart: vi.fn(async () => ({})),
+        },
+      }),
+    });
+    const service = new WorkOpportunityService(env, {
       sessionId: "session",
       userId: userOne,
       workspaceId,
@@ -608,19 +662,16 @@ describe("suggested-work aggregation", () => {
       role: "owner",
     });
 
-    const first = service.start(opportunityId, 1, "same-attempt");
-    while ((database.prepare("SELECT status FROM work_opportunities WHERE id = ?").get(opportunityId) as { status: string }).status !== "starting") {
-      await Promise.resolve();
-    }
-    const second = service.start(opportunityId, 1, "same-attempt");
-    release();
-    const [firstResult, secondResult] = await Promise.all([first, second]);
+    const firstResult = await service.start(opportunityId, 1, "same-attempt");
+    const secondResult = await service.start(opportunityId, 1, "same-attempt");
 
     expect(firstResult.workstream.id).toBe(workstreamId);
     expect(secondResult.workstream.id).toBe(workstreamId);
     expect(create).toHaveBeenCalledOnce();
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM work_opportunity_snapshots WHERE opportunity_id = ?",
-    ).get(opportunityId)).toEqual({ count: 1 });
+    // Both attempts settle the same durable ids onto the claim.
+    expect(complete).toHaveBeenCalledTimes(2);
+    for (const call of complete.mock.calls) {
+      expect(call[0]).toMatchObject({ workstreamId, messageId, idempotencyKey: "same-attempt" });
+    }
   });
 });

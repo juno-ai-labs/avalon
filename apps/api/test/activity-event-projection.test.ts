@@ -9,7 +9,7 @@ import {
   listActivityEventsForUser,
   reapExpiredActivityEvents,
 } from "../src/services/activity-event-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const { projectActivityEvent } = __testing;
@@ -46,7 +46,7 @@ function envFor(database: DatabaseSync): Env {
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)

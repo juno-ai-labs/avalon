@@ -1,10 +1,15 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000c0";
 const PARTICIPANT = "00000000-0000-7000-8000-0000000000c1";
@@ -28,8 +33,8 @@ beforeEach(() => {
   });
 });
 
-function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync {
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -55,6 +60,7 @@ function seededDatabase(): DatabaseSync {
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${WORKSTREAM}', '${PARTICIPANT}', '${PARTICIPANT}', 'creator', '${at}');
   `);
+  if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database, at);
   return database;
 }
 
@@ -94,12 +100,42 @@ function fakeSocket(userId: string): FakeSocket {
   };
 }
 
+const productDatabases = new WeakMap<SubstreamAgent, DatabaseSync>();
+
 function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamAgent {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
-  const objectDatabase = new DatabaseSync(":memory:");
+  const objectDatabase = testWorkstreamObjectStore();
   databases.push(objectDatabase);
+  seedWorkstreamObjectRoot(objectDatabase, { workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
+  const source = database.prepare(
+    "SELECT scope FROM workstreams WHERE id = ? AND workspace_id = ?",
+  ).get(WORKSTREAM, WORKSPACE) as { scope: string };
+  objectDatabase.prepare("UPDATE workstream SET scope = ? WHERE id = 1").run(source.scope);
+  const participants = database.prepare(
+    `SELECT user_id, participation_reason, added_by_user_id, joined_at
+       FROM workstream_participants WHERE workstream_id = ? AND removed_at IS NULL`,
+  ).all(WORKSTREAM) as Array<{
+    user_id: string;
+    participation_reason: string;
+    added_by_user_id: string | null;
+    joined_at: string;
+  }>;
+  for (const participant of participants) {
+    objectDatabase.prepare(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status,
+          participant_epoch, added_at, removed_at, updated_at)
+       VALUES (?, ?, ?, 'active', 0, ?, NULL, ?)`,
+    ).run(
+      participant.user_id,
+      participant.participation_reason,
+      participant.added_by_user_id,
+      Date.parse(participant.joined_at),
+      Date.parse(participant.joined_at),
+    );
+  }
   const sql = createTestSqlStorage(objectDatabase);
   const state = createCloudflareTestBinding<DurableObjectState>({
     blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
@@ -134,10 +170,18 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamA
       }),
     },
   });
-  return new SubstreamAgent(
+  const room = new SubstreamAgent(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
+  productDatabases.set(room, objectDatabase);
+  return room;
+}
+
+function productDatabase(room: SubstreamAgent): DatabaseSync {
+  const database = productDatabases.get(room);
+  if (!database) throw new Error("room_product_database_missing");
+  return database;
 }
 
 describe("message commands over the SubstreamAgent socket", () => {
@@ -246,7 +290,7 @@ describe("who the work-stream room lets connect", () => {
   });
 
   it("refuses late room events after the source snapshot is frozen", async () => {
-    const database = seededDatabase();
+    const database = seededDatabase({ openAuthority: false });
     database.exec(`
       UPDATE workstream_authority_control
          SET phase = 'maintenance_draining', generation = 1, updated_at = '2026-08-17T00:00:00.000Z'
@@ -309,7 +353,7 @@ describe("who the work-stream room disconnects", () => {
     const room = roomFor(database, [removed]);
     // Losing a participant retracts read access in a private work stream
     // exactly as narrowing the scope does, and nothing else disconnects them.
-    database.exec(`DELETE FROM workstream_participants WHERE user_id = '${PARTICIPANT}'`);
+    productDatabase(room).exec(`DELETE FROM participants WHERE user_id = '${PARTICIPANT}'`);
 
     const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
 
@@ -341,7 +385,7 @@ describe("who the work-stream room disconnects", () => {
 
     // The work stream goes private and the publisher that would have said so
     // fails — `publishWorkstreamEvent` swallows that, so the room is never told.
-    database.exec(`UPDATE workstreams SET scope = 'personal' WHERE id = '${WORKSTREAM}'`);
+    productDatabase(room).exec("UPDATE workstream SET scope = 'personal' WHERE id = 1");
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
 
     // The next thing the room would have sent them is what catches it.
@@ -379,7 +423,7 @@ describe("who the work-stream room disconnects", () => {
     const database = seededDatabase();
     const reader = fakeSocket(PARTICIPANT);
     const room = roomFor(database, [reader]);
-    database.exec("DROP TABLE workstream_participants");
+    productDatabase(room).exec("DROP TABLE participants");
 
     await publish(room, { type: "workstream_scope_changed", scope: "personal" });
 

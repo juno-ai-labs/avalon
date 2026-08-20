@@ -33,18 +33,27 @@ describe("database primitives", () => {
     expect(sql).toContain("ELSE workstream_participants.joined_at");
   });
 
-  it("lists work streams strictly by latest activity instead of harness status", async () => {
+  it("resolves the automation origin label in a separate statement from the work-stream read", async () => {
+    const rows = [
+      { id: newId(), automation_subscription_id: newId(), title: "t", harness_status: "idle" },
+      { origin_label: "Weekly digest" },
+    ];
     const statement = {
       bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ success: true, results: [] })
+      first: vi.fn().mockImplementation(() => Promise.resolve(rows.shift() ?? null)),
     };
     const prepare = vi.fn().mockReturnValue(statement);
     const db = createDatabase({ prepare, batch: vi.fn() } as never);
 
-    await db.workstreams.list(newId());
+    const workstream = await db.workstreams.get(newId(), newId());
 
-    const sql = String(prepare.mock.calls[0]?.[0]);
-    expect(sql).toContain("ORDER BY w.last_activity_at DESC");
-    expect(sql).not.toContain("CASE w.harness_status");
+    // One statement cannot span authorities through the runtime router, so the
+    // work-stream read must not join the workspace-authority automation tables.
+    const workstreamSql = String(prepare.mock.calls[0]?.[0]);
+    expect(workstreamSql).not.toContain("automation_subscriptions");
+    const labelSql = String(prepare.mock.calls[1]?.[0]);
+    expect(labelSql).toContain("automation_subscriptions");
+    expect(labelSql).not.toContain("workstreams");
+    expect(workstream?.originLabel).toBe("Weekly digest");
   });
 });
