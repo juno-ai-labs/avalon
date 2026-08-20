@@ -175,6 +175,19 @@ export interface IdentityAuthContext {
   workspaceId: WorkspaceId | null;
   region: Region;
   role: "owner" | "admin" | "member" | null;
+  /**
+   * The analytics surrogates this person and workspace are known by in PostHog
+   * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
+   * They ride the session query that authenticates the request rather than
+   * being looked up, so they cost nothing, and they are optional because they
+   * are minted lazily: null means no PostHog identity exists yet, and there is
+   * therefore nothing for a trace to match against.
+   *
+   * They are correlation values only. Nothing authorizes on them; the
+   * authority for who this is remains `userId` and `workspaceId`.
+   */
+  analyticsPersonId?: string | null;
+  analyticsWorkspaceId?: string | null;
 }
 
 export interface AuthContext extends IdentityAuthContext {

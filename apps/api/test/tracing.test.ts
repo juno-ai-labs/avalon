@@ -208,4 +208,45 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     expect(rows(info).find((row) => row.event === "perf_flow"))
       .toMatchObject({ request_id: requestId, flow: "workstream_open" });
   });
+
+  it("carries the analytics surrogates PostHog is keyed on, when they exist", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await inFlowSpan(envAt("info"), "workstream.create", {
+      flow: "workstream_create",
+      component: "api",
+      identity: {
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        analyticsPersonId: "person-analytics-1",
+        analyticsWorkspaceId: "workspace-analytics-1",
+      },
+    }, async () => undefined);
+
+    expect(recordedSpans()[0]?.attributes).toMatchObject({
+      // Both sides of the join: the raw id identifies the person to us, the
+      // surrogate identifies the same person to PostHog.
+      "user.id": "user-1",
+      "avalon.workspace.id": "workspace-1",
+      "avalon.analytics.person_id": "person-analytics-1",
+      "avalon.analytics.workspace_id": "workspace-analytics-1",
+    });
+  });
+
+  it("sets no analytics attribute before the surrogate has been minted", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await inFlowSpan(envAt("info"), "workstream.create", {
+      flow: "workstream_create",
+      component: "api",
+      // What an account that has produced no product event yet looks like:
+      // the columns are null, and there is no PostHog person to join to.
+      identity: { userId: "user-1", analyticsPersonId: null, analyticsWorkspaceId: null },
+    }, async () => undefined);
+
+    const attributes = recordedSpans()[0]?.attributes ?? {};
+    expect(attributes["user.id"]).toBe("user-1");
+    expect(Object.keys(attributes)).not.toContain("avalon.analytics.person_id");
+    expect(Object.keys(attributes)).not.toContain("avalon.analytics.workspace_id");
+  });
 });

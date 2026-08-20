@@ -28,7 +28,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
-import { inFlowSpan } from "../observability/tracing";
+import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
@@ -753,6 +753,16 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
  * state; regional D1 retains only identity, routing, migration, and the
  * workspace modules that have not yet moved behind a Durable Object boundary.
  */
+/**
+ * What the command socket's authorization query answers with. The analytics
+ * column is absent on the development path, which selects only the role —
+ * optional rather than nullable so that shape stays legal.
+ */
+interface WorkspaceAuthRoleRow {
+  role: AuthContext["role"];
+  analytics_workspace_id?: string | null;
+}
+
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -2277,6 +2287,9 @@ export class WorkspaceDO extends DurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
       const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
+      if (auth) span.setAttributes(identityAttributes({
+        analyticsWorkspaceId: auth.analyticsWorkspaceId,
+      }));
       if (!auth) {
         span.setError("session_inactive");
         socket.close(1008, "Session no longer active");
@@ -2940,9 +2953,13 @@ export class WorkspaceDO extends DurableObject<Env> {
           WHERE member.workspace_id = ? AND member.user_id = ?
             AND member.status = 'active' AND workspace.region = ?`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION)
-        .first<{ role: AuthContext["role"] }>()
+        .first<WorkspaceAuthRoleRow>()
       : await this.env.DB.prepare(
-        `SELECT member.role
+        // The workspace surrogate rides this query rather than being looked
+        // up: a command socket authorizes itself on every frame anyway, and
+        // `workspaces` is already joined. The person surrogate is not fetched
+        // here — see `docs/performance-tracing.md` for where it comes from.
+        `SELECT member.role, workspace.analytics_workspace_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -2959,13 +2976,14 @@ export class WorkspaceDO extends DurableObject<Env> {
         this.env.AVALON_REGION,
         new Date().toISOString(),
         this.env.AVALON_REGION,
-      ).first<{ role: AuthContext["role"] }>();
+      ).first<WorkspaceAuthRoleRow>();
     return role ? {
       sessionId: identity.sessionId,
       userId: identity.userId,
       workspaceId: identity.workspaceId,
       region: this.env.AVALON_REGION,
       role: role.role,
+      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     } : null;
   }
 }

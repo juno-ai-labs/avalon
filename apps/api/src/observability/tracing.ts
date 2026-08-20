@@ -82,6 +82,17 @@ export interface TraceIdentity {
    */
   requestId?: string | null | undefined;
   sessionId?: string | null | undefined;
+  /**
+   * The analytics surrogates PostHog knows this person and workspace by. They
+   * are what makes a system span joinable to a product event: PostHog is keyed
+   * on these and not on `userId`, so without them the two datasets can only be
+   * matched by reconstructing the mapping out of regional D1.
+   *
+   * Absent until the first product event mints them, which is correct rather
+   * than a gap — there is no PostHog person to join to yet.
+   */
+  analyticsPersonId?: string | null | undefined;
+  analyticsWorkspaceId?: string | null | undefined;
 }
 
 export function identityAttributes(identity: TraceIdentity): SpanAttributes {
@@ -92,6 +103,11 @@ export function identityAttributes(identity: TraceIdentity): SpanAttributes {
     "avalon.workstream.id": identity.workstreamId,
     "avalon.substream.id": identity.substreamId,
     "avalon.request.id": identity.requestId,
+    // Named for what they are on the other side. A reader who has a PostHog
+    // person open and wants its traces filters on the same value they are
+    // already looking at.
+    "avalon.analytics.person_id": identity.analyticsPersonId,
+    "avalon.analytics.workspace_id": identity.analyticsWorkspaceId,
   };
 }
 
@@ -319,6 +335,8 @@ export function requestFlowSpan<T>(
       workspaceId: auth?.workspaceId,
       userId: auth?.userId,
       sessionId: auth?.sessionId,
+      analyticsPersonId: auth?.analyticsPersonId,
+      analyticsWorkspaceId: auth?.analyticsWorkspaceId,
       ...(options.identity ?? {}),
     },
     attributes: {

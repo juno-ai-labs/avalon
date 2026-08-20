@@ -66,7 +66,11 @@ async function seedOpenAuthority(): Promise<void> {
     VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY,
-      region TEXT NOT NULL
+      region TEXT NOT NULL,
+      -- Read by the socket authorization query so a socket-rooted trace can be
+      -- matched to the workspace's product analytics; see
+      -- docs/performance-tracing.md.
+      analytics_workspace_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (

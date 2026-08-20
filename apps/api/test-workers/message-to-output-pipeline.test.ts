@@ -60,7 +60,9 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
-    env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE TABLE workspaces (
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+    )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
