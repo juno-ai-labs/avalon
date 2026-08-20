@@ -1215,6 +1215,41 @@ picking a side needs resumable execution: a run that checkpoints at a step
 boundary is cheap to interrupt, which is what would make the drain safe to
 leave the alarm again.
 
+### 2026-08-20 — The last maintenance-only RPC goes, and what still blocks the fence drop
+
+**What changed:** `WorkspaceDO.importWorkstreamPins` and its request schema are
+removed. Its only caller was the campaign machinery retired in #190, and it
+refused every phase except `maintenance_importing` and `maintenance_verified`,
+which nothing can enter now that the machinery driving those phases is gone.
+
+**Why:** It was the last piece of import-only surface left on an object that no
+longer imports.
+
+**What a future change has to respect — the legacy D1 serving paths are NOT yet
+removable, for two independent reasons, and the fences cannot be dropped until
+both are resolved:**
+
+1. `services/workstream-service.ts` is still reached post-open, so it is not the
+   dead legacy implementation it appears to be. `slack-agent-service.ts` builds
+   it ungated on two connector paths (`startFromPrompt` answering an open
+   elicitation, and `createSlackWorkstreamSession` creating a work stream for a
+   linked identity — neither has a phase check anywhere near it), and
+   `work-opportunity-service.ts` calls into it from `startDurable`, the Durable
+   Object path itself, for `createFromOpportunity` and — via `startedResponse`
+   — `get`. Deleting the file breaks live Slack ingress and suggested-work
+   starts in an already-open region. Those two callers have to move onto the
+   object client first; that is a product migration, not a cleanup.
+
+2. A freshly seeded local development environment runs at `legacy_open`.
+   Migration 0079 inserts that row, and neither `scripts/seed-local-region.mjs`
+   nor `packages/db/seed.sql` ever changes it, so local development serves the
+   seeded workspace through exactly the branches a removal would delete —
+   while `pnpm test` stays green, because the suites build their own fixtures
+   and never go through the seed. Local seeding has to move to the
+   post-cutover model (the regional half staying SQL, the work-stream half
+   going through the object via `bootstrapWorkstreamRuntimeEnvironment`) before
+   those branches can go.
+
 ### 2026-08-20 — A re-derived projection wins over the version it reuses
 
 **What changed:** When a child effect arrives under a projection version this
