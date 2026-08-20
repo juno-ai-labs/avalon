@@ -340,3 +340,49 @@ describe("block dashboard dispatch scheduling", () => {
     })?.id).toBe("block-run");
   });
 });
+
+describe("compat trigger timestamp conversion", () => {
+  // Half of all ISO timestamps used to come back one millisecond early: the
+  // trigger truncated `julianday(x) * 86400000`, whose float error sits just
+  // below the true integer. Every guard comparing a stored timestamp to the
+  // string it was written from — `terminalized_at = ?` above all — then failed
+  // for that half, and the member watched a spinner over a finished run. The
+  // dense sweep makes the old truncation fail deterministically here.
+  it("round-trips every millisecond exactly through the harness runs view", () => {
+    const sql = substreamQueue();
+    sql.exec(
+      `INSERT INTO workstream (
+         id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+         authority_mode, authority_generation, title, description, preview, scope,
+         exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+         unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+         source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+         created_at, last_people_activity_at, state_changed_at, updated_at
+       ) VALUES (1, 'w', 's', NULL, 0, 'global', 'authoritative', 1, 'T', '', '', 'workspace',
+                 'idle', 'seeded', 1, 1, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?)`,
+      NOW, NOW, NOW, NOW,
+    );
+    let mismatches = 0;
+    for (let step = 0; step < 500; step += 1) {
+      const epoch = 1_787_239_771_000 + step * 7 + (step % 3);
+      const iso = `${new Date(epoch).toISOString().slice(0, 23)}Z`;
+      const runId = `00000000-0000-7000-8000-00000000${(6000 + step).toString(16)}`;
+      sql.exec(
+        `INSERT INTO _runtime_harness_runs
+           (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+            created_at, terminalized_at, completed_at)
+         VALUES (?, 'w', 's', 'user_message', '{}', 'failed', ?, ?, ?)`,
+        runId,
+        iso,
+        iso,
+        iso,
+      );
+      const back = sql.exec<{ terminalized_at: string | null }>(
+        `SELECT terminalized_at FROM _runtime_harness_runs WHERE id = ?`,
+        runId,
+      ).toArray()[0]!.terminalized_at;
+      if (back !== iso) mismatches += 1;
+    }
+    expect(mismatches).toBe(0);
+  });
+});

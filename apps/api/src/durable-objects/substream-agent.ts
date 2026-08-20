@@ -45,7 +45,7 @@ import {
 import {
   launchBlockDashboardRefresh,
 } from "../services/block-dashboard-service";
-import { logInfo, logWarn } from "../observability/logger";
+import { logError, logInfo, logWarn } from "../observability/logger";
 import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
@@ -802,6 +802,11 @@ export class SubstreamAgent extends DurableObject<Env> {
       if (parsed.data.operation === "initialize") {
         const result = await this.product.initialize(current, parsed.data.input);
         const identity = { workspaceId: parsed.data.input.workspaceId, workstreamId: parsed.data.input.workstreamId };
+        // The dispatch is durable state and must land before anything that can
+        // fail for cosmetic reasons: a refused broadcast used to abort this
+        // handler after the run was committed, leaving a run with no executor,
+        // no alarm, and a member-facing 500 over a work stream that exists.
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         const messages = await this.product.messages(current, 1);
         if (messages.items[0]) {
           await this.publishLocalProductEvent(identity, {
@@ -809,7 +814,6 @@ export class SubstreamAgent extends DurableObject<Env> {
             message: messages.items[0],
           });
         }
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         return jsonResponse({
           workstream: result.workstream,
           messageId: result.messageId,
@@ -846,10 +850,10 @@ export class SubstreamAgent extends DurableObject<Env> {
       }
       if (parsed.data.operation === "create_message") {
         const result = await this.product.createMessage(current, parsed.data.input);
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         if (result.inserted) {
           await this.publishLocalProductEvent(identity, { type: "message_created", message: result.message });
         }
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         return jsonResponse({
           message: result.message,
           agentInvoked: result.agentInvoked,
@@ -898,13 +902,13 @@ export class SubstreamAgent extends DurableObject<Env> {
           parsed.data.elicitationId,
           parsed.data.input,
         );
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         if (result.elicitation) {
           await this.publishLocalProductEvent(identity, {
             type: "elicitation_answered",
             elicitation: result.elicitation,
           });
         }
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
         return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
       }
       if (parsed.data.operation === "stop") {
@@ -918,6 +922,17 @@ export class SubstreamAgent extends DurableObject<Env> {
       const safe = error instanceof ApiError
         ? error
         : new ApiError(500, "workstream_object_request_failed", "The work stream could not be loaded");
+      if (!(error instanceof ApiError)) {
+        // The member-facing body stays generic, but an internal failure that
+        // reaches here with no record is undiagnosable — this same anonymous
+        // 500 cost a debugging round during the dispatch outage.
+        logError(this.env, "workstream_product_request_failed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
       return jsonResponse({ error: safe.code, message: safe.message, details: safe.details }, safe.status);
     }
   }
