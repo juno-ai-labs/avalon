@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
 import { resolveConnectorActorIdentities } from "./connector-actor-identity";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 /**
  * Who a work stream started from a connector conversation belongs to.
@@ -139,14 +140,24 @@ export async function admitConnectorAudience(
 ): Promise<void> {
   const userIds = [...new Set(input.userIds)];
   if (userIds.length === 0) return;
-  const active = await env.DB.prepare(
+  // Participant rows live with the work stream, so every statement that touches
+  // them has to run under the work stream's authority — post-cutover that is
+  // the Durable Object, and the D1 copy is fenced. User profiles stay regional,
+  // which is why the roster read below is split in two instead of joining
+  // `users` from inside the object.
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
+  const active = await executionEnv.DB.prepare(
     `SELECT user_id FROM workstream_participants
      WHERE workstream_id = ? AND removed_at IS NULL
        AND user_id IN (SELECT value FROM json_each(?))`,
   ).bind(input.workstreamId, JSON.stringify(userIds)).all<{ user_id: string }>();
   const activeUserIds = new Set((active.results ?? []).map((row) => row.user_id));
   const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
-  const results = await env.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(env.DB, {
+  const results = await executionEnv.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(executionEnv.DB, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     userId,
@@ -157,10 +168,9 @@ export async function admitConnectorAudience(
     throw new Error("Could not admit the connector conversation audience");
   }
   if (newlyAdmittedUserIds.length === 0) return;
-  const participants = await env.DB.prepare(
-    `SELECT user.*, participant.participation_reason, participant.joined_at
+  const participants = await executionEnv.DB.prepare(
+    `SELECT participant.user_id, participant.participation_reason, participant.joined_at
      FROM workstream_participants participant
-     JOIN users user ON user.id = participant.user_id
      JOIN workstreams workstream ON workstream.id = participant.workstream_id
      WHERE participant.workstream_id = ? AND workstream.workspace_id = ?
        AND participant.removed_at IS NULL
@@ -170,16 +180,25 @@ export async function admitConnectorAudience(
     input.workstreamId,
     input.workspaceId,
     JSON.stringify(newlyAdmittedUserIds),
-  ).all<Record<string, unknown>>();
-  for (const row of participants.results ?? []) {
+  ).all<{ user_id: string; participation_reason: string; joined_at: string }>();
+  const admittedRows = participants.results ?? [];
+  if (admittedRows.length === 0) return;
+  const users = await env.DB.prepare(
+    `SELECT id, email, name, avatar_url, timezone, created_at FROM users
+     WHERE id IN (SELECT value FROM json_each(?))`,
+  ).bind(JSON.stringify(admittedRows.map((row) => row.user_id))).all<Record<string, unknown>>();
+  const usersById = new Map((users.results ?? []).map((row) => [String(row.id), row]));
+  for (const row of admittedRows) {
+    const user = usersById.get(row.user_id);
+    if (!user) continue;
     const participant = ParticipantSchema.parse({
       user: {
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        avatarUrl: row.avatar_url ?? null,
-        timezone: row.timezone,
-        createdAt: row.created_at,
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatar_url ?? null,
+        timezone: user.timezone,
+        createdAt: user.created_at,
       },
       participationReason: row.participation_reason,
       joinedAt: row.joined_at,
