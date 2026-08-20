@@ -670,6 +670,30 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-20 — `agent_run_dispatches` carries a lease in both agent objects
+
+**What changed:** `lease_token` and `lease_expires_at`, plus an index on
+`(state, lease_expires_at, available_at)`, appended as schema v2 to the
+`SubstreamAgent` and `BlockDashboardAgent` dispatch tables. The reasoning and
+the scheduling rules the columns exist to support live in
+[`workstream-durable-object.md`](workstream-durable-object.md)'s same-day
+changelog.
+
+**Why:** `state = 'running'` was a claim with no deadline, so a run interrupted
+by an eviction or a cancelled invocation was indistinguishable from one still
+executing, and the scheduler had no durable time at which to look again. Every
+other queue in these schemas — `memory_index_outbox`,
+`workstream_notification_intents`, `automation_email_receipts` — already
+carried this pair; the dispatch tables were the outliers.
+
+**Considered and rejected:** Inferring abandonment from `started_at` age, which
+guesses at a timeout the writer never declared, and editing the v1 migrations,
+which are hashed and immutable once deployed.
+
+**Consequences:** A null lease on a row carried through the upgrade reads as
+immediately reclaimable, which is the recovering direction; the D1 harness
+attempt claim turns away a reclaim that races a run still genuinely in flight.
+
 ### 2026-08-19 — Object tables audited: retention, byte bounds, and promoted discriminators
 
 **What changed:** A per-object table audit and platform-limits research pass

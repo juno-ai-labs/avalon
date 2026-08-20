@@ -124,6 +124,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamA
       ),
       setAlarm: async () => undefined,
       getAlarm: async () => null,
+      deleteAlarm: async () => undefined,
       transactionSync: (body: () => unknown) => body(),
       sql,
       transaction: async (body: (t: unknown) => Promise<unknown>) => body({

@@ -33,6 +33,13 @@ import {
 } from "../services/workstream-authority";
 import { workstreamExecutionEnvironment } from "../services/workstream-runtime-database";
 import {
+  AGENT_RUN_DISPATCH_DUE_AT_SQL,
+  AGENT_RUN_DISPATCH_LEASE_MS,
+  BLOCK_DASHBOARD_RUN_DISPATCHES,
+  applyAgentRunDispatchSweepFloor,
+  releaseAgentRunDispatchLeases,
+} from "./agent-run-dispatch-queue";
+import {
   DurableAgentDrain,
   DurableAgentKeepAlive,
   DurableAgentPublicationQueue,
@@ -214,6 +221,18 @@ export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqli
         REFERENCES agent_run_dispatches(block_run_id) ON DELETE RESTRICT
     ) STRICT`,
   ],
+}, {
+  version: 2,
+  description: "lease block run dispatches so an abandoned run stays discoverable",
+  statements: [
+    // Same defect as the substream agent's queue: a claim with no deadline is
+    // indistinguishable from an abandoned one, and this object's scheduler
+    // additionally returned no due time at all while a drain was in flight.
+    `ALTER TABLE agent_run_dispatches ADD COLUMN lease_token TEXT`,
+    `ALTER TABLE agent_run_dispatches ADD COLUMN lease_expires_at INTEGER`,
+    `CREATE INDEX IF NOT EXISTS agent_run_dispatches_lease_idx
+       ON agent_run_dispatches(state, lease_expires_at, available_at)`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -276,7 +295,15 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         component: "block_dashboard_block_agent",
         workerVersionId: env.APP_VERSION ?? "unknown",
       });
-      this.resumeRunDrain();
+      // Whatever leases survive belong to the isolate this one replaced, so
+      // the runs they cover are recoverable now rather than at expiry.
+      releaseAgentRunDispatchLeases(
+        state.storage.sql,
+        BLOCK_DASHBOARD_RUN_DISPATCHES,
+        Date.now(),
+      );
+      // Any run left behind by a previous isolate is rediscovered by the alarm
+      // this schedules, not by a drain the constructor cannot outlive.
       await this.scheduleNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -321,8 +348,9 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     this.ensureIdentity(dispatch);
     this.enqueue(dispatch);
     this.queueBroadcast(() => this.broadcastLatestRun(dispatch.blockRunId), "dispatch");
-    this.resumeRunDrain();
-    await this.ensureAlarmNoLaterThan(Date.now() + 1);
+    // Arm unconditionally: reading the current alarm first would leave a window
+    // in which the row above is durable and nothing is scheduled to reach it.
+    await this.state.storage.setAlarm(Date.now() + 1);
   }
 
   /** Applies an explicit parent access/configuration retraction to live sockets. */
@@ -374,7 +402,11 @@ export class BlockDashboardAgent extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.initialized;
-    this.resumeRunDrain();
+    // Delivery consumes the alarm. Re-arm from the rows before the drain, so a
+    // cancelled or wedged run still leaves a wake-up behind; see the same
+    // comment in SubstreamAgent.alarm.
+    await this.scheduleNextAlarm();
+    await this.drainRunsToCompletion();
     await this.scheduleNextAlarm();
   }
 
@@ -739,7 +771,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches
               SET state = 'completed', terminal_outcome_json = ?, available_at = ?, completed_at = ?,
-                  last_error_code = 'block_dashboard_run_superseded', updated_at = ?
+                  last_error_code = 'block_dashboard_run_superseded', updated_at = ?,
+                  lease_token = NULL, lease_expires_at = NULL
             WHERE block_run_id = ? AND state = 'queued' AND terminal_outcome_json IS NULL`,
           JSON.stringify(outcome),
           now,
@@ -800,17 +833,20 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     });
   }
 
-  private resumeRunDrain(): void {
-    if (this.agentDrain.active) return;
-    const drain = this.agentDrain.resume(
+  /**
+   * Runs the queue to completion in the caller's invocation. Durable work is
+   * never left to a promise the caller abandons: the runtime cancels it, and
+   * cancellation raises nothing, so the loss is silent.
+   */
+  private async drainRunsToCompletion(): Promise<void> {
+    await this.agentDrain.resume(
       () => this.drainRunQueue().catch((error: unknown) => {
         logWarn(this.env, "block_dashboard_block_agent_drain_failed", {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }),
-      () => this.scheduleNextAlarm().catch(() => undefined),
+      () => undefined,
     );
-    this.state.waitUntil(drain);
   }
 
   private async drainRunQueue(): Promise<void> {
@@ -819,10 +855,15 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
            FROM agent_run_dispatches
           WHERE terminal_outcome_json IS NULL AND state IN ('queued', 'running')
-            AND available_at <= ?
+            AND available_at <= ?1
+            AND (state = 'queued' OR lease_expires_at IS NULL OR lease_expires_at <= ?1)
             AND (
               state = 'running'
               OR NOT EXISTS (
+                -- Any running row blocks queued work, lease or no lease: this
+                -- object executes one block run at a time. An abandoned run is
+                -- not bypassed but reclaimed — it sorts first below, and the
+                -- lease guard above admits it once its claim has lapsed.
                 SELECT 1 FROM agent_run_dispatches AS active
                  WHERE active.state = 'running'
                    AND active.terminal_outcome_json IS NULL
@@ -836,15 +877,22 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       ).toArray()[0];
       if (row) {
         const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
-        this.state.storage.sql.exec(
+        const claimedAt = Date.now();
+        const claimed = this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
-             started_at = COALESCE(started_at, ?), updated_at = ?
-           WHERE block_run_id = ? AND state IN ('queued', 'running')
-             AND terminal_outcome_json IS NULL`,
-          Date.now(),
-          Date.now(),
+             started_at = COALESCE(started_at, ?2), lease_token = ?3,
+             lease_expires_at = ?4, updated_at = ?2
+           WHERE block_run_id = ?1 AND state IN ('queued', 'running')
+             AND terminal_outcome_json IS NULL
+             AND (state = 'queued' OR lease_expires_at IS NULL OR lease_expires_at <= ?2)`,
           row.block_run_id,
-        );
+          claimedAt,
+          uuidV7(claimedAt),
+          claimedAt + AGENT_RUN_DISPATCH_LEASE_MS,
+        ).rowsWritten;
+        // Another invocation holds it. The alarm derived from the lease will
+        // bring this object back when that claim lapses.
+        if (claimed === 0) return;
         this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
         let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
         try {
@@ -855,7 +903,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
             : "block_dashboard_block_execution_failed";
           this.state.storage.sql.exec(
             `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               last_error_code = ?, updated_at = ?, lease_token = NULL,
+               lease_expires_at = NULL WHERE block_run_id = ?
                AND terminal_outcome_json IS NULL`,
             Date.now() + durableAgentRetryDelay(row.attempt + 1),
             code,
@@ -879,7 +928,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         if (result.retryAt !== null) {
           this.state.storage.sql.exec(
             `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-               last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+               last_error_code = ?, updated_at = ?, lease_token = NULL,
+               lease_expires_at = NULL WHERE block_run_id = ?
                AND terminal_outcome_json IS NULL`,
             result.retryAt,
             result.errorCode,
@@ -890,7 +940,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         }
         this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
-             last_error_code = ?, updated_at = ? WHERE block_run_id = ?
+             last_error_code = ?, updated_at = ?, lease_token = NULL,
+             lease_expires_at = NULL WHERE block_run_id = ?
              AND terminal_outcome_json IS NULL`,
           result.failed ? "failed" : "completed",
           Date.now(),
@@ -1166,7 +1217,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       this.state.storage.sql.exec(
         `UPDATE agent_run_dispatches SET state = ?, terminal_outcome_json = ?,
            available_at = ?, completed_at = COALESCE(completed_at, ?), settled_at = NULL,
-           last_settlement_error_code = NULL, updated_at = ? WHERE block_run_id = ?`,
+           last_settlement_error_code = NULL, updated_at = ?,
+           lease_token = NULL, lease_expires_at = NULL WHERE block_run_id = ?`,
         state,
         JSON.stringify(parsed),
         now,
@@ -1262,20 +1314,29 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Derived from the dispatch rows alone.
+   *
+   * This used to open with `if (this.agentDrain.active) return null`, which
+   * meant an invocation cancelled mid-drain left every row unscheduled and the
+   * object inert for good. In-memory drain state governs deduplication, never
+   * scheduling; see agent-run-dispatch-queue for the full reasoning.
+   */
   private nextRunAt(): number | null {
-    if (this.agentDrain.active) return null;
     // Two indexable lanes instead of one OR the planner cannot seek: the
     // ready index serves the queued/running arm, the settlement partial
-    // index serves the unsettled-terminal arm.
-    return this.state.storage.sql.exec<{ due_at: number | null }>(
+    // index serves the unsettled-terminal arm. A running row is due at its
+    // lease expiry, which is when it becomes reclaimable.
+    const dueAt = this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(due_at) AS due_at FROM (
-         SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
+         SELECT MIN(${AGENT_RUN_DISPATCH_DUE_AT_SQL}) AS due_at FROM agent_run_dispatches
           WHERE state IN ('queued', 'running') AND terminal_outcome_json IS NULL
          UNION ALL
          SELECT MIN(available_at) FROM agent_run_dispatches
           WHERE terminal_outcome_json IS NOT NULL AND settled_at IS NULL
        )`,
     ).toArray()[0]?.due_at ?? null;
+    return applyAgentRunDispatchSweepFloor(dueAt, Date.now());
   }
 
   private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {

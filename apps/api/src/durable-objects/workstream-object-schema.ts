@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 1;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 2;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1083,6 +1083,24 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       ...WORKSTREAM_SCHEMA_V1,
       ...WORKSTREAM_RUNTIME_COMPAT_SCHEMA,
       ...WORKSTREAM_SUBSTREAM_AGENT_SCHEMA,
+    ],
+  },
+  {
+    version: 2,
+    description: "lease agent run dispatches so an abandoned run stays discoverable",
+    statements: [
+      // Before this, `state = 'running'` was a claim with no expiry, so a run
+      // interrupted by an eviction or a cancelled invocation was
+      // indistinguishable from one still executing — and the scheduler had no
+      // durable time at which to look again. The lease supplies that time.
+      `ALTER TABLE agent_run_dispatches ADD COLUMN lease_token TEXT`,
+      `ALTER TABLE agent_run_dispatches ADD COLUMN lease_expires_at INTEGER`,
+      `CREATE INDEX IF NOT EXISTS agent_run_dispatches_lease_idx
+         ON agent_run_dispatches(state, lease_expires_at, available_at)`,
+      // Objects that carried a run through the upgrade have no lease on it. A
+      // null lease reads as immediately reclaimable, which is the recovering
+      // direction: the harness attempt claim in D1 turns away a reclaim that
+      // races a run still genuinely in flight.
     ],
   },
 ];

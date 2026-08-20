@@ -31,6 +31,14 @@ import {
 import { uuidV7 } from "../lib/uuid-v7";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import {
+  SUBSTREAM_AGENT_RUN_DISPATCHES,
+  claimAgentRunDispatch,
+  deferAgentRunDispatch,
+  nextAgentRunDispatchWakeUpAt,
+  releaseAgentRunDispatchLeases,
+  settleAgentRunDispatch,
+} from "./agent-run-dispatch-queue";
+import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
@@ -409,11 +417,20 @@ export class SubstreamAgent extends DurableObject<Env> {
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
-      const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-      const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
-      const nextAlarmAt = minimumTimestamp(nextEffectAt, nextBlockDashboardAt);
-      if (nextAlarmAt !== null) await this.ensureAlarmNoLaterThan(nextAlarmAt);
-      this.resumeRunDrain();
+      // Whatever leases survive belong to the isolate this one replaced, so
+      // the runs they cover are recoverable now rather than at expiry.
+      releaseAgentRunDispatchLeases(
+        this.state.storage.sql,
+        SUBSTREAM_AGENT_RUN_DISPATCHES,
+        Date.now(),
+      );
+      // A run left behind by a previous isolate is rediscovered here, by
+      // arming the alarm rather than by starting a drain this constructor
+      // cannot stay alive to finish. The full derivation runs rather than an
+      // arm-only helper because the keep-alive lease is in-memory: a new
+      // instance inherits none of it, so a heartbeat alarm left behind by the
+      // evicted one has to be cleared when no durable work remains.
+      await this.scheduleNextAlarm();
     });
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
@@ -663,7 +680,6 @@ export class SubstreamAgent extends DurableObject<Env> {
         parsed.data,
       );
       await this.scheduleNextAlarm();
-      this.resumeRunDrain();
       return jsonResponse(result);
     } catch (error) {
       return jsonResponse({
@@ -955,13 +971,24 @@ export class SubstreamAgent extends DurableObject<Env> {
         )`,
       now - OPERATIONAL_FENCE_RETENTION_MS,
     );
-    await this.ensureAlarmNoLaterThan(now + 1);
-    this.resumeRunDrain();
+    // Armed unconditionally rather than through `ensureAlarmNoLaterThan`: that
+    // helper reads the current alarm first, and an invocation that died in the
+    // gap between the insert above and the write below would leave a queued row
+    // with nothing scheduled to reach it. Nothing can be sooner than now + 1,
+    // so there is no alarm worth preserving.
+    await this.state.storage.setAlarm(now + 1);
   }
 
-  private resumeRunDrain(): void {
-    if (this.agentDrain.active) return;
-    const drain = this.agentDrain.resume(
+  /**
+   * Runs the queue to completion in the caller's invocation.
+   *
+   * Durable work is never handed to a promise the caller then abandons. The
+   * previous implementation dropped the drain into `waitUntil` and returned,
+   * which invited the runtime to cancel it mid-run — and because cancellation
+   * is not a thrown error, it did so silently, with no failure logged anywhere.
+   */
+  private async drainRunsToCompletion(): Promise<void> {
+    await this.agentDrain.resume(
       () => this.drainRunQueue()
       .catch((error: unknown) => {
         logWarn(this.env, "substream_agent_drain_failed", {
@@ -971,68 +998,59 @@ export class SubstreamAgent extends DurableObject<Env> {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }),
-      () => this.scheduleNextAlarm().catch(() => undefined),
+      () => undefined,
     );
-    this.state.waitUntil(drain);
   }
 
   private async drainRunQueue(): Promise<void> {
     while (true) {
+      // Only the alarm forwards regional effects, and this loop owns the alarm
+      // until it returns. Flushing between runs keeps a queue of runs from
+      // holding the parent's view of all of them; effects committed *during* a
+      // single long run still wait for it to finish.
+      await this.flushDueRegionalEffects();
       const now = Date.now();
-      const row = this.state.storage.sql.exec<{
-        run_id: string;
-        input_json: string;
-        state: "queued" | "running";
-      }>(
-        `SELECT run_id, input_json, state FROM agent_run_dispatches
-          WHERE state IN ('queued', 'running') AND available_at <= ?
-          ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,
-                   created_at, run_id LIMIT 1`,
-        now,
-      ).toArray()[0];
-      if (!row) return;
+      // The claim leases the row, so an invocation that dies mid-run leaves a
+      // deadline behind rather than an indefinite "running" that only a live
+      // process could explain.
+      const claim = claimAgentRunDispatch(
+        this.state.storage.sql,
+        SUBSTREAM_AGENT_RUN_DISPATCHES,
+        { now, leaseToken: uuidV7(now) },
+      );
+      if (!claim) return;
 
-      const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(row.input_json));
+      const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(claim.payload));
       const identity = { workspaceId: input.workspaceId, workstreamId: input.workstreamId };
       try {
-        if (row.state === "queued") {
-          await this.product.recordWorkflowStarted(row.run_id, `substream-agent:${row.run_id}`);
+        if (claim.started) {
+          await this.product.recordWorkflowStarted(claim.id, `substream-agent:${claim.id}`);
           await this.publishLocalProductEvent(identity, {
             type: "harness_status_changed",
             status: "running",
           });
         }
-        this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches
-              SET state = 'running', attempt = attempt + 1,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE run_id = ? AND state IN ('queued', 'running')`,
-          now,
-          now,
-          row.run_id,
-        );
         const result = await this.keepAliveWhile(() => this.executeAgentRun(input));
         if (result.retryAt !== null) {
-          this.state.storage.sql.exec(
-            `UPDATE agent_run_dispatches
-                SET state = 'running', available_at = ?, last_error_code = ?, updated_at = ?
-              WHERE run_id = ?`,
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
             result.retryAt,
             result.errorCode,
             Date.now(),
-            row.run_id,
           );
           return;
         }
-        this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches
-              SET state = ?, completed_at = ?, last_error_code = ?, updated_at = ?
-            WHERE run_id = ?`,
+        settleAgentRunDispatch(
+          this.state.storage.sql,
+          SUBSTREAM_AGENT_RUN_DISPATCHES,
+          claim.id,
+          claim.leaseToken,
           result.status === "failed" ? "failed" : "completed",
-          Date.now(),
           result.errorCode,
           Date.now(),
-          row.run_id,
         );
       } catch (error) {
         const safe = {
@@ -1041,15 +1059,15 @@ export class SubstreamAgent extends DurableObject<Env> {
             : "agent_loop_failed",
           message: "The Avalon harness could not complete this run",
         };
-        await this.product.recordWorkflowFailed(row.run_id, safe).catch(() => undefined);
-        this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches
-              SET state = 'failed', completed_at = ?, last_error_code = ?, updated_at = ?
-            WHERE run_id = ?`,
-          Date.now(),
+        await this.product.recordWorkflowFailed(claim.id, safe).catch(() => undefined);
+        settleAgentRunDispatch(
+          this.state.storage.sql,
+          SUBSTREAM_AGENT_RUN_DISPATCHES,
+          claim.id,
+          claim.leaseToken,
+          "failed",
           safe.code,
           Date.now(),
-          row.run_id,
         );
         await this.publishLocalProductEvent(identity, {
           type: "harness_status_changed",
@@ -1763,6 +1781,12 @@ export class SubstreamAgent extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.initialized;
+    // Delivery consumes the alarm, so until this line the object has no wake-up
+    // at all. Everything below awaits the network, and a cancelled continuation
+    // never settles — it does not throw, so a `finally` would not run either.
+    // Re-arming first is what makes the sweep floor a floor rather than
+    // something reachable only when the work it guards already succeeded.
+    await this.scheduleNextAlarm();
     const pending = this.objectStore.pendingBlockDashboardRefresh();
     const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
@@ -1799,7 +1823,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
 
     if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
-      this.resumeRunDrain();
+      await this.drainRunsToCompletion();
       await this.scheduleNextAlarm();
       return;
     }
@@ -1817,8 +1841,22 @@ export class SubstreamAgent extends DurableObject<Env> {
       this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
-    this.resumeRunDrain();
+    await this.drainRunsToCompletion();
     await this.scheduleNextAlarm();
+  }
+
+  /** Best-effort forward of due effects; the alarm retries whatever defers. */
+  private async flushDueRegionalEffects(): Promise<void> {
+    const effects = this.objectStore.dueRegionalEffects();
+    if (effects.length === 0) return;
+    try {
+      await this.forwardEffectsToWorkstreamDO(effects);
+      for (const effect of effects) {
+        this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+      }
+    } catch {
+      this.objectStore.deferRegionalEffects(effects, Date.now() + 5_000);
+    }
   }
 
   private async forwardEffectsToWorkstreamDO(
@@ -2329,11 +2367,22 @@ export class SubstreamAgent extends DurableObject<Env> {
     ).toArray()[0]?.due_at ?? null;
   }
 
+  /**
+   * Derived from the dispatch rows alone.
+   *
+   * This deliberately does not consult `agentDrain.active`. It used to, and an
+   * invocation cancelled between claiming a run and finishing it then left the
+   * row `running` with the alarm already deleted — nothing was left to
+   * rediscover it, and the member watched a spinner that would never resolve.
+   * In-memory knowledge that a drain is running belongs to deduplication, not
+   * to scheduling.
+   */
   private nextRunDispatchAt(): number | null {
-    return this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
-        WHERE state = 'queued' ${this.agentDrain.active ? "" : "OR state = 'running'"}`,
-    ).toArray()[0]?.due_at ?? null;
+    return nextAgentRunDispatchWakeUpAt(
+      this.state.storage.sql,
+      SUBSTREAM_AGENT_RUN_DISPATCHES,
+      Date.now(),
+    );
   }
 
   private async scheduleNextAlarm(): Promise<void> {

@@ -114,8 +114,13 @@ describe("the Workstream Durable Object relational schema", () => {
       applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
       applyWorkstreamObjectSchema(storage, "worker-two", 2_000);
 
-      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS).toHaveLength(1);
-      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS[0]?.version).toBe(1);
+      // Migration versions are hashed and immutable once deployed, so the list
+      // only ever grows: assert it is a gapless 1..N whose last entry is the
+      // declared schema version, rather than pinning a count that any new
+      // migration would have to edit.
+      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.map((migration) => migration.version))
+        .toEqual(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.map((_, index) => index + 1));
+      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS).toHaveLength(WORKSTREAM_OBJECT_SCHEMA_VERSION);
 
       const tables = database.prepare(
         `SELECT name FROM sqlite_schema

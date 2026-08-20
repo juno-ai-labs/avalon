@@ -41,6 +41,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, steering, and child-to-parent effect RPC. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, resumable token checkpoints, hibernating block sockets, and result settlement. |
 | `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
+| `apps/api/src/durable-objects/agent-run-dispatch-queue.ts` | The dispatch queue's leased claim and its wake-up derivation, shared by both agent objects. Derived from persisted rows only; read it before changing how either object schedules an alarm. |
 | `apps/api/src/durable-objects/block-dashboard-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
@@ -253,8 +254,32 @@ dispatch ledger—not an in-memory promise—are the recovery authority for all 
 those durations.
 
 `agent_run_dispatches` is the child-local durable dispatcher. `queued` work is
-claimed as `running`; constructor and alarm activation resume both queued and
-abandoned-running rows after eviction. The harness attempt lease prevents a
+claimed as `running` under a `lease_expires_at` deadline, and both queued and
+lease-expired running rows are resumed by the alarm after an eviction. The
+lease is what makes "a run in flight" and "a run whose owner died" separable
+without a live process to ask; a claim with no deadline is not recoverable
+state. Two rules keep the queue live and are not negotiable:
+
+- **The next alarm is a pure function of the rows.** No in-memory value may be
+  an input to it. `SubstreamAgent.nextRunDispatchAt` and
+  `BlockDashboardAgent.nextRunAt` both once consulted a "drain is active" flag
+  and both went permanently inert because of it.
+- **The alarm executes; callers only enqueue.** An RPC records the dispatch,
+  arms the alarm, and returns. Durable work is never handed to a promise the
+  invocation then abandons, because the runtime cancels it and cancellation
+  raises nothing.
+
+`agent-run-dispatch-queue.ts` owns both rules for both objects. While any row is
+non-terminal the alarm is additionally floored at
+`AGENT_RUN_DISPATCH_SWEEP_MS`, so a future scheduling defect costs one interval
+rather than the run.
+
+Construction releases every surviving lease. A lease is only ever held by a
+living isolate and an object runs one isolate at a time, so a lease still
+recorded when a new isolate boots was issued by one that is gone: its run is
+recoverable immediately rather than at expiry. The lease duration therefore
+bounds how long a *cancelled invocation within a living isolate* goes
+unnoticed, not how long an eviction does. The harness attempt lease prevents a
 replacement isolate from overlapping the previous owner. Once that lease
 expires, replay resumes through the same run scope and tool receipts, so an
 external write is not intentionally performed twice.
@@ -343,7 +368,9 @@ the useful Agents SDK lifecycle behavior shared by `SubstreamAgent` and
 `BlockDashboardAgent`. The first reference ensures an alarm no later than 30
 seconds; nested long operations share it; the final idempotent disposer
 recomputes the alarm only from durable work. `DurableAgentDrain` similarly
-ensures one in-isolate dispatcher drain at a time. Runtime ping/pong is handled
+ensures one in-isolate dispatcher drain at a time — deduplication only. It
+never suppresses scheduling, and its result is awaited by the invocation that
+started it rather than left to `waitUntil`. Runtime ping/pong is handled
 by WebSocket auto-response and does not wake the object.
 
 The keep-alive alarm lowers the chance of eviction during a long model request,
@@ -936,6 +963,63 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-20 — A leased dispatch, and an alarm derived only from the rows
+
+**What changed:** `agent_run_dispatches` gained `lease_token` and
+`lease_expires_at` in both agent objects (schema v2 in each). The alarm
+derivation no longer reads `DurableAgentDrain.active`, the drain is awaited by
+the invocation that starts it instead of being dropped into `waitUntil`, RPCs
+enqueue rather than execute, and the alarm is floored at
+`AGENT_RUN_DISPATCH_SWEEP_MS` while any row is non-terminal.
+`agent-run-dispatch-queue.ts` holds the shared derivation.
+
+**Why:** Every agent run in Global stalled behind a spinner with no error
+anywhere. `nextRunDispatchAt` computed a *durable* wake-up from *in-memory*
+state: `resumeRunDrain()` set `agentDrain.active`, the next line's
+`scheduleNextAlarm()` therefore excluded the row it had just claimed, and with
+nothing else pending it called `deleteAlarm()`. The invocation then returned
+while the drain was still outstanding, so the runtime cancelled it — silently,
+because cancellation is not a thrown error, which is why no
+`substream_agent_drain_failed` was ever logged. The row stayed `running` with
+no alarm left to rediscover it. The recovery clause existed and was correct;
+nothing was scheduled to reach it.
+
+**Considered and rejected:** Restoring the `OR state = 'running'` arm alone —
+it re-reads memory to interpret durable rows, which is the defect rather than
+an instance of it. Returning execution to Cloudflare Workflows, which would
+undo the cutover this hierarchy exists to serve. Keeping `waitUntil` and only
+extending the lease, which leaves the cancellation window open.
+
+**Consequences:** A dispatch is recoverable by *any* later invocation, so
+reclaim after an eviction is ordinary rather than exceptional — and immediate,
+because construction releases the dead isolate's leases rather than waiting
+them out. Retries are consequently guaranteed rather than best-effort, and a
+reclaim replays the run: the run scope and tool receipts are what keep an
+external write from happening twice, and the D1 harness attempt claim remains
+the real mutual exclusion. A long run is not at risk from its own lease
+lapsing, because the only reader inside a living isolate is the single-flight
+drain that already holds it; the lease matters solely to a successor, and a
+successor always releases it. `lease_token` fences the writes that release a
+lease, so a straggler cannot clear its successor's claim — without that, one
+late writer produces two concurrent runs, because a NULL lease reads as
+reclaimable. An object with outstanding work now wakes at least once per sweep
+interval. Adding a migration to either object no longer requires editing a
+pinned count in the tests: the expected ledger length is read from the
+published list.
+
+The cost, accepted knowingly: because `alarm()` awaits the drain and the
+platform does not deliver overlapping alarm invocations, an object executing a
+run does not service its other alarm lanes until that run ends. Regional
+effects committed *during* a run reach the parent `WorkstreamDO` when it
+finishes rather than within 30 seconds, and an agent timer set mid-run fires
+late by the same amount. The drain flushes due effects between runs so a queue
+of runs does not compound it, and p95 run duration is under a minute — but a
+multi-hour session delays the parent's view for hours. Not awaiting was the
+alternative, and it is what produced the outage. Removing the trade rather than
+picking a side needs resumable execution: a run that checkpoints at a step
+boundary is cheap to interrupt, which is what would make the drain safe to
+leave the alarm again.
 
 ### 2026-08-20 — A re-derived projection wins over the version it reuses
 
