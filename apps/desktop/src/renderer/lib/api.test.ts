@@ -1,6 +1,6 @@
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
+import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks, redactQuery } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -1212,6 +1212,45 @@ describe('socket ticket transport', () => {
   });
 });
 
+describe('request correlation', () => {
+  it('stamps every call with an x-request-id the regional service will honour', async () => {
+    const sent: Array<RequestInit | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(init);
+      return json(detail);
+    }));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await api.getWorkstream(workstreamId);
+    await api.getWorkstream(workstreamId);
+
+    const ids = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
+    // Without one the service mints its own, which no client-side trace line
+    // names — a slow call would then be findable only by timestamp.
+    expect(ids[0]).toMatch(/^[A-Za-z0-9._:-]{1,100}$/u);
+    // Per call, not per client: two requests sharing an id would collapse into
+    // one row's worth of phases in Workers Logs.
+    expect(ids[0]).not.toEqual(ids[1]);
+  });
+
+  it('sends the id a flow is already being traced under', async () => {
+    const sent: Array<RequestInit | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(init);
+      return json({ workstream: detail, messageId, harnessRunId: null });
+    }));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await api.createWorkstream({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
+      requestId: 'trace-from-the-screen',
+    });
+
+    expect(new Headers(sent[0]?.headers).get('x-request-id')).toBe('trace-from-the-screen');
+  });
+});
+
 describe('expired access-token recovery', () => {
   const renewed: DesktopSession = { ...session, accessToken: 'renewed-access-token-longer-than-twenty' };
   // What the endpoint sends, and what the client hands back after stripping the
@@ -1422,5 +1461,16 @@ describe('expired access-token recovery', () => {
 
     await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
     expect(reportJavascriptError).not.toHaveBeenCalled();
+  });
+
+  it("keeps query parameter names out of the log but never their values", async () => {
+    // `/auth/invitations/preview?token=…` carries a live invitation credential
+    // and `/resources?q=…` carries whatever someone typed into a search box.
+    // Neither belongs in the renderer's console or log file.
+    expect(redactQuery('/auth/invitations/preview?token=secret-invitation-token'))
+      .toBe('/auth/invitations/preview?token');
+    expect(redactQuery('/resources?limit=50&q=quarterly%20revenue'))
+      .toBe('/resources?limit,q');
+    expect(redactQuery('/workstreams/abc/messages')).toBe('/workstreams/abc/messages');
   });
 });

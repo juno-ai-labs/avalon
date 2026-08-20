@@ -558,6 +558,12 @@ export interface SocketTicket {
   ticket: string;
   /** Pass as the `WebSocket` constructor's second argument. */
   protocols: [string, string];
+  /**
+   * The ticket's own id, which the room reports consuming. It is the trace id
+   * every server-side row for this socket carries, so printing it is what makes
+   * a slow open findable; see `docs/performance-tracing.md`.
+   */
+  ticketId?: string;
 }
 
 export type WorkstreamSocketEvent =

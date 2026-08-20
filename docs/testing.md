@@ -22,8 +22,8 @@ once and passes on a rerun.
 | Suite | Command | Runs on |
 | --- | --- | --- |
 | `apps/api/test-workers/**/*.test.ts` | `pnpm --filter @avalon/api test:workers` | **Real workerd**, through `@cloudflare/vitest-pool-workers`. Durable Objects, their SQLite storage, alarms, hibernation, eviction, `WebSocketPair`, D1, and queue producers are the real implementations. |
-| `apps/api/test/**/*.test.ts` | `pnpm --filter @avalon/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. |
-| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | jsdom. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). |
+| `apps/api/test/**/*.test.ts` | `pnpm --filter @avalon/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
+| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | jsdom. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @avalon/<pkg> test` | Node. Pure contract, harness, and connector logic. |
 | `packages/db/test/**/*.test.ts` | `pnpm --filter @avalon/db test` | Node. The migration sequence itself and the work-stream queries over it — where a migration's own test goes, rather than beside the package's source. |
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @avalon/site test`, `pnpm --filter @avalon/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
@@ -60,6 +60,17 @@ shape of your own code:
   detail is in [`realtime-sockets.md`](realtime-sockets.md#testing).
 - Anything reached through a real binding: D1 semantics, queue sends, RPC
   envelopes between objects.
+- Platform APIs the code imports but the Node suite can only stub.
+  `tracing.enterSpan` from `cloudflare:workers` is the standing example: the
+  tracing tests in `test/` run against a hand-written stub, which is right for
+  asserting span names and attributes cheaply, but it means nothing there ever
+  resolves the real import.
+  `test-workers/tracing-runtime.test.ts` is the smoke test that does — the API
+  is reachable, it runs the callback, it awaits the promise, it propagates a
+  throw — and it is deliberately shallow, because the runtime exposes no way to
+  read a finished span back and anything deeper would be asserting on the stub
+  again. A beta platform API that only a double has ever exercised is not
+  covered.
 
 The Node suite cannot stand in for any of it. `apps/api/vitest.config.ts` aliases
 `cloudflare:workers` to `test/helpers/cloudflare-workers.ts`, a ten-line stand-in

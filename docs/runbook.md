@@ -670,7 +670,7 @@ instead:
 | API Worker, inside a request | `apps/api/src/observability/logger.ts` | `logEvent(c, level, event, fields)` — adds `request_id` and `workspace_id` |
 | API Worker, everywhere else | same | `logInfo`/`logWarn`/`logError(env, event, fields)` |
 | Retention Worker | `apps/release-retention/src/logger.ts` | `logEvent(level, event, fields)` |
-| Desktop client | `apps/desktop/src/common/logger.ts` | `logWarn`/`logError(scope, message, …detail)` |
+| Desktop client | `apps/desktop/src/common/logger.ts` | `logWarn`/`logError(scope, message, …detail)`, and `logDebug` for the trace level |
 
 `apps/site` is the fourth Worker and appears in no row: it serves static assets
 and logs nothing, so it has no logger. It keeps Workers Logs enabled without a
@@ -686,8 +686,9 @@ wants: it indexes the object's properties as queryable fields and renders its
 - **Never log a bare object either.** Without `message`, the row lists as a
   blank line and has to be expanded before it identifies itself. The API logger
   derives one from `event` plus whichever of `method`, `path`, `status`, `code`,
-  and `duration_ms` the entry carries — `http_request GET /notes 200 96ms` — and
-  a caller may pass its own `message` instead.
+  `flow`, `phase`, `component`, and `duration_ms` the entry carries —
+  `http_request GET /notes 200 96ms`, `perf_flow workstream_create api 812ms` —
+  and a caller may pass its own `message` instead.
 - Keep the summary a restatement of indexed fields. Filter on the fields, not on
   message text; anything only the message says is unqueryable. `message` is
   therefore reserved: a field that holds an opaque provider string is `detail`.
@@ -699,6 +700,22 @@ wants: it indexes the object's properties as queryable fields and renders its
 
 The desktop client logs to a terminal or DevTools rather than to Workers Logs,
 so its logger keeps human-readable lines and only owns the scope tag and level.
+`logDebug` is the trace level: `console.debug`, which DevTools and a terminal
+filter out until a reader opens the Verbose level, which is what lets the
+client's performance traces stay on in every build.
+
+Both regional Workers also enable **Workers Traces**
+(`observability.traces`, head sampling 1), which instruments handler
+invocations, `fetch`, and binding calls automatically and exports OTLP traces
+and logs. Because `console` output is attributed to the active span, the
+structured rows above are exported as log records carrying that span's trace id,
+and a destination correlates them to the trace with no configuration. The custom
+spans layered on top are [`performance-tracing.md`](performance-tracing.md)'s;
+what the platform itself provides, what its span API does and does not support,
+and the beta caveats on its names and prices are in
+[`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). No
+OpenTelemetry package is installed, and adding one is the mistake both documents
+exist to prevent.
 
 Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:observability` idempotently creates these account-level saved views in Workers & Pages → Observability → Query Builder; each view is scoped to both regional API service names:
 
@@ -713,6 +730,16 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 | Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
+
+**Work-stream flow latency** has no saved view yet, deliberately: the thresholds
+would be guesses until there are production rows to pick them from. Starting,
+opening, and sending a message to a work stream each emit one `perf_flow` row per
+participant, carrying `flow`, `component`, `duration_ms`, `slowest_step`, and a
+`steps` object, alongside the custom spans the same flows open on Workers Traces.
+Filter `event = perf_flow` with a `flow` and a `duration_ms` threshold, group by
+`slowest_step`, and follow one interaction by `request_id`.
+[`performance-tracing.md`](performance-tracing.md) holds the span names, the
+attribute registry, and the investigation procedure.
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
 

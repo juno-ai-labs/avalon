@@ -892,12 +892,15 @@ export class WorkstreamService {
 
   async socketTicket(id: string, substreamId = "0") {
     await this.requireWorkstream(id);
-    const ticket = await issueSocketTicket(this.env, this.auth, id, substreamId);
+    // Minted here rather than inside the issuer so the route can log the id the
+    // room will report consuming; see `docs/performance-tracing.md`.
+    const ticketId = newId();
+    const ticket = await issueSocketTicket(this.env, this.auth, id, substreamId, ticketId);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
     url.search = new URLSearchParams({ ticket }).toString();
-    return { url: url.toString(), ticket };
+    return { url: url.toString(), ticket, ticketId };
   }
 
   async workstreamControlSocketTicket(id: string) {

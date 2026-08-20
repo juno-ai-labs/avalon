@@ -27,6 +27,7 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, verified-to-active route transition, hierarchy drain, and email activation. |
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
+| `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
 ## How it works
 
@@ -310,6 +311,44 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-20 — Every awaited step of the create is a named span
+
+**What changed:** `POST /workstreams` opens a `workstream.create` span and hands
+it to `WorkstreamObjectCreationService.create`, which opens a child span per
+awaited step — the receipt, the email-address reservation, the D1 batch, the
+object initialize, both effect flushes, the directory probe, the route
+activation, the receipt completion. These are custom spans on Cloudflare's
+automatic tracing, so the room's own spans and the D1 and Durable Object calls
+the platform instruments nest underneath without anything being propagated by
+hand. The flow also emits one `perf_flow` log row carrying the whole breakdown.
+
+**Why:** This document already says that everything the response does not depend
+on waits for it anyway, deliberately — which makes the create the longest thing
+a person waits on in Avalon, and made "it feels slow" unanswerable. The only
+measurement was `http_request`'s total duration: eleven awaited round trips
+behind one number, so the question of whether the cost is the email reservation,
+the Durable Object initialize, or the directory probe could not be asked without
+adding a temporary log and deploying it.
+
+**Considered and rejected:** Cutting or deferring work on the create path to
+make it faster before knowing which part was slow. The 2026-08-18 entry below is
+the last time that trade was made and had to be put back, and this document's
+opening already says the deferral experiment was reverted; guessing again
+without a measurement would repeat it. Also rejected: timing the create as one
+number per stage in the existing `api_operation_outcome` telemetry, which is
+bucketed to five ranges by design and cannot locate a step.
+
+**Consequences:** Nothing about what the caller waits for changed — every span
+wraps a call that already existed, in the same order. A step added to `create`
+should get a span in the same change, or the trace quietly attributes its cost
+to whichever span follows it. The service's authority read is named
+`workstream.create.authority.read_recheck` because the route has already made
+the same read, and the trace is where that duplicated round trip is now visible.
+See [`performance-tracing.md`](performance-tracing.md), including its rule
+against adding an OpenTelemetry package.
+
+Shipped in #203.
 
 ### 2026-08-18 — Route activation waits for the WorkspaceDO directory
 

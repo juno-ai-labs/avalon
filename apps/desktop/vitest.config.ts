@@ -6,6 +6,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // The renderer's performance traces print at the trace level on every
+    // build, which is what makes a slow work stream diagnosable from a user's
+    // DevTools without a preference nobody had enabled at the time. In a suite
+    // that would be a hundred lines of noise per run, so console output is
+    // buffered and printed only for the tests that fail — where it is the
+    // context a reader wants anyway.
+    silent: 'passed-only',
     setupFiles: ['./src/renderer/test/setup.ts'],
     // `common` is in the list because the code both processes share lives there
     // and a test that never runs is worse than no test: it reads as coverage.
