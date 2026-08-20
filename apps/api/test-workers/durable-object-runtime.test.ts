@@ -12,8 +12,13 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
-import { BlockDashboardAgent } from "../src/durable-objects/block-dashboard-agent";
+import {
+  BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
+  BlockDashboardAgent,
+} from "../src/durable-objects/block-dashboard-agent";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
+import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
@@ -190,6 +195,14 @@ type TestableBlockDashboardAgent = {
 
 type TestableSubstreamAgent = {
   publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
+  nextRunDispatchAt(): number | null;
+  agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
+};
+
+type TestableDispatchScheduler = {
+  nextRunDispatchAt?(): number | null;
+  nextRunAt?(): number | null;
+  agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
 };
 
 type TestableWorkstreamDO = {
@@ -441,7 +454,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.SUBSTREAM_AGENTS,
         name: substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: SubstreamAgent,
-        migrations: 1,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
           "parts",
@@ -458,7 +471,7 @@ describe("Durable Objects in the Workers runtime", () => {
           BLOCK_DASHBOARD_BLOCK_ID,
         ),
         constructor: BlockDashboardAgent,
-        migrations: 1,
+        migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
           "block_dashboard_block_identity",
@@ -470,7 +483,7 @@ describe("Durable Objects in the Workers runtime", () => {
         namespace: env.WORKSTREAM_DOS,
         name: workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: WorkstreamDO,
-        migrations: 1,
+        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
           "substream_directory",
@@ -2732,5 +2745,61 @@ describe("Durable Objects in the Workers runtime", () => {
       code: "workspace_socket_required",
     });
     socket!.close(1000, "done");
+  });
+  // The production stall in one assertion, against the real objects rather than
+  // the shared helper: `nextRunDispatchAt`/`nextRunAt` once consulted the
+  // in-memory drain flag, so a claimed run stopped contributing a due time, the
+  // alarm was deleted, and the cancelled drain left nothing to rediscover it.
+  // A drain that never settles is exactly the state a cancellation produces.
+  it("keeps a claimed run schedulable in both agents while a drain is in flight", async () => {
+    const wedged = new Promise<void>(() => {});
+
+    const substream = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, CHILD_SUBSTREAM_ID),
+    ));
+    await fetchAndDrain(substream, "https://object.test/health");
+    await runInDurableObject(substream, async (instance, state) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      state.storage.sql.exec(
+        `INSERT INTO substreams
+           (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+         VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 1)
+         ON CONFLICT(id) DO NOTHING`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO runs (
+           run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
+           model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+           active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+           tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+           created_at, updated_at
+         ) VALUES ('run-wedged', '0', NULL, 'admitted', '{}', 0, 0, '', 0, 0, 1,
+                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO agent_run_dispatches
+           (run_id, input_json, state, attempt, available_at, started_at, created_at, updated_at)
+         VALUES ('run-wedged', '{}', 'running', 1, 1, 1, 1, 1)`,
+      );
+      // Put the drain in the state a cancelled invocation leaves behind.
+      void testable.agentDrain.resume(() => wedged, () => undefined);
+      expect(testable.nextRunDispatchAt()).not.toBeNull();
+    });
+
+    const block = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
+    ));
+    await fetchAndDrain(block, "https://block-dashboard.test/health");
+    await runInDurableObject(block, async (instance, state) => {
+      const testable = instance as unknown as TestableDispatchScheduler;
+      state.storage.sql.exec(
+        `INSERT INTO agent_run_dispatches
+           (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
+            source_created_at, state, attempt, available_at, started_at, created_at, updated_at)
+         VALUES ('block-wedged', '{}', 1, 0, 1, 'running', 1, 1, 1, 1, 1)`,
+      );
+      void testable.agentDrain.resume(() => wedged, () => undefined);
+      expect(testable.nextRunAt!()).not.toBeNull();
+    });
   });
 });
