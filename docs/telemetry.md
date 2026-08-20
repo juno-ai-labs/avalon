@@ -573,6 +573,51 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
+
+**What changed:** `wrangler.global.jsonc` names two account-level OTLP
+destinations — `posthog-logs` for Workers Logs and `posthog-traces` for
+automatic tracing — both pointing at the US PostHog project's `/i/v1/logs` and
+`/i/v1/traces` ingest. `persist` is left at its default, so Cloudflare keeps its
+own copy and the export is an addition rather than a redirection. The EU
+Worker's config names no destination and is unchanged; a comment there now says
+that adding one *is* the decision this entry records, so it cannot be made by
+accident.
+
+**Why:** The traces shipped in #203 answer "which step was slow" only for
+whoever is looking at Workers Logs at the time. Putting them where the product
+events already are means one place to ask both halves of the question, and the
+analytics surrogates on each span are what join them.
+
+**The cost, stated plainly:** *PostHog now receives customer message content.*
+Cloudflare's automatic Durable Object SQL spans carry
+`cloudflare.durable_object.query.bindings` — the bound parameter values — and
+SubstreamAgent and WorkstreamDO write message text, titles, and objectives
+through exactly that API. Cloudflare documents no attribute filtering or
+redaction, so this is not a gap to be closed later by configuration; it is a
+property of exporting these traces at all. PostHog is therefore a processor of
+message content, which is a subprocessor and DPA question rather than an
+observability one, and it is owed the treatment those get.
+
+**Considered and rejected:** *Lowering `head_sampling_rate` to reduce exposure.*
+Sampling changes how many traces carry content, not what a sampled trace
+carries, so it buys no privacy and costs diagnostic value; full sampling is kept
+for that reason rather than by default. *Exporting logs only.* The structured
+logger redacts, so logs alone would have been the conservative option, and the
+`perf_flow` rows would still have carried the whole step breakdown — but that
+gives up the span waterfall, which is the part a trace is for. *Redacting at the
+destination.* There is no hook: the attribute is attached by the platform before
+anything of ours runs.
+
+**Consequences:** The boundary this document defends is now narrower than it
+was: it holds for the EU region, and for Global it holds only up to the trace
+destination. Anything that would widen what a Durable Object writes through
+embedded SQL now also widens what PostHog receives, with no review step that
+would flag it as a logging change. If Cloudflare ships attribute filtering, this
+is the first thing that should use it.
+
+Shipped in #TBD.
+
 ### 2026-08-20 — The analytics surrogates gain a second reader
 
 **What changed:** Nothing about how `users.analytics_person_id` and
