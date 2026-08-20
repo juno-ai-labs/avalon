@@ -18,7 +18,7 @@ either stops being true.
 | `config/design-tokens/registry.json` | Every token that exists, its type, and the prose explaining what it is for. The vocabulary. |
 | `config/design-tokens/themes/*.json` | One appearance each: values for the registry's paths. The only place a colour is written down. |
 | `config/design-tokens/*.schema.json` | JSON Schema for both, so an editor completes and validates them. |
-| `scripts/build-theme-css.mjs` | Turns the JSON into `themes.css`. `pnpm tokens:build` writes it; `pnpm tokens:check` fails on drift. |
+| `scripts/build-theme-assets.mjs` | Turns the JSON into `themes.css`. `pnpm tokens:build` writes it; `pnpm tokens:check` fails on drift. |
 | `apps/desktop/src/renderer/styles/themes.css` | **Generated.** The custom properties, one block per theme. |
 | `apps/desktop/src/renderer/styles/app.css` | The rules. Names tokens; states no colour of its own. |
 | `apps/desktop/src/common/themes.ts` | The vocabulary both processes share: the theme ids, `resolveTheme`, and each theme's window background. |
@@ -27,6 +27,9 @@ either stops being true.
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance control in Settings. |
 | `apps/desktop/src/main/application-settings.ts` | `windowTheme`, the mirrored copy the main process paints a new window with. |
 | `apps/desktop/tailwind.config.ts` | The Tailwind palette, pointed at the same tokens so a utility class cannot diverge. |
+| `apps/desktop/src/main/theme-assets.ts` | The two asset schemes: the backdrop policy, and the remote-font cache. |
+| `apps/desktop/src/renderer/components/theme-backdrop.tsx` | The sandboxed frame a backdrop document renders in. |
+| `apps/desktop/src/renderer/fonts/` | Font files a theme may name as `bundled`, with their licences. |
 
 ## A theme file
 
@@ -71,6 +74,95 @@ renders, and it may not alias a token — a data URI is its own document and can
 read a custom property, so the generator rejects both rather than emitting a dud.
 `url` must be `https:`, which is all the renderer's Content-Security-Policy
 allows from the network.
+
+## Fonts
+
+A theme file has a `fonts` array beside its `tokens`, because a family name is a
+wish and the file is the fact:
+
+```json
+"fonts": [
+  { "family": "Geist", "weight": "100 900", "display": "block",
+    "src": { "bundled": "geist-latin-variable.woff2" } },
+  { "family": "Cadence", "weight": "400",
+    "src": { "url": "https://fonts.example/cadence.woff2", "integrity": "sha256-…" } }
+]
+```
+
+Every theme declares its own — a theme that inherited them would be one you
+cannot read on its own — and the generator emits the union once, so switching
+appearance never waits on a font.
+
+**`bundled` names a file in `apps/desktop/src/renderer/fonts/`**, which ships
+inside the application. That is what removes the substitution flash: the family
+is present on the first paint, and `font-display: block` has nothing to block
+on. Geist and Geist Mono are bundled for exactly this reason — the interface
+named `Inter` for months without shipping it, so every weight resolved against
+whatever the platform substituted and the type had two usable weights instead of
+nine. Adding a file means adding its licence and a row in that directory's
+`README.md`.
+
+**`url` is fetched by the main process, once.** The stylesheet never names the
+remote host; it names `avalon-font://cache/<id>.woff2`, where the id is a hash of
+the URL. On a miss the main process fetches it, checks `integrity` if the theme
+declared one, refuses anything empty or larger than 8 MB, and writes it under
+`userData` through a rename so an interrupted launch leaves no half-file.
+Nothing expires — a font at a URL is immutable in practice, and a theme that
+wants different bytes changes the URL, which changes the id, which misses. A
+renderer that asked the remote host itself would announce the reader to whoever
+runs it, on every cold start, for as long as the theme was in use.
+
+What that does not remove is the first fetch: a remote family is `swap`, so the
+first launch on a new machine paints the fallback and swaps. A theme that wants
+no flash at all bundles its font.
+
+## A backdrop that moves
+
+Some backdrops are not values. Airy's is a field of light that orbits, and there
+is no `background-image` that orbits — it needs a clock and a frame loop. Rather
+than invent a declarative motion vocabulary that would cover that one case and
+none of the next, a theme may bring a whole document:
+
+```json
+"backdrop": {
+  "description": "Four blurred blooms orbiting a shared centroid.",
+  "html": "<div class=\"field\">…</div><style>…</style><script>…</script>"
+}
+```
+
+The generator wraps it in a page, writes the theme's tokens in as custom
+properties — a document on another origin inherits nothing from this one's
+cascade — and gives it the theme's own `sys.backdrop.*` stack as its floor.
+A theme that brings a document owns the whole backdrop.
+
+### What a backdrop may do
+
+Paint, and animate. That is the entire grant, and three mechanisms enforce it:
+
+| Mechanism | What it withholds |
+| --- | --- |
+| Served from `avalon-backdrop://`, not the renderer's scheme | The application's origin, and whatever that origin is ever granted. |
+| `default-src 'none'` with **no** `connect-src` | Every network call. A backdrop cannot report that it was rendered. |
+| `sandbox="allow-scripts"`, **without** `allow-same-origin` | The parent document, storage, cookies, and the preload bridge. Its script runs in an opaque origin. |
+
+All three are load-bearing. The policy without the sandbox attribute is still a
+document that can read the application's DOM; the sandbox without the policy is
+still a document that can phone home. `script-src 'unsafe-inline'` is the point
+of the arrangement rather than a concession to it — the document exists to run
+its own animation — and it is only safe inside the other two.
+
+The window's own policy has to *skip* a backdrop response rather than add to it:
+that policy ends in `frame-ancestors 'none'`, and a backdrop that cannot be
+framed never renders. `isBackdropUrl` is the predicate that does it, for the same
+reason the message exporter has one.
+
+**A backdrop that animates must honour `prefers-reduced-motion`.** It is the one
+piece of motion in the interface a reader cannot dismiss, scroll past, or wait
+out. A test rejects a backdrop that starts a frame loop without naming the query.
+
+Colours may be written down inside a backdrop document. It is part of the theme,
+and a theme file is the one place a colour is allowed to be a literal — `app.css`
+is not, and the difference is the whole engine.
 
 Adding a theme is that file plus an entry in `themeChoices`. Everything else —
 the picker, persistence, the window background — reads from those.
@@ -286,6 +378,14 @@ next report.
   changes nothing. The Settings miniature is exactly that element, and it
   previewed a dark surface under the Light swatch until the blocks were filled
   out.
+- **A backdrop document may paint and nothing else.** Its own scheme, a policy
+  with no `connect-src`, and a frame sandboxed without `allow-same-origin`. All
+  three, every time; any two of them is a hole.
+- **A backdrop that animates honours `prefers-reduced-motion`.** It is the one
+  piece of motion a reader cannot dismiss, scroll past, or wait out.
+- **The renderer never names a remote font host.** It names
+  `avalon-font://cache/<id>.woff2`; the main process is the only thing that
+  fetches. A stylesheet pointing at `https://` is a per-launch beacon.
 - **The backdrop is painted once.** Only `.workspace-shell` and the Settings
   miniature may name `--av-sys-backdrop-image`; anything else that paints it
   draws a second copy of one gradient and shows a seam where the two disagree.
@@ -353,6 +453,7 @@ reads a stylesheet.
 | --- | --- |
 | `scripts/build-theme-css.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
 | `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
+| `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
 | `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, and the unknown-theme fallback. |
 | `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
@@ -375,7 +476,54 @@ Airy, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — Airy is lit by two circles, not two corners
+### 2026-08-20 — A theme may bring fonts and a document that moves
+
+**What changed:** three things a theme could not previously carry.
+
+*Fonts are an asset, not a name.* A theme file has a `fonts` array; `bundled`
+names a file that ships in the application, `url` names one the main process
+fetches once and keeps under `userData`. Geist and Geist Mono are bundled and
+every theme uses them. `Inter` had been named since the engine was written and
+never shipped, so weight resolved against whatever the platform substituted —
+which is why the type scale had two usable weights and the earlier changelog
+entry recorded that weight could only be verified as computed values. It can be
+looked at now.
+
+*A backdrop may be a document.* `sys.backdrop.*` describes a floor, and Airy's
+design is a field of light that orbits — no `background-image` orbits. The
+alternative was a declarative motion vocabulary, which would have covered this
+one case and none of the next; a theme brings HTML instead, and the generator
+turns it into a page.
+
+*What makes that safe is three mechanisms, not one.* Its own scheme so it never
+holds the application's origin; `default-src 'none'` with no `connect-src` so it
+cannot report that it ran; and `sandbox="allow-scripts"` without
+`allow-same-origin` so its script sits in an opaque origin with no parent, no
+storage, and no bridge. Verified in a running window rather than reasoned about:
+`parent.location` throws, `fetch` throws, `localStorage` throws, and nothing
+Avalon-shaped is on `window`. A future change must not relax any one of the
+three on the grounds that the other two hold — they cover different things.
+
+The window's own policy now *skips* a backdrop response instead of attaching
+alongside it, exactly as it already did for the message exporter, and for a
+sharper reason: that policy ends in `frame-ancestors 'none'`, so attaching it
+means the backdrop never renders at all.
+
+**Two things went wrong on the way, and both are worth keeping.** The first cut
+made the document transparent and let the shell's backdrop show through; a frame
+on another origin gets Chromium's default *white* canvas, so the whole
+application composited against white. The document paints the theme's floor
+itself now, which is also the more honest description — a theme that brings a
+document owns the whole backdrop. The second: `vw` looked right for bloom radii
+until the Settings miniature sampled a window-sized field through a 92px
+keyhole. Percentages of the positioning area work in both.
+
+**Not done:** no shipped theme uses a remote font. The capability is tested
+against a stubbed fetch rather than a live host, because a shipped theme that
+fetched a font would put a first-run flash and a first-run request into every
+install to demonstrate a feature nobody had asked for yet.
+
+8-20 — Airy is lit by two circles, not two corners
 
 **What changed:** `sys.backdrop.image` in Airy is two overlapping amber discs
 sitting in the field — one at 67%/28%, one lower and left of centre at 52%/84% —
