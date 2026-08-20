@@ -63,6 +63,22 @@ Both commands cover Global and EU. Run them before starting a Worker: the
 migration and seed tooling writes to the same `.wrangler/state/<region>` SQLite
 files that a running `wrangler dev` holds open.
 
+After the Workers are running (§3), open the authority:
+
+```bash
+pnpm db:open-authority
+```
+
+This walks the **Global** authority to `durable_object_open`, so the local
+stack serves the same post-cutover Durable-Object model production runs, and
+imports the seeded work streams into their objects through the Worker's
+dev-only import route — which is why the Workers must be up first; run without
+them, the walk completes and the script says to re-run for the import. Local
+EU deliberately stays `legacy_open`. Skipping this step leaves local
+development on the legacy path, where none of the object-authority code
+executes — the gap that once hid a defect failing every production harness
+run. The script is idempotent and re-runs repair partial imports.
+
 ## 3. Start the API Workers
 
 **Inside a sandbox, use `dev:api:local`, not `dev:api`.**

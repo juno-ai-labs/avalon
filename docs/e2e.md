@@ -21,6 +21,43 @@ The smoke check signs in through development-only authentication, verifies prote
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production.
 
+## Automated behavioral lane
+
+`pnpm e2e:local` drives the running local stack through the same public API the
+desktop client uses, in three lanes: **happy** paths that must produce an agent
+reply (create-and-reply, follow-up, stop, transcript ordering, title
+settlement), **sad** paths that must be refused safely (auth, validation,
+idempotent replays, missing targets), and **chaos** paths that must not corrupt
+or wedge anything (concurrent bursts). Counts and concurrency are arguments:
+
+```text
+pnpm db:migrate && pnpm db:seed
+pnpm dev:api:local            # in another terminal
+pnpm db:open-authority        # walk local D1 to durable_object_open + import seeds
+pnpm e2e:local -- --happy 10 --sad 8 --chaos 2 --concurrency 4
+```
+
+`pnpm db:open-authority` matters: without it a fresh local database serves the
+*legacy* path, and none of the Durable-Object-authority code runs — which is
+how a defect that failed every production harness run stayed invisible to
+every local check. The walk is idempotent, respects the production state
+machine, and imports the seeded work streams into their objects through the
+Worker's dev-only route, so `pnpm smoke:local` keeps passing on an opened
+stack.
+
+Model dependence is decided from the Worker's own `/health`: with OpenRouter
+configured (an `OPENROUTER_API_KEY` in `.env.local` and `pnpm env:sync`), a
+run must complete with a reply; without one, a run must still reach a terminal
+state that tells the member the truth. The oracles themselves are unit-tested
+in `scripts/e2e-local-oracles.test.mjs` — this lane's own first deployment
+failed 34 stop scenarios because `idle` was missing from its terminal set, so
+the pass conditions are treated as code that can rot.
+
+This lane exists because it catches what the unit and workerd suites
+structurally cannot: its first sustained run found a view trigger that crashed
+every retried run's settlement, a creation path that never scheduled
+work-stream naming, and a compound-SELECT limit under concurrent load.
+
 ## Right-sidebar and desktop acceptance
 
 Run the Electron desktop with `pnpm dev:desktop` and exercise these flows against the local Worker:
