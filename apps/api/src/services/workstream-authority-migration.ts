@@ -1233,115 +1233,101 @@ async function quarantineWorkspaceProductRoute(
   ).bind(code, new Date().toISOString(), route.generation).run();
 }
 
+/** Rows deleted per statement, and per invocation, while scrubbing D1. */
+const WORKSPACE_SCRUB_CHUNK = 500;
+const WORKSPACE_SCRUB_ROW_BUDGET = 20_000;
+
+/**
+ * The legacy workspace copy, in foreign-key order. Child rows without a
+ * workspace column are scoped through the row that owns them; every other
+ * product table carries the workspace directly.
+ */
+const WORKSPACE_SCRUB_TARGETS: readonly { table: string; where: string; binds: number }[] = [
+  { table: "workstream_notification_intents", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "note_privacy_change_outbox", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "note_transcript_segments", where: "WHERE note_id IN (SELECT id FROM notes WHERE workspace_id = ?)", binds: 1 },
+  { table: "notes", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_email_receipts", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_email_rate_windows", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_delivery_targets", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_runs", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "schedules", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_resources", where: "WHERE automation_subscription_id IN (SELECT id FROM automation_subscriptions WHERE workspace_id = ?)", binds: 1 },
+  { table: "automation_subscriptions", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "automation_template_versions", where: "WHERE template_id IN (SELECT id FROM automation_templates WHERE workspace_id = ?)", binds: 1 },
+  { table: "automation_templates", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "digest_deliveries", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "digest_delivery_targets", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "digest_schedule_times", where: "WHERE digest_schedule_id IN (SELECT id FROM digest_schedules WHERE workspace_id = ?)", binds: 1 },
+  { table: "digest_schedules", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "resource_watches", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "note_resource_deletion_outbox", where: "WHERE resource_id IN (SELECT id FROM resources WHERE workspace_id = ?)", binds: 1 },
+  { table: "resources", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "resource_object_deletion_outbox", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "memory_scopes", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "external_user_identities", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "workspace_sandbox_network_policy_mutations", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "workspace_sandbox_network_domains", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "workspace_sandbox_network_policies", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "slack_unfurled_links", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "slack_ingress_jobs", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "slack_agent_feedback", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "slack_agent_sessions", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "slack_user_links", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "activities", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "connector_oauth_attempts", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "connector_connections", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "work_opportunity_snapshots", where: "WHERE opportunity_id IN (SELECT id FROM work_opportunities WHERE workspace_id = ?)", binds: 1 },
+  { table: "work_opportunity_provenance_roots", where: "WHERE opportunity_id IN (SELECT id FROM work_opportunities WHERE workspace_id = ?)", binds: 1 },
+  { table: "work_opportunity_user_links", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "work_opportunity_user_states", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "opportunity_provenance_edges", where: "WHERE parent_node_id IN (SELECT id FROM opportunity_provenance_nodes WHERE workspace_id = ?) OR child_node_id IN (SELECT id FROM opportunity_provenance_nodes WHERE workspace_id = ?)", binds: 2 },
+  { table: "opportunity_provenance_nodes", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "suggested_work_ranking_rounds", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "suggested_work_sets", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "work_opportunities", where: "WHERE workspace_id = ? AND NOT EXISTS ( SELECT 1 FROM workstreams WHERE created_from_opportunity_id = work_opportunities.id )", binds: 1 },
+  { table: "opportunity_batch_events", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "opportunity_batch_windows", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "activity_event_targets", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "activity_events", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "workstream_email_receipts", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "realtime_transcription_sessions", where: "WHERE workspace_id = ?", binds: 1 },
+  { table: "realtime_transcription_ticket_receipts", where: "WHERE workspace_id = ?", binds: 1 },
+];
+
 /**
  * Remove the verified legacy copy before advertising the WorkspaceDO route.
  *
- * The maintenance phase has already fenced every producer, so this D1 batch is
- * a stable, all-or-nothing deletion. Child rows without workspace_id are scoped
- * through their owning opportunity; every other product row carries the
- * workspace directly. The route becomes active in the same batch, leaving no
- * state in which D1 has been scrubbed while the control plane still promises a
- * legacy rollback source.
+ * Deleting a whole workspace at once exceeds D1's per-batch CPU limit — the
+ * largest workspaces carry six figures of provenance rows, each delete
+ * cascading further — so the scrub runs in bounded chunks and spends a fixed
+ * row budget per invocation. Falling short simply returns: the route stays
+ * `verified`, and the next cron tick resumes. Every statement is scoped to the
+ * workspace and idempotent, so a resumed pass re-runs the earlier targets and
+ * deletes nothing.
+ *
+ * This trades away the original all-or-nothing batch, which could no longer
+ * run: D1 may now hold a partially scrubbed workspace. The invariant that
+ * matters survives, because the route turns `active` only after the last
+ * target is empty — an active route is always a fully scrubbed one.
  */
 async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
-  const opportunityIds = `SELECT id FROM work_opportunities WHERE workspace_id = ?`;
-  const nodeIds = `SELECT id FROM opportunity_provenance_nodes WHERE workspace_id = ?`;
+  let budget = WORKSPACE_SCRUB_ROW_BUDGET;
+  for (const target of WORKSPACE_SCRUB_TARGETS) {
+    for (;;) {
+      if (budget <= 0) return;
+      const deleted = await env.DB.prepare(
+        `DELETE FROM ${target.table} WHERE rowid IN (
+           SELECT rowid FROM ${target.table} ${target.where} LIMIT ${WORKSPACE_SCRUB_CHUNK}
+         )`,
+      ).bind(...Array.from({ length: target.binds }, () => route.workspace_id)).run();
+      const changes = Number(deleted.meta.changes ?? 0);
+      budget -= changes;
+      if (changes < WORKSPACE_SCRUB_CHUNK) break;
+    }
+  }
   const at = new Date().toISOString();
   await env.DB.batch([
-    // WorkspaceDO is already verified. Remove the old relational authority in
-    // FK order before activating its route; D1 keeps only global routing and
-    // identity/control rows after this transaction.
-    env.DB.prepare(`DELETE FROM workstream_notification_intents WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM note_privacy_change_outbox WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM note_transcript_segments WHERE note_id IN
-      (SELECT id FROM notes WHERE workspace_id = ?)`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM notes WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_email_receipts WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_email_rate_windows WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_delivery_targets WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_runs WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM schedules WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_resources WHERE automation_subscription_id IN
-      (SELECT id FROM automation_subscriptions WHERE workspace_id = ?)`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_subscriptions WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_template_versions WHERE template_id IN
-      (SELECT id FROM automation_templates WHERE workspace_id = ?)`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM automation_templates WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM digest_deliveries WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM digest_delivery_targets WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM digest_schedule_times WHERE digest_schedule_id IN
-      (SELECT id FROM digest_schedules WHERE workspace_id = ?)`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM digest_schedules WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM resource_watches WHERE workspace_id = ?`).bind(route.workspace_id),
-    // Keyed by resource, with no workspace column of its own, so it has to be
-    // scoped through `resources` — and therefore emptied before the rows it
-    // joins to are gone. Deleting note/resource rows fires the old R2 cleanup
-    // triggers; those receipts refer to objects WorkspaceDO now owns and must
-    // never run.
-    env.DB.prepare(`DELETE FROM note_resource_deletion_outbox WHERE resource_id IN
-      (SELECT id FROM resources WHERE workspace_id = ?)`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM resources WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM memory_scopes WHERE workspace_id = ?`).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM external_user_identities WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM workspace_sandbox_network_policy_mutations WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM workspace_sandbox_network_domains WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM workspace_sandbox_network_policies WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM slack_unfurled_links WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM slack_ingress_jobs WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM slack_agent_feedback WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM slack_agent_sessions WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM slack_user_links WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM activities WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM connector_oauth_attempts WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM connector_connections WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(
-      `DELETE FROM work_opportunity_snapshots WHERE opportunity_id IN (${opportunityIds})`,
-    ).bind(route.workspace_id),
-    env.DB.prepare(
-      `DELETE FROM work_opportunity_provenance_roots WHERE opportunity_id IN (${opportunityIds})`,
-    ).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM work_opportunity_user_links WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM work_opportunity_user_states WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(
-      `DELETE FROM opportunity_provenance_edges
-        WHERE parent_node_id IN (${nodeIds}) OR child_node_id IN (${nodeIds})`,
-    ).bind(route.workspace_id, route.workspace_id),
-    env.DB.prepare(`DELETE FROM opportunity_provenance_nodes WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM suggested_work_ranking_rounds WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM suggested_work_sets WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
     // A D1 workstream identity anchor still has an unshipped foreign key to the
     // opportunity it came from. Keep only that opaque identity row; all prompts,
     // labels, reasoning, user state, and provenance are redacted or removed.
@@ -1358,26 +1344,6 @@ async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRo
           SELECT 1 FROM workstreams WHERE created_from_opportunity_id = work_opportunities.id
         )`,
     ).bind(at, route.workspace_id),
-    env.DB.prepare(
-      `DELETE FROM work_opportunities
-        WHERE workspace_id = ? AND NOT EXISTS (
-          SELECT 1 FROM workstreams WHERE created_from_opportunity_id = work_opportunities.id
-        )`,
-    ).bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM opportunity_batch_events WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM opportunity_batch_windows WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM activity_event_targets WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM activity_events WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM workstream_email_receipts WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM realtime_transcription_sessions WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
-    env.DB.prepare(`DELETE FROM realtime_transcription_ticket_receipts WHERE workspace_id = ?`)
-      .bind(route.workspace_id),
     env.DB.prepare(
       `UPDATE workspace_product_authority_routes SET state = 'active', updated_at = ?
         WHERE workspace_id = ? AND generation = ? AND state = 'verified'`,
@@ -1546,4 +1512,7 @@ export const __workstreamAuthorityMigrationTesting = {
   workspaceProductSourceQuery,
   productImportRow,
   isTransientCampaignError,
+  WORKSPACE_SCRUB_TARGETS,
+  WORKSPACE_SCRUB_CHUNK,
+  activateWorkspaceProductRoute,
 };

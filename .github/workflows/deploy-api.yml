@@ -86,20 +86,50 @@ jobs:
   # this one: both start together, so migrations could apply before CI finishes
   # or after it has already failed. Verifying here makes the deployment
   # self-gating rather than dependent on a race.
-  verify:
+  # The lanes mirror ci.yml's, deliberately: the same split is already balanced
+  # against this repository's suites, and two workflows that verify the same
+  # revision differently is a way to have one of them pass on something the
+  # other would have caught. The Wrangler dry-run builds live here rather than
+  # in `deploy` because they validate the revision, not the deployment — and a
+  # config error should fail beside lint, minutes earlier, instead of after the
+  # deploy job has re-installed dependencies.
+  checks:
+    name: verify / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    outputs:
-      verified_sha: ${{ steps.revision.outputs.sha }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lint
+            command: pnpm lint
+          - name: typecheck-and-build-invariants
+            command: >-
+              pnpm typecheck &&
+              pnpm --filter @avalon/api build &&
+              pnpm --filter @avalon/api build:eu &&
+              pnpm --filter @avalon/desktop test:release
+          - name: desktop-tests-1-of-2
+            command: pnpm --filter @avalon/desktop exec vitest run --shard=1/2
+          - name: desktop-tests-2-of-2
+            command: pnpm --filter @avalon/desktop exec vitest run --shard=2/2
+          - name: api-tests-1-of-2
+            command: pnpm --filter @avalon/api exec vitest run --shard=1/2
+          - name: api-tests-2-of-2
+            command: >-
+              pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
+              pnpm --filter @avalon/api test:workers
+          - name: crash-symbolicator-container
+            command: pnpm --filter @avalon/api test:crash-symbolicator-container
+          - name: remaining-tests
+            command: >-
+              pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&
+              pnpm test:scripts
     steps:
       - name: Check out the revision being deployed
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.sha }}
-
-      - name: Resolve the verified revision
-        id: revision
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -116,17 +146,47 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      # The symbolicator image compiles `minidump-stackwalk` from source, which
+      # costs about three and a half minutes and depends on nothing in this
+      # repository. Build it on a cache-capable builder so the layer is fetched
+      # rather than rebuilt on every run.
+      - name: Use a cache-capable container builder
+        if: matrix.name == 'crash-symbolicator-container'
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
 
-      - name: Typecheck
-        run: pnpm typecheck
+      - name: Run ${{ matrix.name }}
+        env:
+          AVALON_CONTAINER_CACHE_FROM: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,scope=crash-symbolicator' || '' }}
+          AVALON_CONTAINER_CACHE_TO: ${{ matrix.name == 'crash-symbolicator-container' && 'type=gha,mode=max,scope=crash-symbolicator' || '' }}
+        run: ${{ matrix.command }}
 
-      - name: Test
-        run: pnpm test
+  # `deploy` gates on this one job rather than on the matrix, so the lane list
+  # can change without touching the deployment. `always()` makes it report a
+  # failure rather than being skipped when a lane fails or is cancelled — a
+  # skipped gate would let `deploy` run behind a red verification.
+  verify:
+    needs: checks
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      verified_sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - name: Require every verification lane to pass
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: test "$CHECKS_RESULT" = success
 
-      - name: Test the release and deployment scripts
-        run: pnpm test:scripts
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve the verified revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: verify
@@ -176,12 +236,6 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Validate both Wrangler configurations with dry-run builds
-        run: |
-          set -euo pipefail
-          pnpm --filter @avalon/api build
-          pnpm --filter @avalon/api build:eu
 
       - name: List the pending remote migrations for EU
         if: env.DEPLOY_EU == 'true'
