@@ -8,11 +8,11 @@
  */
 
 /** What a person chose. `system` is a rule, not an appearance. */
-export const themeChoices = ['system', 'light', 'dark', 'airy'] as const;
+export const themeChoices = ['system', 'light', 'dark', 'airy', 'airy-dark'] as const;
 export type ThemeChoice = (typeof themeChoices)[number];
 
 /** What is actually drawn. `system` has been resolved away. */
-export const resolvedThemes = ['light', 'dark', 'airy'] as const;
+export const resolvedThemes = ['light', 'dark', 'airy', 'airy-dark'] as const;
 export type ResolvedTheme = (typeof resolvedThemes)[number];
 
 export const defaultThemeChoice: ThemeChoice = 'system';
@@ -27,7 +27,8 @@ export const themeDescriptions: readonly ThemeDescription[] = [
   { id: 'system', label: 'System', description: 'Follow the appearance this Mac is set to.' },
   { id: 'light', label: 'Light', description: 'A warm near-white page with hairline rules.' },
   { id: 'dark', label: 'Dark', description: 'Avalon’s original low-light palette.' },
-  { id: 'airy', label: 'Airy', description: 'Near-black, amber, and a great deal of room.' },
+  { id: 'airy', label: 'Airy', description: 'Warm paper, amber light, and a great deal of room.' },
+  { id: 'airy-dark', label: 'Airy Dark', description: 'The same room after dark: near-black and amber.' },
 ];
 
 /**
@@ -41,7 +42,8 @@ export const themeDescriptions: readonly ThemeDescription[] = [
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
   light: '#ffffff',
   dark: '#111210',
-  airy: '#100e0c',
+  airy: '#f7f3ec',
+  'airy-dark': '#100e0c',
 };
 
 export function parseThemeChoice(value: unknown): ThemeChoice | null {
