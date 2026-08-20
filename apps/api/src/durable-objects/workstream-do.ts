@@ -1519,8 +1519,19 @@ export class WorkstreamDO extends DurableObject<Env> {
     ));
     if (existing && existing.source_version > envelope.sourceVersion) return;
     if (existing?.source_version === envelope.sourceVersion) {
-      if (existing.payload_hash !== envelope.payloadHash) throw new Error("substream_projection_version_conflict");
-      return;
+      if (existing.payload_hash === envelope.payloadHash) return;
+      // Same version, different content. The child numbers these itself and
+      // restarts its counter when a maintenance import rebuilds it, while this
+      // projection survives — so a re-derived effect legitimately arrives under
+      // a version this object has already seen carrying different bytes. The
+      // child is the authority for its own projection, so the newer payload
+      // wins rather than failing the campaign. It is still worth saying out
+      // loud: outside a campaign the two should never disagree.
+      logWarn(this.env, "substream_projection_version_reused", {
+        substream_id: substreamId,
+        source_version: envelope.sourceVersion,
+        workstream_id: envelope.workstreamId,
+      });
     }
     if (kind === "common") {
       this.state.storage.sql.exec(

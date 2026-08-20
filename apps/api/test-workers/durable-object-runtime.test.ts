@@ -297,6 +297,22 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(replayedFromOne.status).toBe(200);
     expect(JSON.parse(replayedFromOne.bodyJson)).toEqual({ ok: true, accepted: 1 });
+    // A child restarts its own projection numbering when a maintenance import
+    // rebuilds it, so the same source version legitimately comes back carrying
+    // different content. The newer payload wins instead of failing delivery.
+    const reused = await replayParent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [{
+        ...common,
+        messageId: "epoch-one-reused-version",
+        workstreamId: replayWorkstreamId,
+        generation: 2,
+        payloadHash: `${common.payloadHash.slice(0, -1)}f`,
+        effect: { ...common.effect, title: "Re-derived after import" },
+      }],
+    });
+    expect(reused.status).toBe(200);
+    expect(JSON.parse(reused.bodyJson)).toEqual({ ok: true, accepted: 1 });
   });
 
   it("flushes a creation snapshot through both parents before a route can be advertised", async () => {
