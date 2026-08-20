@@ -1766,22 +1766,53 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("applies the development seed after every migration", () => {
+  it("applies the development seed after every migration, touching no product table", () => {
     const database = migrateFreshDatabase();
     database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));
+    // The seed owns only the regional control plane. Product content —
+    // transcripts, resources, connections, automations — lives in
+    // seed-product.json and reaches the Durable Objects through the Worker's
+    // dev seed route, which is what lets the legacy D1 product tables be
+    // dropped. A product row appearing here again would quietly recreate the
+    // dependency that blocked the drop.
     expect(database.prepare(
-      "SELECT provider, connection_id FROM resources WHERE id = '00000000-0000-7000-8000-000000000041'",
-    ).get()).toEqual({ provider: "fixture", connection_id: null });
+      "SELECT COUNT(*) AS n FROM users",
+    ).get()).toEqual({ n: 2 });
     expect(database.prepare(
-      `SELECT connector_type, scope, status, model_plugin_id FROM connector_connections
-       WHERE id = '00000000-0000-7000-8000-000000000061'`,
-    ).get()).toEqual({
-      connector_type: "generic_webhook",
-      scope: "workspace",
-      status: "healthy",
-      model_plugin_id: "plugin_webhook",
-    });
+      "SELECT title FROM workstreams WHERE id = '00000000-0000-7000-8000-000000000021'",
+    ).get()).toEqual({ title: "Investigate ENG-142" });
+    for (const table of ["messages", "resources", "connector_connections", "harness_runs",
+      "tool_invocations", "workstream_participants", "workstream_resources",
+      "automation_subscriptions", "schedules"]) {
+      expect(database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(),
+        `${table} must stay empty in the D1 seed`).toEqual({ n: 0 });
+    }
     database.close();
+  });
+
+  it("keeps the product fixtures parseable and shaped for the dev seed route", () => {
+    const fixtures = JSON.parse(
+      readFileSync(new URL("../seed-product.json", import.meta.url), "utf8"),
+    ) as {
+      workspaceId: string;
+      workspaceTables: Record<string, Record<string, unknown>[]>;
+      workstreams: {
+        id: string; nextSequenceNumber: number;
+        messages: { sequence_number: number; structured_content_json: string | null }[];
+      }[];
+    };
+    expect(fixtures.workspaceId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(fixtures.workstreams.length).toBeGreaterThan(0);
+    for (const workstream of fixtures.workstreams) {
+      const sequences = workstream.messages.map((message) => message.sequence_number);
+      expect(Math.max(0, ...sequences)).toBeLessThan(workstream.nextSequenceNumber);
+      for (const message of workstream.messages) {
+        if (message.structured_content_json) JSON.parse(message.structured_content_json);
+      }
+    }
+    for (const rows of Object.values(fixtures.workspaceTables)) {
+      for (const row of rows) expect(typeof row.id).toBe("string");
+    }
   });
 
   it("removes legacy web-monitor data and prevents the retired connector from returning", () => {

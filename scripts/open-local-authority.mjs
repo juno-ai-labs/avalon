@@ -17,22 +17,35 @@
 //
 // Idempotent: a stack already at `durable_object_open` is left untouched.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const apiDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "apps", "api");
 
 function query(sql) {
-  const output = execFileSync("pnpm", [
-    "exec", "wrangler", "d1", "execute", "DB",
-    "--config", "wrangler.global.jsonc",
-    "--persist-to", ".wrangler/state/global",
-    "--local", "--json",
-    "--command", sql,
-  ], { cwd: apiDirectory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const start = output.indexOf("[");
-  if (start === -1) throw new Error(`wrangler returned no JSON for: ${sql.slice(0, 80)}`);
-  return JSON.parse(output.slice(start))[0]?.results ?? [];
+  // A running `wrangler dev` holds the same SQLite files, so individual
+  // statements can lose a lock race and fail transiently. Retrying is the
+  // contract here — every statement in this walk is idempotent by design.
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const output = execFileSync("pnpm", [
+        "exec", "wrangler", "d1", "execute", "DB",
+        "--config", "wrangler.global.jsonc",
+        "--persist-to", ".wrangler/state/global",
+        "--local", "--json",
+        "--command", sql,
+      ], { cwd: apiDirectory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      const start = output.indexOf("[");
+      if (start === -1) throw new Error(`wrangler returned no JSON for: ${sql.slice(0, 80)}`);
+      return JSON.parse(output.slice(start))[0]?.results ?? [];
+    } catch (error) {
+      lastError = error;
+      execFileSync("sleep", [String(1 + attempt)]);
+    }
+  }
+  throw lastError;
 }
 
 const [control] = query(
@@ -47,45 +60,59 @@ if (control.phase === "durable_object_open") {
   await importSeeds();
   process.exit(0);
 }
-if (control.phase !== "legacy_open") {
-  console.error(`Local authority is mid-walk at '${control.phase}'. Reset the local database (delete apps/api/.wrangler/state) and reseed, or finish the walk by hand.`);
+const PHASES = ["legacy_open", "maintenance_draining", "maintenance_importing", "maintenance_verified", "durable_object_open"];
+if (!PHASES.includes(control.phase)) {
+  console.error(`Local authority is in unknown phase '${control.phase}'.`);
   process.exit(1);
 }
 
-const generation = Number(control.generation) + 1;
+// Resuming a half-finished walk is the common failure mode — a crashed Worker
+// or an interrupted script leaves the phase mid-machine — so every step below
+// is guarded by "are we before this phase" rather than assumed from a clean
+// start.
+const reached = (phase) => PHASES.indexOf(control.phase) >= PHASES.indexOf(phase);
+const generation = control.phase === "legacy_open"
+  ? Number(control.generation) + 1
+  : Number(control.generation);
 const advance = (sql) => query(sql);
 
 // Draining admits no new legacy work and creates pending route rows for every
 // existing work stream and workspace.
-advance(`UPDATE workstream_authority_control
-    SET phase='maintenance_draining', generation=${generation},
-        serving_contract_version=required_serving_contract_version,
-        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  WHERE id=1`);
+if (!reached("maintenance_draining")) {
+  advance(`UPDATE workstream_authority_control
+      SET phase='maintenance_draining', generation=${generation},
+          serving_contract_version=required_serving_contract_version,
+          updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE id=1`);
+}
 
-// The drain gate: no live legacy runs may cross into the import phase. Seeded
-// fixtures ship one; a developer may have made more.
+// The drain gate: no live legacy runs may cross into the import phase.
 advance(`UPDATE harness_runs
     SET status='completed',
         terminalized_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
         completed_at=COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   WHERE terminalized_at IS NULL`);
 
-advance(`UPDATE workstream_authority_control SET phase='maintenance_importing',
-        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
+if (!reached("maintenance_importing")) {
+  advance(`UPDATE workstream_authority_control SET phase='maintenance_importing',
+          updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
+}
 
 // Route states move with the phases: verified before the verified gate, active
 // before the open gate. `importing` first because the route machine is also
-// forward-only.
+// forward-only. Route updates are idempotent, so a resumed walk repeats them
+// harmlessly.
 for (const state of ["importing", "verified"]) {
-  advance(`UPDATE workstream_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
-  advance(`UPDATE workspace_product_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
+  advance(`UPDATE workstream_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation} AND state != 'active'`);
+  advance(`UPDATE workspace_product_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation} AND state != 'active'`);
 }
-advance(`UPDATE workstream_authority_control SET phase='maintenance_verified',
-        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
-for (const table of ["workstream_authority_routes", "workspace_product_authority_routes"]) {
-  advance(`UPDATE ${table} SET state='active', activated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
+if (!reached("maintenance_verified")) {
+  advance(`UPDATE workstream_authority_control SET phase='maintenance_verified',
+          updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
 }
+// Only the workstream route table records an activation time.
+advance(`UPDATE workstream_authority_routes SET state='active', activated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
+advance(`UPDATE workspace_product_authority_routes SET state='active', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
 advance(`UPDATE workstream_authority_control SET phase='durable_object_open',
         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
 
@@ -104,29 +131,28 @@ await importSeeds();
 // half-succeeding.
 async function importSeeds() {
   const baseUrl = process.env.AVALON_E2E_BASE_URL ?? "http://127.0.0.1:8787";
-  const seeds = query(
-    "SELECT id, workspace_id FROM workstreams WHERE do_identity_anchor IS NULL OR do_identity_anchor != 1",
-  );
-  if (seeds.length === 0) {
-    console.log("No legacy work streams to import.");
-    return;
-  }
+  const fixtures = JSON.parse(readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "packages", "db", "seed-product.json"),
+    "utf8",
+  ));
   const health = await fetch(new URL("/health", baseUrl)).then((r) => r.json()).catch(() => null);
   if (!health?.ok) {
-    console.log(`Worker not running at ${baseUrl}; start \`pnpm dev:api:local\` and re-run to import the ${seeds.length} seeded work stream(s).`);
+    console.log(`Worker not running at ${baseUrl}; start \`pnpm dev:api:local\` and re-run to seed the product fixtures.`);
     return;
   }
-  for (const seed of seeds) {
-    const response = await fetch(new URL("/dev/import-seed-workstream", baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId: seed.workspace_id, workstreamId: seed.id }),
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      console.error(`Import failed for ${seed.id}: ${JSON.stringify(body).slice(0, 200)}`);
-      process.exit(1);
-    }
-    console.log(`Imported ${seed.id}: ${JSON.stringify(body.copied ?? body)}`);
+  const payload = { ...fixtures };
+  delete payload.comment;
+  const response = await fetch(new URL("/dev/seed-product", baseUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    console.error(`Product seed failed: ${JSON.stringify(body).slice(0, 300)}`);
+    process.exit(1);
+  }
+  for (const entry of body.workstreams ?? []) {
+    console.log(`Seeded ${entry.workstreamId}: ${JSON.stringify(entry.copied)}`);
   }
 }

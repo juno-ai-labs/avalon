@@ -670,6 +670,38 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-20 — The development seed touches no product table
+
+**What changed:** `packages/db/seed.sql` shrank to the regional control plane
+— users, workspaces, members, and the `workstreams` index rows. Product
+content moved to `packages/db/seed-product.json` and reaches the Durable
+Objects through the Worker's dev-gated `POST /dev/seed-product`, which
+`pnpm db:open-authority` invokes: workspace-authority rows (resources,
+connections, automations, schedules) through the workspace runtime router,
+work-stream rows (participants, runs, tool invocations, messages) through the
+work-stream compat views, attachments through the product attach flow. A
+migration test pins the contract: the listed product tables must be empty
+after the seed, and a product row reappearing in seed.sql fails the suite.
+
+**Why:** The legacy D1 product tables cannot be dropped while anything writes
+them, and the seed was the last writer. It was also the last consumer the
+old import route scraped rows from — a circular dependency between the seed
+and the tables it was keeping alive.
+
+**Considered and rejected:** Seeding through the public API — it cannot
+fabricate historical transcripts, tool events, or terminal runs, which is
+what the fixtures are for; and keeping a parallel legacy seed for
+pre-open stacks — the pre-open configuration is no longer supported.
+
+**Consequences:** Two seeded behaviors changed deliberately: the fixture run
+is terminal rather than `running` (a running run with no executor is the
+phantom the reaper kills), and local automations are visible again on an
+opened stack — they previously existed only in fenced D1. The D1 product
+tables now have no writers outside migrations, which is the precondition the
+drop migration was waiting for.
+
+
+
 ### 2026-08-20 — `agent_run_dispatches` carries a lease in both agent objects
 
 **What changed:** `lease_token` and `lease_expires_at`, plus an index on
