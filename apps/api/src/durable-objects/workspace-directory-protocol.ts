@@ -82,17 +82,6 @@ export const WorkspaceDirectoryReorderPinsRequestSchema = z.object({
   workstreamIds: z.array(IdSchema).max(1_000),
 }).strict();
 
-export const WorkspaceDirectoryImportPinsRequestSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  pins: z.array(z.object({
-    userId: IdSchema,
-    position: z.number().int().nonnegative(),
-    createdAt: TimestampSchema,
-    updatedAt: TimestampSchema,
-  }).strict()).max(10_000),
-}).strict();
-
 export const WorkspaceDirectoryNotificationRequestSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
@@ -298,7 +287,6 @@ export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryE
 export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectoryPlannedRequestSchema>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;
 export type WorkspaceDirectoryReorderPinsRequest = z.infer<typeof WorkspaceDirectoryReorderPinsRequestSchema>;
-export type WorkspaceDirectoryImportPinsRequest = z.infer<typeof WorkspaceDirectoryImportPinsRequestSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;
 export type WorkspaceDirectoryNotificationState = z.infer<typeof WorkspaceDirectoryNotificationStateSchema>;
 export type WorkspaceDirectoryResourceRequest = z.infer<typeof WorkspaceDirectoryResourceRequestSchema>;
