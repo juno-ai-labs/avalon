@@ -9,6 +9,7 @@ import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
@@ -192,6 +193,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         <BackgroundWorkstreamSocket api={api} key={workstreamId} workstreamId={workstreamId} />
       ))}
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+      <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading || notes.isLoading}

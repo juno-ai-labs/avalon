@@ -41,7 +41,7 @@ export const themeDescriptions: readonly ThemeDescription[] = [
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
   light: '#ffffff',
   dark: '#111210',
-  airy: '#0a0806',
+  airy: '#100e0c',
 };
 
 export function parseThemeChoice(value: unknown): ThemeChoice | null {

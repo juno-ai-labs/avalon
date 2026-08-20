@@ -1,12 +1,27 @@
 /*
  * GENERATED FILE — do not edit.
  *
- * Written by `scripts/build-theme-css.mjs` from the design-token JSON under
- * `config/design-tokens/`. Edit a theme there and run `pnpm tokens:build`;
- * `pnpm tokens:check` fails if this file and that JSON disagree.
+ * Written by `scripts/build-theme-assets.mjs` from the design-token JSON
+ * under `config/design-tokens/`. Edit a theme there and run
+ * `pnpm tokens:build`; `pnpm tokens:check` fails if the two disagree.
  *
  * See `docs/theming.md` for the token taxonomy and what each tier means.
  */
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('../fonts/geist-latin-variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('../fonts/geist-mono-latin-variable.woff2') format('woff2');
+}
 
 /* Dark — Avalon's original low-light palette. */
 :root,
@@ -224,11 +239,13 @@
   /* Between paragraphs. */
   --av-sys-space-prose-gap: 14px;
 
-  /* The families. `ui` is named but not bundled, so weight resolves against
-   * whatever the platform substitutes. */
-  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* The families. `ui` and `mono` are Geist, which ships inside the
+   * application as a `bundled` font source — a family the app only names is a
+   * family the platform substitutes, and weight then resolves against whatever
+   * it picked. */
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
-  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   /* The sizes the interface sets, as against the document size a theme
    * inherits. */
@@ -363,15 +380,15 @@
   --av-ref-color-line-6: #4a4030;
 
   --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
-  --av-sys-backdrop-image: radial-gradient(32% 50% at 67% 28%, rgba(232, 150, 72, 0.17), rgba(228, 144, 64, 0.062) 40%, rgba(224, 140, 58, 0.014) 72%, transparent), radial-gradient(37% 58% at 52% 84%, rgba(230, 147, 68, 0.145), rgba(226, 141, 60, 0.05) 42%, rgba(224, 140, 58, 0.012) 74%, transparent);
+  --av-sys-backdrop-image: none;
   --av-sys-backdrop-position: 0% 0%;
   --av-sys-backdrop-size: auto;
   --av-sys-backdrop-repeat: no-repeat;
   --av-sys-backdrop-attachment: fixed;
   --av-sys-backdrop-blend-mode: normal;
 
-  --av-sys-color-surface-canvas: #0a0806;
-  --av-sys-color-surface-default: #0a0806;
+  --av-sys-color-surface-canvas: #100e0c;
+  --av-sys-color-surface-default: #100e0c;
   --av-sys-color-surface-subtle: #110e0a;
   --av-sys-color-surface-sunken: #080604;
   --av-sys-color-surface-raised: #16110b;
@@ -391,7 +408,7 @@
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  --av-sys-color-brand-base: #e08c3a;
+  --av-sys-color-brand-base: #e8a15c;
   --av-sys-color-brand-strong: #f0a55a;
   --av-sys-color-brand-soft: #d29757;
   --av-sys-color-brand-ink: #e08c3a;
@@ -501,9 +518,9 @@
 
   --av-sys-space-prose-gap: 22px;
 
-  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --av-sys-font-family-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
-  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-display: var(--av-sys-font-family-ui);
+  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   --av-sys-font-size-base: 15px;
   --av-sys-font-size-prose: 16.5px;
@@ -745,9 +762,9 @@
 
   --av-sys-space-prose-gap: 15px;
 
-  --av-sys-font-family-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
-  --av-sys-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   --av-sys-font-size-base: 14px;
   --av-sys-font-size-prose: 14px;

@@ -470,6 +470,20 @@ pre {
   width: 100%;
 }
 
+/* The frame a theme's backdrop document renders in. It sits between the shell's
+   painted backdrop and every pane, takes no pointer, and takes no focus — the
+   document inside it is decoration with a clock, not an interface. */
+.theme-backdrop {
+  border: 0;
+  color-scheme: normal;
+  height: 100%;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+  z-index: 0;
+}
+
 .main-pane {
   /* Its own fill, over the shell's backdrop. A theme that wants the backdrop to
      reach the feed sets this to `transparent`; one that wants the pane to be a
@@ -481,6 +495,9 @@ pre {
   min-width: 0;
   overflow: hidden;
   position: relative;
+  /* Above the backdrop frame, which is positioned and would otherwise paint over
+     this pane's static content for being later in the same stacking context. */
+  z-index: 1;
 }
 
 @media (min-width: 1181px) {
