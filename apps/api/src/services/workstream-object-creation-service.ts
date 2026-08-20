@@ -10,7 +10,7 @@ import type { z } from "zod";
 
 import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
-import { workstreamImportHash } from "../durable-objects/workstream-authority-import";
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { provisionalWorkstreamTitle } from "./workstream-naming-service";

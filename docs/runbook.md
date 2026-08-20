@@ -208,7 +208,7 @@ without matching the exact regional route and object-local
 workspace/work-stream/generation rows;
 final diffs and ambiguous publication state may still require preservation.
 
-Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. After the Durable Object cutover these rows live in the owning `WorkspaceDO` (`realtime_transcription_ticket_receipts` and `realtime_transcription_sessions`); the D1 tables are fenced maintenance-import input. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
+Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. After the Durable Object cutover these rows live in the owning `WorkspaceDO` (`realtime_transcription_ticket_receipts` and `realtime_transcription_sessions`); the D1 tables are fenced. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
 
 Alert on `realtime_transcription_session_release_failed`. The Worker retries the idempotent lease deletion in the owning WorkspaceDO before emitting this event; repeated occurrences can leave a user at the concurrency limit until the five-minute lease expires.
 
@@ -542,16 +542,15 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 ## Realtime operations and cost controls
 
 - Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `block-dashboard:<stable-block-id>` for each configured `BlockDashboardAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
-- Respect the authority phase. Before `durable_object_open`, REST reads the
-  legacy D1 source; afterward REST reads the selected `SubstreamAgent`, its
-  parent holds aggregate metadata/outbox, and D1 contains only authority/migration
-  routing plus activity/notification and unrelated relational workspace data;
+- Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
+  parent holds aggregate metadata/outbox, and D1 contains only authority
+  routing plus unrelated relational workspace data;
   work-stream directory state is in WorkspaceDO. The child's bounded replay
   buffer remains an in-memory
   optimization. The active checkpoint lives in `active_output_turns` and
   60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
   terminal state. Do not collapse it into one unbounded value.
-- Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data moves only through the maintenance import, never a hidden KV importer.
+- Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data never moves through a hidden KV importer.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
   SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO,
@@ -609,100 +608,44 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
-### WorkstreamDO authority maintenance cutover
+### WorkstreamDO authority steady-state operations
 
-**The ordinary path is automated.** Merging the cutover branch triggers
-`deploy-api.yml`, which applies every pending migration, deploys both Workers
-(the shipped Worker is dual-path and already attests serving contract 1, so
-there is no separate compatibility deploy), and then runs
-`scripts/run-authority-cutover.mjs` for EU, verifies EU health, and runs it for
-Global. The script executes the numbered steps below as guarded D1 updates —
-the phase-transition triggers remain the safety authority, a region already at
-`durable_object_open` is a fast no-op on every later merge, and a quarantine
-fails the workflow run for a human. Each region returns 503 for non-health
-traffic from the drain flip until it opens; merge when that downtime is
-acceptable. The automated path substitutes the post-open health check for step
-6's inside-the-window smoke tests; run the step 7 product checks (two
-simultaneous streaming work streams, sidebar pages) promptly after the
-workflow reports both regions open. A `workflow_dispatch` run can skip the
-cutover with `run_cutover: false`.
+Both regions completed the one-time maintenance cutover and are permanently at
+`durable_object_open` in `workstream_authority_control`. The campaign machinery
+(the cron importer, the per-object import RPCs, and the deploy workflow's
+cutover steps) has been retired; the control row, the route directory, and the
+legacy D1 fence triggers deliberately remain. The control row is read on every
+request and fails closed — do not delete it, and never edit
+`serving_contract_version` manually. `workstream_authority_routes` is now the
+live work-stream-to-object directory: creation writes it, and regional effect
+delivery fences on its `state`/`generation`.
 
-The numbered procedure below is what the script executes, the reference for
-watching it, and the manual path for quarantine recovery. Run one region at a
-time. Use a new positive generation; never reuse one from a quarantined
-attempt — the script never resumes a quarantined campaign for this reason.
-
-1. Set `workstream_authority_control` from `legacy_open` (or `quarantined` with
-   a larger generation) to `maintenance_draining`, recording the operator and
-   reason. All non-health HTTP traffic returns 503, named connector/email RPC
-   entrypoints return retryable maintenance failures, Queue deliveries retry,
-   workspace/room alarms park for five minutes, and only existing Workflows may
-   finish.
-2. Confirm the Cloudflare Queue has no in-flight consumer. Query
-   `harness_runs` for every nonterminal `scheduled`/`running` row, including
-   inline children. Wait, cancel through the normal fenced path, or let the
-   stale-run reaper terminalize them. Do not edit a live run to completed.
-3. Set the phase to `maintenance_importing`. The D1 trigger rejects this while
-   any run remains. It also creates one route row for every archived and active
-   work stream at the frozen sequence fence and activates legacy product-table
-   writer triggers. A `workstream_do_authoritative` error during import is a
-   late writer, not permission to remove the fence.
-4. Let cron process the campaign. The importer resolves every target through
-   the jurisdiction-locked namespace, so an unrestricted Global predecessor is
-   a different object and must not be reused or treated as fallback. Monitor
-   counts grouped by `state` and inspect
-   `last_error_code`; `quarantined` stops the region and requires repair plus a
-   new generation. A page can be retried. Do not manually advance its cursor.
-5. When every route verifies, control advances to `maintenance_verified` and
-   cron activates each object. For every work stream it must flush common/user
-   state synchronously from WorkstreamDO into WorkspaceDO, verify the workspace directory
-   row, import the frozen legacy D1 pins, and only then mark the route `active`.
-   This maintenance/bootstrap fence is the only direct parent-to-workspace
-   delivery; after activation every runtime state transition uses Queue.
-   Wait until every route is active. The region remains behind the maintenance
-   response intentionally.
-6. Deploy the Worker whose product reads/writes, direct Bind-loop persistence,
-   Terminal persistence, and child/parent regional-effect outboxes use the
-   `SubstreamAgent`/`WorkstreamDO` hierarchy. Run the read,
-   write, queued/steering, streaming reconnect, Terminal, and sidebar smoke
-   tests while the public surface is still closed. That deployment must bump
-   `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. The complete
-   object-local serving implementation is contract `1`. Cron writes
-   that code-owned attestation only after every route is active; never edit
-   `serving_contract_version` manually.
-7. Confirm `serving_contract_version >= required_serving_contract_version`, then
-   perform the guarded update to `durable_object_open`. It fails unless every
-   route in the generation is active and the serving contract is attested. The
-   Worker gate independently rejects an open phase when its own compile-time
-   version is too old. Verify HTTP, Queue, cron, two simultaneous streaming work
-   streams, and common/user WorkspaceDO sidebar pages before starting the next region.
-
-After opening, inspect the parent `WorkstreamDO.durable_outbox` and source child
-outbox/receipt first. For a missing sidebar badge/resource route/suggestion
-feedback row, inspect `WorkspaceDO.workspace_workstream_effect_receipts` and the
-corresponding `workspace_workstream_*` row's authority generation, waterline,
-and UUIDv7 `source_event_id`. For a missing digest event, Slack
-mention, or email notification, inspect that same
+For a missing or stale product fact, inspect the parent
+`WorkstreamDO.durable_outbox` and source child outbox/receipt first. For a
+missing sidebar badge/resource route/suggestion feedback row, inspect
+`WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
+`workspace_workstream_*` row's authority generation, waterline, and UUIDv7
+`source_event_id`. For a missing digest event, Slack mention, or email
+notification, inspect that same
 `WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
 effects commit their receipt in the object transaction that commits the event
 or intent — and `WorkspaceDO.workstream_notification_intents`. A receiver
 receipt with no local outbox row means the owning WorkspaceDO transaction
 committed and acknowledged the effect; an outbox row with no receiver receipt
-means Queue/consumer-RPC delivery is still retrying. Both rows with the same hash mean
-only the acknowledgement RPC is retrying. Never delete an object outbox row to
-clear an alert. Repair the receiver/consumer and let the alarm resend it. A
-generation/waterline/hash conflict is a producer bug or restore-generation error
-and requires quarantine, not last-writer-wins repair.
+means Queue/consumer-RPC delivery is still retrying. Both rows with the same
+hash mean only the acknowledgement RPC is retrying. Never delete an object
+outbox row to clear an alert. Repair the receiver/consumer and let the alarm
+resend it. A generation/waterline/hash conflict is a producer bug or
+restore-generation error and requires quarantine, not last-writer-wins repair.
 Effect receipts and terminal notification shells disappear after 30 days; a
 redelivery older than that converges on the idempotent product identities
 (directory waterline, activity dedupe key, intent ID) instead of a receipt.
 
-The legacy D1 product triggers are the post-open tripwire. An error containing
-`workstream_do_authoritative` means a missed writer; quarantine and fix that
-path. Do not remove the trigger or fall back to D1. Directory projection tables,
-work-stream resource-link projections, and work-stream pins do not exist after
-this unshipped cutover. Workspace resource records, schedules for D1-owned
-modules, connector delivery, audit, and telemetry remain valid D1 writers.
+The legacy D1 product triggers are the permanent tripwire. An error containing
+`workstream_do_authoritative` (or `workspace_do_authoritative`) means a missed
+writer; quarantine and fix that path. Do not remove the trigger or fall back to
+D1. Workspace resource records, schedules for D1-owned modules, connector
+delivery, audit, and telemetry remain valid D1 writers.
 
 ## Timezones
 
