@@ -689,6 +689,21 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             unixepoch() * 1000, unixepoch() * 1000
       WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)`,
   ],
+}, {
+  version: 6,
+  description: "per-list ordering for the pushed sidebar lists",
+  statements: [
+    // One counter per list, not one for both. `choosing-sockets-or-rest.md`:
+    // fields that change independently need independent counters, or updates
+    // to the faster one hide updates to the slower one. Rows are seeded here
+    // so a push never has to decide what an absent counter means.
+    `CREATE TABLE workspace_sidebar_list_state (
+      list TEXT PRIMARY KEY CHECK (list IN ('automations', 'notes')),
+      waterline INTEGER NOT NULL CHECK (waterline >= 0)
+    ) STRICT`,
+    `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('automations', 0)`,
+    `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('notes', 0)`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -1003,7 +1018,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
-      const results = executeWorkspaceRuntimeSql(this.state.storage, request);
+      const lists = new Set<SidebarList>();
+      for (const statement of request.statements) {
+        const target = workspaceMutationTarget(statement.sql);
+        const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
+        if (list) lists.add(list);
+      }
+      // The counters advance inside the write's own transaction, so a version
+      // can never describe rows that rolled back.
+      const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
       if (request.statements.some((statement) => {
         const target = workspaceMutationTarget(statement.sql);
         return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
@@ -1019,14 +1042,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }));
       }
-      // After the transaction, so a socket is never sent a list built from
-      // rows that are about to roll back.
-      const lists = new Set<SidebarList>();
-      for (const statement of request.statements) {
-        const target = workspaceMutationTarget(statement.sql);
-        const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
-        if (list) lists.add(list);
-      }
+      // Published after it commits, so a socket is never sent a list built
+      // from rows that are about to disappear.
       for (const list of lists) this.publishSidebarList(list);
       return responseToRpcResult(json({ results }));
     } catch (error) {
@@ -1104,8 +1121,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           limit: parsed.data.limit,
           includeSystem: parsed.data.includeSystem,
         }),
-        automations: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
-        notes: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+        automations: {
+          waterline: this.sidebarListWaterline("automations"),
+          items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+        },
+        notes: {
+          waterline: this.sidebarListWaterline("notes"),
+          items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+        },
       })));
       return;
     }
@@ -3289,8 +3312,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * on the same socket. That ordering is what lets the event carry no
    * waterline; see the schema in `packages/contracts`.
    */
+  private sidebarListWaterline(list: SidebarList): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM workspace_sidebar_list_state WHERE list = ?`,
+      list,
+    ).one().waterline;
+  }
+
   private publishSidebarList(list: SidebarList): void {
     const occurredAt = new Date().toISOString();
+    const waterline = this.sidebarListWaterline(list);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -3302,6 +3333,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           type: "workspace_sidebar_list",
           occurredAt,
           list,
+          waterline,
           items,
         })));
       } catch {

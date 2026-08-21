@@ -422,7 +422,7 @@ describe('WorkspaceSocketProvider', () => {
           pinPosition: null,
         }],
       },
-      automations: [{
+      automations: { waterline: 3, items: [{
         id: '00000000-0000-7000-8000-000000000005',
         name: 'Monday brief',
         description: 'Every Monday',
@@ -433,8 +433,8 @@ describe('WorkspaceSocketProvider', () => {
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
         updateAvailable: false,
-      }],
-      notes: [{
+      }] },
+      notes: { waterline: 1, items: [{
         id: '00000000-0000-7000-8000-000000000006',
         workspaceId: '00000000-0000-7000-8000-000000000001',
         resourceId: '00000000-0000-7000-8000-000000000009',
@@ -450,7 +450,7 @@ describe('WorkspaceSocketProvider', () => {
         createdAt: '2026-08-17T19:00:00.000Z',
         updatedAt: '2026-08-17T21:00:00.000Z',
         archivedAt: null,
-      }],
+      }] },
     }));
 
     await expect(result).resolves.toMatchObject({
@@ -458,8 +458,11 @@ describe('WorkspaceSocketProvider', () => {
       items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
       // Mapped the way the REST list maps it: the sidebar renders `you` for a
       // personal row, so the wire's `personal`/`workspace` cannot reach it raw.
-      automations: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Monday brief', scope: 'workspace' }],
-      notes: [{ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' }],
+      automations: {
+        waterline: 3,
+        items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Monday brief', scope: 'workspace' }],
+      },
+      notes: { waterline: 1, items: [{ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' }] },
     });
     // The batch also lands in the shared ledger, so a row it carried is not
     // re-fetched by the work-stream caches behind it.
@@ -505,6 +508,7 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_sidebar_list',
       occurredAt: '2026-08-17T20:00:00.000Z',
       list: 'automations',
+      waterline: 5,
       items: [
         automation('00000000-0000-7000-8000-000000000005', 'Monday brief'),
         automation('00000000-0000-7000-8000-000000000006', 'Former-client monitor'),
@@ -521,6 +525,7 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_sidebar_list',
       occurredAt: '2026-08-17T20:01:00.000Z',
       list: 'automations',
+      waterline: 6,
       items: [automation('00000000-0000-7000-8000-000000000005', 'Monday brief')],
     }));
     expect(queryClient.getQueryData(['automations'])).toEqual([
@@ -531,6 +536,7 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_sidebar_list',
       occurredAt: '2026-08-17T20:02:00.000Z',
       list: 'notes',
+      waterline: 2,
       items: [{
         id: '00000000-0000-7000-8000-000000000007',
         workspaceId: '00000000-0000-7000-8000-000000000001',
@@ -553,6 +559,66 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000007', title: 'Standup' })]);
     // The lists are separate pushes; one must not clear the other.
     expect(queryClient.getQueryData(['automations'])).toHaveLength(1);
+  });
+
+  it('drops a sidebar list whose version is not newer than the one applied', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    const push = (waterline: number, name: string) => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      list: 'automations',
+      waterline,
+      items: [{
+        id: '00000000-0000-7000-8000-000000000005',
+        name,
+        description: 'Every Monday',
+        emailAddress: null,
+        scope: 'workspace',
+        status: 'active',
+        nextRunAt: null,
+        lastRunAt: null,
+        updatedAt: '2026-08-17T19:00:00.000Z',
+        updateAvailable: false,
+      }],
+    });
+
+    act(() => push(7, 'Newest'));
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'Newest' })]);
+
+    // A redelivery of the same version, and a straggler from before it. Neither
+    // is newer, so neither may overwrite what is on screen — this is the whole
+    // reason the list carries a version rather than trusting arrival order.
+    act(() => push(7, 'Duplicate'));
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'Newest' })]);
+    act(() => push(6, 'Stale'));
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'Newest' })]);
+
+    act(() => push(8, 'Newer still'));
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {

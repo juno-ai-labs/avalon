@@ -2,8 +2,9 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket, type WorkstreamPage } from './workspace-socket';
+import { applyVersionedSidebarList } from './sidebar-list-store';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
-import type { AutomationSummary, NoteSummary, WorkstreamSummary } from './types';
+import type { WorkstreamSummary } from './types';
 
 /**
  * The one cache entry every work-stream list reads and every producer writes.
@@ -100,15 +101,18 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
           // Written before this function returns, so React Query stores the
           // work streams in the same tick the other two lists land in. The
           // three arrive in one render rather than three, which is the whole
-          // point of asking for them together. The keys are the ones the shell
-          // reads them under; `use-workstreams-query.test.tsx` holds them to it.
+          // point of asking for them together.
           //
-          // Safe against a push that lands mid-flight: WorkspaceDO reads this
-          // batch and sends it before any later write can be applied, and the
-          // socket preserves that order, so a newer pushed list always arrives
-          // after the batch it supersedes.
-          queryClient.setQueryData<AutomationSummary[]>(['automations'], batch.automations);
-          queryClient.setQueryData<NoteSummary[]>(['notes'], batch.notes);
+          // Through the same receiver the pushes use, so a batch read before a
+          // write cannot land on top of the push that carried it: the ledger
+          // keeps whichever version is newer, whatever order they arrive in.
+          applyVersionedSidebarList(
+            queryClient,
+            'automations',
+            batch.automations.waterline,
+            batch.automations.items,
+          );
+          applyVersionedSidebarList(queryClient, 'notes', batch.notes.waterline, batch.notes.items);
           result = batch;
         } else {
           result = await listWorkstreams({
