@@ -402,7 +402,7 @@ harness attempt, index, trigger, and start time; the matching
 (or the attempt fails). A finish from an abandoned attempt cannot clear a
 recovered attempt at the same run/index. Snapshot and resync frames carry that
 singleton. It exists solely to restore the desktop activity indicator and never
-substitutes for `compaction_jobs` or `compaction_checkpoints`.
+substitutes for `compaction_checkpoints`.
 
 The child keeps a bounded replay window in memory. A connected desktop can
 switch from stream A to stream B and back with no loss: it sends its last room
@@ -855,18 +855,18 @@ join crosses an object boundary.
 
 | Table group | Meaning and relationships |
 | --- | --- |
-| `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Schema/data/import versions and resumable maintenance receipts. |
+| `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
-| `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
+| `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources, the authorization revision every relationship change advances (compat-routed changes included), and operational suggestion overlays. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
-| `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
+| `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
 `parts.sequence_number` is transcript order, including tool and system rows.
@@ -975,6 +975,49 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — Retire four object tables that no code reads or writes
+
+**What changed:** Schema migration 11 drops `terminal_commands`,
+`compaction_jobs`, `_data_migrations`, and `_migration_command_receipts` from
+the SubstreamAgent database. The v1 statements still create them — they are
+hashed into every deployed object's `_sql_schema_migrations` receipt and cannot
+be edited — so a new object now creates and drops them inside one bootstrap
+transaction.
+
+**Why:** Each survived the work it was built for. `terminal_commands` was
+provisioned for per-command receipts during the D1 retirement, but the Terminal
+runtime settles commands through `terminal_tasks`, which already carries the
+command hash, deadline, exit, termination reason, byte counts, and head/tail.
+`compaction_jobs` modelled compaction as a claimable job row before the agent
+settled on the `active_agent_compaction` singleton plus immutable
+`compaction_checkpoints`. The two `_`-prefixed tables are bookkeeping for the
+one-time authority cutover campaign whose driver was deleted in "Retire the
+authority cutover campaign machinery" — the tables outlived it. An empty table
+with plausible columns is worse than no table: it invites a future writer to
+adopt a shape nothing has ever exercised, and it makes the schema read as
+though a second compaction or command authority exists.
+
+**Considered and rejected:** Deleting the `CREATE TABLE` statements from v1.
+That changes v1's implementation hash, and `applyDurableObjectSqliteMigrations`
+throws `workstream_schema_hash_mismatch:1` on any object whose receipt records
+the original — which is every deployed object. Append-only history is the
+constraint; the redundant create-then-drop is its price. Also rejected:
+dropping `content_refs` in the same migration. It has no reader either, but
+`parts.content_ref_id` carries a foreign key, two CHECK constraints, and a
+partial index pointing at it, so retiring it means rebuilding the transcript's
+hottest table under a maintenance window. That is its own change.
+
+**Consequences:** `terminal_commands` and `compaction_jobs` never had a writer
+in this repository's history, so their drop cannot lose a row. The two
+`_`-prefixed tables did, and a deployed object may still hold the completed
+campaign's receipts; the drop discards them deliberately, because the campaign
+finished, its D1 source tables were retired in migration `0090`, and nothing
+can replay from them. A future migration must not reuse these four names for a
+different shape — a re-`CREATE` under an old name would land beside the drop in
+version order and read as a revival. Anything that genuinely needs per-command
+receipts or a claimable compaction job should model it fresh, and say in its
+own entry why `terminal_tasks` or `compaction_checkpoints` is not enough.
 
 ### 2026-08-21 — Stopped runs remain stopped through every projection
 
