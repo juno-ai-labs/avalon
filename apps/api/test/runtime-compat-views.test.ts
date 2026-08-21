@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
+import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -70,5 +72,137 @@ describe("the runtime messages insert trigger", () => {
     ).toArray();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.id).toBe("00000000-0000-7000-8000-00000000aa01");
+  });
+
+  it("settles a tool write with the same id and client id", () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    applyWorkstreamObjectSchema(createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null, setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(), sql,
+    }), "v", 1);
+    sql.exec(`INSERT INTO workstream (
+        id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+        authority_mode, authority_generation, title, description, preview, scope,
+        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+        unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+        source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+        created_at, last_people_activity_at, state_changed_at, updated_at
+      ) VALUES (1,'S','W',NULL,0,'global','authoritative',1,'T','','','workspace',
+                'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
+    sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+      VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
+
+    const id = "00000000-0000-7000-8000-00000000bb01";
+    const write = (status: "started" | "completed", editedAt: string | null) => sql.exec(
+      `INSERT INTO _runtime_messages
+         (id, client_message_id, workspace_id, workstream_id, author_type,
+          message_type, text_content, structured_content_json, sequence_number,
+          created_at, edited_at)
+       VALUES (?, ?, 'W', 'S', 'agent', 'tool', '', ?, 5,
+               '2026-08-20T12:00:00.000Z', ?)`,
+      id,
+      `tool:${id}`,
+      JSON.stringify({ invocation: { toolName: "workstream_read_resource", status } }),
+      editedAt,
+    );
+
+    write("started", null);
+    write("completed", "2026-08-20T12:00:01.000Z");
+
+    const rows = sql.exec<{
+      invocation_status: string;
+      tool_status: string;
+      edited_at: number | null;
+    }>(`SELECT json_extract(structured_content_json, '$.invocation.status') AS invocation_status,
+              tool_status, edited_at
+         FROM parts WHERE id = ?`, id).toArray();
+    expect(rows).toEqual([{
+      invocation_status: "completed",
+      tool_status: "completed",
+      edited_at: 1_787_227_201_000,
+    }]);
+  });
+
+  it("repairs a terminal tool row stranded before schema v11", () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null, setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(), sql,
+    });
+    applyDurableObjectSqliteMigrations({
+      storage,
+      migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.slice(0, 10),
+      component: "workstream",
+      workerVersionId: "v10",
+      now: 1,
+    });
+    sql.exec(`INSERT INTO workstream (
+        id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+        authority_mode, authority_generation, title, description, preview, scope,
+        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+        unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+        source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+        created_at, last_people_activity_at, state_changed_at, updated_at
+      ) VALUES (1,'S','W',NULL,0,'global','authoritative',1,'T','','','workspace',
+                'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
+    sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+      VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
+    const runId = "00000000-0000-7000-8000-00000000cc01";
+    const toolId = "00000000-0000-7000-8000-00000000cc02";
+    sql.exec(
+      `INSERT INTO _runtime_harness_runs
+         (id, workspace_id, workstream_id, origin, execution_principal_json,
+          status, started_at, created_at)
+       VALUES (?, 'W', 'S', 'message', '{}', 'running',
+               '2026-08-20T12:00:00.000Z', '2026-08-20T12:00:00.000Z')`,
+      runId,
+    );
+    sql.exec(
+      `INSERT INTO _runtime_messages
+         (id, client_message_id, workspace_id, workstream_id, author_type,
+          message_type, text_content, structured_content_json, sequence_number, created_at)
+       VALUES (?, ?, 'W', 'S', 'agent', 'tool', '', ?, 5,
+               '2026-08-20T12:00:00.000Z')`,
+      toolId,
+      `tool:${toolId}`,
+      JSON.stringify({ invocation: {
+        id: toolId,
+        toolName: "workstream_read_resource",
+        status: "started",
+        outputSummary: null,
+        completedAt: null,
+        error: null,
+      } }),
+    );
+    sql.exec(
+      `INSERT INTO _runtime_tool_invocations
+         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+          input_hash, input_json, output_summary, status, started_at, completed_at)
+       VALUES (?, 'W', 'S', ?, 'call-1', 'workstream_read_resource',
+               'hash', '{}', 'Read 47 characters from fixture.txt', 'completed',
+               '2026-08-20T12:00:00.000Z', '2026-08-20T12:00:01.000Z')`,
+      toolId,
+      runId,
+    );
+
+    applyWorkstreamObjectSchema(storage, "v11", 2);
+
+    expect(sql.exec<{
+      invocation_status: string;
+      output_summary: string;
+      completed_at: string;
+      tool_status: string;
+    }>(`SELECT json_extract(structured_content_json, '$.invocation.status') AS invocation_status,
+              json_extract(structured_content_json, '$.invocation.outputSummary') AS output_summary,
+              json_extract(structured_content_json, '$.invocation.completedAt') AS completed_at,
+              tool_status
+         FROM parts WHERE id = ?`, toolId).toArray()).toEqual([{
+      invocation_status: "completed",
+      output_summary: "Read 47 characters from fixture.txt",
+      completed_at: "2026-08-20T12:00:01.000Z",
+      tool_status: "completed",
+    }]);
   });
 });
