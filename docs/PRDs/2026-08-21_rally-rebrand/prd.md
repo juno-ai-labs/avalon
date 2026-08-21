@@ -339,13 +339,31 @@ webhook logs show it idle.
   name (decision 4).
 - **Resend** — verify the Rally automation domain for sending; keep the old
   domain verified and receiving indefinitely (decision 2).
-- **Slack, GitHub, Linear** (`config/provider-apps/*.json`) — display names,
-  branding, and redirect/callback URLs move to `{slack,github,linear}.rallywith.ai`;
-  add-before-remove so in-flight OAuth completes. The GitHub App rides the
-  repository rename; existing installations follow automatically.
+- **Slack, GitHub, Linear** — redirect/callback URLs move to
+  `{slack,github,linear}.rallywith.ai`, add-before-remove so in-flight OAuth
+  completes. Two distinct surfaces change: the checked-in manifests
+  (`config/provider-apps/*.json` — `display_information`, the long
+  description, agent display name, shortcut labels, all currently saying
+  Avalon) rename with the flip, and the *published* listings — the Slack App
+  Directory / Marketplace entry, the Linear integration directory entry, the
+  GitHub App's public profile — are edited manually in each provider
+  console, where a listing change can queue behind that provider's review.
+  The GitHub App rides the repository rename; existing installations follow
+  automatically.
 - **Notion** — callback and webhook host re-registration per Regional impact;
-  public-integration re-review risk is an open question.
-- **Google** — OAuth consent screen name, logo, and authorized domains.
+  the public-integration gallery listing is manually edited, and re-review
+  risk is an open question.
+- **Google** — both OAuth clients from
+  [`provider-apps.md`](../../provider-apps.md), not just the consent screen:
+  **Avalon Login** (`api.with-avalon.com/auth/google/callback`) and
+  **Avalon Google Connectors** (`…/connections/google/callback` in both
+  regions) each gain their `rallywith.ai` redirect URIs before the flip and
+  keep the old ones until phase 4; the consent-screen name, logo, and
+  authorized domains change with the flip. The connector client is verified
+  for the restricted `gmail.modify` scope, and changing a verified app's
+  name or domains can re-trigger Google's verification and security
+  assessment — a timeline risk of the same shape as Notion's, carried in
+  open question 3.
 - **Apple** — team id (`AVALON_APPLE_TEAM_ID` renames in code only) and
   signing identity unchanged; notarization follows the bundle id, which stays
   (decision 3).
@@ -426,8 +444,10 @@ predecessor, and sequenced so every state the fleet can observe is valid.
    clearance check before phase 2 makes it public. Blocks phase 2, not
    phase 0–1 groundwork.
 2. **New repository name — `rally`?** Assumed here. Blocks phase 3 only.
-3. **Do the Slack directory listing or Notion public-integration re-reviews
-   gate the callback/branding changes, and on what timeline?** May force
+3. **Do the provider re-reviews gate the callback/branding changes, and on
+   what timeline?** Three carry the risk: the Slack App Directory /
+   Marketplace listing, the Notion public-integration gallery, and Google's
+   verification of the restricted-scope connector client. May force
    phase 1's provider additions to start earliest of all.
 4. **Does outbound email move to the new domain on flip day, or after a
    deliverability warm-up?** A cold sending domain can land digests in spam;
