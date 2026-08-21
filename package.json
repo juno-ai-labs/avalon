@@ -14,7 +14,7 @@
     "env:sync": "node scripts/sync-dev-env.mjs",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
-    "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs",
+    "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs && dotenv -e .env.local -- node scripts/check-cloudflare-queues.mjs",
     "terminal:analytics": "dotenv -e .env.local -- node scripts/report-terminal-analytics.mjs",
     "notion:webhook:prepare": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs prepare",
     "notion:webhook:copy-token": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs copy-token",
