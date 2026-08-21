@@ -34,7 +34,8 @@ is recorded.
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
-| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages and retains the last page while a reconnect retries its request. |
+| `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages, opens a cold sidebar with the one batched read, and retains the last page while a reconnect retries its request. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
@@ -166,7 +167,27 @@ common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed wo
 and the next cursor. Pending page requests survive a transient reconnect
 and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
-REST/D1 list endpoint to reconstruct them. The renderer applies WorkspaceDO-owned
+REST/D1 list endpoint to reconstruct them.
+
+Opening a cold sidebar sends `list_sidebar` instead, once. It carries the same
+request ID, limit and system-row preference but no cursor, and WorkspaceDO
+answers `workspace_sidebar_page`: one `workstream_page` body plus the viewer's
+automations and notes, each bounded at 250 rows. All three come from this
+object's own SQLite — `workspace_workstream_directory`, `automation_subscriptions`
+and `notes` — read with no `await` between them, so the sidebar opens on one
+consistent snapshot in one round trip rather than a socket page beside two REST
+calls that turn back into RPC to this same object. The batch is the cold read
+only: a later page is `list_workstreams`, and a later refresh belongs to whichever
+topic owns the list that changed. Two consequences follow. The automation email
+route is served as stored, because reconciling it against the Global registry is
+a network call that must not run on the object's socket thread; no sidebar row
+renders the address, and the next `automations` invalidation refetches a
+reconciled list over REST. And a workspace past either bound is served its first
+250 rows here and reconciled the same way — a bound that truncates keeps a very
+large sidebar loading, where a bound that rejected would fail the whole batch.
+The desktop keeps `automations` and `notes` disabled until the batch settles,
+succeeded or failed, so they never race it on a cold start and a failed batch
+still hands the sidebar back to REST. The renderer applies WorkspaceDO-owned
 fields such as pin position only when that row's observed directory waterline is
 newer. Every socket reconnect also reloads a resident directory, because current
 state rows intentionally do not retain every intermediate push for replay.
@@ -424,6 +445,39 @@ work stream no longer closes anything until reconnect — those are object-local
 facts the D1-fed queue cannot see.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
+
+### 2026-08-21 — The sidebar opens on one answer instead of three
+
+**What changed:** A `list_sidebar` command and its `workspace_sidebar_page`
+reply. WorkspaceDO answers the cold sidebar read with the first directory page,
+the viewer's automations and the viewer's notes together, from three local
+SQLite reads with no `await` between them. Electron sends it in place of the
+first `list_workstreams`, seeds all three caches before the query resolves, and
+holds the REST `automations`/`notes` queries disabled until it settles. The
+statement and row mapping for each list are shared with the REST services in
+`sidebar-reads.ts`.
+
+**Why:** The three lists have one authority and had three transports. Work
+streams came down this socket while automations and notes each cost a Worker
+round trip that turned straight back into RPC to this same object — so opening
+the sidebar paid for three sequential arrivals of data one object could have
+answered at once, and filled in three visible stages.
+
+**Considered and rejected:** Leaving the two on REST and only reordering their
+fetches, which does not remove a round trip; moving them onto their own socket
+commands, which is three correlated requests instead of one and still fills the
+sidebar in stages; and making the batch the refresh path too, which would let a
+directory invalidation overwrite an automations list a REST refresh had just
+written.
+
+**Consequences:** The workspace protocol now carries a second correlated
+directory shape, and a caller must match a reply's kind to the request that
+asked for it — resolving a batch into a page's shape would hand an array where
+an object is unpacked. The automation email route in the batch is whatever is
+stored, since reconciling it is a Global-registry call that cannot run on the
+object's socket thread; the REST refresh remains the only path that reconciles.
+Both lists are bounded at 250 and truncate rather than reject. A future list
+that belongs to the sidebar should join this batch rather than add a transport.
 
 ### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
 

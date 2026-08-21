@@ -1,11 +1,13 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceSidebarPageEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamSocketCommandResultSchema,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
+  type WorkspaceWorkstreamPageEvent,
 } from '@avalon/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,9 +20,9 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { ApiError, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
+import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
 import { uuidV7 } from './telemetry';
-import type { Message, WorkstreamSummary } from './types';
+import type { AutomationSummary, Message, NoteSummary, WorkstreamSummary } from './types';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -30,8 +32,21 @@ import { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
+type ListSidebarCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_sidebar' }>;
 type WorkspaceSocketApi = Pick<AvalonApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+
+/** One page of the work-stream directory, as every caller here receives it. */
+export interface WorkstreamPage {
+  items: WorkstreamSummary[];
+  nextCursor: string | null;
+}
+
+/** Everything the sidebar opens with, from the one object that owns all of it. */
+export interface SidebarBatch extends WorkstreamPage {
+  automations: AutomationSummary[];
+  notes: NoteSummary[];
+}
 
 interface PendingCommand {
   command: CreateMessageCommand;
@@ -40,12 +55,30 @@ interface PendingCommand {
   timeout: number;
 }
 
-interface PendingWorkstreamPage {
-  command: ListWorkstreamsCommand;
-  resolve: (page: { items: WorkstreamSummary[]; nextCursor: string | null }) => void;
-  reject: (error: Error) => void;
-  timeout: number;
-}
+/**
+ * A correlated directory request awaiting its answer.
+ *
+ * The two kinds share one map so they share one lifecycle: resend after a
+ * transient reconnect, reject on going offline, reject on disposal. Those are
+ * the paths a second map would quietly fall out of — the batch is sent once per
+ * cold sidebar, which is exactly when a reconnect is most likely to be in
+ * flight, and a batch dropped there leaves the sidebar on skeletons forever.
+ */
+type PendingDirectoryRequest =
+  | {
+    kind: 'workstreams';
+    command: ListWorkstreamsCommand;
+    resolve: (page: WorkstreamPage) => void;
+    reject: (error: Error) => void;
+    timeout: number;
+  }
+  | {
+    kind: 'sidebar';
+    command: ListSidebarCommand;
+    resolve: (batch: SidebarBatch) => void;
+    reject: (error: Error) => void;
+    timeout: number;
+  };
 
 interface WorkspaceSocketContextValue {
   state: WorkspaceSocketState;
@@ -55,7 +88,9 @@ interface WorkspaceSocketContextValue {
     limit: number;
     before?: string;
     includeSystem: boolean;
-  }): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }>;
+  }): Promise<WorkstreamPage>;
+  /** The cold-start read: the first directory page, the automations and the notes. */
+  listSidebar(input: { limit: number; includeSystem: boolean }): Promise<SidebarBatch>;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -97,6 +132,39 @@ function invalidateTopic(
   for (const queryKey of roots[topic]) void queryClient.invalidateQueries({ queryKey });
 }
 
+/**
+ * Write one directory page into the shared caches and return its rows.
+ *
+ * Shared by the paged answer and the sidebar batch, which carry the same page
+ * body and must land in the ledger the same way: a row is only as fresh as its
+ * own common/viewer waterline, so the cached copy wins whenever it is newer
+ * than the page that just arrived. Returning the cached row rather than the
+ * one off the wire is what keeps a page from walking back a state the direct
+ * WorkstreamDO socket already advanced.
+ */
+function applyDirectoryPage(
+  queryClient: ReturnType<typeof useQueryClient>,
+  page: Pick<WorkspaceWorkstreamPageEvent, 'items' | 'stateVersions' | 'directoryWaterline' | 'nextCursor'>,
+): WorkstreamPage {
+  const versions = new Map(page.stateVersions.map((version) => [version.workstreamId, version]));
+  const items = page.items.map(mapWorkstreamSummary).map((workstream) => {
+    const version = versions.get(workstream.id);
+    if (!version) return workstream;
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: workstream.id,
+      stateVersion: version,
+      ...workstreamSummaryState(workstream),
+      visible: true,
+    });
+    applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
+      pinPosition: workstream.pinPosition,
+    }, page.directoryWaterline);
+    return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+      ?.find((item) => item.id === workstream.id) ?? workstream;
+  });
+  return { items, nextCursor: page.nextCursor };
+}
+
 /** One persistent Electron connection to the current workspace's WorkspaceDO. */
 export function WorkspaceSocketProvider({
   api,
@@ -120,6 +188,13 @@ export function WorkspaceSocketProvider({
       'workspace_socket_unavailable',
     )),
   );
+  const listSidebarRef = useRef<WorkspaceSocketContextValue['listSidebar']>(
+    () => Promise.reject(new ApiError(
+      'The workspace is not connected.',
+      409,
+      'workspace_socket_unavailable',
+    )),
+  );
 
   useEffect(() => {
     let stopped = false;
@@ -132,7 +207,7 @@ export function WorkspaceSocketProvider({
     let attempt = 0;
     let lastWaterline = -1;
     const pending = new Map<string, PendingCommand>();
-    const pendingWorkstreamPages = new Map<string, PendingWorkstreamPage>();
+    const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -159,14 +234,14 @@ export function WorkspaceSocketProvider({
     const sendPending = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
       for (const entry of pending.values()) socket.send(JSON.stringify(entry.command));
-      for (const entry of pendingWorkstreamPages.values()) socket.send(JSON.stringify(entry.command));
+      for (const entry of pendingDirectoryRequests.values()) socket.send(JSON.stringify(entry.command));
     };
-    const rejectPendingWorkstreamPages = (error: Error): void => {
-      for (const entry of pendingWorkstreamPages.values()) {
+    const rejectPendingDirectoryRequests = (error: Error): void => {
+      for (const entry of pendingDirectoryRequests.values()) {
         window.clearTimeout(entry.timeout);
         entry.reject(error);
       }
-      pendingWorkstreamPages.clear();
+      pendingDirectoryRequests.clear();
     };
     const rejectPending = (error: Error): void => {
       for (const entry of pending.values()) {
@@ -174,7 +249,7 @@ export function WorkspaceSocketProvider({
         entry.reject(error);
       }
       pending.clear();
-      rejectPendingWorkstreamPages(error);
+      rejectPendingDirectoryRequests(error);
     };
     const scheduleReconnect = (): void => {
       if (stopped || accessRevoked || reconnectTimer !== null) return;
@@ -248,32 +323,26 @@ export function WorkspaceSocketProvider({
           }
           const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);
           if (workstreamPage.success) {
-            const entry = pendingWorkstreamPages.get(workstreamPage.data.requestId);
-            if (!entry) return;
-            pendingWorkstreamPages.delete(workstreamPage.data.requestId);
+            const entry = pendingDirectoryRequests.get(workstreamPage.data.requestId);
+            // A request id answers with the kind it asked for. A mismatch is a
+            // protocol fault rather than a late reply, and resolving the wrong
+            // shape would put an object where the caller unpacks an array.
+            if (entry?.kind !== 'workstreams') return;
+            pendingDirectoryRequests.delete(workstreamPage.data.requestId);
             window.clearTimeout(entry.timeout);
-            const versions = new Map(workstreamPage.data.stateVersions.map((version) => [
-              version.workstreamId,
-              version,
-            ]));
-            const items = workstreamPage.data.items.map(mapWorkstreamSummary).map((workstream) => {
-              const version = versions.get(workstream.id);
-              if (!version) return workstream;
-              applyVersionedWorkstreamState(queryClient, {
-                workstreamId: workstream.id,
-                stateVersion: version,
-                ...workstreamSummaryState(workstream),
-                visible: true,
-              });
-              applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
-                pinPosition: workstream.pinPosition,
-              }, workstreamPage.data.directoryWaterline);
-              return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
-                ?.find((item) => item.id === workstream.id) ?? workstream;
-            });
+            entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data));
+            return;
+          }
+          const sidebarPage = WorkspaceSidebarPageEventSchema.safeParse(decoded);
+          if (sidebarPage.success) {
+            const entry = pendingDirectoryRequests.get(sidebarPage.data.requestId);
+            if (entry?.kind !== 'sidebar') return;
+            pendingDirectoryRequests.delete(sidebarPage.data.requestId);
+            window.clearTimeout(entry.timeout);
             entry.resolve({
-              items,
-              nextCursor: workstreamPage.data.nextCursor,
+              ...applyDirectoryPage(queryClient, sidebarPage.data.workstreams),
+              automations: sidebarPage.data.automations.map(mapAutomationSummary),
+              notes: sidebarPage.data.notes,
             });
             return;
           }
@@ -365,14 +434,34 @@ export function WorkspaceSocketProvider({
         includeSystem: input.includeSystem,
       };
       const timeout = window.setTimeout(() => {
-        pendingWorkstreamPages.delete(requestId);
+        pendingDirectoryRequests.delete(requestId);
         reject(new ApiError(
           'The work-stream directory could not be loaded. Try again.',
           0,
           'workspace_directory_timeout',
         ));
       }, COMMAND_TIMEOUT_MS);
-      pendingWorkstreamPages.set(requestId, { command, resolve, reject, timeout });
+      pendingDirectoryRequests.set(requestId, { kind: 'workstreams', command, resolve, reject, timeout });
+      sendPending();
+      void connect();
+    });
+    listSidebarRef.current = (input) => new Promise((resolve, reject) => {
+      const requestId = uuidV7();
+      const command: ListSidebarCommand = {
+        type: 'list_sidebar',
+        requestId,
+        limit: input.limit,
+        includeSystem: input.includeSystem,
+      };
+      const timeout = window.setTimeout(() => {
+        pendingDirectoryRequests.delete(requestId);
+        reject(new ApiError(
+          'The sidebar could not be loaded. Try again.',
+          0,
+          'workspace_sidebar_timeout',
+        ));
+      }, COMMAND_TIMEOUT_MS);
+      pendingDirectoryRequests.set(requestId, { kind: 'sidebar', command, resolve, reject, timeout });
       sendPending();
       void connect();
     });
@@ -385,7 +474,7 @@ export function WorkspaceSocketProvider({
       clearReconnect();
       clearHeartbeat();
       setState('unavailable');
-      rejectPendingWorkstreamPages(new ApiError(
+      rejectPendingDirectoryRequests(new ApiError(
         'The work-stream directory cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
@@ -403,6 +492,11 @@ export function WorkspaceSocketProvider({
         'workspace_socket_closed',
       ));
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
+        'The workspace is no longer connected.',
+        409,
+        'workspace_socket_closed',
+      ));
+      listSidebarRef.current = () => Promise.reject(new ApiError(
         'The workspace is no longer connected.',
         409,
         'workspace_socket_closed',
@@ -428,9 +522,13 @@ export function WorkspaceSocketProvider({
     (input) => listWorkstreamsRef.current(input),
     [],
   );
+  const listSidebar = useCallback<WorkspaceSocketContextValue['listSidebar']>(
+    (input) => listSidebarRef.current(input),
+    [],
+  );
   const value = useMemo(
-    () => ({ state, topicWaterlines, createMessage, listWorkstreams }),
-    [createMessage, listWorkstreams, state, topicWaterlines],
+    () => ({ state, topicWaterlines, createMessage, listWorkstreams, listSidebar }),
+    [createMessage, listSidebar, listWorkstreams, state, topicWaterlines],
   );
   return <WorkspaceSocketContext.Provider value={value}>{children}</WorkspaceSocketContext.Provider>;
 }

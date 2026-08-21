@@ -20,6 +20,11 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import {
+  NOTE_SIDEBAR_SQL,
+  SIDEBAR_LIST_LIMIT,
+  toNoteSummary,
+} from "./sidebar-reads";
 
 const MAX_NOTES_CONTEXT_CHARACTERS = 50_000;
 const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 400_000;
@@ -95,14 +100,14 @@ export class NoteService {
     this.meetingNotesGenerator = meetingNotesGenerator ?? new MeetingNotesService(this.env, auth);
   }
 
+  /** Shares its statement and row mapping with the sidebar's socket batch. */
   async list(limit: number): Promise<{ items: NoteSummary[] }> {
-    const result = await this.env.DB.prepare(
-      `SELECT * FROM notes
-       WHERE workspace_id = ? AND archived_at IS NULL
-         AND (scope = 'workspace' OR owner_user_id = ?)
-       ORDER BY last_activity_at DESC, id DESC
-       LIMIT ?`,
-    ).bind(this.auth.workspaceId, this.auth.userId, Math.min(Math.max(limit, 1), 250)).all<NoteRow>();
+    const result = await this.env.DB.prepare(NOTE_SIDEBAR_SQL)
+      .bind(
+        this.auth.workspaceId,
+        this.auth.userId,
+        Math.min(Math.max(limit, 1), SIDEBAR_LIST_LIMIT),
+      ).all<NoteRow>();
     return { items: (result.results ?? []).map(toNoteSummary) };
   }
 
@@ -525,26 +530,6 @@ export class NoteService {
       }),
     ]);
   }
-}
-
-function toNoteSummary(row: NoteRow): NoteSummary {
-  return {
-    id: String(row.id),
-    workspaceId: String(row.workspace_id),
-    resourceId: String(row.resource_id),
-    ownerUserId: String(row.owner_user_id),
-    scope: row.scope,
-    title: String(row.title),
-    recordingStatus: row.recording_status,
-    recordedMs: Number(row.recorded_ms),
-    startedAt: row.started_at == null ? null : String(row.started_at),
-    endedAt: row.ended_at == null ? null : String(row.ended_at),
-    generatedAt: row.generated_at == null ? null : String(row.generated_at),
-    lastActivityAt: String(row.last_activity_at),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-    archivedAt: row.archived_at == null ? null : String(row.archived_at),
-  };
 }
 
 function toSegment(row: SegmentRow): NoteTranscriptSegment {

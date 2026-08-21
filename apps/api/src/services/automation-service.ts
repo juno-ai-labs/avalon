@@ -29,6 +29,12 @@ import {
 import { resolveFrozenDeliveryIdentity, type FrozenDeliveryIdentity } from "./user-delivery";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
+  AUTOMATION_SIDEBAR_SQL,
+  AutomationSidebarRowSchema,
+  SIDEBAR_LIST_LIMIT,
+  toAutomationSummary,
+} from "./sidebar-reads";
+import {
   recordWorkstreamCreatedTelemetry,
   type WorkstreamCreationSource,
 } from "../telemetry/workstream-creation";
@@ -145,22 +151,25 @@ export class AutomationService {
     }).catch(() => undefined);
   }
 
+  /**
+   * The automations the sidebar lists, with their email routes reconciled.
+   *
+   * The statement and the row mapping are shared with the socket batch, which
+   * WorkspaceDO answers from the same table without this reconciliation pass —
+   * it is a Global-registry call and cannot run inside the object. This path
+   * keeps it, so the address converges on the next `automations` refresh.
+   */
   async list() {
-    const result = await this.env.DB.prepare(
-      `SELECT s.id, s.email_address, s.email_route_status, t.name, t.description, s.scope, s.status,
-         s.next_run_at, s.last_run_at, s.updated_at,
-         CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
-       FROM automation_subscriptions s
-       JOIN automation_templates t ON t.id = s.template_id
-       JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.lifecycle_state = 'visible'
-         AND (s.scope = 'workspace' OR s.owner_user_id = ?)
-       ORDER BY t.name COLLATE NOCASE`,
-    ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
-    const rows = result.results ?? [];
+    const result = await this.env.DB.prepare(AUTOMATION_SIDEBAR_SQL)
+      .bind(this.auth.workspaceId, this.auth.userId, SIDEBAR_LIST_LIMIT)
+      .all<Record<string, unknown>>();
+    const rows = (result.results ?? []).map((row) => ({
+      ...AutomationSidebarRowSchema.parse(row),
+      email_route_status: row.email_route_status == null ? null : String(row.email_route_status),
+    }));
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routesById = new Map(rows.flatMap((row) =>
-      row.email_address == null ? [] : [[String(row.id), String(row.email_address)] as const]));
+      row.email_address == null ? [] : [[row.id, row.email_address] as const]));
     const needsReconciliation = rows.filter((row) => {
       // A draft has no address to reconcile and is not owed one: an address is
       // a way to reach an automation, and this one cannot run yet. Reserving
@@ -171,22 +180,11 @@ export class AutomationService {
     });
     for (let offset = 0; offset < needsReconciliation.length; offset += 512) {
       const inputs = needsReconciliation.slice(offset, offset + 512)
-        .map((row) => this.automationRouteInput(String(row.id)));
+        .map((row) => this.automationRouteInput(row.id));
       const routes = await emailRouting.backfillAutomationAddresses(inputs);
       for (const route of routes) routesById.set(route.automationSubscriptionId, route.emailAddress);
     }
-    return { items: rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      description: String(row.description),
-      emailAddress: routesById.get(String(row.id)) ?? null,
-      scope: String(row.scope),
-      status: String(row.status),
-      nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
-      lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
-      updatedAt: String(row.updated_at),
-      updateAvailable: Number(row.update_available) === 1,
-    })) };
+    return { items: rows.map((row) => toAutomationSummary(row, routesById.get(row.id) ?? null)) };
   }
 
   async compile(

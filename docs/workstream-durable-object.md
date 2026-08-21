@@ -36,6 +36,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
+| `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
@@ -558,7 +559,12 @@ listability, “You Are Mentioned,” and the Home/sidebar list of work streams 
 interest. Pins, resource links, and resolved suggestion feedback live beside
 those rows so cross-work-stream queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
-WorkspaceDO socket. Common and viewer rows retain separate monotonic waterlines,
+WorkspaceDO socket, and opens a cold sidebar with one `list_sidebar` batch that
+answers the first page together with the viewer's `automation_subscriptions` and
+`notes` rows — all three are this object's tables, so the sidebar's opening state
+is one local snapshot rather than a socket read beside two Worker round trips
+back into the same object. [`realtime-sockets.md`](realtime-sockets.md) holds the
+protocol and its bounds. Common and viewer rows retain separate monotonic waterlines,
 because Queue is at-least-once and unordered. Electron keeps one shared
 per-work-stream waterline ledger behind the header/detail/sidebar caches. The
 active WorkstreamDO socket normally wins first; the later WorkspaceDO event is
@@ -1211,6 +1217,30 @@ expired. Recovery remains row-derived and survives eviction, while a
 receipt terminalized by recovery converges the transcript in the same SQLite
 transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
 tests pin both the v13-to-v14 repair and ordinary receipt semantics.
+
+### 2026-08-21 — The sidebar's three lists are read together in one object
+
+**What changed:** WorkspaceDO answers a new `list_sidebar` socket command with
+the directory page, the viewer's automations and the viewer's notes, read from
+its own SQLite with no `await` between them. The statement and row mapping for
+each list are shared with the REST services rather than written a second time.
+
+**Why:** `automation_subscriptions` and `notes` have been this object's tables
+since the authority cutover, but the sidebar still reached them through the
+Worker's REST routes, which route back into this object over RPC. The reads
+already belonged here; only the transport did not.
+
+**Considered and rejected:** Duplicating each SELECT inside the object, which
+puts two copies of one query behind one client cache with no response schema to
+catch the drift; and reconciling automation email routes inside the batch, which
+would put a Global-registry network call on the socket handler's single thread
+alongside the directory read.
+
+**Consequences:** This handler is now the object's widest synchronous read, and
+a list added to the sidebar later should join it rather than open a transport.
+Anything in it that cannot be answered from local SQL — the email-route
+reconciliation is the first such case — stays on the REST path and converges
+through the topic that owns it.
 
 ### 2026-08-21 — WorkspaceDO sweeps the sockets it publishes to
 

@@ -115,6 +115,48 @@ const COMMAND_SHORTCUT_LIMIT = 9;
  */
 export const REVEAL_DEADLINE_MS = 2_000;
 
+/**
+ * One row's worth of placeholder, in the geometry of the row it stands in for.
+ *
+ * Shaped rather than a single block because the sidebar's three lists arrive
+ * together now: the reader sees the layout they are about to get — a marker, a
+ * title, sometimes a second line — and the rows fill in where the bars already
+ * are, instead of a grey rectangle collapsing into a different shape. Widths
+ * vary by position in CSS rather than here, so the set reads as a list of
+ * unequal titles and not as a barcode.
+ *
+ * Decorative: the label for the wait is said once, by the section.
+ */
+function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.JSX.Element {
+  return (
+    <div aria-hidden="true" className="sidebar-row skeleton-row">
+      <span className="skeleton-bar skeleton-row-marker" />
+      <span className="sidebar-row-main">
+        <span className="skeleton-bar skeleton-row-line" />
+        {hint && <span className="skeleton-bar skeleton-row-subline" />}
+      </span>
+    </div>
+  );
+}
+
+function SidebarSkeletonRows({ count, hint = false }: { count: number; hint?: boolean }): React.JSX.Element {
+  return (
+    <div className="sidebar-list">
+      {Array.from({ length: count }, (_, index) => <SidebarSkeletonRow hint={hint} key={index} />)}
+    </div>
+  );
+}
+
+/** A dated group of work streams, heading included — what the list resolves into. */
+function SidebarSkeletonGroup({ count }: { count: number }): React.JSX.Element {
+  return (
+    <div className="sidebar-group">
+      <span aria-hidden="true" className="skeleton-bar skeleton-group-label" />
+      <SidebarSkeletonRows count={count} hint />
+    </div>
+  );
+}
+
 const onboardingItems = [
   {
     id: 'connect-tools',
@@ -1315,7 +1357,7 @@ export function Sidebar({
               <h2 id="automations-heading">Automations</h2>
             </div>
             {loading && automations.length === 0 ? (
-              <div className="sidebar-skeleton" aria-label="Loading automations" />
+              <SidebarSkeletonRows count={3} />
             ) : automations.length === 0 ? (
               <p className="sidebar-empty">No active automations</p>
             ) : (
@@ -1395,7 +1437,14 @@ export function Sidebar({
 
           <section aria-label="Work streams" className="sidebar-section workstreams-section">
             {loading && workstreams.length === 0 && notes.length === 0 ? (
-              <div className="sidebar-skeleton tall" aria-label="Loading work streams" />
+              // The one announcement for the whole wait. The automations above
+              // are loading from the same answer and finish with these, so a
+              // second live region would say the same thing twice.
+              <div role="status">
+                <span className="sr-only">Loading your work streams, automations and notes</span>
+                <SidebarSkeletonGroup count={4} />
+                <SidebarSkeletonGroup count={3} />
+              </div>
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only
               // holds when nothing is pinned either; with everything pinned the
