@@ -70,9 +70,11 @@ one. The case is structural:
    passed its October 2025 end of support; its inclusion is deliberate — the
    installed base is still large — with verification on Windows 11 (CI and
    the physical machine) and Windows 10 best-effort.
-2. The installed client performs every workspace surface the macOS client
-   offers except the three excluded capabilities: work streams, automations,
-   settings, invitations, connectors, dictation, message export, theming.
+2. The installed client offers work streams, automations, settings,
+   invitations, connectors, dictation, message export, and theming — every
+   workspace surface the macOS client has, minus the three capabilities
+   non-goals 1 and 2 exclude (meeting recording, the menu bar item, and
+   launch-at-login).
 3. Windows builds are Authenticode-signed via Azure Artifact Signing from CI,
    with no hardware token and no human in the signing path.
 4. An installed Windows client updates itself from
