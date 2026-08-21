@@ -22,7 +22,7 @@ describe('the two axes', () => {
   });
 
   it('starts on the original design, following the Mac', () => {
-    expect(defaultThemeChoice).toEqual({ family: 'neu', mode: 'system' });
+    expect(defaultThemeChoice).toEqual({ family: 'terra', mode: 'system' });
   });
 
   /**
@@ -52,7 +52,7 @@ describe('the two axes', () => {
 
 describe('resolveTheme', () => {
   it.each([
-    ['neu', true, 'neu'], ['neu', false, 'neu-light'],
+    ['terra', true, 'terra'], ['terra', false, 'terra-light'],
     ['air', true, 'air-dark'], ['air', false, 'air'],
   ] as const)('follows the Mac within %s when dark is %s', (family, prefersDark, expected) => {
     expect(resolveTheme({ family, mode: 'system' }, prefersDark)).toBe(expected);
@@ -65,7 +65,7 @@ describe('resolveTheme', () => {
    * for, and it is the failure the flat list made easy.
    */
   it.each([
-    ['neu', 'light', 'neu-light'], ['neu', 'dark', 'neu'],
+    ['terra', 'light', 'terra-light'], ['terra', 'dark', 'terra'],
     ['air', 'light', 'air'], ['air', 'dark', 'air-dark'],
   ] as const)('pins %s in %s mode whatever the Mac is set to', (family, mode, expected) => {
     expect(resolveTheme({ family, mode }, true)).toBe(expected);
@@ -94,13 +94,23 @@ describe('parsing', () => {
    * design by a rename and a refactor.
    */
   it.each([
-    ['system', { family: 'neu', mode: 'system' }],
-    ['light', { family: 'neu', mode: 'light' }],
-    ['dark', { family: 'neu', mode: 'dark' }],
+    ['system', { family: 'terra', mode: 'system' }],
+    ['light', { family: 'terra', mode: 'light' }],
+    ['dark', { family: 'terra', mode: 'dark' }],
     ['airy', { family: 'air', mode: 'light' }],
     ['airy-dark', { family: 'air', mode: 'dark' }],
   ] as const)('migrates the flat choice %s', (legacy, expected) => {
     expect(parseThemeChoice(legacy)).toEqual(expected);
+  });
+
+  /**
+   * A family that has been renamed. `neu` was this design's name for one commit
+   * before it became Terra; a rename is not a reason to hand somebody a
+   * different design, so the old name still resolves.
+   */
+  it('migrates a renamed family', () => {
+    expect(parseThemeChoice({ family: 'neu', mode: 'dark' })).toEqual({ family: 'terra', mode: 'dark' });
+    expect(parseThemeChoice({ family: 'neu', mode: 'system' })).toEqual({ family: 'terra', mode: 'system' });
   });
 
   it.each([

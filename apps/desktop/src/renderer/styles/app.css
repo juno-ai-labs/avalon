@@ -1640,6 +1640,7 @@ pre {
    slice of a window-sized gradient happened to fall behind it. Left to scroll,
    the artwork scales into the swatch and the swatch previews the theme. */
 .settings-theme-swatch {
+  position: relative;
   background-color: var(--av-sys-backdrop-color);
   background-image: var(--av-sys-backdrop-image);
   background-position: var(--av-sys-backdrop-position);
@@ -1660,12 +1661,47 @@ pre {
 .settings-theme-option:focus-visible .settings-theme-swatch { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .settings-theme-option:focus-visible { outline: 0; }
 
+/* The other half of a System swatch.
+ *
+ * Under `system` a family has two appearances and which one you get depends on
+ * the Mac, so the swatch shows both rather than picking one and being quietly
+ * wrong for half the day. The split is a mask rather than a clip path because a
+ * gradient angle in `deg` is a true angle whatever the box's aspect ratio is,
+ * where a polygon's percentages are only 30° at one particular size. `120deg`
+ * puts the edge 30° off vertical: the gradient runs perpendicular to its own
+ * bands, so the edge angle is the direction minus a right angle. */
+.settings-theme-swatch-alternate {
+  background-color: var(--av-sys-backdrop-color);
+  background-image: var(--av-sys-backdrop-image);
+  background-position: var(--av-sys-backdrop-position);
+  background-size: var(--av-sys-backdrop-size);
+  background-repeat: var(--av-sys-backdrop-repeat);
+  background-blend-mode: var(--av-sys-backdrop-blend-mode);
+  display: flex;
+  inset: 0;
+  mask-image: linear-gradient(120deg, transparent 0 50%, currentColor 50% 100%);
+  position: absolute;
+}
+
 /* The miniature reads its own tokens, which is the whole point: `--av-cmp-sidebar-background`
    here is the offered theme's, not the running one's. */
 .settings-theme-swatch-sidebar {
   background: var(--av-cmp-sidebar-background);
   border-right: 1px solid var(--av-ref-color-line-2);
   flex: 0 0 26px;
+  position: relative;
+}
+
+/* The same two tokens the real navigation uses, and at swatch scale they still
+   produce the two shapes: `calc(50% - 3px)` is a centred dot, a flat inset is a
+   line down the row's leading edge. */
+.settings-theme-swatch-marker {
+  background: var(--av-sys-color-brand-base);
+  border-radius: var(--av-cmp-marker-radius);
+  inset-block: var(--av-cmp-marker-inset-block);
+  left: 7px;
+  position: absolute;
+  width: var(--av-cmp-marker-inline-size);
 }
 
 .settings-theme-swatch-surface {
@@ -1678,9 +1714,25 @@ pre {
   padding: 0 8px;
 }
 
-.settings-theme-swatch-line { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); height: 3px; }
+/* `display: block` because one of these is not a flex item: the turn's line
+   sits inside the bubble, and an inline span ignores both height and width. */
+.settings-theme-swatch-line { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); display: block; height: 3px; }
 .settings-theme-swatch-line.is-short { width: 58%; }
-.settings-theme-swatch-accent { background: var(--av-sys-color-brand-base); border-radius: var(--av-sys-size-radius-pill); height: 5px; margin-top: 2px; width: 32%; }
+.settings-theme-swatch-line.is-turn { width: 26px; }
+
+/* A person's own turn, on the side the theme puts it. `--av-cmp-turn-align` is
+   the same token the feed uses, so the preview cannot say left while the feed
+   says right — and the bubble around it appears or does not for the same
+   reason. In Air both are flat: the turn is text at the leading edge like
+   everything else. */
+.settings-theme-swatch-turn {
+  align-self: var(--av-cmp-turn-align);
+  background: var(--av-cmp-bubble-background);
+  border: 1px solid var(--av-cmp-bubble-border);
+  border-radius: var(--av-sys-size-radius-sm);
+  margin-top: 2px;
+  padding: 3px 4px;
+}
 
 .settings-theme-option-label { color: var(--av-sys-color-text-subtle); font-size: 11px; }
 .settings-theme-option[aria-checked='true'] .settings-theme-option-label { color: var(--av-sys-color-text-default); font-weight: 570; }

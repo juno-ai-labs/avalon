@@ -1,12 +1,12 @@
 /**
  * The theme vocabulary both processes speak.
  *
- * A choice has two axes, not one. A **family** is a design — Neu, Avalon's
+ * A choice has two axes, not one. A **family** is a design — Terra, Avalon's
  * original palette, or Air — and a **mode** is which way round it runs. They
  * are separate because they answer different questions: the family is a taste,
  * and the mode is a lighting condition that may change during the day. Folding
  * them into one flat list made `system` a peer of the designs, which meant
- * choosing to follow the Mac silently also chose Neu, and a person on Air had
+ * choosing to follow the Mac silently also chose Terra, and a person on Air had
  * no way to say "this design, but follow the room".
  *
  * The renderer decides what a theme *looks* like — every value lives in
@@ -16,7 +16,7 @@
  */
 
 /** A design. Each brings a light appearance and a dark one. */
-export const themeFamilies = ['neu', 'air'] as const;
+export const themeFamilies = ['terra', 'air'] as const;
 export type ThemeFamily = (typeof themeFamilies)[number];
 
 /** Which way round to run it. `system` is a rule, not an appearance. */
@@ -24,7 +24,7 @@ export const appearanceModes = ['system', 'light', 'dark'] as const;
 export type AppearanceMode = (typeof appearanceModes)[number];
 
 /** What is actually drawn, once family and mode have been combined. */
-export const resolvedThemes = ['neu-light', 'neu', 'air', 'air-dark'] as const;
+export const resolvedThemes = ['terra-light', 'terra', 'air', 'air-dark'] as const;
 export type ResolvedTheme = (typeof resolvedThemes)[number];
 
 export interface ThemeChoice {
@@ -32,7 +32,7 @@ export interface ThemeChoice {
   mode: AppearanceMode;
 }
 
-export const defaultThemeChoice: ThemeChoice = { family: 'neu', mode: 'system' };
+export const defaultThemeChoice: ThemeChoice = { family: 'terra', mode: 'system' };
 
 /**
  * The two appearances each family brings.
@@ -42,7 +42,7 @@ export const defaultThemeChoice: ThemeChoice = { family: 'neu', mode: 'system' }
  * new name.
  */
 export const familyAppearances: Record<ThemeFamily, Record<'light' | 'dark', ResolvedTheme>> = {
-  neu: { light: 'neu-light', dark: 'neu' },
+  terra: { light: 'terra-light', dark: 'terra' },
   air: { light: 'air', dark: 'air-dark' },
 };
 
@@ -53,7 +53,7 @@ export interface Described<Id> {
 }
 
 export const themeFamilyDescriptions: readonly Described<ThemeFamily>[] = [
-  { id: 'neu', label: 'Neu', description: 'The original palette: dense rows and a composer that is a card.' },
+  { id: 'terra', label: 'Terra', description: 'The original palette: dense rows and a composer that is a card.' },
   { id: 'air', label: 'Air', description: 'Amber light on a moving field, with a great deal more room.' },
 ];
 
@@ -73,8 +73,8 @@ export const appearanceModeDescriptions: readonly Described<AppearanceMode>[] = 
  * copies drift.
  */
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
-  'neu-light': '#ffffff',
-  neu: '#111210',
+  'terra-light': '#ffffff',
+  terra: '#111210',
   air: '#f7f3ec',
   'air-dark': '#100e0c',
 };
@@ -95,24 +95,29 @@ export function parseAppearanceMode(value: unknown): AppearanceMode | null {
  * What a flat theme name used to mean, before the axes were separated.
  *
  * A stored preference outlives the shape it was written in, and a person who had
- * chosen Airy should not be handed Neu by a refactor. Anything unrecognised
+ * chosen Airy should not be handed Terra by a refactor. Anything unrecognised
  * falls through to `null` and the caller falls back to the default.
  */
 const LEGACY_CHOICES: Record<string, ThemeChoice> = {
-  system: { family: 'neu', mode: 'system' },
-  light: { family: 'neu', mode: 'light' },
-  dark: { family: 'neu', mode: 'dark' },
+  system: { family: 'terra', mode: 'system' },
+  light: { family: 'terra', mode: 'light' },
+  dark: { family: 'terra', mode: 'dark' },
   // `airy` was the name before it was shortened; a stored preference should not
   // be a reason to be handed a different design.
   airy: { family: 'air', mode: 'light' },
   'airy-dark': { family: 'air', mode: 'dark' },
 };
 
+/** Families that have been renamed, so a stored choice survives the rename. */
+const LEGACY_FAMILIES: Record<string, ThemeFamily> = { neu: 'terra' };
+
 export function parseThemeChoice(value: unknown): ThemeChoice | null {
   if (typeof value === 'string') return LEGACY_CHOICES[value] ?? null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  const family = parseThemeFamily(candidate['family']);
+  const named = candidate['family'];
+  const family = parseThemeFamily(named)
+    ?? (typeof named === 'string' ? LEGACY_FAMILIES[named] ?? null : null);
   const mode = parseAppearanceMode(candidate['mode']);
   return family && mode ? { family, mode } : null;
 }
@@ -142,5 +147,5 @@ export function familyOf(theme: ResolvedTheme): ThemeFamily {
   const found = themeFamilies.find((family) => (
     familyAppearances[family].light === theme || familyAppearances[family].dark === theme
   ));
-  return found ?? 'neu';
+  return found ?? 'terra';
 }

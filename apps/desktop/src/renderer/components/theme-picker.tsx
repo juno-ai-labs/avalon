@@ -2,28 +2,51 @@ import {
   appearanceModeDescriptions,
   familyAppearances,
   themeFamilyDescriptions,
+  type ResolvedTheme,
 } from '../../common/themes';
 import { persistThemeChoice, useTheme, withFamily, withMode } from '../lib/theme';
+
+/**
+ * The miniature, drawn entirely from the offered appearance's own tokens.
+ *
+ * It shows the three things that differ between families rather than only their
+ * colours: the shape of a row's leading mark, whether a person's turn sits in a
+ * bubble, and — the one that reads fastest — which side of the feed each actor
+ * speaks from. Avalon's own turn hugs the right; Air's runs left with everything
+ * else. A preview built from hardcoded values would be a second copy of the
+ * palette and go stale the first time a theme is retuned; this one cannot.
+ */
+function Miniature(): React.JSX.Element {
+  return (
+    <>
+      <span className="settings-theme-swatch-sidebar">
+        <span className="settings-theme-swatch-marker" />
+      </span>
+      <span className="settings-theme-swatch-surface">
+        <span className="settings-theme-swatch-line" />
+        <span className="settings-theme-swatch-line is-short" />
+        <span className="settings-theme-swatch-turn">
+          <span className="settings-theme-swatch-line is-turn" />
+        </span>
+      </span>
+    </>
+  );
+}
 
 /**
  * The Appearance control, on two axes.
  *
  * The **mode** sits above the designs rather than beside them, because it is not
  * one of them: it says which way round to run whichever design is chosen. As one
- * flat list, `system` was a peer of Light and Dark and Airy — so following the
- * Mac silently also chose Neu, and someone on Airy had no way to say "this
- * design, but follow the room". Two rows say both things at once.
- *
- * Each family swatch previews *itself under the current mode*, drawn with that
- * appearance's own tokens under `data-theme` on the swatch rather than on the
- * document. A preview built from hardcoded colours is a second copy of the
- * palette and goes stale the first time a theme is retuned; this one cannot.
+ * flat list, `system` was a peer of Light and Dark and Air — so following the Mac
+ * silently also chose Terra, and someone on Air had no way to say "this design,
+ * but follow the room". Two rows say both things at once.
  */
 export function ThemePicker(): React.JSX.Element {
   const { choice, resolved } = useTheme();
   const lighting = resolved === familyAppearances[choice.family].dark ? 'dark' : 'light';
   const familyLabel = themeFamilyDescriptions.find((family) => family.id === choice.family)?.label
-    ?? 'Neu';
+    ?? 'Terra';
 
   return (
     <div className="settings-theme-card">
@@ -51,34 +74,38 @@ export function ThemePicker(): React.JSX.Element {
       </div>
 
       <div aria-label="Theme" className="settings-theme-shelf" role="radiogroup">
-        {themeFamilyDescriptions.map((family) => (
-          <button
-            aria-checked={choice.family === family.id}
-            className="settings-theme-option"
-            key={family.id}
-            onClick={() => persistThemeChoice(withFamily(choice, family.id))}
-            role="radio"
-            title={family.description}
-            type="button"
-          >
-            <span
-              aria-hidden="true"
-              className="settings-theme-swatch"
-              // The appearance *this* family would show under the mode in force,
-              // so switching mode redraws both swatches rather than only the
-              // selected one — which is what makes the mode row legible.
-              data-theme={familyAppearances[family.id][lighting]}
+        {themeFamilyDescriptions.map((family) => {
+          const appearances = familyAppearances[family.id];
+          // Under a pinned mode a family has one appearance to show. Under
+          // `system` it has two, and which one you get depends on the Mac — so
+          // the swatch shows both, split, rather than picking one and being
+          // quietly wrong for half of the day.
+          const halves: readonly ResolvedTheme[] = choice.mode === 'system'
+            ? [appearances.light, appearances.dark]
+            : [appearances[lighting]];
+
+          return (
+            <button
+              aria-checked={choice.family === family.id}
+              className="settings-theme-option"
+              key={family.id}
+              onClick={() => persistThemeChoice(withFamily(choice, family.id))}
+              role="radio"
+              title={family.description}
+              type="button"
             >
-              <span className="settings-theme-swatch-sidebar" />
-              <span className="settings-theme-swatch-surface">
-                <span className="settings-theme-swatch-line" />
-                <span className="settings-theme-swatch-line is-short" />
-                <span className="settings-theme-swatch-accent" />
+              <span aria-hidden="true" className="settings-theme-swatch" data-theme={halves[0]}>
+                <Miniature />
+                {halves[1] ? (
+                  <span className="settings-theme-swatch-alternate" data-theme={halves[1]}>
+                    <Miniature />
+                  </span>
+                ) : null}
               </span>
-            </span>
-            <span className="settings-theme-option-label">{family.label}</span>
-          </button>
-        ))}
+              <span className="settings-theme-option-label">{family.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <p aria-live="polite" className="settings-theme-status">

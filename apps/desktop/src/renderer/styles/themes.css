@@ -23,9 +23,9 @@
   src: url('../fonts/geist-mono-latin-variable.woff2') format('woff2');
 }
 
-/* Neu — Avalon's original low-light palette. */
+/* Terra — Avalon's original low-light palette. */
 :root,
-[data-theme='neu'] {
+[data-theme='terra'] {
   color-scheme: dark;
 
   /* The neutral ramp, ordered by contrast against the surface rather than by
@@ -921,8 +921,8 @@
   --av-cmp-connector-plug-background: #191509;
   --av-cmp-connector-plug-foreground: #c4b478;
 }
-/* Neu Light — A warm near-white page with hairline rules. */
-[data-theme='neu-light'] {
+/* Terra Light — A warm near-white page with hairline rules. */
+[data-theme='terra-light'] {
   color-scheme: light;
 
   --av-ref-color-neutral-1: #f4f2ed;

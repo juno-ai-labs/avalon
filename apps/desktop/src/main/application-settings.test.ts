@@ -114,7 +114,7 @@ describe('desktop application settings', () => {
         productAnalyticsEnabled: true,
         productAnalyticsPreferenceVersion: 0,
         productAnalyticsPreferencePending: false,
-        windowTheme: 'neu',
+        windowTheme: 'terra',
       });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
   });
