@@ -130,7 +130,7 @@ export async function executeWorkstreamRuntimeSql(
   }
 
   const affectsDirectory = request.statements.some((statement) =>
-    /\b(?:workstreams|messages|workstream_wakeups|workstream_sandboxes|workstream_resources|workstream_participants)\b/iu
+    /\b(?:workstreams|messages|workstream_wakeups|workstream_resources|workstream_participants)\b/iu
       .test(statement.sql));
   const committed = await product.commitRuntimeMutation(
     (sql) => {

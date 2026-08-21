@@ -387,6 +387,57 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-21 — Terminal writes republish the directory deadline again
+
+**What changed:** `/internal/terminal` runs each operation through
+`commitRuntimeMutation` and then `scheduleNextAlarm`, the way
+`/internal/runtime-sql` always did. Operations that cannot move a deadline —
+reads, and the task, import, and publication writes — are exempted by name;
+anything else, including anything added later, publishes.
+
+**Why:** the typed port called its storage method directly, which committed the
+row and told nobody. `workspace_workstream_directory.next_terminal_action_at`
+is the only input `WorkspaceScheduler` has for Terminal work and the
+`directory_common` effect is its only writer, so a sandbox could hold three
+durable deadlines with nothing enqueued. The pre-cutover path published by
+accident: `affectsDirectory` was a table-name regex naming
+`workstream_sandboxes`, so every Terminal statement matched it. Removing that
+vocabulary removed the publication with it, and the regex — which can no longer
+match anything — is gone too. The sweeper's own transitions were the worst case:
+stop, archive, and expire produced no other directory-affecting write, so the
+chain stalled after whatever value was published last, and nothing ever cleared
+a stale one.
+
+**Considered and rejected:** treating every operation as directory-affecting.
+Task settlement runs once per command, and republishing the whole directory row
+plus a per-participant effect on that path is real parent work for a projection
+that cannot have changed. The exemption list is explicit and the default falls
+the other way, so a new operation over-publishes rather than stranding the
+scheduler.
+
+**Consequences:** an operation added to `WorkstreamTerminalStorage` publishes a
+directory effect unless it is named in `NON_DIRECTORY_OPERATIONS`. Adding a name
+there is a claim that the operation cannot change `terminal_workspace`, and it
+is only checked by review.
+
+### 2026-08-21 — Policy transitions keep their per-path lease semantics
+
+**What changed:** `settlePolicyTransition` takes `clearOperationLease` instead
+of always clearing the mutation lease.
+
+**Why:** the five D1 statements it replaced were not uniform. The stop and the
+two failure paths that lose the sandbox released the lease; the rollback and the
+settle that only records the applied revision left it with its holder. Folding
+them into one operation quietly made all five release it, which is a change to a
+mutual-exclusion guard that nothing asked for.
+
+**Considered and rejected:** keeping the uniform clear and documenting it. The
+lease is what stops two runs mutating one workspace; changing when it drops
+belongs in a change that argues for it, not in a refactor.
+
+**Consequences:** each call site states its own answer, and the two that keep
+the lease are the two that leave a sandbox a run may still be using.
+
 ### 2026-08-21 — Terminal addresses its own tables through a typed port
 
 **What changed:** The Terminal services no longer hold a `D1Database`. A new

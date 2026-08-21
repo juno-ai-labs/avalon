@@ -56,14 +56,12 @@ const DISPATCHED_OPERATIONS = [
   "sandbox",
   "reserveFirstGeneration",
   "claimOperation",
-  "releaseOperation",
   "attachProviderSandbox",
   "failGeneration",
   "setRunning",
   "refreshDeadlines",
   "setAppliedNetworkRevision",
   "replaceGeneration",
-  "deleteSandbox",
   "resetSandbox",
   "claimLifecycleTransition",
   "failLifecycleClaim",
@@ -83,10 +81,8 @@ const DISPATCHED_OPERATIONS = [
   "completeImportedResource",
   "repository",
   "selectedRepository",
-  "selectRepository",
   "replaceRepository",
   "recordRepositoryBootstrap",
-  "clearRepositoryBootstrap",
   "admitPublicationGrant",
   "latestPublicationGrant",
   "consumePublicationGrant",
@@ -119,6 +115,56 @@ export function isTerminalOperation(value: string): value is TerminalOperation {
  * per-argument shapes are enforced at the call site by `TerminalObjectPort`,
  * where a mismatch is a compile error rather than a runtime rejection.
  */
+/**
+ * Operations that cannot change what the workspace directory publishes.
+ *
+ * `workspace_workstream_directory.next_terminal_action_at` is the only input
+ * `WorkspaceScheduler` has for Terminal work, and the `directory_common`
+ * regional effect is its only writer. That effect is enqueued from
+ * `commitRuntimeMutation`, so an operation that moves a deadline in
+ * `terminal_workspace` and does not enqueue one leaves the sweep with nothing
+ * to run on — and nothing else ever clears a stale value.
+ *
+ * Reads are listed because they mutate nothing at all. The task, import, and
+ * publication writes are listed because they touch tables the directory
+ * projection does not read. Everything else — including any operation added
+ * later — is treated as directory-affecting: over-publishing costs an outbox
+ * row, under-publishing strands the scheduler, so the default falls the safe
+ * way rather than relying on the next author to notice this list.
+ */
+const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
+  // Reads.
+  "sandbox",
+  "finalDiffResourceId",
+  "policyTarget",
+  "taskByEffect",
+  "hasLiveTask",
+  "unsettledTaskCount",
+  "importedResources",
+  "repository",
+  "selectedRepository",
+  "latestPublicationGrant",
+  "completedPublication",
+  "publicationExists",
+  // Writes that leave `terminal_workspace` alone.
+  "insertTask",
+  "settleTask",
+  "cancelUnsettledTasks",
+  "recordImportedResource",
+  "completeImportedResource",
+  "recordRepositoryBootstrap",
+  "admitPublicationGrant",
+  "consumePublicationGrant",
+  "beginPublication",
+  "completePublication",
+  "markPublicationAmbiguous",
+]);
+
+/** Whether this operation has to republish the work stream's directory row. */
+export function terminalOperationAffectsDirectory(operation: TerminalOperation): boolean {
+  return !NON_DIRECTORY_OPERATIONS.has(operation);
+}
+
 export const TerminalOperationRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
