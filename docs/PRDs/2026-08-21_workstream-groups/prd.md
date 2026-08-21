@@ -316,11 +316,40 @@ group's whole default set at the moment it joins.
 The rules, stated in full because most of them are about what does *not* happen:
 
 - The attachment carries `relationship_type = 'group_default'`, alongside the
-  existing `attachment`, `origin`, and `generated`.
+  existing `attachment`, `origin`, `generated`, and `inbound_email`.
 - Attachment is idempotent per (work stream, resource). A resource a work stream
-  already has keeps the relationship type it already had — `attachResource`'s
-  insert is already `ON CONFLICT(resource_id) DO NOTHING`, and this relies on
-  that rather than changing it.
+  already has keeps the relationship type *and the attribution* it already had.
+- **Neither existing attachment path can be used to do this**, so the build adds
+  one. `attachResource` has the right conflict semantics
+  (`ON CONFLICT(resource_id) DO NOTHING`) and publishes `resource_attached`, but
+  it opens with `this.authorize(auth)` and a queue consumer has no
+  `AuthContext`. The userless path, `attachRuntimeResource`, is not equivalent in
+  either respect: its clause is `ON CONFLICT(resource_id) DO UPDATE SET …
+  relationship_type = excluded.relationship_type`, which would rewrite an
+  existing `origin` or `attachment` link as `group_default`, and it returns
+  `void` without a `publishLocalProductEvent`, so an open work stream would never
+  see the resource arrive. Using it as-is would break the "keeps the relationship
+  type it already had" rule above *and* acceptance criterion 7.
+
+**The operation the build adds.** One internal, userless RPC — call it
+`attachGroupDefaultResource` — is the only thing that writes a group default, and
+**both** the queue fan-out and the synchronous join-a-group path go through it,
+so the two cannot drift. Its contract:
+
+1. Verify the work stream's identity against the workspace, the way
+   `attachRuntimeResource` already does with `parent_workspace_key`.
+2. Insert the link with `ON CONFLICT(resource_id) DO NOTHING`, carrying the
+   `attached_by_user_id` the caller supplies.
+3. Advance `resource_inventory_revision` **only when a row was actually
+   inserted** — an existing link is not a change, and revving it invalidates
+   every cached invocation in that work stream for nothing.
+4. On conflict, change nothing: not the relationship type, not the attribution,
+   not `updated_at`.
+5. Publish `resource_attached` **only for a newly inserted link**, so a
+   redelivered queue message is silent rather than announcing an arrival twice.
+
+Steps 2–5 are what make the operation safe to retry, which matters because the
+queue delivers at least once.
 - **Removing a default from the group detaches it from nothing.** Later work
   streams stop being given it; every work stream that has it keeps it. The
   confirmation says so in those words.
@@ -331,9 +360,10 @@ The rules, stated in full because most of them are about what does *not* happen:
 - A group holds at most 20 default resources; a workspace holds at most 200
   groups.
 
-**Live.** The attach publishes `resource_attached` on each affected work stream's
-socket, which is what `attachResource` already does, so a work stream open on
-somebody's screen shows the resource arrive without refetching. Changes to the
+**Live.** A newly inserted link publishes `resource_attached` on that work
+stream's socket — the same event the existing attach path emits from
+`substream-agent.ts` — so a work stream open on somebody's screen shows the
+resource arrive without refetching. Changes to the
 group itself — created, renamed, restyled, deleted, membership, defaults —
 publish a new `groups` topic on the workspace socket, so every window's sidebar
 converges without polling.
@@ -531,13 +561,18 @@ CREATE TABLE workspace_group_default_resources (
 -- object's alarm. Same shape as the regional-effect outbox the work-stream
 -- objects already use, and for the same reason: `queue.send()` does not
 -- participate in the local transaction, so the intent has to be committed with
--- the row that caused it.
+-- the row that caused it. Deliberately self-contained — every field the attach
+-- needs is on the row, so draining it joins to nothing.
 CREATE TABLE workspace_group_resource_fanout (
-  group_id      TEXT NOT NULL,
-  resource_id   TEXT NOT NULL,
-  workstream_id TEXT NOT NULL,
-  enqueued_at   INTEGER NOT NULL CHECK (enqueued_at >= 0),
-  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  group_id            TEXT NOT NULL,
+  resource_id         TEXT NOT NULL,
+  workstream_id       TEXT NOT NULL,
+  -- Copied in, not joined to. The group or the default may be deleted between
+  -- this commit and the alarm that drains it, and a deleted row cannot name the
+  -- person whose action caused the attachment.
+  attached_by_user_id TEXT NOT NULL,
+  enqueued_at         INTEGER NOT NULL CHECK (enqueued_at >= 0),
+  attempts            INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   PRIMARY KEY (group_id, resource_id, workstream_id)
 ) STRICT;
 ```
@@ -547,6 +582,13 @@ It is present rather than deferred because adding a column later means a
 migration *and* a read path that has to tolerate its absence, whereas an unused
 constrained column costs nothing and makes private groups an API change. It is
 the cheaper thing to reverse either way.
+
+`workspace_group_resource_fanout` rows are written in the same transaction as the
+`workspace_group_default_resources` row that caused them, carry
+`attached_by_user_id` forward into the queue payload, and are deleted only once
+the attach is acknowledged. Nothing in the drain path reads the defaults table:
+by design, removing a default does not cancel an attach already in flight, so the
+row it came from may be gone by the time the message is handled.
 
 `workspace_group_participants` is seeded with the creator and is otherwise inert,
 per non-goal 2. Nothing reads it to make an authorization decision, and the code
@@ -604,14 +646,51 @@ registered in both `wrangler.global.jsonc` and `wrangler.eu.jsonc`, and in
 
 ## Security and trust model
 
-**Only a workspace-scoped resource can be a group default, and the check happens
-when it is added.** `attachResource` today refuses a resource whose connector
-connection is personal and owned by somebody other than the caller. The fan-out
-runs later, from a queue consumer, with no user behind it — so it cannot make
-that judgement, and it must never be given a resource whose readability depends
-on who is asking. `POST /groups/:id/resources` therefore rejects a
-personal-scoped resource outright, with a message saying so, and the fan-out
-attaches only what that gate admitted.
+**Only a resource that is already visible to the whole workspace can be a group
+default, and the check happens when it is added.** The fan-out runs later, from a
+queue consumer, with no user behind it, so it cannot make that judgement — and it
+must never be handed a resource whose readability depends on who is asking. What
+makes this load-bearing rather than defensive is stated in
+`apps/api/src/lib/activity-visibility.ts`: a resource row "is listed to every
+member of the work stream it hangs off and is broadcast over `resource_attached`
+— `WORKSTREAM_RESOURCES_SQL` applies no connection-scope filter". Attaching is
+therefore disclosure to everyone in that work stream, and to its agent.
+
+**Connector scope is not the whole of resource visibility, so the gate cannot be
+modelled on the check `attachResource` already makes.** That check is
+`connection_scope === 'personal' && owner_user_id !== auth.userId`, which speaks
+only for connector-backed rows. Two resource classes have a null
+`connection_id` and get their readability from somewhere else entirely:
+
+- **Notes.** A note is a `resources` row with a `notes` row pointing at it, and
+  `notes.scope` — `'personal' | 'workspace'`, defaulting to `'personal'` — is
+  what decides who may read it. `attachResource` selects `note.scope AS
+  note_scope` in its lookup query and then **never reads it**; the identifier
+  appears exactly once in `workstream-object-product.ts`. So the existing check
+  does not reject a personal note today, and a group-default gate copied from it
+  would admit one and fan it out to every work stream in the group.
+- **Inbound email.** `resend-inbound-email-service.ts` creates an `email`/`resend`
+  resource with a null connection and attaches it with
+  `relationship_type = 'inbound_email'`. Its visibility *is* the attachment — the
+  work stream it landed in — so there is nothing about the row itself that makes
+  it workspace-readable.
+
+`POST /groups/:id/resources` therefore gates on one named predicate,
+`resourceIsWorkspaceDefaultEligible`, which is **default-deny** and is the single
+implementation used both by the picker (to decide what it may offer) and by the
+route (to decide what it accepts):
+
+| Resource class | Admitted when |
+| --- | --- |
+| Connector-backed (`connection_id` non-null) | The connection's scope is `workspace`. |
+| Note (`notes.resource_id` matches) | `notes.scope = 'workspace'` and the note is not archived. |
+| Inbound email (`provider = 'resend'`, `resource_type = 'email'`) | Never — its visibility derives from an existing attachment. |
+| Anything else | Never. A resource class the predicate has not been taught is refused until somebody decides what it means. |
+
+Default-deny is the point: a new resource class added later is refused rather
+than silently inheriting group-wide disclosure, and the refusal is the thing that
+prompts the decision. The predicate is new code, not a reuse of the existing
+check, and the tests it needs are named in acceptance criteria 9.
 
 **Group membership grants nothing.** It does not make a work stream readable to
 somebody who could not read it, and it does not make a group's contents visible
@@ -631,7 +710,11 @@ it.
 **Deletion is bounded and audited.** Deleting a group deletes group rows only.
 Every mutation records the acting user (`created_by_user_id`, `added_by_user_id`),
 so a resource that arrived in a work stream by a group rule still names the
-person whose action caused it.
+person whose action caused it. That promise is why the fan-out outbox carries
+`attached_by_user_id` of its own rather than joining back to
+`workspace_group_default_resources`: the group, or just that default, may be
+deleted after the transaction commits and before the alarm drains, and a join to
+a row that no longer exists cannot name anybody.
 
 ## Agent behavior
 
@@ -699,19 +782,35 @@ does not establish that any of this is visible or legible.
 8. Removing a default resource from the group removes it from the group and from
    no work stream. Removing a work stream from the group, and deleting the group,
    likewise detach nothing.
-9. A personal-scoped resource is refused as a group default, with a message that
-   says why.
-10. Switching **Group terminology** to **Project** changes the sidebar heading,
+9. `resourceIsWorkspaceDefaultEligible` is proved default-deny, with one case per
+   row of its table plus the ones that motivated it: a **personal note owned by
+   the caller** is refused (the case the existing connector check misses), a
+   workspace-scoped note is admitted, another member's personal connector
+   resource is refused, a workspace connector resource is admitted, an inbound
+   `resend`/`email` resource is refused, and a resource of an unrecognized class
+   is refused. The picker offers exactly what the route accepts — one test drives
+   both against the same fixtures, so they cannot diverge.
+10. `attachGroupDefaultResource` is proved on real workerd against a work stream
+    that already holds the resource: the relationship type and
+    `attached_by_user_id` are unchanged, `resource_inventory_revision` does not
+    move, and no `resource_attached` is published. Against one that does not, all
+    three happen exactly once — and a redelivered message produces no second
+    event. Both the queue fan-out and the synchronous join path are shown to call
+    it, with a live socket asserting the event.
+11. A default added and then deleted — group and all — before the alarm drains
+    still attaches, and the resulting link names the original actor. This is the
+    case that a join back to `workspace_group_default_resources` cannot serve.
+12. Switching **Group terminology** to **Project** changes the sidebar heading,
     the plus button, the context-menu item, the modal, the marker's accessible
     name, the group home page, and the settings row itself, with no reload. A
     grep of the renderer finds no user-visible `"Group"` or `"Project"` literal
     outside the terminology helper, and a test asserts it.
-11. Membership and defaults survive a WorkspaceDO restart, and a deleted work
+13. Membership and defaults survive a WorkspaceDO restart, and a deleted work
     stream leaves no orphaned membership row.
-12. A fan-out whose target work stream is unreachable retries and lands in the
+14. A fan-out whose target work stream is unreachable retries and lands in the
     dead-letter queue; the group keeps the default, and nothing else in the
     workspace is affected.
-13. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
+15. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
     `pnpm test:scripts`, both Wrangler dry-run builds, and
     `pnpm --filter @avalon/api test:workers` are green. Anything that depends on
     Durable Object storage, alarms, or the socket is a `test-workers/` test on
