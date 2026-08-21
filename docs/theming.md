@@ -39,7 +39,7 @@ dotted keys, because flat keys diff cleanly and a nested tree does not:
 ```json
 {
   "$schema": "../theme.schema.json",
-  "id": "airy-dark",
+  "id": "air-dark",
   "name": "Air Dark",
   "appearance": "dark",
   "description": "Near-black, amber, and a great deal of room.",
@@ -176,12 +176,13 @@ the picker, persistence, the window background — reads from those.
 render, and sets two attributes on `<html>`:
 
 ```html
-<html data-theme="airy" data-theme-choice="airy">
+<html data-theme="air-dark" data-theme-family="air" data-theme-mode="system">
 ```
 
-`data-theme` selects one block out of `themes.css`. `data-theme-choice` records
-what the person actually picked, because `dark` and "system, currently dark"
-produce an identical `data-theme` and the Settings picker has to tell them apart.
+`data-theme` selects one block out of `themes.css`. The other two record what the
+person actually picked, one attribute per axis, because a pinned Dark and
+"system, currently dark" produce an identical `data-theme` and the Settings
+picker has to tell them apart.
 
 Nothing else in the renderer branches on the theme. No component reads a colour,
 and no rule is written twice for two appearances.
@@ -532,6 +533,15 @@ depend on that:
 - **The backdrop is painted once.** Only `.workspace-shell` and the Settings
   miniature may name `--av-sys-backdrop-image`; anything else that paints it
   draws a second copy of one gradient and shows a seam where the two disagree.
+- **The backdrop document is mounted by the main window alone.** The standalone
+  Settings and meeting windows keep a flat `surface-default` ground: both are
+  dense forms, and a field of moving light behind one costs more legibility than
+  it buys. On Air that does mean the two windows differ side by side, since
+  Settings opens over the work stream — a decision, not an oversight, and the
+  one place the "one appearance everywhere" rule below is knowingly relaxed. The
+  *choice* still reaches those windows; only the document does not. A test pins
+  which surfaces mount `ThemeBackdrop`, because the painted-once guard above
+  looks for a second copy and would never notice a missing one.
 - **Both ramps are monotonic in contrast against the surface**, in every theme.
 - **Lines come off `--av-ref-color-line-*` and fills come off `--av-ref-color-neutral-*`.** A border that reaches
   back onto the neutral ramp re-creates the coupling the split exists to remove,
@@ -604,6 +614,26 @@ reads a stylesheet.
 - **Themes are not animated.** Switching repaints immediately, and the reported
   window background applies to the *next* window rather than the current one.
 
+### Deliberately unfinished
+
+Three things the reference designs specify that Air does not do yet. They are
+here rather than only in the pull request that raised them, because a pull
+request description is not reachable from the repository.
+
+- **A person's own turn is left-aligned in Air.** Both reference files use
+  `align-self: flex-end`, which would put it on the right as Terra does. Left is
+  a deliberate instruction that overrides the files, and `cmp.turn.align` is the
+  one token that changes it if that is revisited.
+- **The send control is a bare arrow.** The reference is an uppercase
+  letterspaced label beside it with no button frame. That is markup rather than
+  a token, so it is not a theme's decision to make as things stand — a theme
+  that wanted the label would need the composer to offer one.
+- **There is one row hover.** The reference distinguishes three —
+  navigation actions, the automation row, and stream rows — where
+  `cmp.row.background-hover` covers all of them; only the stream value matches.
+  Pressed and focus states are absent from the reference files entirely and are
+  unchanged from Terra.
+
 ## Testing
 
 | Suite | What it covers |
@@ -632,6 +662,66 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-21 — The documents catch up with the two-axis picker
+
+**What changed:** `docs/e2e.md`'s appearance acceptance step, the worked theme
+file here, the `data-theme` example, and a new "Deliberately unfinished" list.
+
+**Why:** the axes were split several commits before the documents were, and the
+stale text was not merely out of date — it was actively wrong in ways that cost
+someone time.
+
+- The acceptance step asked a tester to choose Airy and confirm it *stopped*
+  following the Mac. That is the exact bug the split exists to prevent, so
+  following the step would have reported a working app as broken.
+- The worked example carried `"id": "airy-dark"` against a file on disk named
+  `air-dark`. Copying it produces a theme that fails the registry check.
+- The `data-theme` example showed a `data-theme-choice` attribute that no longer
+  exists; `applyTheme` sets `data-theme-family` and `data-theme-mode`. The
+  paragraph's reasoning was still right, which is what made it hard to notice —
+  it described the attribute that superseded it.
+
+The changelog's own references to `airy` are left alone. They are correct as
+history, and so is the one in the migration section, which is about reading a
+preference an older build wrote.
+
+**Why the unfinished list exists:** three reference-design items are knowingly
+not done. They were stated in the pull request, which nobody reading this file in
+a year can reach. A decision that is only in a review thread is a decision that
+will be rediscovered as a bug.
+
+**What a future change has to respect:** an acceptance step is executable
+documentation — someone will follow it literally against a build they did not
+write. Stale prose elsewhere misleads; stale prose there manufactures a defect
+report.
+
+### 2026-08-21 — Secondary windows keep a flat ground, on purpose
+
+**What changed:** nothing in how it renders. A comment at the mount site, an
+invariant, and `theme-backdrop.node.test.ts`, which asserts that `AppShell` is
+the only surface mounting `ThemeBackdrop`.
+
+**Why:** review pointed out that the standalone Settings and meeting windows
+never mount it, so on Air — where the document *is* the entire backdrop, since
+every theme sets `sys.backdrop.image` to `none` — the main window animates and
+the Settings window beside it is flat. That was true by omission: those surfaces
+return before `AppShell` is reached and nobody had decided anything about it.
+
+**The decision:** they stay flat. Both are dense forms and a moving field behind
+one costs more legibility than it buys. The alternative — mounting it and making
+`.settings-window` translucent so the light runs beneath — was considered and
+rejected on those grounds, not on effort.
+
+**Why a test for a thing that does nothing:** the stylesheet's painted-once
+guard looks for a *second* surface painting a backdrop, so it can only catch a
+duplicate. A surface that gains or loses the frame is invisible to it, which is
+how this went unnoticed in the first place. The new test names the mounting
+surfaces, so changing the set means changing the decision in the same diff.
+
+**What a future change has to respect:** "one preference, one appearance
+everywhere" is knowingly relaxed here, and only here. If a third window is
+added, decide which side of this line it is on before shipping it.
 
 ### 2026-08-21 — A following window applies the message, not the store
 

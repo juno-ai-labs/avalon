@@ -193,6 +193,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         <BackgroundWorkstreamSocket api={api} key={workstreamId} workstreamId={workstreamId} />
       ))}
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+      {/*
+        The main window only. The standalone Settings and meeting windows reach
+        their own surfaces before `AppShell` and deliberately do not mount this:
+        both are dense forms, and a field of moving light behind one costs more
+        legibility than it buys. They keep `surface-default` as a flat ground.
+
+        So on Air the two windows do look different side by side, which is a
+        decision rather than an oversight — `docs/theming.md` records it in the
+        Invariants, and a test fails if a third surface starts mounting one
+        without that decision being revisited.
+      */}
       <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
