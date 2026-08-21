@@ -579,29 +579,42 @@ export class WorkstreamDO extends DurableObject<Env> {
    * the alarm adds its own delay on top, so a transition a person is actively
    * waiting on arrived seconds after the thing that caused it.
    *
-   * Nothing about durability moves. The outbox row is still the authority and
-   * is deleted only against a confirmed application; `deliverWorkspaceDirectoryEffects`
-   * returns the rows to `pending` if the call fails, and the alarm and the
-   * Queue remain exactly the delivery guarantee they were. This is one bounded
-   * attempt to get there first — never awaited by the caller, because the
-   * child's effect must not be held open on the workspace being reachable.
+   * This delivers but deliberately **does not acknowledge**. The outbox is
+   * untouched — no row consumed, no `not_before` moved, no attempt counted — so
+   * the alarm, the Queue, and the activation fence keep exactly the lifecycle
+   * they had, and this is purely additive. WorkspaceDO applies by `messageId`
+   * and `payloadHash`, so the Queue's later copy of the same effect finds the
+   * receipt, reports no change, and publishes nothing a second time.
    *
-   * The failure case is worth naming: a failed attempt pushes `not_before`
-   * forward by the retry base, so it delays the Queue path it was racing. That
-   * is acceptable because the two paths end in the same RPC to the same object
-   * — a workspace that refuses this call would have refused the consumer's.
+   * Acknowledging here was the first attempt and was wrong. Draining the
+   * outbox eagerly meant whoever looked next found it empty: the activation
+   * fence reported that it had flushed nothing, and the effects it was supposed
+   * to be gating on had already gone. Delivery is a thing this can usefully
+   * race the Queue at; ownership of the outbox is not.
    */
   private deliverDirectoryEffectsEagerly(): void {
     if (this.eagerDirectoryDeliveryInFlight) return;
     const effects = this.dueWorkspaceDirectoryEffects(25);
     if (effects.length === 0) return;
+    const metadata = this.metadataRow();
+    if (!metadata) return;
     this.eagerDirectoryDeliveryInFlight = true;
     this.state.waitUntil((async () => {
       try {
-        await this.deliverWorkspaceDirectoryEffects(effects);
+        const workspace = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.WORKSPACE_DOS,
+          metadata.workspace_id,
+          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
+        );
+        await workspace.applyWorkstreamDirectoryEffects({
+          workspaceId: metadata.workspace_id,
+          envelopes: effects,
+        });
       } catch {
-        // Already handled: the delivery path returns its rows to `pending`
-        // rather than throwing, and the alarm owns every retry after this one.
+        // The outbox still holds every one of these, so the alarm and the Queue
+        // deliver them exactly as they would have. Nothing is lost by losing
+        // the race this was trying to win.
       } finally {
         this.eagerDirectoryDeliveryInFlight = false;
       }
