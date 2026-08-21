@@ -187,7 +187,10 @@ async function reachSite(url, fetchImpl, { attempts, timeoutMs, wait, log }) {
     let outcome;
     try {
       const response = await fetchImpl(url, {
-        redirect: "manual",
+        // `manual` on purpose: Access answers with a 302 to its login page, and
+        // following it would report the identity provider's health rather than
+        // this Worker's.
+        redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (response.status < 500) return response;
@@ -209,9 +212,28 @@ async function reachSite(url, fetchImpl, { attempts, timeoutMs, wait, log }) {
     await wait(delay);
   }
 
+  // Giving up is logged as loudly as waiting was. `checkRegion` in
+  // `check-regional-health.mjs` does the same, and without it the job output
+  // shows five "retrying" lines and then a bare failure, with nothing saying
+  // the budget was spent rather than the attempt abandoned early.
+  log(`${url} never settled after ${attempts} attempts`);
   return lastResponse ?? { status: 0, error: lastError };
 }
 
+/**
+ * Run both checks and throw with everything that is wrong, or return the
+ * expectation that was verified.
+ *
+ * Every dependency is injectable so the suite can drive this without a network
+ * or real timers:
+ *
+ * - `environment` — where the Cloudflare credentials are read from.
+ * - `fetchImpl` — used for both the Queues API and the site request.
+ * - `expected` — skips reading `wrangler.jsonc`, for tests that want a fixture.
+ * - `siteAttempts` / `siteTimeoutMs` / `wait` — the retry budget. Tests shrink
+ *   the timeout and no-op the wait so the loop runs at full speed.
+ * - `log` — collected by tests to assert on what an operator would read.
+ */
 export async function checkMigrationTrackerHealth(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -234,9 +256,6 @@ export async function checkMigrationTrackerHealth(options = {}) {
 
   if (expected.hostname) {
     const url = `https://${expected.hostname}/`;
-    // `redirect: manual` on purpose: Access answers with a 302 to its login
-    // page, and following it would report the identity provider's health
-    // instead of this Worker's.
     const response = await reachSite(url, fetchImpl, {
       attempts: options.siteAttempts ?? SITE_ATTEMPTS,
       timeoutMs: options.siteTimeoutMs ?? SITE_ATTEMPT_TIMEOUT_MS,
