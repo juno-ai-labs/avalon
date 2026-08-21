@@ -4,6 +4,7 @@ import {
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
+  WorkspaceSidebarPageEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
@@ -11,6 +12,8 @@ import {
   WorkspaceSyncTopicSchema,
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
+  type AutomationSummary,
+  type NoteSummary,
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
@@ -39,6 +42,15 @@ import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
+import {
+  AUTOMATION_SIDEBAR_SQL,
+  AutomationSidebarRowSchema,
+  NOTE_SIDEBAR_SQL,
+  NoteSidebarRowSchema,
+  SIDEBAR_LIST_LIMIT,
+  toAutomationSummary,
+  toNoteSummary,
+} from "../services/sidebar-reads";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -1042,6 +1054,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
         ...page,
+      })));
+      return;
+    }
+    if (parsed.data.type === "list_sidebar") {
+      const auth = await this.sessionAuth(attachment);
+      if (!auth) {
+        socket.close(1008, "Session no longer active");
+        return;
+      }
+      // Three local SQLite reads, no await between them: the directory, the
+      // automations and the notes all belong to this object, so the sidebar's
+      // opening state is one consistent snapshot rather than three answers a
+      // concurrent write could land between.
+      socket.send(JSON.stringify(WorkspaceSidebarPageEventSchema.parse({
+        type: "workspace_sidebar_page",
+        requestId: parsed.data.requestId,
+        workstreams: this.listDirectory({
+          workspaceId: attachment.workspaceId,
+          userId: attachment.userId,
+          limit: parsed.data.limit,
+          includeSystem: parsed.data.includeSystem,
+        }),
+        automations: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+        notes: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       })));
       return;
     }
@@ -3079,6 +3115,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
     };
+  }
+
+  /**
+   * The automations the sidebar opens with, read straight from this object.
+   *
+   * The REST list reconciles each automation's email route against the Global
+   * registry before answering. That is a network call, and this runs on the
+   * socket handler's single thread with the directory read beside it, so the
+   * address is served as stored and reconciled by the next `automations`
+   * refresh. No sidebar row renders it. `sidebar-reads.ts` holds the reasoning
+   * along with the statement both callers use.
+   */
+  private listSidebarAutomations(workspaceId: string, userId: string): AutomationSummary[] {
+    return this.state.storage.sql.exec<Record<string, SqlStorageValue>>(
+      AUTOMATION_SIDEBAR_SQL,
+      workspaceId,
+      userId,
+      SIDEBAR_LIST_LIMIT,
+    ).toArray().map((row) => toAutomationSummary(AutomationSidebarRowSchema.parse(row)));
+  }
+
+  private listSidebarNotes(workspaceId: string, userId: string): NoteSummary[] {
+    return this.state.storage.sql.exec<Record<string, SqlStorageValue>>(
+      NOTE_SIDEBAR_SQL,
+      workspaceId,
+      userId,
+      SIDEBAR_LIST_LIMIT,
+    ).toArray().map((row) => toNoteSummary(NoteSidebarRowSchema.parse(row)));
   }
 
   private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {

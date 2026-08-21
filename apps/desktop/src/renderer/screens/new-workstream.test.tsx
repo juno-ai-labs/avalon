@@ -22,6 +22,7 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 
 const workspaceSocket = vi.hoisted(() => ({
   createMessage: vi.fn(),
+  listSidebar: vi.fn(),
   listWorkstreams: vi.fn(),
   state: 'connected' as const,
 }));
@@ -124,7 +125,7 @@ describe('New work-stream home', () => {
       disconnect(): void {}
     });
     api.getWorkspaceMembers.mockResolvedValue([currentUser, teammate]);
-    workspaceSocket.listWorkstreams.mockResolvedValue({
+    const directoryPage = {
       items: [
         workstream('waiting', 'Board decision', 'needs_input'),
         workstream('running', 'Pricing restructure', 'running'),
@@ -132,6 +133,13 @@ describe('New work-stream home', () => {
         workstream('failed', 'Broken connector', 'failed'),
       ],
       nextCursor: null,
+    };
+    workspaceSocket.listWorkstreams.mockResolvedValue(directoryPage);
+    // The cold read is the sidebar batch, which carries the same first page.
+    workspaceSocket.listSidebar.mockResolvedValue({
+      ...directoryPage,
+      automations: [],
+      notes: [],
     });
     api.getWorkOpportunities.mockResolvedValue([]);
     api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);

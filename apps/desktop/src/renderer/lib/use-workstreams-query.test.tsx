@@ -8,10 +8,11 @@ import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from './use-workstreams-qu
 import { setCachedWorkstreams } from './workstreams-cache';
 
 const listWorkstreams = vi.hoisted(() => vi.fn());
+const listSidebar = vi.hoisted(() => vi.fn());
 const getApplicationSettings = vi.hoisted(() => vi.fn());
 const settingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 
-vi.mock('./workspace-socket', () => ({ useWorkspaceSocket: () => ({ listWorkstreams }) }));
+vi.mock('./workspace-socket', () => ({ useWorkspaceSocket: () => ({ listSidebar, listWorkstreams }) }));
 vi.mock('./platform', () => ({
   desktopBridge: () => ({
     getApplicationSettings,
@@ -63,6 +64,13 @@ describe('useWorkstreamsQuery', () => {
       items: [summary('workstream-1', 'Launch brief')],
       nextCursor: null,
     });
+    listSidebar.mockReset();
+    listSidebar.mockResolvedValue({
+      items: [summary('workstream-1', 'Launch brief')],
+      nextCursor: null,
+      automations: [],
+      notes: [],
+    });
     getApplicationSettings.mockReset();
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
@@ -78,6 +86,49 @@ describe('useWorkstreamsQuery', () => {
 
     expect(WORKSTREAMS_QUERY_KEY).toEqual(['workstreams']);
     expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual(result.current.data);
+  });
+
+  // The sidebar's three lists are one answer, and the two the shell reads by
+  // key are only useful if the batch writes them under the keys it reads. A
+  // literal typed differently in either place fails here rather than as an
+  // empty sidebar section nobody can explain.
+  it('seeds the automations and notes the shell reads, from the one batch', async () => {
+    listSidebar.mockResolvedValue({
+      items: [summary('workstream-1', 'Launch brief')],
+      nextCursor: null,
+      automations: [{ id: 'automation-1', name: 'Monday brief', scope: 'workspace', status: 'active', updatedAt: '2026-08-21T09:00:00.000Z' }],
+      notes: [{ id: 'note-1', title: 'Standup', lastActivityAt: '2026-08-21T10:00:00.000Z' }],
+    });
+    const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ id: 'automation-1', name: 'Monday brief' })]);
+    expect(queryClient.getQueryData(['notes']))
+      .toEqual([expect.objectContaining({ id: 'note-1', title: 'Standup' })]);
+    // One request for all three. The REST fetchers are the refresh path, not
+    // part of opening the sidebar.
+    expect(listSidebar).toHaveBeenCalledTimes(1);
+    expect(listWorkstreams).not.toHaveBeenCalled();
+  });
+
+  // A batch that failed has left the automations and notes with nothing to load
+  // them: the REST queries are waiting on it, and a retry that asked for the
+  // directory alone would open a sidebar permanently missing two of its lists.
+  it('retries a failed batch as a batch', async () => {
+    listSidebar.mockRejectedValueOnce(new Error('offline'));
+    const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(queryClient.getQueryData(['automations'])).toBeUndefined();
+
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+    });
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    expect(listSidebar).toHaveBeenCalledTimes(2);
+    expect(listWorkstreams).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(['notes'])).toEqual([]);
   });
 
   // The regression this hook exists to prevent: realtime handlers, renames and
@@ -106,13 +157,18 @@ describe('useWorkstreamsQuery', () => {
     const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
-    expect(listWorkstreams).toHaveBeenCalledTimes(1);
-    expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: false });
+    // The cold read is the batch; the preference change reloads the directory
+    // alone, because the automations and notes it also carried do not vary
+    // with it and are the topics' to refresh from here on.
+    expect(listSidebar).toHaveBeenCalledTimes(1);
+    expect(listSidebar.mock.calls[0]?.[0]).toMatchObject({ includeSystem: false });
+    expect(listWorkstreams).not.toHaveBeenCalled();
 
     announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
-    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(2));
-    expect(listWorkstreams.mock.calls[1]?.[0]).toMatchObject({ includeSystem: true });
+    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
+    expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
+    expect(listSidebar).toHaveBeenCalledTimes(1);
   });
 
   describe('paging', () => {
@@ -123,6 +179,15 @@ describe('useWorkstreamsQuery', () => {
       ) => input.before === 'cursor-1'
         ? { items: [summary('workstream-2', 'Second page')], nextCursor: null }
         : { items: [summary('workstream-1', 'First page')], nextCursor: 'cursor-1' });
+      // The batch answers the cold first page, so it has to offer the same
+      // cursor the paged list continues from.
+      listSidebar.mockReset();
+      listSidebar.mockResolvedValue({
+        items: [summary('workstream-1', 'First page')],
+        nextCursor: 'cursor-1',
+        automations: [],
+        notes: [],
+      });
     }
 
     it('reports a further page and appends it without refetching the first', async () => {
@@ -136,8 +201,8 @@ describe('useWorkstreamsQuery', () => {
       await waitFor(() => expect(result.current.data).toHaveLength(2));
       // One request for the page itself: appending is what makes reaching the
       // bottom cost a page rather than the whole list again.
-      expect(listWorkstreams).toHaveBeenCalledTimes(2);
-      expect(listWorkstreams.mock.calls[1]?.[0]).toMatchObject({ before: 'cursor-1' });
+      expect(listWorkstreams).toHaveBeenCalledTimes(1);
+      expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
       // The end of the list, so nothing asks again.
@@ -151,7 +216,7 @@ describe('useWorkstreamsQuery', () => {
       expect(result.current.hasMore).toBe(false);
       act(() => result.current.fetchMore());
 
-      expect(listWorkstreams).toHaveBeenCalledTimes(1);
+      expect(listWorkstreams).not.toHaveBeenCalled();
     });
 
     // The regression a hand-rolled pager invites: the list polls every fifteen
@@ -168,9 +233,12 @@ describe('useWorkstreamsQuery', () => {
         await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       });
 
-      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(4));
-      expect(listWorkstreams.mock.calls[2]?.[0]).not.toHaveProperty('before');
-      expect(listWorkstreams.mock.calls[3]?.[0]).toMatchObject({ before: 'cursor-1' });
+      // Three: the appended page, then both pages again on the refetch. The
+      // batch is not re-sent — the sidebar has already opened.
+      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(3));
+      expect(listSidebar).toHaveBeenCalledTimes(1);
+      expect(listWorkstreams.mock.calls[1]?.[0]).not.toHaveProperty('before');
+      expect(listWorkstreams.mock.calls[2]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
     });

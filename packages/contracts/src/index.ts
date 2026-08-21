@@ -1578,6 +1578,17 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }).strict(),
+  /**
+   * Open the sidebar: the first directory page, the automations and the notes,
+   * in one answer. Deliberately has no cursor — this is the cold-start read,
+   * and everything after it is a `list_workstreams` page or a topic refresh.
+   */
+  z.object({
+    type: z.literal("list_sidebar"),
+    requestId: IdSchema,
+    limit: z.number().int().min(1).max(250),
+    includeSystem: z.boolean(),
+  }).strict(),
 ]);
 
 const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
@@ -1621,15 +1632,24 @@ export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchem
   workstreamId: IdSchema,
 }).strict();
 
-/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
-export const WorkspaceWorkstreamPageEventSchema = z.object({
-  type: z.literal("workspace_workstream_page"),
-  requestId: IdSchema,
+/**
+ * The body of one cursor-paged directory answer, shared by both events that
+ * carry it: the page a scroll asks for, and the page inside the opening
+ * sidebar batch. Held as fields plus a refinement rather than a schema so both
+ * can spread it into their own strict object — `superRefine` returns a
+ * `ZodEffects`, which cannot be extended.
+ */
+const workspaceWorkstreamPageFields = {
   directoryWaterline: z.number().int().nonnegative(),
   items: z.array(WorkstreamSchema).max(1_250),
   stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-}).strict().superRefine((page, context) => {
+} as const;
+
+function refineWorkstreamPagePairing(
+  page: { items: Array<{ id: string }>; stateVersions: Array<{ workstreamId: string }> },
+  context: z.RefinementCtx,
+): void {
   const itemIds = new Set(page.items.map((item) => item.id));
   const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
   if (itemIds.size !== page.items.length
@@ -1642,7 +1662,39 @@ export const WorkspaceWorkstreamPageEventSchema = z.object({
       message: "must contain exactly one state version for every work stream item",
     });
   }
-});
+}
+
+/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
+export const WorkspaceWorkstreamPageEventSchema = z.object({
+  type: z.literal("workspace_workstream_page"),
+  requestId: IdSchema,
+  ...workspaceWorkstreamPageFields,
+}).strict().superRefine(refineWorkstreamPagePairing);
+
+/**
+ * Every list the sidebar opens with, in one answer.
+ *
+ * The three lists have one authority — WorkspaceDO SQLite owns the work-stream
+ * directory, `automation_subscriptions` and `notes` alike — so the opening read
+ * is three local queries in one object rather than a socket round trip beside
+ * two Worker round trips that each turn back into RPC to this same object.
+ * Sent once per cold sidebar; a later page comes from `list_workstreams`, and a
+ * later refresh from the topic that owns the list that changed.
+ *
+ * The automation and note arrays are bounded rather than paged: neither has a
+ * cursor, and a workspace past the bound is served its first rows here and
+ * reconciled by the ordinary REST refresh the next `automations`/`notes`
+ * invalidation triggers. A bound that truncates keeps a very large workspace's
+ * sidebar loading; a bound that rejects would fail the whole batch.
+ */
+export const WorkspaceSidebarPageEventSchema = z.object({
+  type: z.literal("workspace_sidebar_page"),
+  requestId: IdSchema,
+  workstreams: z.object(workspaceWorkstreamPageFields).strict()
+    .superRefine(refineWorkstreamPagePairing),
+  automations: z.array(AutomationSummarySchema).max(250),
+  notes: z.array(NoteSummarySchema).max(250),
+}).strict();
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.object({
@@ -1751,6 +1803,7 @@ export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
+export type WorkspaceSidebarPageEvent = z.infer<typeof WorkspaceSidebarPageEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

@@ -221,6 +221,57 @@ describe('Sidebar work-stream markers', () => {
   // OnboardingChecklist is disabled (demo-only, local-state-only, and had no
   // dismiss mechanism — see the commented-out render call in sidebar.tsx).
   // This guards against it silently coming back.
+  // The three lists arrive in one answer now, so both regions are waiting on
+  // the same round trip and both must show the shape of what is coming rather
+  // than a blank panel or one grey block that collapses into a different one.
+  it('holds a set of row-shaped skeletons while the one batch is in flight', () => {
+    const { container, rerender } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            loading
+            notes={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    // Three for the automations, then two groups of four and three.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
+    expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
+    // Said once for the whole wait, not once per section and not once per row.
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByText('Loading your work streams, automations and notes')).toBeInTheDocument();
+    // Nothing claims the sidebar is empty while it is still arriving.
+    expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
+    expect(screen.queryByText('No work streams or notes yet')).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            loading={false}
+            notes={[note('00000000-0000-4000-8000-000000000031', 'Standup', '2026-07-31T19:00:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('00000000-0000-4000-8000-000000000030', 'Launch brief', 'running')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
+    expect(screen.getByText('Launch brief')).toBeInTheDocument();
+    expect(screen.getByText('Standup')).toBeInTheDocument();
+  });
+
   it('does not render the disabled onboarding checklist', () => {
     render(
       <MemoryRouter>
