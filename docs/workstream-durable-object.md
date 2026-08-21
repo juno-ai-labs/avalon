@@ -1005,7 +1005,9 @@ A fresh id under the same client id remains an ignored replay, while the stable
 tool row can now advance from `started` to `completed`, `failed`, or
 `ambiguous`. The migration also repairs already-stranded transcript rows from
 their same-id terminal `tool_effects` receipt, including settlement time,
-member-safe output/error, and terminal status.
+member-safe output/error, and terminal status. Because the status-specific
+activity prose is not reconstructible in SQL, repaired rows clear the stale
+started-tense label and use the renderer's neutral tool-name fallback.
 
 **Why:** The v5 replay repair put `ON CONFLICT(client_message_id) DO NOTHING`
 before its existing `ON CONFLICT(id) DO UPDATE`. A tool's start and terminal
@@ -1024,7 +1026,9 @@ first arm must distinguish same-row lifecycle updates from different-row
 replays, and historical migration v5 remains unchanged; deployed objects
 receive the repair only through append-only v11. The terminal effect receipt is
 the only accepted backfill authority; a started part without one remains
-started rather than being guessed complete from the surrounding run.
+started rather than being guessed complete from the surrounding run. Historical
+repair must not leave status-derived presentation fields claiming that a
+terminal invocation is still active.
 
 ### 2026-08-20 — Transcript order is separated from unread attention
 
