@@ -9,6 +9,7 @@ import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
@@ -183,7 +184,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${slotHolder === 'block-dashboard' ? blockDashboardWidth : railWidth}px`,
-    '--sidebar-width': `${sidebarWidth}px`,
+    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
   return (
@@ -192,6 +193,18 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         <BackgroundWorkstreamSocket api={api} key={workstreamId} workstreamId={workstreamId} />
       ))}
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+      {/*
+        The main window only. The standalone Settings and meeting windows reach
+        their own surfaces before `AppShell` and deliberately do not mount this:
+        both are dense forms, and a field of moving light behind one costs more
+        legibility than it buys. They keep `surface-default` as a flat ground.
+
+        So on Air the two windows do look different side by side, which is a
+        decision rather than an oversight — `docs/theming.md` records it in the
+        Invariants, and a test fails if a third surface starts mounting one
+        without that decision being revisited.
+      */}
+      <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading || notes.isLoading}

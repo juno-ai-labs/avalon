@@ -59,6 +59,15 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import { backdropScheme, fontScheme } from '../common/theme-assets';
+import {
+  defaultThemeChoice,
+  parseThemeChoice,
+  resolveTheme,
+  sameThemeChoice,
+  themeWindowBackground,
+  type ThemeChoice,
+} from '../common/themes';
 import {
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
@@ -95,6 +104,12 @@ import {
 } from './javascript-error-candidate';
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
+import {
+  ThemeFontCache,
+  backdropResponse,
+  isBackdropUrl,
+  themeAssetSchemes,
+} from './theme-assets';
 import { MenuBarContentStore } from './menu-bar-content';
 import {
   isMessageExportUrl,
@@ -629,7 +644,7 @@ protocol.registerSchemesAsPrivileged([{
     standard: true,
     secure: true,
   },
-}]);
+}, ...themeAssetSchemes]);
 
 // Keep development credentials and user data out of the production Avalon
 // namespace. Development Electron binaries are not signed with the stable
@@ -648,6 +663,28 @@ app.setPath(
 
 function userDataDirectory(): string {
   return app.getPath('userData');
+}
+
+/**
+ * The theme choice the last renderer reported, resolved for `backgroundColor`
+ * on every window this process opens. It is read from the preference file at
+ * startup so the very first window of a launch is already the right colour;
+ * before that read completes it is Terra following the Mac, what Avalon ships
+ * with.
+ *
+ * The choice, not the appearance. `system` resolves against whatever the Mac is
+ * set to *when it is read*, so storing the resolved value meant a Mac that
+ * changed appearance while Avalon was closed opened the next launch's first
+ * window in yesterday's colour — precisely the flash this exists to prevent.
+ */
+let windowThemeChoice: ThemeChoice = defaultThemeChoice;
+
+/**
+ * Resolved at the moment a window is constructed rather than cached, so it also
+ * follows a Mac that changes appearance while Avalon is running.
+ */
+function windowBackgroundColor(): string {
+  return themeWindowBackground[resolveTheme(windowThemeChoice, nativeTheme.shouldUseDarkColors)];
 }
 
 const telemetryFetch: typeof globalThis.fetch = (input, init) => net.fetch(
@@ -2443,6 +2480,34 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return enqueueApplicationIconReset();
   });
+  // The renderer owns the theme; this only records which one, so the next
+  // window is constructed with a matching background instead of flashing the
+  // previous theme's canvas before the first paint. An unrecognised value is
+  // dropped rather than thrown on: nothing the caller does depends on it.
+  ipcMain.handle('theme:set-window', async (event, choice: unknown) => {
+    assertTrustedIpcSender(event);
+    const parsed = parseThemeChoice(choice);
+    if (!parsed || sameThemeChoice(parsed, windowThemeChoice)) return;
+    windowThemeChoice = parsed;
+    // A theme is a preference of the device, not of the window it was chosen in.
+    // Every window reads the same stored choice, but each holds its own document,
+    // so without this the Settings window repaints and the work stream behind it
+    // does not. The sender has already applied it.
+    //
+    // Relaying only on a *change* is what stops this echoing: a window told to
+    // follow re-applies and reports back, and that report matches
+    // `windowThemeChoice` and stops here.
+    //
+    // The comparison is over both axes. Deduplicating on the resolved
+    // appearance instead meant that going from `system` to a pinned Dark while
+    // the Mac was already dark resolved to the same appearance, returned here,
+    // and left every other window still believing it was following the Mac —
+    // no visible difference in that moment, and the wrong one at sunrise.
+    for (const window of avalonWindows()) {
+      if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
+    }
+    await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
+  });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
     const stored = await loadStoredSession();
@@ -2650,6 +2715,16 @@ async function installRendererProtocol(): Promise<void> {
     }
   });
 }
+
+/**
+ * Fonts a theme named by URL, kept under `userData` so they survive a relaunch.
+ * Constructed eagerly and lazily populated: nothing is fetched until a stylesheet
+ * asks for a family, which for a theme that bundles its fonts is never.
+ */
+const themeFontCache = new ThemeFontCache({
+  directory: join(app.getPath('userData'), 'theme-fonts'),
+  fetch: (url) => net.fetch(url),
+});
 
 function installMessageExportProtocol(): void {
   protocol.handle(MESSAGE_EXPORT_SCHEME, (request) => {
@@ -3078,7 +3153,7 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     minWidth: 720,
     minHeight: 560,
     show: false,
-    backgroundColor: '#111210',
+    backgroundColor: windowBackgroundColor(),
     title: 'Avalon Settings',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3115,7 +3190,7 @@ async function createMeetingWindow(
     minWidth: 540,
     minHeight: 640,
     show: false,
-    backgroundColor: '#1d1e1b',
+    backgroundColor: windowBackgroundColor(),
     title: 'Meeting notes — Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3208,7 +3283,7 @@ async function createMainWindow(): Promise<void> {
     minWidth: 860,
     minHeight: 640,
     show: false,
-    backgroundColor: '#111210',
+    backgroundColor: windowBackgroundColor(),
     title: 'Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 18, y: 17 },
@@ -3252,6 +3327,12 @@ function installContentSecurityPolicy(): void {
     // header this handler writes is cased differently from the one the protocol
     // set. A boundary that survives on header casing is not a boundary.
     if (isMessageExportUrl(details.url)) return callback({});
+    // And a backdrop document carries its own for the same reason: it is served
+    // under `default-src 'none'` with no `connect-src`, which is stricter than
+    // anything below in every direction except the one that matters here — this
+    // handler's policy ends in `frame-ancestors 'none'`, and a backdrop that
+    // cannot be framed is a backdrop that never renders.
+    if (isBackdropUrl(details.url)) return callback({});
     const configuredOrigins = Object.values(runtimeConfig().api).flatMap((rawUrl) => {
       const url = new URL(rawUrl);
       const socketProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -3269,7 +3350,7 @@ function installContentSecurityPolicy(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'`,
+          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
         ],
       },
     });
@@ -3343,6 +3424,13 @@ if (!singleInstanceLock) {
     } catch (error) {
       logWarn('avalon', 'could not read the Developer preference', error);
     }
+    try {
+      // Before any window is constructed, so the first one of the launch opens
+      // on the theme's own canvas rather than flashing the previous default.
+      windowThemeChoice = (await readStoredApplicationSettings(userDataDirectory())).themeChoice;
+    } catch (error) {
+      logWarn('avalon', 'could not read the stored window theme', error);
+    }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
@@ -3381,6 +3469,8 @@ if (!singleInstanceLock) {
     }
     await installRendererProtocol();
     installMessageExportProtocol();
+    protocol.handle(backdropScheme, (request) => backdropResponse(request.url));
+    protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();
     autoUpdateController = initializeAutoUpdate({

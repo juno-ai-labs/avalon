@@ -1,3 +1,4 @@
+import { parseThemeChoice, type ThemeChoice } from '../../common/themes';
 import type { Region } from './types';
 
 export const DEVICE_PREFERENCES_STORAGE_KEY = 'avalon:device-preferences';
@@ -9,6 +10,10 @@ export interface DevicePreferences {
   selectedRegion?: Region;
   workspaceName?: string;
   microphoneDeviceId?: string;
+  /** Absent means the theme has never been chosen, which is not the same as
+   * having chosen `system` mode: only the latter survives a change of default.
+   * A string here is the flat pre-family shape and is migrated on read. */
+  theme?: ThemeChoice;
 }
 
 function parsedPreferences(value: string | null): DevicePreferences | null {
@@ -21,6 +26,7 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
     const selectedRegion = candidate['selectedRegion'];
     const workspaceName = candidate['workspaceName'];
     const microphoneDeviceId = candidate['microphoneDeviceId'];
+    const theme = parseThemeChoice(candidate['theme']);
     if (selectedRegion !== undefined && selectedRegion !== 'global' && selectedRegion !== 'eu') return null;
     if (workspaceName !== undefined && typeof workspaceName !== 'string') return null;
     if (microphoneDeviceId !== undefined && typeof microphoneDeviceId !== 'string') return null;
@@ -31,6 +37,10 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
       ...(typeof microphoneDeviceId === 'string' && microphoneDeviceId.trim()
         ? { microphoneDeviceId: microphoneDeviceId.trim() }
         : {}),
+      // An unrecognised theme is dropped rather than rejecting the whole
+      // document: a build that removes a theme must not also cost the person
+      // their region and microphone.
+      ...(theme ? { theme } : {}),
     };
   } catch {
     return null;
@@ -70,6 +80,12 @@ export function setDeviceSelectedRegion(selectedRegion: Region | null): void {
 export function setDeviceWorkspaceName(workspaceName: string): void {
   const preferences = readDevicePreferences();
   preferences.workspaceName = workspaceName.trim();
+  writeDevicePreferences(preferences);
+}
+
+export function setDeviceTheme(theme: ThemeChoice): void {
+  const preferences = readDevicePreferences();
+  preferences.theme = theme;
   writeDevicePreferences(preferences);
 }
 
