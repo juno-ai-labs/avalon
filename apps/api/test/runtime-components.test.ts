@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 
-import { workspaceSchedulerName } from "../src/durable-objects/workspace-scheduler";
 import { scheduledAlarmRetryDelay } from "../src/durable-objects/scheduled-alarms";
 import {
   calculateNextOccurrence,
@@ -86,7 +85,6 @@ describe("runtime component invariants", () => {
     )).toBe(
       "eu:00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-00000000000b"
     );
-    expect(workspaceSchedulerName("global", "workspace-id")).toBe("global:workspace-id");
   });
 
   it("delivers personal room events only to the authenticated target user", () => {

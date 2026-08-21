@@ -28,7 +28,7 @@ function resourceTelemetryConnector(value: unknown):
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -724,7 +724,7 @@ export class ResourceService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    await refreshWorkspaceSchedulerAlarm(this.env, this.auth.workspaceId);
+    await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
   }
 }
 
