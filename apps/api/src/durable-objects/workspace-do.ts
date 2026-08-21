@@ -36,6 +36,11 @@ import {
 } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import {
+  authorizationKey,
+  permittedWorkspaceSocketIdentities,
+  type ConnectedSocketIdentity,
+} from "./workspace-socket-authorization";
+import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
@@ -318,12 +323,6 @@ const PRODUCT_ALARM_BATCH = 6;
  * pays it twice a minute.
  */
 const AUTHORIZATION_REVALIDATE_MS = 30_000;
-/**
- * Sessions per sweep query. D1 permits 100 bound parameters per statement and
- * the fixed predicate takes four, so batches stay well inside it rather than
- * failing the whole sweep on a workspace with many windows open.
- */
-const AUTHORIZATION_SWEEP_BATCH = 48;
 /**
  * Topics whose publication can mean somebody just lost access to this
  * workspace. Publishing one sweeps immediately rather than waiting out the
@@ -614,6 +613,11 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   }
 }
 
+/** One connected authorization identity and the sockets it holds. */
+interface ConnectedIdentity extends ConnectedSocketIdentity {
+  sockets: WebSocket[];
+}
+
 /**
  * Stop sending to a socket, then close it.
  *
@@ -859,6 +863,15 @@ export class WorkspaceDO extends DurableObject<Env> {
    * the next publication sweeps. The failure direction is toward asking again.
    */
   private lastRevalidatedAt = 0;
+  /**
+   * The sweep currently running, so concurrent publications join it instead of
+   * each starting their own. A directory batch fans out to one
+   * `publishWorkstreamState` per changed work stream, all started together,
+   * and every one of them would otherwise pass the interval check before the
+   * first sweep finished and recorded itself.
+   */
+  private sweepInFlight: Promise<boolean> | null = null;
+  private sweepInFlightCertain = false;
 
   constructor(
     state: DurableObjectState,
@@ -3061,7 +3074,25 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   private async revalidateBeforePublish(certain: boolean): Promise<void> {
     if (!certain && Date.now() - this.lastRevalidatedAt < AUTHORIZATION_REVALIDATE_MS) return;
-    await this.evictListenersWhoMayNoLongerListen(certain);
+    // A caller joins a sweep already running rather than starting a second one
+    // — except a certain caller behind an uncertain sweep, which must not
+    // inherit the uncertain one's error path: if that sweep's query fails it
+    // leaves everyone connected, which is the wrong answer for a retraction.
+    if (this.sweepInFlight && (!certain || this.sweepInFlightCertain)) {
+      await this.sweepInFlight;
+      return;
+    }
+    const sweep = this.evictListenersWhoMayNoLongerListen(certain);
+    this.sweepInFlight = sweep;
+    this.sweepInFlightCertain = certain;
+    try {
+      await sweep;
+    } finally {
+      if (this.sweepInFlight === sweep) {
+        this.sweepInFlight = null;
+        this.sweepInFlightCertain = false;
+      }
+    }
   }
 
   /**
@@ -3080,21 +3111,42 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   private async evictListenersWhoMayNoLongerListen(certain: boolean): Promise<boolean> {
     const sockets = this.state.getWebSockets();
-    const bySession = new Map<string, { userId: string; sockets: WebSocket[] }>();
+    // Keyed by session *and* user, because a session id is not by itself an
+    // identity: the development bypass gives every user the literal session id
+    // `development`, so grouping on the session alone would let one member's
+    // membership decide every local window's fate. The production query is
+    // still asked by session id — the composite is what the answer is recorded
+    // against.
+    const byIdentity = new Map<string, ConnectedIdentity>();
     for (const socket of sockets) {
       const attachment = readAttachment(socket);
       if (!attachment) continue;
-      const existing = bySession.get(attachment.sessionId);
+      const key = authorizationKey(attachment.sessionId, attachment.userId);
+      const existing = byIdentity.get(key);
       if (existing) existing.sockets.push(socket);
-      else bySession.set(attachment.sessionId, { userId: attachment.userId, sockets: [socket] });
+      else {
+        byIdentity.set(key, {
+          sessionId: attachment.sessionId,
+          userId: attachment.userId,
+          sockets: [socket],
+        });
+      }
     }
-    if (bySession.size === 0) return false;
+    if (byIdentity.size === 0) return false;
     const workspaceId = this.workspaceId();
     if (!workspaceId) return false;
 
     let permitted: Set<string>;
     try {
-      permitted = await this.permittedSessionIds(workspaceId, bySession);
+      permitted = await permittedWorkspaceSocketIdentities(
+        this.env.DB,
+        {
+          workspaceId,
+          region: this.env.AVALON_REGION,
+          devAuth: this.env.APP_ENV === "development" && this.env.AVALON_DEV_AUTH === "true",
+        },
+        byIdentity.values(),
+      );
     } catch {
       if (certain) {
         // A retraction has definitely happened and this object cannot find out
@@ -3114,77 +3166,27 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     this.lastRevalidatedAt = Date.now();
 
-    let evicted = false;
-    for (const [sessionId, session] of bySession) {
-      if (permitted.has(sessionId)) continue;
-      for (const socket of session.sockets) {
+    const evictedUsers = new Set<string>();
+    let evictedSockets = 0;
+    for (const [key, identity] of byIdentity) {
+      if (permitted.has(key)) continue;
+      for (const socket of identity.sockets) {
         disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
-        evicted = true;
+        evictedSockets += 1;
       }
+      evictedUsers.add(identity.userId);
+    }
+    // One line for the sweep rather than one per identity: a bulk deactivation
+    // would otherwise log once for every member it touched.
+    if (evictedSockets > 0) {
       logWarn(this.env, "workspace_socket_access_revoked", {
         workspace_id: workspaceId,
-        user_id: session.userId,
-        sockets: session.sockets.length,
+        users: evictedUsers.size,
+        sockets: evictedSockets,
         certain,
       });
     }
-    return evicted;
-  }
-
-  /** The subset of the connected sessions that may still hold a socket here. */
-  private async permittedSessionIds(
-    workspaceId: string,
-    bySession: ReadonlyMap<string, { userId: string; sockets: WebSocket[] }>,
-  ): Promise<Set<string>> {
-    const permitted = new Set<string>();
-    // The development bypass in `sessionAuth` admits a socket with no session
-    // row at all, so a sweep that only queried `sessions` would close every
-    // local window on its first publication.
-    const devAuth = this.env.APP_ENV === "development" && this.env.AVALON_DEV_AUTH === "true";
-    const sessionIds: string[] = [];
-    const devUserIds = new Map<string, string>();
-    for (const [sessionId, session] of bySession) {
-      if (devAuth && sessionId === "development") devUserIds.set(session.userId, sessionId);
-      else sessionIds.push(sessionId);
-    }
-
-    const now = new Date().toISOString();
-    for (let index = 0; index < sessionIds.length; index += AUTHORIZATION_SWEEP_BATCH) {
-      const batch = sessionIds.slice(index, index + AUTHORIZATION_SWEEP_BATCH);
-      const placeholders = batch.map(() => "?").join(",");
-      const result = await this.env.DB.prepare(
-        `SELECT session.id AS session_id
-           FROM sessions session
-           JOIN workspace_members member
-             ON member.workspace_id = session.workspace_id
-            AND member.user_id = session.user_id
-            AND member.status = 'active'
-           JOIN workspaces workspace ON workspace.id = session.workspace_id
-          WHERE session.workspace_id = ? AND session.region = ? AND workspace.region = ?
-            AND session.revoked_at IS NULL AND session.expires_at > ?
-            AND session.id IN (${placeholders})`,
-      ).bind(workspaceId, this.env.AVALON_REGION, this.env.AVALON_REGION, now, ...batch)
-        .all<{ session_id: string }>();
-      for (const row of result.results ?? []) permitted.add(row.session_id);
-    }
-
-    const devIds = [...devUserIds.keys()];
-    for (let index = 0; index < devIds.length; index += AUTHORIZATION_SWEEP_BATCH) {
-      const batch = devIds.slice(index, index + AUTHORIZATION_SWEEP_BATCH);
-      const placeholders = batch.map(() => "?").join(",");
-      const result = await this.env.DB.prepare(
-        `SELECT member.user_id
-           FROM workspace_members member
-           JOIN workspaces workspace ON workspace.id = member.workspace_id
-          WHERE member.workspace_id = ? AND member.status = 'active'
-            AND workspace.region = ? AND member.user_id IN (${placeholders})`,
-      ).bind(workspaceId, this.env.AVALON_REGION, ...batch).all<{ user_id: string }>();
-      for (const row of result.results ?? []) {
-        const sessionId = devUserIds.get(row.user_id);
-        if (sessionId) permitted.add(sessionId);
-      }
-    }
-    return permitted;
+    return evictedSockets > 0;
   }
 
   private async sessionAuth(identity: Pick<SocketIdentity, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
