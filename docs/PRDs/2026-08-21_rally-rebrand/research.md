@@ -80,12 +80,13 @@ resources behind the automated reviewers).
 
 | Kind | Names | Renameable in place? |
 | --- | --- | --- |
-| Workers | `avalon-api-global`, `avalon-api-eu`, `avalon-site`, `avalon-migration-tracker`, `avalon-global-crash-symbolicator`, `avalon-eu-crash-symbolicator` | Only `avalon-site` safely: every other script owns Durable Object namespaces or containers whose identity and stored objects are bound to the script, and a Wrangler `name` change deploys a different script |
+| Workers | `avalon-api-global`, `avalon-api-eu`, `avalon-site`, `avalon-migration-tracker`, `avalon-release-retention` | Only the stateless `avalon-site` and `avalon-release-retention` safely: the other three own Durable Object namespaces whose identity and stored objects are bound to the defining script, and a Wrangler `name` change deploys a *different* script |
+| Containers | `avalon-global-crash-symbolicator`, `avalon-eu-crash-symbolicator` | `containers[].name` entries on the API Workers, tied to `CrashSymbolicatorContainer` |
 | D1 databases | `avalon-global`, `avalon-eu` | No — recreate + copy only |
-| Queues | `avalon-global-activities`, `avalon-eu-activities`, `avalon-migration-reports` | No — recreate + drain only |
-| R2 buckets | `avalon-desktop-releases`, `avalon-desktop-releases-archive` | No — recreate + copy only |
+| Queues | `avalon-global-activities`, `avalon-eu-activities`, `avalon-migration-reports`, plus their dead-letter companions `avalon-global-activities-dead-letter`, `avalon-eu-activities-dead-letter`, `avalon-migration-reports-dead-letter` | No — recreate + drain only |
+| R2 buckets | `avalon-desktop-releases`, `avalon-desktop-releases-archive`, `avalon-global-payloads`, `avalon-global-telemetry`, `avalon-eu-payloads`, `avalon-eu-telemetry` | No — recreate + copy only. The EU pair carry `jurisdiction: "eu"`, so a copy there is a residency operation, not just a copy |
 | Workflows | `avalon-{global,eu}-connector-poll`, `-connector-event`, `-work-opportunity` | Config-declared; rename orphans in-flight instances |
-| Analytics Engine datasets | `avalon-global-telemetry`, `avalon-eu-telemetry` | No |
+| Analytics Engine datasets | `avalon_agent_runs`, `avalon_terminal_operations` — the same two datasets bound in both regions | No |
 
 ## 7. Persisted inside production data
 
@@ -100,6 +101,12 @@ resources behind the automated reviewers).
   matched against the live Daytona sandbox
   (`apps/api/src/services/terminal/coordinator.ts`); renaming one orphans
   the sandbox it names.
+- Canonical plugin IDs `avalon:discovery`, `avalon:core`, `avalon:memory`,
+  `avalon:tables`, `avalon:web`, `avalon:workstream`,
+  `avalon:automation_architect` (`packages/agent-harness/src/index.ts`) —
+  stored in `workstream_plugin_activation_hints` and replayed against the
+  live plugin set on every run; a changed value rehydrates to `"unknown"`
+  and silently deactivates the plugin on every existing work stream.
 
 ## 8. Frozen by policy
 
