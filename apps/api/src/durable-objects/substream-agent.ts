@@ -1822,6 +1822,11 @@ export class SubstreamAgent extends DurableObject<Env> {
       return;
     }
 
+    if (parsed.data.type === "request_snapshot") {
+      await this.fulfillSnapshotRequest(socket, attachment);
+      return;
+    }
+
     if (parsed.data.type === "load_message_page") {
       await this.fulfillMessagePage(socket, attachment, parsed.data);
       return;
@@ -1843,6 +1848,54 @@ export class SubstreamAgent extends DurableObject<Env> {
       "rest_required",
       "Persist this action through the work-stream API before publishing it."
     );
+  }
+
+  /**
+   * Re-serve canonical state to a viewer that is already subscribed.
+   *
+   * This is `fulfillSubscription` at sequence zero, and deliberately nothing
+   * more: assembling a snapshot awaits D1, so asking for one mid-connection has
+   * exactly the bootstrap race an initial subscription has — an event published
+   * inside that window would reach the viewer *before* the snapshot that
+   * precedes it, and land as a duplicate or a gap. The initial path closes the
+   * race by holding the socket out of broadcasts until an in-memory catch-up
+   * runs, so a socket that is already in the room has to be put back into that
+   * state to get the same guarantee; `fulfillSubscription` re-marks it
+   * subscribed once the catch-up has closed the window.
+   *
+   * The reply is the ordinary sequenced `snapshot` frame rather than a
+   * correlated direct one. That is what makes a stale answer a non-question:
+   * the client already drops any frame at or below its cursor, so the room does
+   * not have to reason about which of two concurrent answers is newer.
+   */
+  private async fulfillSnapshotRequest(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+  ): Promise<void> {
+    if (!attachment.subscribed) {
+      this.sendError(
+        socket,
+        "subscription_required",
+        "Subscribe to the message feed before requesting a snapshot.",
+      );
+      return;
+    }
+    socket.serializeAttachment({ ...attachment, subscribed: false } satisfies SocketAttachment);
+    try {
+      await this.fulfillSubscription(
+        socket,
+        attachment.workspaceId,
+        attachment.workstreamId,
+        0,
+      );
+    } catch (error) {
+      // Put the viewer back in the room rather than leaving it silently out of
+      // every future broadcast. It still holds usable state, and a reader that
+      // stops receiving frames has no way to tell that from a quiet work
+      // stream. `sendSnapshot` reports its own failure to the client.
+      socket.serializeAttachment({ ...attachment, subscribed: true } satisfies SocketAttachment);
+      throw error;
+    }
   }
 
   private async fulfillMessagePage(

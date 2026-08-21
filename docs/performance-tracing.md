@@ -367,6 +367,14 @@ This module owns latency diagnosis for the three named flows and nothing else.
   would need `first-primary` or bookmark-based consistency, which gives back
   much of what replication buys. Treat it as a decision with a security
   argument in it, not a configuration change.
+- **Canonical reconciliation is not traced.** A viewer that asks the room to
+  re-send canonical state (`request_snapshot`, see
+  [`architecture.md`](architecture.md)) runs the same snapshot assembly a
+  subscribe does, but under `noFlowSpan` — it is a background repair, not one of
+  the three flows a person waits on, and `PerfFlow` is deliberately limited to
+  those. The consequence is that a slow reconciliation is invisible here; it
+  appears only as room time nobody attributed. Adding a fourth flow is the lever
+  if that becomes the question, and it costs a `perf_flow` row per repair.
 - **A `workstream_open` trace is not always a completed open.** The renderer
   closes the trace on the first valid server frame and records which one it was
   as `outcome`. A `snapshot` means the screen filled; a `resync_required` means
