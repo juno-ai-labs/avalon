@@ -651,7 +651,7 @@ for a sharper reason. A backdrop frame must never gain `allow-same-origin`, and
 the backdrop policy must never gain a `connect-src`; either alone turns the
 document from decoration into a participant.
 
-8-13 — A saved message is rendered outside the application's origin
+### 2026-08-13 — A saved message is rendered outside the application's origin
 
 **What changed:** Exporting one of Avalon's messages as a picture or a PDF renders
 it in a hidden, preload-free window on a scheme of its own, `avalon-export://`,
