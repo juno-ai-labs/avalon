@@ -771,7 +771,7 @@ already have committed across the object boundary.
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents`, `external_delivery_attempts` | Causally fenced mention intents plus the normalized ledger available to multi-destination delivery paths. Existing automation/digest transports keep their smaller idempotency receipts on their local target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
+| `workstream_notification_intents` | Causally fenced mention intents. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -975,6 +975,34 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — Two workspace tables retired with no reader or writer
+
+**What changed:** WorkspaceDO schema migration 3 drops
+`external_delivery_attempts` and `slack_agent_channel_allowlist`, and both
+names leave `WORKSPACE_LOCAL_TABLES` so no statement routes to a table that is
+gone.
+
+**Why:** `external_delivery_attempts` declared a unified outbound pipeline —
+idempotency key, lease, attempt count, five states — covering automation,
+digest, mention, and note-privacy sends. Nothing ever wrote it; real delivery
+runs through `workstream_notification_intents` and the per-channel services.
+`slack_agent_channel_allowlist` was superseded before first use by
+`slack_agent_policies.public_channel_mode` and `private_channel_mode`. An empty
+table beside a working one is not neutral: it reads as a second authority and
+invites the next change to extend the side that has never run.
+
+**Considered and rejected:** Pruning `external_delivery_attempts` from
+`WORKSPACE_FENCED_TABLES` as well. That list feeds version 1's identity-fence
+triggers, so editing it changes v1's implementation hash and strands every
+deployed object on a hash mismatch. The table's drop takes its fences and index
+with it; the list keeps the name because version 1 is frozen, not because the
+table still exists.
+
+**Consequences:** Reviving either name means writing a fresh migration whose
+entry says why the current path is not enough — a unified delivery pipeline now
+has to argue against `workstream_notification_intents`, and channel admission
+against the policy modes.
 
 ### 2026-08-21 — Retire four object tables that no code reads or writes
 
