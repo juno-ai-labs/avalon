@@ -18,9 +18,21 @@ import { z } from "zod";
  * - `unreported` — an inventory sweep found it, but it has not woken since the
  *   tracker existed, so nothing knows its version.
  * - `current` — it is on the highest version its component has been seen on.
+ * - `not_reporting` — its class does not run the migration reporter at all, so
+ *   silence from it means nothing. The sweep enumerates every Durable Object in
+ *   the account, including this Worker's own registry object and the API's
+ *   container class; without this they would sit in `unreported` forever and
+ *   make that count useless for spotting a genuinely stranded object.
  * - `absent` — it was in a previous sweep and is not in the latest one.
  */
-export const ObjectStatusSchema = z.enum(["failed", "behind", "unreported", "current", "absent"]);
+export const ObjectStatusSchema = z.enum([
+  "failed",
+  "behind",
+  "unreported",
+  "current",
+  "not_reporting",
+  "absent",
+]);
 export type ObjectStatus = z.infer<typeof ObjectStatusSchema>;
 
 export const ObjectQuerySchema = z.object({
@@ -125,6 +137,14 @@ export interface RegistryOverview {
   components: ComponentSummary[];
   namespaces: NamespaceSummary[];
   latestSweep: SweepSummary | null;
+  /**
+   * The most recent sweep that actually enumerated something — anything but
+   * `failed`. Staleness is measured against this rather than `latestSweep`,
+   * because a failing sweep still writes a receipt with a fresh timestamp and
+   * would otherwise keep the stale banner suppressed through an outage of any
+   * length.
+   */
+  latestEnumeration: SweepSummary | null;
   recentFailures: TrackedObject[];
   recentEvents: MigrationEvent[];
 }
