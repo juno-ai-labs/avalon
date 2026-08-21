@@ -262,9 +262,12 @@ export interface CreateWorkstreamInput {
   clientMessageId: string;
   participantUserIds: string[];
   /**
-   * Who may read it. Defaults to `workspace`; a caller passes `personal` when
-   * the work stream is born private — a connector conversation that was itself
-   * private, whose members are `participantUserIds`.
+   * Who may read it. Defaults to `personal` — the creator and everyone in
+   * `participantUserIds`, and nobody else — which is what a work stream nobody
+   * has said anything about is. A caller passes `workspace` when it *knows* the
+   * audience is wider than the room: a thread in a public Slack channel, whose
+   * members are not seated as participants and would otherwise be handed a work
+   * stream none of them could open.
    */
   scope?: Scope;
   attachmentIds?: string[];
@@ -352,7 +355,7 @@ export function createDatabase(db: D1DatabaseLike) {
             input.opportunitySnapshot?.version ?? null,
             input.opportunitySnapshot?.displayPromptHash ?? null,
             input.opportunitySnapshot?.executionPromptHash ?? null,
-            input.scope ?? "workspace",
+            input.scope ?? "personal",
           ),
         db
           .prepare(
@@ -432,7 +435,7 @@ export function createDatabase(db: D1DatabaseLike) {
         createdAt: at,
         updatedAt: at,
         archivedAt: null,
-        scope: input.scope ?? "workspace",
+        scope: input.scope ?? "personal",
         systemKind: null,
         modelOverride: AgentModelOverrideSchema.safeParse(input.modelOverride).data ?? null,
         nextPendingWakeup: null,

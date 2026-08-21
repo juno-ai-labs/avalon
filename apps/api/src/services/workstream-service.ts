@@ -522,6 +522,11 @@ export class WorkstreamService {
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
     await requireOpenWorkstreamAuthority(this.env);
+    // `input.scope` travels with the rest of the input rather than being read
+    // off and re-stated: the connector ingresses decide it from the conversation
+    // they read the prompt out of, and a public channel's thread seats no
+    // participants — so a create that lost `workspace` on the way through would
+    // hand that channel a work stream none of its members could open.
     const created = await new WorkstreamObjectCreationService(this.env, this.auth, this.defer).create(input, {
       executionPrincipal: { type: "user", userId: this.auth.userId },
       ...(slackOrigin ? { slackOrigin } : {}),
