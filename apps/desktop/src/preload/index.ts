@@ -105,6 +105,11 @@ const bridge: AvalonDesktopBridge = {
     return () => ipcRenderer.removeListener('application-icon:changed', handler);
   },
   setWindowTheme: (theme: ResolvedTheme) => ipcRenderer.invoke('theme:set-window', theme) as Promise<void>,
+  onThemeChanged: (listener) => {
+    const handler = (_event: unknown, theme: ResolvedTheme): void => listener(theme);
+    ipcRenderer.on('theme:changed', handler);
+    return () => ipcRenderer.removeListener('theme:changed', handler);
+  },
   getSession: () => ipcRenderer.invoke('session:get') as Promise<DesktopSession | null>,
   createDesktopAuthAttempt: (input) => ipcRenderer.invoke('auth:create-desktop-attempt', input) as Promise<DesktopAuthAttempt>,
   cancelDesktopAuthAttempt: (attemptId) => ipcRenderer.invoke('auth:cancel-desktop-attempt', attemptId) as Promise<void>,

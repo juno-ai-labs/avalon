@@ -307,10 +307,21 @@ export interface AvalonDesktopBridge {
   onApplicationIconChanged: (listener: (state: DesktopApplicationIconState) => void) => () => void;
   /**
    * Records the appearance the renderer is drawing, so that the next window the
-   * main process constructs is given a matching `backgroundColor`. Write-only:
-   * the renderer is the authority on which theme is active.
+   * main process constructs is given a matching `backgroundColor`, and so that
+   * every other open window can follow. The renderer is still the authority on
+   * which theme is active; main only relays.
    */
   setWindowTheme: (theme: ResolvedTheme) => Promise<void>;
+  /**
+   * Fires when *another* window changed the theme.
+   *
+   * A theme is one device preference, not one window's — choosing it in the
+   * Settings window and having the work stream behind it stay as it was is the
+   * behaviour this removes. The payload is the appearance now in force, but a
+   * listener should re-read the stored choice rather than trust it: the store is
+   * what every window resolves from, and it already holds both axes.
+   */
+  onThemeChanged: (listener: (theme: ResolvedTheme) => void) => () => void;
   getSession: () => Promise<DesktopSession | null>;
   createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: AvalonRegion }) => Promise<DesktopAuthAttempt>;
   cancelDesktopAuthAttempt: (attemptId: string) => Promise<void>;
