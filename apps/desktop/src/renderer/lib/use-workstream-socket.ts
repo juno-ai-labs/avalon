@@ -698,10 +698,13 @@ export function useWorkstreamSocket(
       });
     };
 
-    const syncBlockDashboardQueries = (): Promise<unknown> => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['block-dashboard-preference', workstreamId], exact: true }),
-    ]);
+    // Only the dashboard itself. `block-dashboard-preference` is a cache read
+    // with no fetcher behind it — the control socket's boot frame and
+    // `GET /workstreams/:id` both write it — so invalidating it can never
+    // refetch, and leaving the call here would read as a repair path that no
+    // longer exists.
+    const syncBlockDashboardQueries = (): Promise<unknown> =>
+      queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true });
 
     /**
      * Ask the room to re-send canonical state down the socket already open.

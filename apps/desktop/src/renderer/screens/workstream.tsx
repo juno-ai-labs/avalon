@@ -853,19 +853,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
+  // The one fetcher for `['workstream', id]`. Both this query and the transcript
+  // query below fetch that key, and only one of the two runs — TanStack dedups
+  // onto whichever it starts first, which is hook declaration order. A queryFn
+  // that writes the panel preference sitting beside one that does not would make
+  // that ordering load-bearing, so neither has a side effect the other lacks.
+  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
+    const detail = await api!.getWorkstream(id, signal);
+    // The detail carries the panel preference for the case where it arrives
+    // before the control socket's boot frame. Null means this frame did not
+    // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
+    // it null — so it must not be written as `false`.
+    if (detail.blockDashboardPreference) {
+      queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
+    }
+    return detail;
+  }, [api, id, queryClient]);
   const workstream = useQuery({
     queryKey: ['workstream', id],
-    queryFn: async ({ signal }) => {
-      const detail = await api!.getWorkstream(id, signal);
-      // The detail carries the panel preference for the case where it arrives
-      // before the control socket's boot frame. Null means this frame did not
-      // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
-      // it null — so it must not be written as `false`.
-      if (detail.blockDashboardPreference) {
-        queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
-      }
-      return detail;
-    },
+    queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
@@ -902,7 +908,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryFn: async ({ signal }) => {
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
-        queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
+        queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
         staleTime: 5_000,
       });
       // No second request: the detail above carries both windows. `resumeFeed`
