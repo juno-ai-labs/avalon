@@ -231,6 +231,9 @@ jobs:
       - name: Require every R2 bucket declared by the regional Wrangler configs
         run: node scripts/check-cloudflare-r2-buckets.mjs
 
+      - name: Require every Queue declared by the Wrangler configs
+        run: node scripts/check-cloudflare-queues.mjs
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:

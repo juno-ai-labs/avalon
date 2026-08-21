@@ -31,6 +31,7 @@ or touching what the tracker stores, serves, or lets in.
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger. |
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding in each region. |
+| `scripts/check-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and proves each queue it declares exists, so the configuration stays the single source of truth. |
 
 ## How it works
 
