@@ -1,10 +1,11 @@
 # Rename-surface survey
 
 > Created 2026-08-21. Supporting material for [`prd.md`](prd.md): where the
-> Avalon name actually lives, measured from the repository as of `4be3833`.
-> Counts are `grep -ri avalon` over the tree excluding `node_modules`,
-> `.git`, and `.wrangler` state. This file is an inventory, not a proposal —
-> the decisions about each row are in the PRD.
+> Avalon name actually lives, measured from the repository as of
+> `4be383317982a4f67212e6798df227d851326b67`. Counts are
+> `grep -ri avalon --exclude-dir={node_modules,.git,.wrangler}` over the
+> tree. This file is an inventory, not a proposal — the decisions about each
+> row are in the PRD.
 
 Roughly **7,800 occurrences across ~800 files**. They are not one kind of
 thing: some are plain prose, some are durable identifiers users hold copies
@@ -30,7 +31,7 @@ these categories.
 | Work-stream / automation email addresses `…@automation.with-avalon.com` | **Permanent** per [`workstream-email-addresses.md`](../../workstream-email-addresses.md); in people's address books and forwarding rules |
 | Desktop auto-update feed `https://downloads.with-avalon.com/stable/darwin/arm64` | Every installed build polls this exact URL; it is the only channel through which the fleet can be moved |
 | Installed app identity | `appId: app.avalon.desktop`; userData under `~/Library/Application Support/Avalon`; keychain items, login-item registration, notification permission all keyed to the installed identity |
-| Deep-link schemes | `avalon://` (desktop authentication), `avalon-export://` (message-export renderer) registered on user machines |
+| Deep-link scheme | `avalon://` (desktop authentication) registered on user machines. The `avalon-export://` scheme is *not* in this category: it exists only inside the app's hidden export window ([`security.md`](../../security.md)), never appears in a user-held link, and renames freely |
 
 ## 3. Wire protocol between shipped clients and the Workers
 

@@ -121,8 +121,10 @@ user data directory (`…/Application Support/Avalon` → `…/Rally`) so login,
 drafts, theme, and caches survive; a fresh install never sees the old path.
 Both `rally://` and `avalon://` deep links open the app — the old scheme stays
 registered so links and auth flows minted before the flip keep working. The
-export renderer moves to a `rally-export` scheme; message cards and their
-footers say Rally.
+export renderer moves to a `rally-export` scheme with no compatibility
+window — that scheme lives only inside the app's hidden export window and
+never appears in a user-held link ([`security.md`](../../security.md));
+message cards and their footers say Rally.
 
 **Links.** New work streams get
 `https://withrally.ai/app/workstreams/<uuid>` as the canonical link
@@ -333,8 +335,8 @@ predecessor, and sequenced so every state the fleet can observe is valid.
   of every renamed screen captured per
   [`dev-environment.md`](../../dev-environment.md#driving-and-screenshotting-it).
 - Old-generation headers and subprotocol succeed against phase-1 Workers
-  (proved in `test-workers/`); the rename guard fails a seeded user-visible
-  "Avalon" string and passes the allowlist.
+  (proved in `apps/api/test-workers/`); the rename guard fails a seeded
+  user-visible "Avalon" string and passes the allowlist.
 - Post phase 3: fresh clone of `juno-ai-labs/rally` passes `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, both Wrangler dry-run
   builds, and the desktop release invariants.
