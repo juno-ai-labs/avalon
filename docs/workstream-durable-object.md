@@ -1035,7 +1035,7 @@ development bypass in `sessionAuth` admits a socket with no session row, so the
 sweep carries a matching membership-only branch; a change to either has to move
 both or local windows close on the first publication.
 
-Shipped in #219.
+Shipped in #220.
 
 ### 2026-08-21 — Terminal addresses its own tables through a typed port
 
