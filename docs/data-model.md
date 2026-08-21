@@ -691,7 +691,9 @@ losing it at `CreateWorkstreamRequestSchema.parse`. The three automation
 inserts — `AutomationService.createRun`, the activity consumer, and the
 workspace scheduler — state `scope = 'workspace'` in their own SQL, and the
 `Workstream` contract's read default flips to `personal` for the same
-fail-closed reason.
+fail-closed reason. The resolved scope also joins the `workstream_create_receipts`
+request hash, so two creates under one `clientMessageId` that resolved different
+audiences are two requests rather than one.
 
 **Why:** Work started in Avalon was published to the whole workspace on
 creation, and the person who started it had to notice and close it. The default
@@ -712,7 +714,18 @@ the automation, so the narrow default would have hidden them from the only
 person who can read them. Leaving the bootstrap row `workspace` and relying on
 each caller to pass `personal` was rejected because the runtime compatibility
 insert writes `COALESCE(NEW.scope, scope)` — with a `workspace` bootstrap, the
-one thing a future caller forgets is the thing that publishes it.
+one thing a future caller forgets is the thing that publishes it. Keeping the
+scope *out* of the create receipt's request hash was rejected once the rest of
+this change landed, and the first reasoning was wrong: the cost of adding it is
+one deploy's worth of `workstream_create_idempotency_conflict` on receipts the
+previous Worker reserved, and the cost of omitting it is permanent and silent.
+A Slack event id is a stable create key across the redeliveries Slack makes on
+an ack timeout, while `resolveSlackChannelType` runs per delivery and answers
+`unknown` — failing closed to `personal` — whenever `conversations.info` times
+out or the token has lost the scope for it. Unhashed, a redelivery that resolved
+`private` matched the receipt of an attempt that had already committed a
+`workspace` row, replayed it, and handed the caller the audience it had just
+decided against.
 
 **Consequences:** Every surface that renders `scope` now renders the private
 state on a freshly created work stream: the sidebar's privacy marker and the
@@ -722,7 +735,11 @@ workspace**, so a workspace that relied on new work being visible to everyone
 will see less of it. Existing rows are untouched — this changes what a create
 writes, not what any row already says. Any new create path must decide its
 scope deliberately: omitting it is now a decision for private, and the two
-places that mean `workspace` say so in SQL a reader can see.
+places that mean `workspace` say so in SQL a reader can see. A create retried
+under a create key that has already been used with a different audience is
+refused with `workstream_create_idempotency_conflict` rather than replayed;
+`workstream-import-hash.ts` now records what may be added to the hashed value
+and what the addition costs.
 
 ### 2026-08-21 — Four reader-less object tables dropped
 

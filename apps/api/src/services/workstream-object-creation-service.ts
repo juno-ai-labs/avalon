@@ -100,9 +100,22 @@ export class WorkstreamObjectCreationService {
     if (control.phase !== "durable_object_open") {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
     }
+    // Resolved once, and part of the request rather than a property of it: two
+    // creates under one `clientMessageId` that resolved different audiences are
+    // different requests, and the receipt has to say so. A Slack event id is a
+    // stable create key across the redeliveries Slack makes on an ack timeout,
+    // while `resolveSlackChannelType` is re-run per delivery and answers
+    // `unknown` — which fails closed to `personal` — whenever `conversations.info`
+    // times out or the token has lost the scope for it. Left out of the hash, a
+    // redelivery that resolved `private` would match the receipt of an attempt
+    // that resolved `public`, replay it, and hand the caller back the
+    // workspace-readable work stream the first attempt had already committed.
+    // In the hash, that mismatch is the 409 the receipt exists to raise.
+    const scope = input.scope ?? "personal";
     const requestHash = workstreamImportHash({
       ...body,
       descriptionSource: input.descriptionSource ?? "derived",
+      scope,
     });
     const at = new Date().toISOString();
     const proposedId = newId();
@@ -203,7 +216,7 @@ export class WorkstreamObjectCreationService {
       clientMessageId: body.clientMessageId,
       participantUserIds: body.participantUserIds,
       attachmentIds: body.attachmentIds,
-      scope: input.scope ?? "personal",
+      scope,
       originResourceIds: options.originResourceIds ?? [],
       modelOverride: body.modelOverride ?? null,
       originType: "ad_hoc",

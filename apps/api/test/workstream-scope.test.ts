@@ -97,6 +97,8 @@ function environment(database: DatabaseSync): {
   initializeInputs: Array<Record<string, unknown>>;
 } {
   const initializeInputs: Array<Record<string, unknown>> = [];
+  /** The contract row each initialized work stream would answer `get` with. */
+  const initialized = new Map<string, Record<string, unknown>>();
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -107,18 +109,38 @@ function environment(database: DatabaseSync): {
         initialize: (request) => {
           const input = request.input as Record<string, unknown>;
           initializeInputs.push(input);
+          const workstream = testWorkstreamContract({
+            id: input.workstreamId,
+            workspaceId: input.workspaceId,
+            title: input.title,
+            objective: input.objective,
+            createdByUserId: input.creatorUserId,
+            emailAddress: input.emailAddress,
+            scope: input.scope,
+          });
+          initialized.set(String(input.workstreamId), workstream);
           return {
-            workstream: testWorkstreamContract({
-              id: input.workstreamId,
-              workspaceId: input.workspaceId,
-              title: input.title,
-              objective: input.objective,
-              createdByUserId: input.creatorUserId,
-              emailAddress: input.emailAddress,
-              scope: input.scope,
-            }),
+            workstream,
             messageId: crypto.randomUUID(),
             harnessRunId: crypto.randomUUID(),
+          };
+        },
+        // A completed receipt replays through `get` rather than `initialize`,
+        // so the replay half of the idempotency tests needs it.
+        get: (request) => {
+          const workstreamId = String(request.workstreamId ?? "");
+          const workstream = initialized.get(workstreamId)
+            ?? [...initialized.values()][0];
+          return {
+            ...workstream,
+            participants: [],
+            viewers: [],
+            resources: [],
+            connections: [],
+            backgroundTasks: [],
+            openElicitations: [],
+            suggestions: [],
+            latestHarnessRunId: null,
           };
         },
       },
@@ -174,5 +196,32 @@ describe("the audience a new work stream is created with", () => {
     expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
     expect(open.workstream.scope).toBe("workspace");
     expect(closed.workstream.scope).toBe("personal");
+  });
+
+  it("refuses a retry of one create key that resolved a different audience", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+    // A Slack event id is one create key across every redelivery Slack makes on
+    // an ack timeout, and the channel type is re-resolved per delivery:
+    // `conversations.info` timing out, or a token that lost the scope for it,
+    // answers `unknown`, which fails closed to `personal`.
+    const clientMessageId = "event:Ev0PRIVATE1";
+
+    const first = await service.create(createInput({ clientMessageId, scope: "workspace" }));
+    expect(first.workstream.scope).toBe("workspace");
+
+    // Replaying the *same* audience is still the idempotent replay it was: one
+    // work stream, and no second initialize.
+    await expect(service.create(createInput({ clientMessageId, scope: "workspace" })))
+      .resolves.toMatchObject({ workstream: { id: first.workstream.id } });
+    expect(initializeInputs).toHaveLength(1);
+
+    // A different one is a different request. Without the scope in the receipt
+    // hash this replayed instead, handing back the workspace-readable work
+    // stream the first attempt committed.
+    await expect(service.create(createInput({ clientMessageId, scope: "personal" })))
+      .rejects.toMatchObject({ status: 409, code: "workstream_create_idempotency_conflict" });
+    expect(initializeInputs).toHaveLength(1);
   });
 });
