@@ -1475,9 +1475,18 @@ room means something: one started from a private Slack channel carries that
 channel's members, and seating the workspace on top would re-publish exactly
 what this release made private.
 
-Still tell the workspace before running it. Nothing becomes unreadable, but a
-work stream that quietly appeared for everyone now has an explicit membership,
-and people notice.
+Still tell the workspace before running it, and say what breaks. The clearest
+case is suggested work: `work_opportunities.created_workstream_id` points a
+workspace-audience suggestion's whole audience at the work stream somebody
+started from it, and after the flip everyone but that person gets a 404 from a
+link the product still shows them. That is a broken link rather than a missing
+list entry, and it is the one people will report.
+
+**The population regrows; this is a point-in-time pass, not a lock.** A
+workspace-audience suggestion still creates a `workspace`-scoped work stream
+whose only participant is whoever started it — that is deliberate, since the
+suggestion was shown to the whole workspace — so a non-zero count next month is
+the product working, not a failed run.
 
 It uses the ordinary product API with an ordinary access token, so it grants
 itself nothing — it sees and changes exactly what that member could from the
@@ -1485,13 +1494,20 @@ app. Work streams whose scope is not what decides who reads them (an
 automation's, a digest occurrence's) refuse with `scope_change_unsupported` and
 are counted as left alone.
 
+The dry run writes the record; the apply reads that same file rather than
+rebuilding it, so the two commands share one path on purpose:
+
 ```bash
 export AVALON_ACCESS_TOKEN=...            # a workspace owner's token
 node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \
   --record ./flip-global.json             # dry run: lists and records, changes nothing
 node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \
-  --record ./flip-global.json --apply
+  --record ./flip-global.json --apply     # resumes from the record above
 ```
+
+The count it prints is the blast radius and nothing else: work streams whose
+scope the object refuses to change — an automation's, a digest occurrence's —
+are recognised from the listing and never enter the record.
 
 **Keep the record file.** Nothing in Avalon stores a work stream's previous
 scope, so that file is the only way back. It also names, under `seatedUserIds`,

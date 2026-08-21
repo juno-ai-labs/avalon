@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   buildRecord,
+  CONSECUTIVE_FAILURE_LIMIT,
   flip,
   parseArguments,
+  refusesScopeChange,
   revert,
   setScope,
 } from "./backfill-workstream-scope.mjs";
@@ -14,6 +16,7 @@ const workstream = (overrides = {}) => ({
   title: "A work stream",
   scope: "workspace",
   systemKind: null,
+  automationSubscriptionId: null,
   originType: "ad_hoc",
   ...overrides,
 });
@@ -84,9 +87,12 @@ test("only workspace-scoped work streams are recorded as targets", () => {
   const record = buildRecord(context(), [
     workstream({ id: "public-one", scope: "workspace" }),
     workstream({ id: "already-private", scope: "personal" }),
-    workstream({ id: "public-two", scope: "workspace", systemKind: "digest" }),
+    workstream({ id: "a-digest", scope: "workspace", systemKind: "digest" }),
+    workstream({ id: "an-automation", scope: "workspace", automationSubscriptionId: "sub-1" }),
   ]);
-  assert.deepEqual(record.entries.map((entry) => entry.workstreamId), ["public-one", "public-two"]);
+  // The two that would answer `scope_change_unsupported` are knowable from the
+  // listing, so they never reach the record — the count is the blast radius.
+  assert.deepEqual(record.entries.map((entry) => entry.workstreamId), ["public-one"]);
   // The scope each row held, which is the whole value of the file.
   assert.deepEqual([...new Set(record.entries.map((entry) => entry.priorScope))], ["workspace"]);
 });
@@ -266,10 +272,10 @@ test("a record aimed at another region is refused rather than half-applied", asy
   await assert.rejects(() => revert(reverting), /recorded against https:\/\/eu\.api\.test/u);
 });
 
-test("--apply alongside --revert is refused rather than quietly dropped", () => {
+test("--record alongside --revert is refused rather than quietly dropped", () => {
   assert.throws(
-    () => parseArguments(["--base-url", "https://api.test", "--revert", "./flip.json", "--apply"]),
-    /--apply cannot be combined with --revert/u,
+    () => parseArguments(["--base-url", "https://api.test", "--revert", "./flip.json", "--record", "./x.json"]),
+    /--record belongs to a flip/u,
   );
 });
 
@@ -284,4 +290,32 @@ test("a network failure costs one row, not the sweep", async () => {
   assert.equal(result.outcome, "failed");
   assert.equal(result.status, 0);
   assert.match(result.error, /fetch failed/u);
+});
+
+test("a broken precondition stops the sweep instead of burning the whole list", async () => {
+  // An expired token fails every row. Grinding through hundreds of them buys
+  // nothing and buries the cause.
+  const entries = Array.from({ length: 40 }, (_, index) => ({
+    workstreamId: `ws-${index}`, title: `W${index}`, priorScope: "workspace",
+  }));
+  let patches = 0;
+  const ctx = context({
+    revert: "/tmp/record.json",
+    fetch: async (url, init = {}) => {
+      if ((init.method ?? "GET") === "PATCH") patches += 1;
+      return { status: 401, text: async () => JSON.stringify({ error: "unauthorized" }) };
+    },
+  });
+  ctx.written["/tmp/record.json"] = { baseUrl: "https://api.test", entries };
+
+  const totals = await revert(ctx);
+
+  assert.equal(totals.failed, CONSECUTIVE_FAILURE_LIMIT);
+  assert.equal(patches, CONSECUTIVE_FAILURE_LIMIT);
+});
+
+test("rows the object will refuse are known from the listing, not discovered by asking", () => {
+  assert.equal(refusesScopeChange(workstream()), false);
+  assert.equal(refusesScopeChange(workstream({ systemKind: "digest" })), true);
+  assert.equal(refusesScopeChange(workstream({ automationSubscriptionId: "sub-1" })), true);
 });
