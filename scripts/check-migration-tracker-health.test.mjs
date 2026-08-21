@@ -328,6 +328,28 @@ test('retries a 5xx, which is propagation one layer up from DNS', async () => {
   assert.ok(lines.some((line) => line.includes('answered HTTP 302')));
 });
 
+test('says the budget was spent rather than failing silently', async () => {
+  const lines = [];
+  const fetchImpl = async (input) => {
+    if (String(input).startsWith('https://migrations.')) throw new Error('ENOTFOUND');
+    return Response.json({ success: true, result: [attached()] });
+  };
+
+  await assert.rejects(checkMigrationTrackerHealth({
+    environment,
+    expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+    log: (line) => lines.push(line),
+    fetchImpl,
+    siteAttempts: 3,
+    siteTimeoutMs: 50,
+    wait: async () => {},
+  }), /could not be reached/u);
+
+  // Without this the output is three "retrying" lines and then a bare failure,
+  // with nothing distinguishing a spent budget from an abandoned attempt.
+  assert.ok(lines.some((line) => line.includes('never settled after 3 attempts')));
+});
+
 test('reports an exhausted 5xx as the status it served, not as unreachable', async () => {
   const fetchImpl = async (input) => (String(input).startsWith('https://migrations.')
     ? new Response('worker threw', { status: 500 })
