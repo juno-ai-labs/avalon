@@ -44,7 +44,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
-| `apps/migration-tracker` | The private operator Worker behind `migrations.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, and the Cloudflare Access boundary in front of both. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, and the Cloudflare Access boundary in front of both. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
 | `scripts/eslint-rules/require-validated-response.mjs` | The lint rule that makes a route validate its own response. |

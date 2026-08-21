@@ -375,7 +375,7 @@ copy/delete count that does not match the plan.
 ### The Durable Object migration tracker
 
 `avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
-at `migrations.rallywith.ai` and receives a migration report from
+at `migrations.internal.rallywith.ai` and receives a migration report from
 every Durable Object in both API Workers.
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
 owns the design; this is the provisioning and deployment procedure.
@@ -452,15 +452,33 @@ The tracker needs no D1 database and no R2 bucket: its entire store is the
 `MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
 further one-time steps are required outside the repository.
 
-**1. The hostname.** `migrations.rallywith.ai` is declared as a custom domain in
+**1. The hostname.** `migrations.internal.rallywith.ai` is declared as a custom domain in
 `wrangler.jsonc`, and the deploy provisions the route on the `rallywith.ai` zone.
 
-It is deliberately one label deep. That zone carries Universal SSL only, which
-covers `rallywith.ai` and `*.rallywith.ai` and nothing below that, so a
-`migrations.internal.rallywith.ai` would need Advanced Certificate Manager to
-present a valid certificate. The site is protected by Cloudflare Access, not by
-being hard to guess, so the extra label bought nothing worth a certificate
-purchase. Every other Avalon hostname is single-level for the same reason.
+It is two labels deep, which the zone's Universal SSL **does not cover**. A
+Universal pack covers `rallywith.ai` and `*.rallywith.ai`, and a wildcard matches
+exactly one label — so `migrations.internal.rallywith.ai` is not in it, and
+without a further certificate the hostname serves a certificate error rather
+than the site.
+
+The certificate is therefore an **Advanced Certificate Manager** pack on the
+`rallywith.ai` zone, a paid per-zone add-on, covering `*.internal.rallywith.ai`.
+The wildcard rather than the exact hostname so the next internal tool needs no
+new certificate order; a pack takes up to 50 hostnames. Issue it from
+**Google Trust Services** — DigiCert is being deprecated as a CA, and the zone's
+Universal pack is already Google-issued, so one CA covers the zone. TXT
+validation completes on its own because Cloudflare is authoritative for the
+zone, and the pack takes roughly fifteen minutes to go active.
+
+**Order the certificate before the first deploy.** Wrangler will create the
+route and the DNS record regardless, and the hostname will fail TLS until the
+pack is active — which reads as an outage rather than as a missing certificate.
+`scripts/check-migration-tracker-health.mjs` catches exactly this: an
+unreachable hostname fails the deployment verification.
+
+The `internal.` label buys naming, not security — the site is protected by
+Cloudflare Access, not by being hard to guess. It is the one Avalon hostname
+that is not single-level, and it is the reason this zone carries ACM at all.
 
 **2. Cloudflare Access.** Access is **not enabled on the account yet**, so this
 starts one step earlier than it otherwise would: enable it from the Zero Trust

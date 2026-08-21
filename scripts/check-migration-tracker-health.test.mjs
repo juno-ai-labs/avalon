@@ -44,7 +44,7 @@ function queueListing(queues) {
 test('reads the expectation from the tracker Wrangler file rather than restating it', () => {
   const expected = expectedTrackerConsumer(`{
     "name": "avalon-migration-tracker",
-    "routes": [{ "pattern": "migrations.rallywith.ai", "custom_domain": true }],
+    "routes": [{ "pattern": "migrations.internal.rallywith.ai", "custom_domain": true }],
     "queues": {
       "consumers": [{
         "queue": "avalon-migration-reports",
@@ -59,7 +59,7 @@ test('reads the expectation from the tracker Wrangler file rather than restating
 
   assert.deepEqual(expected, {
     script: 'avalon-migration-tracker',
-    hostname: 'migrations.rallywith.ai',
+    hostname: 'migrations.internal.rallywith.ai',
     queue: 'avalon-migration-reports',
     deadLetterQueue: 'avalon-migration-reports-dead-letter',
     batchSize: 100,
@@ -170,12 +170,12 @@ test('checks the site only when the Wrangler file declares a hostname', async ()
 
   await checkMigrationTrackerHealth({
     environment,
-    expected: { ...EXPECTED, hostname: 'migrations.rallywith.ai' },
+    expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
     log: () => {},
     fetchImpl,
   });
 
-  assert.ok(requested.includes('https://migrations.rallywith.ai/'));
+  assert.ok(requested.includes('https://migrations.internal.rallywith.ai/'));
 });
 
 test('fails when the site serves the fleet to an unauthenticated caller', async () => {
@@ -186,7 +186,7 @@ test('fails when the site serves the fleet to an unauthenticated caller', async 
   await assert.rejects(
     checkMigrationTrackerHealth({
       environment,
-      expected: { ...EXPECTED, hostname: 'migrations.rallywith.ai' },
+      expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
       log: () => {},
       fetchImpl,
     }),
@@ -203,7 +203,7 @@ test('fails when the hostname cannot be reached at all', async () => {
   await assert.rejects(
     checkMigrationTrackerHealth({
       environment,
-      expected: { ...EXPECTED, hostname: 'migrations.rallywith.ai' },
+      expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
       log: () => {},
       fetchImpl,
     }),
