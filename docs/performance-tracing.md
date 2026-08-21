@@ -95,12 +95,19 @@ Two properties of `step` decide how a flow has to be written:
   beside the identity, which is the path built for aggregating across requests.
 
 **One person opening a work stream produces about eight of these rows, not
-one.** A flow is per component invocation, and an open crosses the detail read,
+one — and the rows are the small half of what an export ships.** A flow is per component invocation, and an open crosses the detail read,
 the transcript read, the socket ticket, the socket upgrade, the room's accept,
 its subscribe, and its `get` and `messages` calls. All unconditional, both
 regions, at `LOG_LEVEL: "info"`. The one-row-per-flow decision below is still
 the right one — per *step* would be roughly forty — but eight is the number to
-budget against before enabling an OTLP export.
+budget against, and only for the rows.
+
+What actually leaves at `head_sampling_rate: 1` is every *automatic* span in
+those eight invocations: one `durable_object_storage_exec` per embedded query
+and one D1 span per query, which is a different order of magnitude from the row
+count and is the figure that matters for ingest volume. Sampling is the wrong
+knob for the content question and the right one for this; nothing here has
+measured it under load, and it should be before the export runs unattended.
 
 That row is not a duplicate of the trace. A trace answers *what happened in this
 one invocation* and is read in a trace UI or at the OTLP destination; the row
@@ -421,12 +428,19 @@ Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
 there are enough production rows to pick thresholds that are not guesses; they
 are deliberately not guessed here.
 
-**Before any of this is pointed at a third-party destination**, two things have
-to be decided rather than inherited.
+**This is now pointed at a third-party destination.** As of 2026-08-20 the
+Global Worker exports both its logs and its traces to the US PostHog project,
+via the `posthog-logs` and `posthog-traces` destinations named in
+`wrangler.global.jsonc`. The EU Worker does not, and its config says why.
 
-The first is not about this module at all and is the larger of the two: the
-platform's automatic Durable Object SQL spans carry
-`cloudflare.durable_object.query.bindings`, which for Avalon means message
+The two things below had to be decided rather than inherited before that
+happened. They are kept here in full because they are what a future reader needs
+in order to understand what was accepted, and because the first of them is not
+closed — it is a standing property of the export.
+
+The first is not about this module at all and is the larger of the two, and it
+was **accepted, not solved**: the platform's automatic Durable Object SQL spans
+carry `cloudflare.durable_object.query.bindings`, which for Avalon means message
 content, with no hook to redact it —
 [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md#what-automatic-tracing-captures-that-we-would-never-log)
 has the detail. An OTLP export moves that content out of the region's own trust
@@ -461,12 +475,16 @@ or keep the attributes as opaque correlation values and never promote them to
 identity. What is not fine is letting a destination's default identity mapping
 decide.
 
-Note also that an OTLP destination is account configuration and covers **both**
-regional Workers. Today no EU telemetry reaches PostHog at all — `POSTHOG_HOST`
-is set only in `wrangler.global.jsonc`, the EU Worker holds no destination
-credential, and [`telemetry.md`](telemetry.md) records that an EU PostHog
-project would require a new recorded decision. A trace export configured without
-noticing would route around that boundary rather than change it.
+Note also how an export is scoped, because it is easy to get backwards. The
+destination is account configuration; the **attachment is per Worker**, through
+`observability.<signal>.destinations`. Creating a destination exports nothing —
+a Worker exports when its own config names one.
+
+Global does; EU does not, and `telemetry.md` records that changing that requires
+a new recorded decision. But what enforces it is the absence of a line in
+`wrangler.eu.jsonc`, which is why
+`apps/api/test/telemetry-export-destinations.test.ts` asserts that absence in
+both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
