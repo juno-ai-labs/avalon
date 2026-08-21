@@ -63,10 +63,13 @@ one. The case is structural:
 
 ## Goals
 
-1. A Windows 10/11 x64 user can install Avalon from the public download page,
-   complete Google sign-in via the `avalon://` browser handoff, and reach their
-   workspace — the full flow, on a machine that has never seen a development
-   environment.
+1. A Windows 11 or Windows 10 x64 user can install Avalon from the public
+   download page, complete Google sign-in via the `avalon://` browser handoff,
+   and reach their workspace — the full flow, on a machine that has never seen
+   a development environment. Windows 10 (1809+, Electron's support floor)
+   passed its October 2025 end of support; its inclusion is deliberate — the
+   installed base is still large — with verification on Windows 11 (CI and
+   the physical machine) and Windows 10 best-effort.
 2. The installed client performs every workspace surface the macOS client
    offers except the three excluded capabilities: work streams, automations,
    settings, invitations, connectors, dictation, message export, theming.
@@ -91,7 +94,7 @@ one. The case is structural:
 
 1. **Meeting recording and Control Tower on Windows.** Rejected for this PRD.
    Computer-audio capture is hand-written Core Audio
-   (`native/system-audio-tap/SystemAudioTap.mm`); Windows would require a
+   (`apps/desktop/native/system-audio-tap/SystemAudioTap.mm`); Windows would require a
    from-scratch WASAPI loopback implementation, a second native toolchain in
    CI, and a permission/disclosure story of its own — plausibly the cost of
    everything else in this PRD combined. The product owner has explicitly
@@ -211,10 +214,23 @@ exercised end to end; goal 1 is its acceptance test.
 The Windows client updates from
 `downloads.with-avalon.com/stable/win32/x64` (electron-updater's NSIS path,
 `latest.yml` + installer + blockmap), mirroring the macOS
-`stable/darwin/arm64` feed. The single `AVALON_UPDATE_URL` constant (in
-`apps/desktop/scripts/mac-signature-policy.mjs`) and `release-lib.mjs`'s
-`DEFAULT_RELEASE_PREFIX` become per-target values. Differential download stays
+`stable/darwin/arm64` feed. Three single-platform constants become
+per-target values: `AVALON_UPDATE_URL` (in
+`apps/desktop/scripts/mac-signature-policy.mjs`), `release-lib.mjs`'s
+`DEFAULT_RELEASE_PREFIX`, and `MANUAL_UPDATE_URL` (`updater.ts`), the
+hard-coded `.dmg` link the update-failure dialog opens — unchanged, the first
+failed Windows update would hand the user a DMG. Differential download stays
 enabled as on macOS.
+
+**Updates apply silently on Windows.** The updater currently calls
+`quitAndInstall(false, true)`; `isSilent: false` is inert on macOS
+(Squirrel.Mac always applies silently) but, against this repo's assisted NSIS
+target, would put the full installer wizard — welcome page, directory page —
+in front of a Windows user on every update. Windows passes `isSilent: true`
+instead, matching the macOS feel; the assisted installer with its directory
+choice remains the *first-install* experience only. The per-user install
+keeps updates free of UAC prompts, and `autoInstallOnAppQuit` stays enabled
+(NSIS applies silently on quit).
 
 ### Publication
 
@@ -231,7 +247,12 @@ distinct pieces of state, because today's record is doing two jobs at once:
 - **Per-target publication entries** — one per `{platform, arch}` (prefix,
   artifact names, hashes, published flag, published version), which may trail
   the train. The download page and update feeds read these; a delayed Windows
-  publication of version N touches only its own entry.
+  publication of version N touches only its own entry. The entry schema is
+  built on artifact *roles* (a canonical download artifact, an update
+  manifest, blockmaps), not on the DMG-named fields the current
+  `apps/site/src/release-config.ts` requires and suffix-validates — a Windows
+  target's canonical artifact is an `.exe`, and that reshaping, not the list
+  itself, is most of rollout phase 2's real cost.
 
 macOS can therefore advance the train to a version whose Windows build is
 still in verification, and completing that Windows publication later is an

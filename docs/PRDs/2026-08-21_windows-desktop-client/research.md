@@ -23,8 +23,10 @@ pipeline consumes `CSC_LINK`. A traditional certificate therefore implies
 either a cloud-HSM subscription from the CA (at added cost) or a human with a
 USB token in the release path.
 
+- https://cabforum.org/working-groups/code-signing/documents/ (the Code
+  Signing Baseline Requirements, the normative source for the key-storage
+  mandate)
 - https://www.ssl.com/faqs/which-code-signing-certificate-do-i-need-ev-ov/
-- https://my-ssl.com/learn/code-signing-certificates-explained
 
 ### 2. EV certificates lost their SmartScreen privilege (March 2024)
 
