@@ -237,6 +237,10 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       "avalon.workspace.id": "workspace-1",
       "avalon.analytics.person_id": "person-analytics-1",
       "avalon.analytics.workspace_id": "workspace-analytics-1",
+      // PostHog's own key, set to the surrogate rather than left for the
+      // destination to infer from `user.id` — which would key the same human
+      // differently from the product pipeline and split them in two.
+      "posthog.distinct_id": "person-analytics-1",
     });
   });
 
@@ -255,6 +259,9 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     expect(attributes["user.id"]).toBe("user-1");
     expect(Object.keys(attributes)).not.toContain("avalon.analytics.person_id");
     expect(Object.keys(attributes)).not.toContain("avalon.analytics.workspace_id");
+    // And no PostHog key either: keying a person before the pipeline has minted
+    // their surrogate is what would make the destination fall back to guessing.
+    expect(Object.keys(attributes)).not.toContain("posthog.distinct_id");
   });
 
   it("carries what authentication cost, which the flow's own duration excludes", async () => {
