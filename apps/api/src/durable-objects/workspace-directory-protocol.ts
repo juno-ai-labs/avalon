@@ -76,6 +76,33 @@ export const WorkspaceDirectoryPlannedRequestSchema = z.object({
 
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
+/**
+ * Read or write the viewer's HyperSight panel preference.
+ *
+ * Both carry the work stream because the preference is still per work stream —
+ * only its owner moved. The object resolves visibility itself rather than
+ * trusting a caller that already asked, which is what lets the read be one
+ * round trip instead of a visibility call followed by a preference call.
+ */
+export const WorkspaceBlockDashboardPreferenceRequestSchema =
+  WorkspaceDirectoryVisibilityRequestSchema;
+
+export const WorkspaceBlockDashboardPreferenceUpdateSchema = z.object({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+  workstreamId: IdSchema,
+  visible: z.boolean(),
+  updatedAt: TimestampSchema,
+}).strict();
+
+/** Null when the work stream is not one this viewer may read. */
+export const WorkspaceBlockDashboardPreferenceResultSchema = z.object({
+  preference: z.object({
+    visible: z.boolean(),
+    updatedAt: TimestampSchema.nullable(),
+  }).strict().nullable(),
+}).strict();
+
 export const WorkspaceDirectoryReorderPinsRequestSchema = z.object({
   workspaceId: IdSchema,
   userId: IdSchema,
@@ -281,6 +308,12 @@ export const WorkspaceRegionalEffectApplyResultSchema = z.object({
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
+export type WorkspaceBlockDashboardPreferenceRequest =
+  z.infer<typeof WorkspaceBlockDashboardPreferenceRequestSchema>;
+export type WorkspaceBlockDashboardPreferenceUpdate =
+  z.infer<typeof WorkspaceBlockDashboardPreferenceUpdateSchema>;
+export type WorkspaceBlockDashboardPreferenceResult =
+  z.infer<typeof WorkspaceBlockDashboardPreferenceResultSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
 export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;
