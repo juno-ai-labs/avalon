@@ -322,6 +322,11 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
+  it('preserves a stopped harness status instead of reporting completion', () => {
+    expect(mapWorkstreamDetail({ ...detail, harnessStatus: 'stopped' }))
+      .toMatchObject({ harnessStatus: 'stopped' });
+  });
+
   it('preserves externally attributed Slack actors in renderer messages', () => {
     expect(mapMessage({
       ...message,

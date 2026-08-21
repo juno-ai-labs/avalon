@@ -414,6 +414,14 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
   publish a terminal result.
 - **`completed` cannot commit until the final agent message is durable.**
+- **A failed attachment-content call cannot authorize attachment facts.** The
+  host gives the model one recovery turn, then replaces terminal prose with a
+  content-free failure boundary unless a later successful content access
+  resolves the resource.
+- **Terminal root runs leave no live-looking tool receipt.** Stale-run reaping
+  fails every pending or started tool invocation in the same fenced batch;
+  member-requested stops render a distinct terminal stopped outcome in the
+  desktop rather than disappearing into idle state.
 - **A launch is never acknowledged before durable child admission.** The run,
   state transition, and `agent_run_dispatches` row exist before the request
   reports success, so constructor/alarm recovery has a durable start signal.
@@ -621,6 +629,29 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-20 — Terminal runs close tools and attachment claims stay grounded
+
+**What changed:** The stale root-run reaper terminalizes pending and started
+tool invocations in its ownership-fenced batch. Attachment content failures are
+tracked across tool calls, receive one recovery turn, and end behind a
+deterministic content-free boundary if unresolved. The desktop renders stopped
+runs explicitly and offers a fresh retry.
+
+**Why:** QA observed a terminal retry whose durable tool row still said
+`started`, no transcript outcome for a member stop, and a model that converted
+an attachment-tool failure into invented facts. Run status alone was therefore
+not an honest member or operator view.
+
+**Considered and rejected:** Letting the UI infer tool settlement from the
+parent, relying on prompts to obey tool failures, and displaying stopped as
+failed. Those respectively preserve contradictory durable state, lack an
+enforcement boundary, or misstate an intentional member action.
+
+**Consequences:** Any future terminalization path must audit child and tool
+receipts atomically. Content-bearing tools must expose stable resource identity
+to the grounding guard, and stopped remains a distinct terminal state through
+the wire and UI.
 
 ### 2026-08-18 — Durable memory authority moves into WorkspaceDO
 

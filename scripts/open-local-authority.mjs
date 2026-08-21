@@ -115,6 +115,7 @@ advance(`INSERT INTO workspace_product_authority_routes (
   )
   SELECT id, ${generation}, 'pending', 0, 0, '{}', NULL,
          strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM workspaces
+  WHERE 1
   ON CONFLICT(workspace_id) DO UPDATE SET
     generation=excluded.generation, state='pending', stage_index=0,
     source_cursor=0, row_counts_json='{}', last_error_code=NULL,

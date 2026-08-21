@@ -2637,6 +2637,17 @@ export async function reapStaleHarnessRuns(
                  AND parent.parent_tool_call_id IS NULL
             )`,
       ).bind(now, row.id),
+      db.prepare(
+        `UPDATE tool_invocations
+            SET status = 'failed', completed_at = ?1,
+                error_json = '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}'
+          WHERE harness_run_id = ?2 AND status IN ('pending', 'started')
+            AND EXISTS (
+              SELECT 1 FROM harness_runs parent
+               WHERE parent.id = ?2 AND parent.terminalized_at = ?1
+                 AND parent.parent_tool_call_id IS NULL
+            )`,
+      ).bind(now, row.id),
     ]);
     if (d1Changes(results[1]) > 0) {
       reaped.push(row.id);

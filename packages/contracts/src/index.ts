@@ -104,6 +104,7 @@ export const HarnessStatusSchema = z.enum([
   "needs_input",
   "completed",
   "failed",
+  "stopped",
   "idle"
 ]);
 export const HarnessFailureCodeSchema = z.enum([
@@ -432,6 +433,7 @@ export const MessageSchema = z.object({
   mentions: z.array(MentionSchema),
   attachments: z.array(MessageAttachmentSchema).default([]),
   sequenceNumber: z.number().int().nonnegative(),
+  attentionSequenceNumber: z.number().int().positive().nullable().optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.nullable()
 });

@@ -32,6 +32,7 @@ import { substreamAgentName } from "../src/durable-objects/names";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
+  USER_ID,
   boot,
   dispatches,
   post,
@@ -44,6 +45,17 @@ import {
 
 beforeAll(async () => {
   await seedOpenWorkstreamAuthority(env.DB);
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+    )`),
+    env.DB.prepare(`INSERT INTO workspace_members
+      (workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-20T00:00:00.000Z')
+      ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`)
+      .bind(WORKSPACE_ID, USER_ID),
+  ]);
 });
 
 let unique = 0;
@@ -75,16 +87,26 @@ async function expectScheduledUnlessFinished(
   stub: DurableObjectStub,
   label: string,
 ): Promise<void> {
-  const observed = await runInDurableObject(stub, async (_instance, state) => {
-    const alarm = await state.storage.getAlarm();
-    const outstanding = dispatches(state)
-      .some((row) => row.state === "queued" || row.state === "running");
-    return { alarm, outstanding, rows: JSON.stringify(dispatches(state)) };
-  });
-  if (!observed.outstanding) return;
-  expect(observed.alarm, `${label} left outstanding work with no wake-up: ${observed.rows}`).not.toBeNull();
-  expect(observed.alarm!, `${label} slept past the sweep interval`)
-    .toBeLessThanOrEqual(Date.now() + 60_000);
+  let lastObserved: { alarm: number | null; outstanding: boolean; rows: string } | null = null;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    lastObserved = await runInDurableObject(stub, async (_instance, state) => {
+      const alarm = await state.storage.getAlarm();
+      const outstanding = dispatches(state)
+        .some((row) => row.state === "queued" || row.state === "running");
+      return { alarm, outstanding, rows: JSON.stringify(dispatches(state)) };
+    });
+    if (!lastObserved.outstanding) return;
+    if (lastObserved.alarm !== null) {
+      expect(lastObserved.alarm, `${label} slept past the sweep interval`)
+        .toBeLessThanOrEqual(Date.now() + 60_000);
+      return;
+    }
+    // A due alarm can be consumed between the SQL and alarm reads. Give that
+    // serialized callback a bounded chance to either finish or re-arm.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  expect(lastObserved?.alarm, `${label} left outstanding work with no wake-up: ${lastObserved?.rows}`)
+    .not.toBeNull();
 }
 
 const RUN_A = "00000000-0000-7000-8000-0000000004b1";

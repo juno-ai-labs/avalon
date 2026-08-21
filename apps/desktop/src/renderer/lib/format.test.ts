@@ -102,6 +102,7 @@ describe('work-stream presentation rules', () => {
   it('does not describe a gray harness state as a finished project', () => {
     expect(statusLabel.completed).toBe('Latest run completed');
     expect(statusLabel.scheduled).toBe('Scheduled');
+    expect(statusLabel.stopped).toBe('Latest run stopped');
   });
 
   it('formats concise task durations', () => {

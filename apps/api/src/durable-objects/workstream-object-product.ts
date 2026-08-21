@@ -169,6 +169,7 @@ interface AttentionRow extends SqlRow {
 interface PartRow extends SqlRow {
   id: string;
   sequence_number: number;
+  attention_ordinal: number | null;
   author_type: string;
   author_user_id: string | null;
   external_actor_json: string | null;
@@ -247,6 +248,7 @@ function harnessStatus(exactState: string): Workstream["harnessStatus"] {
   if (exactState === "needs_input") return "needs_input";
   if (exactState === "completed") return "completed";
   if (["failed", "budget_exhausted"].includes(exactState)) return "failed";
+  if (exactState === "cancelled") return "stopped";
   return "idle";
 }
 
@@ -966,7 +968,7 @@ export class WorkstreamObjectProductService {
     const comparator = direction === "before" ? "<" : ">";
     const order = direction === "before" ? "DESC" : "ASC";
     const rows = this.storage.sql.exec<PartRow>(
-      `SELECT id, sequence_number, author_type, author_user_id, external_actor_json,
+      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
               edited_at, created_at
          FROM parts
@@ -1068,6 +1070,7 @@ export class WorkstreamObjectProductService {
       mentions,
       attachments,
       sequenceNumber: row.sequence_number,
+      attentionSequenceNumber: row.attention_ordinal,
       createdAt: iso(row.created_at),
       editedAt: iso(row.edited_at),
     });
@@ -1872,7 +1875,7 @@ export class WorkstreamObjectProductService {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
     const root = await this.authorize(auth);
     const existing = first(this.storage.sql.exec<PartRow>(
-      `SELECT id, sequence_number, author_type, author_user_id, external_actor_json,
+      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
               edited_at, created_at FROM parts WHERE client_message_id = ?`,
       input.clientMessageId,
@@ -1960,18 +1963,23 @@ export class WorkstreamObjectProductService {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
         if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
         const replay = first(sql.exec<PartRow>(
-          `SELECT id, sequence_number, author_type, author_user_id, external_actor_json,
+          `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
                   message_type, content, structured_content_json, client_message_id,
                   edited_at, created_at FROM parts WHERE client_message_id = ?`,
           input.clientMessageId,
         ));
-        if (replay) return {
-          messageId: replay.id,
-          sequenceNumber: replay.sequence_number,
-          attentionOrdinal: replay.sequence_number,
-          inserted: false,
-          runId: null,
-        };
+        if (replay) {
+          if (replay.attention_ordinal == null) {
+            throw new Error("replayed_message_missing_attention_ordinal");
+          }
+          return {
+            messageId: replay.id,
+            sequenceNumber: replay.sequence_number,
+            attentionOrdinal: replay.attention_ordinal,
+            inserted: false,
+            runId: null,
+          };
+        }
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
         sql.exec(
@@ -2202,7 +2210,7 @@ export class WorkstreamObjectProductService {
       },
     );
     const row = first(this.storage.sql.exec<PartRow>(
-      `SELECT id, sequence_number, author_type, author_user_id, external_actor_json,
+      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
               edited_at, created_at FROM parts WHERE id = ?`,
       committed.result.messageId,
