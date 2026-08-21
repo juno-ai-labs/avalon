@@ -95,6 +95,7 @@ import {
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import {
   TerminalOperationRequestSchema,
+  terminalOperationAffectsDirectory,
   type TerminalOperationRequest,
 } from "./workstream-terminal-protocol";
 import {
@@ -811,7 +812,20 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
     try {
       const method = this.terminal[parsed.data.operation] as (...args: unknown[]) => unknown;
-      const value = method.apply(this.terminal, parsed.data.args);
+      // Through `commitRuntimeMutation`, not directly, for the same reason
+      // `acceptRuntimeSql` does: a write that moves a Terminal deadline has to
+      // enqueue the `directory_common` effect, because
+      // `workspace_workstream_directory.next_terminal_action_at` is the only
+      // thing `WorkspaceScheduler` reads to decide a sandbox is due, and that
+      // effect is its only writer. Calling the storage method on its own
+      // committed the row and told nobody.
+      const value = await this.product.commitRuntimeMutation(
+        () => method.apply(this.terminal, parsed.data.args),
+        terminalOperationAffectsDirectory(parsed.data.operation),
+      );
+      // The deadline this operation just wrote is also this object's own next
+      // alarm, so re-derive it here rather than waiting for the next request.
+      await this.scheduleNextAlarm();
       return jsonResponse({ ok: true, value: value ?? null });
     } catch (error) {
       return jsonResponse({
