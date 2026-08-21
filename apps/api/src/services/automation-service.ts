@@ -1,5 +1,5 @@
 import { newId, nowIso } from "@avalon/db";
-import { AutomationDraftStateSchema, asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
+import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
 import type {
   HarnessRunId,
   WorkspaceId,
@@ -11,7 +11,6 @@ import type {
   CreateAutomationRequestSchema,
   ExecutionPrincipal,
   Scope,
-  TriggerDefinitionSchema,
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -1201,7 +1200,8 @@ export class AutomationService {
     const result = await this.env.DB.prepare(
       `SELECT t.*,
        (SELECT COUNT(*) FROM automation_subscriptions s
-         WHERE s.template_id = t.id AND s.lifecycle_state = 'visible') AS use_count,
+         WHERE s.template_id = t.id AND s.workspace_id = t.workspace_id
+           AND s.lifecycle_state = 'visible') AS use_count,
        v.required_capabilities_json, v.trigger_definitions_json
        FROM automation_templates t
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
@@ -1214,7 +1214,7 @@ export class AutomationService {
       `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
     ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
     const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
-    return { items: (result.results ?? []).map((row) => ({
+    return { items: result.results.map((row) => ({
       id: row.id,
       name: row.name,
       author: typeof row.owner_user_id === "string"
@@ -1222,9 +1222,9 @@ export class AutomationService {
         : "Unknown member",
       description: row.description,
       usedBy: Number(row.use_count),
-      requiredCapabilities: parseJson(row.required_capabilities_json, []),
+      requiredCapabilities: templateCapabilities(row.required_capabilities_json),
       latestVersion: Number(row.latest_version_number),
-      activitySources: activitySourceDefinitions(parseJson(row.trigger_definitions_json, [])),
+      activitySources: activitySourceDefinitions(templateTriggers(row.trigger_definitions_json)),
     })) };
   }
 
@@ -2225,6 +2225,35 @@ function activityFilterValueMatches(valueType: string, value: unknown): boolean 
   }
   return false;
 }
+/**
+ * The catalog's two reads of a stored JSON blob, each degrading its own row.
+ *
+ * `parseJson` is `JSON.parse(...) as T` — an assertion, not a parse — and these
+ * columns are durable: a row is whatever the deploy that published it wrote.
+ * The page's response contract covers every item at once, so one blob the
+ * projection cannot represent throws for the *whole* catalog rather than for
+ * its own row. That is the failure this endpoint was already fixed for once;
+ * unvalidated reads are the other way to reach it, and a non-array blob does
+ * not even get as far as the contract — `activitySourceDefinitions` would
+ * throw iterating it.
+ *
+ * Both siblings that read `trigger_definitions_json` already parse it —
+ * `queues/activity-consumer.ts` and `services/slack-agent-service.ts` — and
+ * `draftState` does the same for its own blob for the same stated reason. A
+ * template that loses its bindings here is one nobody can subscribe to, which
+ * the subscribe path already refuses with a typed 422; a catalog that 500s is
+ * a template browser no one in the workspace can open at all.
+ */
+function templateTriggers(value: unknown): TriggerDefinition[] {
+  const parsed = z.array(TriggerDefinitionSchema).safeParse(parseJson<unknown>(value, []));
+  return parsed.success ? parsed.data : [];
+}
+
+function templateCapabilities(value: unknown): string[] {
+  const parsed = z.array(z.string()).safeParse(parseJson<unknown>(value, []));
+  return parsed.success ? parsed.data : [];
+}
+
 function activitySourceDefinitions(triggers: TriggerDefinition[]): Array<{
   bindingKey: string;
   connectorType: string;
