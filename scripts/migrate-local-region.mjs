@@ -81,7 +81,17 @@ export async function inspectLocalDatabase(region, options = {}) {
   const [inventory] = await query(region, INVENTORY_QUERY, options);
   const userTables = Number(inventory?.user_tables ?? 0);
   const hasLedger = Number(inventory?.has_ledger ?? 0) > 0;
+
+  // Counting the ledger costs a second `wrangler d1 execute`, about three
+  // seconds of start-up per region, and it can only change the answer on a
+  // database with no tables — `shouldApplyBaseline` already refuses one that
+  // has any. `scripts/session-start.sh` takes this path on every session after
+  // the first, so asking the second question anyway roughly tripled what a warm
+  // `pnpm db:migrate` costs. `ledgerRows` is null when it was not counted,
+  // rather than 0, so nothing downstream can read "not asked" as "none".
+  if (userTables > 0) return { userTables, ledgerRows: null, hasLedger };
   if (!hasLedger) return { userTables, ledgerRows: 0, hasLedger };
+
   const [ledger] = await query(region, "SELECT COUNT(*) AS applied FROM d1_migrations", options);
   return { userTables, ledgerRows: Number(ledger?.applied ?? 0), hasLedger };
 }
@@ -97,13 +107,21 @@ export function shouldApplyBaseline({ userTables, ledgerRows }) {
   return userTables === 0 && ledgerRows === 0;
 }
 
-/** What the run is about to do, phrased for someone reading setup output. */
+/**
+ * What the run is about to do, phrased for someone reading setup output.
+ *
+ * Reports whichever fact settled the question, rather than both: a database with
+ * tables never has its ledger counted, so naming a number here that was not
+ * fetched would be inventing it.
+ */
 export function describePlan(region, state, baselineFile) {
   if (shouldApplyBaseline(state)) {
     return `${region}: empty database — applying ${baselineFile}, then any migrations after it.`;
   }
-  return `${region}: ${state.userTables} tables and ${state.ledgerRows} applied migrations — `
-    + "skipping the baseline and migrating the ordinary way.";
+  const reason = state.userTables > 0
+    ? `${state.userTables} tables`
+    : `${state.ledgerRows} applied migrations and no tables`;
+  return `${region}: ${reason} — skipping the baseline and migrating the ordinary way.`;
 }
 
 function runInherited(region, rest) {

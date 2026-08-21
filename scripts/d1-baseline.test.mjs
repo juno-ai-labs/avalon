@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 import {
   GUARD_CONSTRAINT_NAME,
   GUARD_TABLE_NAME,
+  assertEveryObjectRenderable,
+  assertVolatileValuesAreTimestamps,
   compareFingerprints,
   detectVolatileColumns,
   digestMigrations,
@@ -677,4 +679,72 @@ test("normalization leaves every real schema object in the baseline unchanged", 
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
   assert.deepEqual(schemaFingerprint(snapshotDatabase(database).objects), recorded.objects);
   database.close();
+});
+
+// ---------------------------------------------------------------------------
+// The generator refuses what it cannot render faithfully
+// ---------------------------------------------------------------------------
+
+test("an object type the renderer cannot emit stops generation instead of vanishing", () => {
+  // A view would be read from `sqlite_schema`, partitioned into nothing, and
+  // silently absent from the baseline. Nothing offline would catch it — the
+  // equivalence suite asserts on tables, per-table shapes and triggers, and
+  // `objectCounts` has no slot for it — so only the credentialed remote verify
+  // would ever notice.
+  withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE a (id TEXT PRIMARY KEY, name TEXT);\nCREATE VIEW a_named AS SELECT name FROM a;",
+  }, (directory) => {
+    const files = ["0001_a.sql"];
+    const snapshot = snapshotChain(directory, files);
+    assert.ok(snapshot.objects.some((object) => object.type === "view"), "the probe must produce a view");
+    assert.throws(
+      () => renderBaselineSql({ through: "0001_a.sql", files, digest: "sha256:x", snapshot }),
+      /Cannot render view:a_named into a baseline/u,
+    );
+  });
+});
+
+test("the checked-in baseline's chain holds nothing the renderer would drop", () => {
+  const files = subsumedMigrations(listMigrationFiles(MIGRATIONS_DIRECTORY), manifest.through);
+  assert.doesNotThrow(() => assertEveryObjectRenderable(snapshotChain(MIGRATIONS_DIRECTORY, files).objects));
+});
+
+test("a volatile column datetime('now') could not have produced stops generation", () => {
+  // Detection is expression-agnostic; re-derivation writes one expression. A
+  // column the chain computes another way would be detected correctly and then
+  // rewritten as a text timestamp — a `strftime('%s','now')` epoch integer
+  // landing in an INTEGER column as text. Nothing downstream compares the two
+  // values, so the assumption is asserted here.
+  assert.throws(
+    () => assertVolatileValuesAreTimestamps(
+      { ctl: [{ id: 1, seen_at: 1787337642 }] },
+      { ctl: ["seen_at"] },
+    ),
+    /ctl\.seen_at is volatile but holds 1787337642/u,
+  );
+  assert.throws(
+    () => assertVolatileValuesAreTimestamps({ ctl: [{ at: "2026-08-21T18:40:42Z" }] }, { ctl: ["at"] }),
+    /datetime\('now'\) does not produce/u,
+  );
+});
+
+test("the renderer itself refuses a volatile value it would retype", () => {
+  // Asserting on the helper alone would leave the renderer free to stop calling
+  // it — which is exactly what a later refactor does.
+  assert.throws(() => renderBaselineSql({
+    through: "0001_a.sql",
+    files: ["0001_a.sql"],
+    digest: "sha256:x",
+    snapshot: {
+      objects: [{ type: "table", name: "ctl", tbl_name: "ctl", sql: "CREATE TABLE ctl (id INTEGER, seen_at INTEGER)" }],
+      rows: { ctl: [{ id: 1, seen_at: 1787337642 }] },
+    },
+    volatileColumns: { ctl: ["seen_at"] },
+  }), /ctl\.seen_at is volatile but holds 1787337642/u);
+});
+
+test("the two real control-row timestamps pass the volatile shape check", () => {
+  const files = subsumedMigrations(listMigrationFiles(MIGRATIONS_DIRECTORY), manifest.through);
+  const snapshot = snapshotChain(MIGRATIONS_DIRECTORY, files);
+  assert.doesNotThrow(() => assertVolatileValuesAreTimestamps(snapshot.rows, manifest.volatileColumns));
 });
