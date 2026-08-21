@@ -95,12 +95,19 @@ Two properties of `step` decide how a flow has to be written:
   beside the identity, which is the path built for aggregating across requests.
 
 **One person opening a work stream produces about eight of these rows, not
-one.** A flow is per component invocation, and an open crosses the detail read,
+one — and the rows are the small half of what an export ships.** A flow is per component invocation, and an open crosses the detail read,
 the transcript read, the socket ticket, the socket upgrade, the room's accept,
 its subscribe, and its `get` and `messages` calls. All unconditional, both
 regions, at `LOG_LEVEL: "info"`. The one-row-per-flow decision below is still
 the right one — per *step* would be roughly forty — but eight is the number to
-budget against before enabling an OTLP export.
+budget against, and only for the rows.
+
+What actually leaves at `head_sampling_rate: 1` is every *automatic* span in
+those eight invocations: one `durable_object_storage_exec` per embedded query
+and one D1 span per query, which is a different order of magnitude from the row
+count and is the figure that matters for ingest volume. Sampling is the wrong
+knob for the content question and the right one for this; nothing here has
+measured it under load, and it should be before the export runs unattended.
 
 That row is not a duplicate of the trace. A trace answers *what happened in this
 one invocation* and is read in a trace UI or at the OTLP destination; the row
