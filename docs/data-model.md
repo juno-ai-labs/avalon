@@ -140,13 +140,24 @@ hash-checked RPCs rather than cross-object SQL joins.
   nothing has examined. See
   [`workstream-descriptions.md`](workstream-descriptions.md).
 - `workstream.scope` answers who may read a work stream, in the same
-  `personal`/`workspace` vocabulary `notes.scope` uses. `personal` is enforced as
-  "an active participant, and nobody else" by both the list query and the
-  single-row read, so privacy is a declared property of the row rather than a rule
-  each caller has to remember. WorkstreamDO enforces the authoritative
-  participant/scope rule and publishes its viewer projection to WorkspaceDO, whose
-  directory applies the same rule for lists and socket admission without
-  consulting D1.
+  `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
+  property of the row rather than a rule each caller has to remember. WorkstreamDO
+  enforces the authoritative participant/scope rule and publishes its viewer
+  projection to WorkspaceDO, whose directory applies it for lists and socket
+  admission without consulting D1.
+- **`personal` means "an active participant — or the creator" on the single-row
+  read, and "an active participant" everywhere else, and the two are not the
+  same rule.** `participantVisible` in the work-stream object, which `authorize`
+  runs, also admits `created_by_user_id`; `WorkstreamDO.canRead` and the
+  `listable` flag it projects test participation alone. `removeParticipant` lets
+  anyone remove *themselves* with no exemption for the creator, so the gap is
+  reachable rather than theoretical: a creator who leaves a private work stream
+  can still `GET` it, while its socket refuses them and it is absent from their
+  list. Do not restate either half as the whole rule — this document said
+  "an active participant, and nobody else" and was wrong about the read it
+  named. Closing the gap means picking which rule is the real one; that is a
+  product decision nobody has made, and neither half should be copied into a new
+  caller until somebody does.
 - **A work stream is born `personal`, and every path that means otherwise says
   so.** `POST /workstreams` carries no scope — a request on the wire cannot claim
   an audience — so the creator plus whoever they named in `participantUserIds` are
