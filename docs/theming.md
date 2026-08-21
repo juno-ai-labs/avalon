@@ -25,7 +25,7 @@ either stops being true.
 | `apps/desktop/src/renderer/lib/theme.ts` | Reading, applying, persisting, and re-resolving the choice. Stamps `data-theme`. |
 | `apps/desktop/src/renderer/lib/device-preferences.ts` | Where the choice is stored, beside the region and the microphone. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance control in Settings. |
-| `apps/desktop/src/main/application-settings.ts` | `windowTheme`, the mirrored copy the main process paints a new window with. |
+| `apps/desktop/src/main/application-settings.ts` | `themeChoice`, the mirrored copy the main process paints a new window from. |
 | `apps/desktop/tailwind.config.ts` | The Tailwind palette, pointed at the same tokens so a utility class cannot diverge. |
 | `apps/desktop/src/main/theme-assets.ts` | The two asset schemes: the backdrop policy, and the remote-font cache. |
 | `apps/desktop/src/renderer/components/theme-backdrop.tsx` | The sandboxed frame a backdrop document renders in. |
@@ -446,11 +446,27 @@ Dark has said what they want.
 ### The window background
 
 Electron needs a window's `backgroundColor` at construction, before any renderer
-exists to ask. So the renderer reports its resolved theme over the
-`theme:set-window` channel, the main process stores it as `windowTheme` in
+exists to ask. So the renderer reports its *choice* over the `theme:set-window`
+channel, the main process stores it as `themeChoice` in
 `application-settings.json`, and reads it back at startup before the first window
 opens. The renderer stays authoritative; a disagreement resolves itself on the
 next report.
+
+**The choice travels, not the appearance**, and main re-resolves it against
+`nativeTheme.shouldUseDarkColors` at the moment it builds each window. Two things
+depend on that:
+
+- **`system` survives a quit.** An appearance resolved under yesterday's Mac is
+  not the appearance to open with today. Storing the resolved value meant a Mac
+  that changed overnight opened the first window of the next launch in the old
+  colour and corrected itself once the renderer ran — the flash this whole
+  mechanism exists to prevent. Because the resolve happens per window rather than
+  once at startup, it also follows a Mac that changes while Avalon is running.
+- **The relay can tell that a preference changed.** Two choices can resolve to
+  the same appearance — Terra following a dark Mac, and Terra pinned to Dark —
+  so comparing appearances reports no change for a move between them. Every
+  other window would keep its old `data-theme-mode`, look identical in that
+  moment, and be wrong at sunrise. `sameThemeChoice` compares both axes.
 
 ## Invariants
 
@@ -601,6 +617,44 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-21 — The main process carries the choice, not the appearance
+
+**What changed:** `theme:set-window` now sends a `ThemeChoice`, the settings
+file stores `themeChoice` instead of `windowTheme`, and `windowBackgroundColor`
+resolves it against `nativeTheme.shouldUseDarkColors` each time a window is
+built. `sameThemeChoice` is the relay's new comparison.
+
+**Why:** storing what a choice resolved *to* threw away the axis that produced
+it, and two independent defects fell out of that.
+
+- A Mac that changed appearance while Avalon was closed opened the next launch's
+  first window in the old colour, because `system` had been flattened to
+  whichever appearance was in force when it was last written. That is exactly
+  the flash the stored value exists to prevent. A fresh profile had the same
+  problem from the other end: its fallback was dark Terra, so a light Mac
+  flashed dark.
+- The relay deduplicated on the resolved appearance, so moving from `system` to
+  a pinned Dark under an already-dark Mac looked like no change at all. No
+  `theme:changed` was emitted, and every other window kept `data-theme-mode`
+  set to `system` — invisible in that moment, and wrong the next time the Mac
+  changed.
+
+**The rejected alternative:** keeping the resolved value and adding a separate
+"preference changed" ping. That is two sources of truth for one preference, and
+the launch case still needs the choice, so the ping would have been a second
+mechanism papering over the same missing information.
+
+**What a future change has to respect:** an appearance is a projection of a
+choice through a moment in time, and the projection is lossy in both directions
+— it cannot be reversed, and it cannot answer whether the choice changed.
+Anything that persists, compares, or transmits a theme across a boundary wants
+the choice. `ResolvedTheme` is for painting only.
+
+**Found by review, not by tests.** Both defects were flagged on the pull request
+by automated reviewers, and neither was caught by the suite: nothing asserted
+what main does with a *pair* of choices, and nothing exercised a relaunch.
+`common/themes.test.ts` now pins the composition main performs.
 
 ### 2026-08-21 — A stopped run gets its own hue
 

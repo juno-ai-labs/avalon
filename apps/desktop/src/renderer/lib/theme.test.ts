@@ -275,7 +275,14 @@ describe('theme', () => {
     });
   });
 
-  it('tells the main process which appearance to construct the next window with', async () => {
+  /**
+   * The *choice* travels to main, not the appearance it resolves to. Main
+   * re-resolves it when it builds a window, which is the only way `system`
+   * survives Avalon being closed while the Mac changes appearance — and the
+   * only way main can tell that a preference changed at all, since two choices
+   * can resolve to the same appearance.
+   */
+  it('tells the main process which choice to construct the next window from', async () => {
     installMatchMedia(false);
     const setWindowTheme = vi.fn(() => Promise.resolve());
     vi.stubGlobal('avalon', { setWindowTheme });
@@ -283,6 +290,24 @@ describe('theme', () => {
     persistThemeChoice({ family: 'air', mode: 'dark' });
     await Promise.resolve();
 
-    expect(setWindowTheme).toHaveBeenCalledWith('air-dark');
+    expect(setWindowTheme).toHaveBeenCalledWith({ family: 'air', mode: 'dark' });
+  });
+
+  /**
+   * The case the appearance could not express: under a dark Mac, `system` and a
+   * pinned Dark both draw `terra`. Main has to hear about the second one, or
+   * every other window goes on believing it is following the room.
+   */
+  it('reports a mode change that does not change the appearance', async () => {
+    installMatchMedia(true);
+    const setWindowTheme = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('avalon', { setWindowTheme });
+
+    expect(persistThemeChoice({ family: 'terra', mode: 'system' }).resolved).toBe('terra');
+    expect(persistThemeChoice({ family: 'terra', mode: 'dark' }).resolved).toBe('terra');
+    await Promise.resolve();
+
+    expect(setWindowTheme).toHaveBeenNthCalledWith(1, { family: 'terra', mode: 'system' });
+    expect(setWindowTheme).toHaveBeenNthCalledWith(2, { family: 'terra', mode: 'dark' });
   });
 });

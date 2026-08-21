@@ -10,6 +10,7 @@ import {
   parseThemeChoice,
   resolveTheme,
   resolvedThemes,
+  sameThemeChoice,
   themeFamilies,
   themeFamilyDescriptions,
   themeWindowBackground,
@@ -75,6 +76,48 @@ describe('resolveTheme', () => {
   it('keeps the family when the mode changes and the mode when the family changes', () => {
     expect(resolveTheme({ family: 'air', mode: 'light' }, true)).toBe('air');
     expect(resolveTheme({ family: 'air', mode: 'dark' }, false)).toBe('air-dark');
+  });
+});
+
+describe('what the main process builds a window from', () => {
+  /**
+   * The composition `windowBackgroundColor` performs: a stored *choice* plus
+   * whatever the Mac says right now. Storing the resolved appearance instead
+   * meant a Mac that changed overnight opened the first window of the next
+   * launch in yesterday's colour and corrected itself once the renderer ran —
+   * the flash the stored value exists to prevent.
+   */
+  it('gives one stored choice two different backgrounds as the Mac changes', () => {
+    const choice = { family: 'terra', mode: 'system' } as const;
+
+    expect(themeWindowBackground[resolveTheme(choice, false)]).toBe('#ffffff');
+    expect(themeWindowBackground[resolveTheme(choice, true)]).toBe('#111210');
+  });
+
+  it('gives a pinned choice the same background whatever the Mac says', () => {
+    const choice = { family: 'air', mode: 'dark' } as const;
+
+    expect(themeWindowBackground[resolveTheme(choice, false)]).toBe('#100e0c');
+    expect(themeWindowBackground[resolveTheme(choice, true)]).toBe('#100e0c');
+  });
+
+  /**
+   * Why the relay compares choices rather than appearances. Under a dark Mac
+   * these two draw the same thing, so an appearance-level comparison reports no
+   * change and every other window goes on believing it follows the room.
+   */
+  it('separates two choices that resolve to the same appearance', () => {
+    const following = { family: 'terra', mode: 'system' } as const;
+    const pinned = { family: 'terra', mode: 'dark' } as const;
+
+    expect(resolveTheme(following, true)).toBe(resolveTheme(pinned, true));
+    expect(sameThemeChoice(following, pinned)).toBe(false);
+  });
+
+  it('treats a choice as the same as itself, on both axes', () => {
+    expect(sameThemeChoice({ family: 'air', mode: 'light' }, { family: 'air', mode: 'light' })).toBe(true);
+    expect(sameThemeChoice({ family: 'air', mode: 'light' }, { family: 'terra', mode: 'light' })).toBe(false);
+    expect(sameThemeChoice({ family: 'air', mode: 'light' }, { family: 'air', mode: 'system' })).toBe(false);
   });
 });
 
