@@ -180,6 +180,13 @@
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
   // has to be asked for separately.
+  //
+  // This config deliberately names no OTLP `destinations`. EU product and crash
+  // telemetry terminates in the region's own Cloudflare resources, and nothing
+  // here holds a destination credential; docs/telemetry.md records that sending
+  // EU telemetry to a US project requires a new recorded decision rather than an
+  // edit here. Adding a `destinations` entry below *is* that decision — so make
+  // it deliberately, and write down why.
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

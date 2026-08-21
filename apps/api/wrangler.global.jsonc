@@ -204,9 +204,28 @@
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
   // has to be asked for separately.
+  //
+  // `destinations` names an account-level OTLP destination configured outside
+  // this repository; the credential for it lives there, never here. Only the
+  // opt-in is repository configuration, and that is what keeps this Global-only
+  // — the EU Worker's config deliberately names no destination. See
+  // docs/telemetry.md and docs/performance-tracing.md.
+  //
+  // `persist` is left at its default so the Cloudflare copy stays: an export is
+  // an addition, and `persist: false` would leave the third party holding the
+  // only copy.
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
-    "traces": { "enabled": true, "head_sampling_rate": 1 }
+    "logs": { "enabled": true, "destinations": ["posthog-logs"] },
+    // Traces carry message content and go to PostHog anyway — a decision taken
+    // deliberately on 2026-08-20, recorded with its reasoning in
+    // docs/telemetry.md. The platform's automatic Durable Object SQL spans
+    // carry `cloudflare.durable_object.query.bindings`, which for Avalon means
+    // message text, and Cloudflare offers no attribute redaction. Sampling is
+    // left at 1 because sampling reduces how many traces carry that content,
+    // not what any one of them carries; there is no privacy to buy by lowering
+    // it, only diagnostic value to lose.
+    "traces": { "enabled": true, "head_sampling_rate": 1, "destinations": ["posthog-traces"] }
   }
 }
