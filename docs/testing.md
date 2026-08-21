@@ -59,7 +59,12 @@ shape of your own code:
   runtime constructs happily there. That has already cost one bug, and the
   detail is in [`realtime-sockets.md`](realtime-sockets.md#testing).
 - Anything reached through a real binding: D1 semantics, queue sends, RPC
-  envelopes between objects.
+  envelopes between objects. `test-workers/terminal-authority.test.ts` is the
+  worked example: it drives Terminal's whole object authority through
+  `/internal/terminal`, so the operation lease is decided against real `runs`
+  rows, the two sequences that used to span statements are proved atomic, and
+  the constraints promoted out of `lifecycle_json` are enforced by workerd
+  rather than asserted about.
 - Platform APIs the code imports but the Node suite can only stub.
   `tracing.enterSpan` from `cloudflare:workers` is the standing example: the
   tracing tests in `test/` run against a hand-written stub, which is right for
