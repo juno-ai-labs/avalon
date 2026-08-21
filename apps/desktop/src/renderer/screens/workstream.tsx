@@ -655,7 +655,9 @@ export function initialTranscriptAnchorIndex(
 ): number | null {
   if (firstUnreadSequenceNumber === null) return null;
   const firstUnreadIndex = transcript.findIndex((message) =>
-    message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
+    message.realtimeOrder === undefined
+    && message.attentionSequenceNumber != null
+    && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
 }
 
@@ -708,9 +710,10 @@ export function highestVisibleAttentionSequence(
       !message
       || message.realtimeOrder !== undefined
       || message.messageType === 'tool_event'
-      || message.sequenceNumber > latestAttentionSequenceNumber
+      || message.attentionSequenceNumber == null
+      || message.attentionSequenceNumber > latestAttentionSequenceNumber
     ) return highest;
-    return Math.max(highest, message.sequenceNumber);
+    return Math.max(highest, message.attentionSequenceNumber);
   }, 0);
 }
 
@@ -746,6 +749,28 @@ export function RunFailureNotice({
           Retry
         </Button>
       </div>
+    </section>
+  );
+}
+
+export function RunStoppedNotice({
+  retrying,
+  onRetry,
+}: {
+  retrying: boolean;
+  onRetry: () => void;
+}): React.JSX.Element {
+  return (
+    <section aria-label="Run stopped" className="run-stopped-notice" role="status">
+      <span aria-hidden="true" className="run-stopped-icon"><X size={16} /></span>
+      <div className="run-stopped-copy">
+        <strong>Run stopped</strong>
+        <p>This run was stopped by request. Its partial tool activity is no longer running.</p>
+      </div>
+      <Button className="button-primary" disabled={retrying} onClick={onRetry}>
+        {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
+        Retry
+      </Button>
     </section>
   );
 }
@@ -1490,7 +1515,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   const firstUnreadIndex = firstUnreadSequenceNumber === null
     ? -1
     : visibleTranscript.findIndex((message) =>
-      message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
+      message.realtimeOrder === undefined
+      && message.attentionSequenceNumber != null
+      && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   const displayedDetail: WorkstreamDetail = {
     ...detail,
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
@@ -1645,6 +1672,9 @@ export function WorkstreamScreen(): React.JSX.Element {
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}
             />
+          )}
+          {detail.latestHarnessRun?.status === 'stopped' && (
+            <RunStoppedNotice onRetry={() => retry.mutate()} retrying={retry.isPending} />
           )}
         </div>
       </div>

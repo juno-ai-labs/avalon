@@ -104,6 +104,7 @@ export const HarnessStatusSchema = z.enum([
   "needs_input",
   "completed",
   "failed",
+  "stopped",
   "idle"
 ]);
 export const HarnessFailureCodeSchema = z.enum([
@@ -432,6 +433,7 @@ export const MessageSchema = z.object({
   mentions: z.array(MentionSchema),
   attachments: z.array(MessageAttachmentSchema).default([]),
   sequenceNumber: z.number().int().nonnegative(),
+  attentionSequenceNumber: z.number().int().positive().nullable().optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.nullable()
 });
@@ -2694,6 +2696,7 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "retryAfterMs",
   "actualMimeType",
   "attachmentKind",
+  "resourceId",
   "suggestedCall",
 ] as const;
 
@@ -2721,6 +2724,10 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
       return typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH
         ? { valid: true, value }
         : { valid: false };
+    case "resourceId": {
+      const parsed = z.string().uuid().safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
     case "available":
       return Array.isArray(value)
         && value.length <= MAXIMUM_FAILURE_AVAILABLE_VALUES

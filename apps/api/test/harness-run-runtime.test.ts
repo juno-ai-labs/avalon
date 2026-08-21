@@ -770,7 +770,53 @@ describe("durable harness attempt runtime", () => {
       attemptId: "attempt-stale",
       owner: "owner-stale",
     });
-    expect(claim.state).toBe("claimed");
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-parent",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-parent",
+      toolName: "terminal.execute",
+      inputHash: "input-stale-parent",
+      input: { command: "sleep 300" },
+      plan: { pluginId: "terminal", canonicalToolName: "terminal.execute", mode: "write" },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-read",
+      toolName: "linear.issue.get",
+      inputHash: "input-stale-read",
+      input: { id: "AVA-1" },
+      plan: { pluginId: "linear", canonicalToolName: "linear.issue.get", mode: "read" },
+      mode: "read",
+    });
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-pending-write",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-pending-write",
+      toolName: "linear.issue.update",
+      inputHash: "input-stale-pending-write",
+      input: { id: "AVA-1", title: "Pending" },
+      plan: { pluginId: "linear", canonicalToolName: "linear.issue.update", mode: "write" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE tool_invocations SET status = 'pending' WHERE id = ?",
+    ).run("invocation-stale-pending-write");
+    expect(sqlite.object.prepare(
+      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+    ).get("invocation-stale-parent")).toEqual({
+      status: "started",
+      completed_at: null,
+      error_json: null,
+    });
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(RUN_ONE);
@@ -781,6 +827,21 @@ describe("durable harness attempt runtime", () => {
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare("SELECT status, lease_owner FROM harness_runs WHERE id = ?").get(RUN_ONE))
       .toEqual({ status: "failed", lease_owner: null });
+    expect(sqlite.object.prepare(
+      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+    ).get("invocation-stale-parent")).toMatchObject({
+      status: "ambiguous",
+      error_json: JSON.stringify({
+        code: "ambiguous_external_write",
+        message: "The parent run lost its durable lease while an external write was in flight",
+      }),
+    });
+    expect(sqlite.object.prepare(
+      "SELECT id, status FROM tool_invocations WHERE id IN (?, ?) ORDER BY id",
+    ).all("invocation-stale-pending-write", "invocation-stale-read")).toEqual([
+      { id: "invocation-stale-pending-write", status: "failed" },
+      { id: "invocation-stale-read", status: "failed" },
+    ]);
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-stale'",
     ).get()).toMatchObject({

@@ -135,6 +135,7 @@ function eventCanChangeActiveStreamCheckpoint(event: ServerSocketEvent): boolean
       && (event.status === "needs_input"
         || event.status === "completed"
         || event.status === "failed"
+        || event.status === "stopped"
         || event.status === "idle"));
 }
 
@@ -180,6 +181,7 @@ export function applyActiveStreamCheckpointEvent(
     && (event.status === "needs_input"
       || event.status === "completed"
       || event.status === "failed"
+      || event.status === "stopped"
       || event.status === "idle")
   ) {
     return [];
@@ -335,16 +337,18 @@ function applyActiveCompactionEvent(
     && (event.status === "needs_input"
       || event.status === "completed"
       || event.status === "failed"
+      || event.status === "stopped"
       || event.status === "idle")
   ) {
     storage.sql.exec(`DELETE FROM active_agent_compaction WHERE id = 1`);
   }
 }
 
-function runTerminalState(event: ServerSocketEvent): "completed" | "failed" | "needs_input" | null {
+function runTerminalState(event: ServerSocketEvent): "cancelled" | "completed" | "failed" | "needs_input" | null {
   if (event.type !== "harness_status_changed") return null;
   if (event.status === "failed") return "failed";
   if (event.status === "needs_input") return "needs_input";
+  if (event.status === "stopped") return "cancelled";
   if (event.status === "completed" || event.status === "idle") return "completed";
   return null;
 }

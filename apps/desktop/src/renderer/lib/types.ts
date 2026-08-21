@@ -28,7 +28,7 @@ export type Scope = 'you' | 'workspace';
  * server's, so "private" means the same thing on both.
  */
 export type VisibilityScope = ContractScope;
-export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
+export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
 export type NoteSummary = ContractNoteSummary;
 export type NoteDetail = ContractNoteDetail;
@@ -300,6 +300,8 @@ export interface Message {
   clientMessageId?: string;
   workstreamId: string;
   sequenceNumber: number;
+  /** Main-substream people-visible ordinal used only for unread attention. */
+  attentionSequenceNumber?: number | null;
   authorType: 'human' | 'external' | 'agent' | 'system';
   author?: WorkspaceMember;
   externalActor?: ExternalActor;

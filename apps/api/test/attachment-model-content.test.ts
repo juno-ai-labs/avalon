@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
+import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import { buildAttachmentManifestPart, buildAttachmentModelParts } from "../src/services/attachment-model-content";
 import { createCloudflareTestBinding, createTestD1Database } from "./helpers/cloudflare-test";
 
@@ -121,12 +122,21 @@ describe("attachment model content", () => {
   it("keeps failed and unsupported resources discoverable without legacy prose", async () => {
     const parts = await buildAttachmentModelParts(fakeBucket({ unsupported: new Uint8Array([1, 2, 3]) }), [
       { id: "missing", fileName: "missing.txt", mimeType: "text/plain", contentRef: null, modelContentStatus: "failed", modelContentErrorCode: "source_unavailable" },
-      { id: "unsupported", fileName: "archive.zip", mimeType: "application/zip", contentRef: "unsupported", modelContentStatus: "unsupported", modelContentErrorCode: "unsupported_archive" },
+      {
+        id: "unsupported",
+        fileName: "archive.zip",
+        mimeType: "application/zip",
+        contentRef: "unsupported",
+        modelContentStatus: "unsupported",
+        modelContentExtractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
+        modelContentErrorCode: "unsupported_archive",
+      },
     ]);
     const rendered = parts.map((part) => part.type === "text" ? part.text : "").join("\n");
     expect(parts).toHaveLength(1);
     expect(rendered).toContain('"errorCode":"source_unavailable"');
     expect(rendered).toContain('"errorCode":"unsupported_archive"');
+    expect(rendered).toContain('"contentMode":"unsupported"');
     expect(rendered).not.toContain("<attachment");
   });
 

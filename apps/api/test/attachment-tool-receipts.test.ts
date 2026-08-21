@@ -106,7 +106,7 @@ function readOutput(sha256 = HASH) {
     title: "Brief",
     sourceMimeType: "text/markdown",
     modelMimeType: "text/markdown",
-    version: { sha256, extractorVersion: "attachment-text-v1" },
+    version: { sha256, extractorVersion: "attachment-text-v2" },
     range: { start: 0, end: 5 },
     totalCharacters: 5,
     charactersBefore: 0,

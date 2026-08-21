@@ -43,6 +43,7 @@ export const statusLabel: Record<HarnessStatus, string> = {
   needs_input: 'Needs input',
   completed: 'Latest run completed',
   failed: 'Needs intervention',
+  stopped: 'Latest run stopped',
 };
 
 /** What each dot color means, for the surfaces that show the dot on its own.
@@ -53,6 +54,7 @@ export const statusDescription: Record<HarnessStatus, string> = {
   needs_input: `${statusLabel.needs_input} — the agent is waiting on an answer.`,
   completed: `${statusLabel.completed} — nothing is running now.`,
   failed: `${statusLabel.failed} — the last run failed and stopped.`,
+  stopped: `${statusLabel.stopped} — the run was stopped by request.`,
 };
 
 export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';

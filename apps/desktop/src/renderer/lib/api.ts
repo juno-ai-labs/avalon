@@ -442,6 +442,7 @@ export function mapMessage(message: WireMessage): Message {
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
     sequenceNumber: message.sequenceNumber,
+    attentionSequenceNumber: message.attentionSequenceNumber ?? null,
     authorType: message.author.type === 'human' ? 'human' : message.author.type,
     ...(message.author.type === 'human' ? { author: mapUser(message.author.user) } : {}),
     ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),

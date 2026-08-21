@@ -6,6 +6,7 @@ import {
 } from "@avalon/contracts";
 import UPNG from "upng-js";
 import * as UTIF from "utif2";
+import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "./attachment-derivative-service";
 import {
   buildGifStoryboard,
   describeGifModelMetadata,
@@ -58,6 +59,7 @@ export interface ModelAttachmentSource {
   modelContentSha256?: string | null;
   modelMetadataJson?: string | null;
   modelContentStatus?: DerivativeStatus;
+  modelContentExtractorVersion?: string | null;
   modelContentErrorCode?: string | null;
 }
 
@@ -85,10 +87,13 @@ export function buildAttachmentManifestPart(
       attachmentKind,
       contentMode: attachmentKind === "image"
         ? "view"
-        : attachmentKind === "other"
-          && !(attachment.modelContentStatus === "ready" && attachment.modelMimeType?.startsWith("text/"))
+        : attachment.modelContentStatus === "unsupported"
+          && attachment.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
           ? "unsupported"
-          : "read",
+          : attachmentKind === "other"
+            && !(attachment.modelContentStatus === "ready" && attachment.modelMimeType?.startsWith("text/"))
+            ? "unsupported"
+            : "read",
       derivativeStatus: override?.derivativeStatus ?? attachment.modelContentStatus ?? null,
       errorCode: override?.errorCode ?? attachment.modelContentErrorCode ?? null,
       inlined: override?.inlined ?? false,
