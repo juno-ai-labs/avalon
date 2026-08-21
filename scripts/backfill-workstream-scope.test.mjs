@@ -22,13 +22,30 @@ const workstream = (overrides = {}) => ({
 function stubFetch(routes) {
   const calls = [];
   const fetch = async (url, init = {}) => {
-    calls.push({ url, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
-    const handler = routes.find(([match]) => url.includes(match));
-    if (!handler) throw new Error(`No stub for ${url}`);
-    const [, status, body] = handler;
+    const method = init.method ?? "GET";
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    const handler = routes.find(([match, verb]) => url.includes(match) && (verb ?? "GET") === method);
+    if (!handler) throw new Error(`No stub for ${method} ${url}`);
+    const [, , status, body] = handler;
     return { status, text: async () => JSON.stringify(body) };
   };
   return { fetch, calls };
+}
+
+/** The four routes a full `--apply` walks, in the shape the API answers them. */
+function applyRoutes({ participants = [], members = ["member-a", "member-b"] } = {}) {
+  return [
+    ["/workspace/members", "GET", 200, {
+      items: members.map((id) => ({ user: { id }, role: "member", status: "active", joinedAt: null })),
+    }],
+    ["/workstreams?", "GET", 200, { items: [workstream()], nextCursor: null }],
+    ["/participants", "POST", 201, {}],
+    ["/workstreams/", "PATCH", 200, workstream({ scope: "personal" })],
+    ["/workstreams/", "GET", 200, {
+      ...workstream(),
+      participants: participants.map((id) => ({ user: { id } })),
+    }],
+  ];
 }
 
 function context(overrides = {}) {
@@ -75,39 +92,38 @@ test("only workspace-scoped work streams are recorded as targets", () => {
 
 test("a dry run writes the record and changes nothing", async () => {
   const { fetch, calls } = stubFetch([
-    ["/workstreams?", 200, { items: [workstream()], nextCursor: null }],
+    ["/workstreams?", "GET", 200, { items: [workstream()], nextCursor: null }],
   ]);
   const ctx = context({ fetch });
   const totals = await flip(ctx);
 
-  assert.deepEqual(totals, { changed: 0, unsupported: 0, failed: 0 });
+  assert.deepEqual(totals, { changed: 0, unsupported: 0, failed: 0, seated: 0 });
   assert.equal(ctx.written["/tmp/record.json"].entries.length, 1);
   assert.deepEqual(calls.map((call) => call.method), ["GET"]);
 });
 
 test("the record is written before the first change, so an interrupted run is reversible", async () => {
   const order = [];
-  const { fetch } = stubFetch([
-    ["/workstreams?", 200, { items: [workstream()], nextCursor: null }],
-    ["/workstreams/", 200, workstream({ scope: "personal" })],
-  ]);
+  const { fetch } = stubFetch(applyRoutes({ participants: ["someone"] }));
   const ctx = context({
     apply: true,
-    fetch: async (...args) => {
-      if (String(args[0]).includes("/workstreams/0")) order.push("patch");
-      return fetch(...args);
+    fetch: async (url, init = {}) => {
+      if (String(url).includes("/workstreams/0") && init.method === "PATCH") order.push("patch");
+      return fetch(url, init);
     },
     writeRecord: () => order.push("record"),
     readRecord: () => ({ entries: [] }),
   });
   await flip(ctx);
 
-  assert.deepEqual(order, ["record", "patch"]);
+  assert.equal(order[0], "record");
+  assert.ok(order.includes("patch"));
+  assert.ok(order.indexOf("record") < order.indexOf("patch"));
 });
 
 test("a work stream whose scope is not what decides who reads it is left alone, not failed", async () => {
   const { fetch } = stubFetch([
-    ["/workstreams/", 409, { error: "scope_change_unsupported" }],
+    ["/workstreams/", "PATCH", 409, { error: "scope_change_unsupported" }],
   ]);
   const result = await setScope(context({ fetch }), "automation-one", "personal");
   assert.deepEqual(result, { outcome: "unsupported" });
@@ -115,7 +131,7 @@ test("a work stream whose scope is not what decides who reads it is left alone, 
 
 test("a revert puts back the scope the file recorded, not a guess", async () => {
   const patched = [];
-  const { fetch } = stubFetch([["/workstreams/", 200, workstream()]]);
+  const { fetch } = stubFetch([["/workstreams/", "PATCH", 200, workstream()]]);
   const ctx = context({
     revert: "/tmp/record.json",
     fetch: async (url, init) => {
@@ -153,4 +169,47 @@ test("every page of the listing is walked", async () => {
     ctx.written["/tmp/record.json"].entries.map((entry) => entry.workstreamId),
     ["first", "second"],
   );
+});
+
+test("an empty room is seated with the whole workspace before it is narrowed", async () => {
+  // The access-preserving half. Without this the work stream would come out
+  // readable by whoever ran the script and nobody else.
+  const order = [];
+  const { fetch } = stubFetch(applyRoutes({ participants: [] }));
+  const ctx = context({
+    apply: true,
+    fetch: async (url, init = {}) => {
+      const method = init.method ?? "GET";
+      if (method === "POST") order.push(`seat:${JSON.parse(init.body).userId}`);
+      if (method === "PATCH") order.push("narrow");
+      return fetch(url, init);
+    },
+  });
+
+  const totals = await flip(ctx);
+
+  // Seated first, every active member, and only then narrowed.
+  assert.deepEqual(order, ["seat:member-a", "seat:member-b", "narrow"]);
+  assert.equal(totals.seated, 1);
+  assert.deepEqual(ctx.written["/tmp/record.json"].entries[0].seatedUserIds, ["member-a", "member-b"]);
+});
+
+test("a room that already means something gains nobody", async () => {
+  // A work stream carrying a private Slack channel's members. Seating the
+  // workspace on top would re-publish exactly what the release made private.
+  const seated = [];
+  const { fetch } = stubFetch(applyRoutes({ participants: ["slack-member"] }));
+  const ctx = context({
+    apply: true,
+    fetch: async (url, init = {}) => {
+      if ((init.method ?? "GET") === "POST") seated.push(url);
+      return fetch(url, init);
+    },
+  });
+
+  const totals = await flip(ctx);
+
+  assert.deepEqual(seated, []);
+  assert.equal(totals.seated, 0);
+  assert.equal(totals.changed, 1);
 });

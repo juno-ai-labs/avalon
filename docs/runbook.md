@@ -1460,15 +1460,24 @@ decides what a create *writes*, so every work stream that already existed kept
 the visibility it was created with.
 `scripts/backfill-workstream-scope.mjs` is the retroactive pass over them.
 
-**Understand what it costs before running it.** `personal` is enforced against
-the participant list, and the rows this touches were never rooms — a work stream
+**It preserves who can read what.** `personal` is enforced against the
+participant list, and the rows this touches were never rooms — a work stream
 created workspace-scoped often has no participant at all, because nothing needed
-to seat one. `PATCH /workstreams/:id` seats *the caller* when it narrows a work
-stream, which is what stops the operation locking its own author out. So every
-participant-less work stream the pass flips ends up readable by whoever ran it
-and nobody else, until somebody adds the people back. Run it as a workspace
-owner, tell the workspace first, and expect people to have lost sight of
-something.
+to seat one. Narrowing one of those on its own would leave it readable by
+whoever ran the pass and nobody else. So a work stream whose room is empty has
+every active workspace member seated into it *first*, which turns implicit
+workspace-wide access into an explicit room holding the same people. The only
+thing that changes for them is that members who join later are no longer
+included, which is what being private means.
+
+A work stream that already has participants keeps them and gains nobody. Its
+room means something: one started from a private Slack channel carries that
+channel's members, and seating the workspace on top would re-publish exactly
+what this release made private.
+
+Still tell the workspace before running it. Nothing becomes unreadable, but a
+work stream that quietly appeared for everyone now has an explicit membership,
+and people notice.
 
 It uses the ordinary product API with an ordinary access token, so it grants
 itself nothing — it sees and changes exactly what that member could from the
@@ -1485,7 +1494,11 @@ node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.co
 ```
 
 **Keep the record file.** Nothing in Avalon stores a work stream's previous
-scope, so that file is the only way back:
+scope, so that file is the only way back. It also names, under `seatedUserIds`,
+everyone the pass added to each work stream. A revert restores scope and leaves
+those seats: once a work stream is workspace-readable again they grant nothing
+its scope does not already, and removing them would also remove anyone
+legitimately added since.
 
 ```bash
 node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \

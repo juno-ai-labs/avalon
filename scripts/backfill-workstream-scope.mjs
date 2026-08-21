@@ -8,16 +8,20 @@
  * work streams that already existed keep the visibility they were created with.
  * This is the deliberate retroactive pass over them.
  *
- * **Read this before running it.** `personal` is enforced against the
+ * **It preserves who can read what.** `personal` is enforced against the
  * participant list, and the rows this touches were never rooms: a work stream
  * created workspace-scoped often has no participant at all, because nothing
- * ever needed to seat one. `PATCH /workstreams/:id` seats *the caller* when it
- * narrows a work stream, which is what stops the operation locking its own
- * author out — so every participant-less work stream this flips ends up
- * readable by whoever ran this script and by nobody else, until somebody adds
- * the people back. That is the accepted cost of the pass, not a bug in it. Run
- * it as somebody who should plausibly hold that access — a workspace owner —
- * and expect to hear from people who lost sight of something.
+ * ever needed to seat one. Narrowing one of those on its own would leave it
+ * readable by whoever ran this script and nobody else. So a work stream with an
+ * empty room has every active workspace member seated into it first, which
+ * turns implicit workspace-wide access into an explicit room holding the same
+ * people. What changes is that members who join *later* are no longer included
+ * — which is what being private means.
+ *
+ * A work stream that already has participants keeps them and gains nobody. Its
+ * room means something: one started from a private Slack channel carries that
+ * channel's members, and seating the workspace on top would re-publish exactly
+ * what this release made private.
  *
  * Which is why `--record` is not optional. Every target is written to a file
  * with the scope it held, *before* the first change is attempted, and
@@ -102,6 +106,30 @@ export async function listWorkstreams(context) {
   }
 }
 
+/** The workspace's active members, as the token's owner can see them. */
+export async function listActiveMembers(context) {
+  const { status, body } = await api(context, "/workspace/members");
+  if (status !== 200) throw new Error(`Member listing failed with ${status}`);
+  return body.items
+    .filter((member) => member.status === "active")
+    .map((member) => member.user.id);
+}
+
+/** Who is in the room today. Empty is the case this script exists to handle. */
+export async function activeParticipants(context, workstreamId) {
+  const { status, body } = await api(context, `/workstreams/${workstreamId}`);
+  if (status !== 200) throw new Error(`Detail read failed with ${status}`);
+  return body.participants.map((participant) => participant.user.id);
+}
+
+export async function addParticipant(context, workstreamId, userId) {
+  const { status } = await api(context, `/workstreams/${workstreamId}/participants`, {
+    method: "POST",
+    body: JSON.stringify({ userId }),
+  });
+  return status === 200 || status === 201;
+}
+
 export async function setScope(context, workstreamId, scope) {
   const { status, body } = await api(context, `/workstreams/${workstreamId}`, {
     method: "PATCH",
@@ -131,11 +159,63 @@ export function buildRecord(context, workstreams) {
   };
 }
 
-async function applyScopes(context, entries, scopeFor) {
-  const totals = { changed: 0, unsupported: 0, failed: 0 };
-  for (const entry of entries) {
-    const result = await setScope(context, entry.workstreamId, scopeFor(entry));
+/**
+ * Narrow one work stream, seating the workspace first when its room is empty.
+ *
+ * This is what keeps the pass from taking access away. A workspace-scoped work
+ * stream with no participants is readable by every member today; narrowing it
+ * without seating anyone would leave it readable by whoever ran this script and
+ * nobody else. Seating every active member first converts that implicit
+ * workspace-wide access into an explicit room holding exactly the same people —
+ * the only thing that changes is that members who join *later* are no longer
+ * included, which is the whole point of a private work stream.
+ *
+ * A work stream that already has participants is left alone on this front. Its
+ * room means something: a work stream started from a private Slack channel
+ * carries that channel's members, and seating the workspace on top of it would
+ * re-publish the very thing this release made private.
+ *
+ * Seating happens before the narrowing, so the work stream is never private
+ * with an empty room, not even between two requests.
+ */
+async function narrow(context, entry) {
+  let seated = [];
+  if (context.membersForEmptyRooms) {
+    const participants = await activeParticipants(context, entry.workstreamId);
+    if (participants.length === 0) {
+      for (const userId of context.membersForEmptyRooms) {
+        if (await addParticipant(context, entry.workstreamId, userId)) seated.push(userId);
+      }
+    }
+  }
+  const result = await setScope(context, entry.workstreamId, "personal");
+  return { ...result, seated };
+}
+
+export async function flip(context) {
+  const all = await listWorkstreams(context);
+  const record = buildRecord(context, all);
+  context.log(`${all.length} work streams visible, ${record.entries.length} workspace-scoped.`);
+  // Written before the first change, so an interrupted run is still reversible
+  // for everything it had already decided to touch.
+  context.writeRecord(context.record, record);
+  context.log(`Recorded ${record.entries.length} entries to ${context.record}.`);
+  if (!context.apply) {
+    context.log("Dry run: nothing was changed. Re-run with --apply.");
+    return { changed: 0, unsupported: 0, failed: 0, seated: 0 };
+  }
+
+  const members = await listActiveMembers(context);
+  context.log(`${members.length} active members will be seated into any work stream with an empty room.`);
+  const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
+  for (const entry of record.entries) {
+    const result = await narrow({ ...context, membersForEmptyRooms: members }, entry);
     totals[result.outcome] += 1;
+    if (result.seated.length > 0) totals.seated += 1;
+    // Rewritten as each row settles, so the file on disk always describes what
+    // has actually happened rather than what was planned.
+    entry.seatedUserIds = result.seated;
+    context.writeRecord(context.record, record);
     if (result.outcome === "failed") {
       context.log(`  ${entry.workstreamId} failed (${result.status} ${result.error}): ${entry.title}`);
     }
@@ -143,23 +223,22 @@ async function applyScopes(context, entries, scopeFor) {
   return totals;
 }
 
-export async function flip(context) {
-  const all = await listWorkstreams(context);
-  const record = buildRecord(context, all);
-  context.log(`${all.length} work streams visible, ${record.entries.length} workspace-scoped.`);
-  context.writeRecord(context.record, record);
-  context.log(`Recorded ${record.entries.length} entries to ${context.record}.`);
-  if (!context.apply) {
-    context.log("Dry run: nothing was changed. Re-run with --apply.");
-    return { changed: 0, unsupported: 0, failed: 0 };
-  }
-  return applyScopes(context, record.entries, () => "personal");
-}
-
 export async function revert(context) {
   const record = context.readRecord(context.revert);
   context.log(`Reverting ${record.entries.length} entries from ${context.revert}.`);
-  return applyScopes(context, record.entries, (entry) => entry.priorScope);
+  const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
+  for (const entry of record.entries) {
+    const result = await setScope(context, entry.workstreamId, entry.priorScope);
+    totals[result.outcome] += 1;
+    if (result.outcome === "failed") {
+      context.log(`  ${entry.workstreamId} failed (${result.status} ${result.error}): ${entry.title}`);
+    }
+  }
+  // Participants the pass seated are left in place. Once the work stream is
+  // workspace-readable again they grant nothing its scope does not already, and
+  // removing them would also remove anyone legitimately added since. The record
+  // names them under `seatedUserIds` for anyone who wants to tidy up by hand.
+  return totals;
 }
 
 export async function run(context) {
