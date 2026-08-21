@@ -589,3 +589,17 @@ test("regenerating a baseline from unchanged migrations produces identical bytes
     assert.deepEqual(first.manifestEntry.volatileColumns, { b: ["at"] });
   });
 });
+
+test("a bare [] in a banner line does not win over the real payload", () => {
+  // The one way the bracket filter could pick wrong, and why it cannot: every
+  // candidate is parsed to the end of the output, so an earlier `[]` fails on
+  // the trailing payload rather than being returned as an empty result set —
+  // which `inspectLocalDatabase` would otherwise read as "this database is
+  // empty" for a database that is not.
+  const stdout = `▲ [WARNING] retries: []\n${JSON.stringify([{ results: [{ user_tables: 42 }] }])}`;
+  assert.deepEqual(parseWranglerJson(stdout, "global"), [{ results: [{ user_tables: 42 }] }]);
+});
+
+test("a payload that is the last thing printed is still found when it is empty", () => {
+  assert.deepEqual(parseWranglerJson("▲ [WARNING] retries: []\n[]", "global"), []);
+});
