@@ -34,14 +34,25 @@ export type TerminalObjectPort = {
 };
 
 /**
- * Every operation the endpoint will dispatch.
+ * Demands that a list of operation names covers the whole key set.
  *
- * Typed as the full key set of the storage class, so this list cannot drift
- * from it: dropping a name fails to satisfy `readonly TerminalOperation[]`
- * only if the name is also removed from the class, and adding a name that is
- * not a method fails immediately.
+ * `satisfies readonly TerminalOperation[]` alone is one-way: it proves every
+ * listed name is a real method, and says nothing about a method with no entry.
+ * That gap was not theoretical — `TerminalObjectPort` is mapped over
+ * `keyof WorkstreamTerminalStorage`, so an unlisted method still appears on the
+ * port's type, while `createTerminalObjectPort` builds its object from this
+ * list and casts. A caller would have compiled and then found `undefined` at
+ * run time.
+ *
+ * When a name is missing, the required type becomes a longer tuple and the
+ * assignment fails naming the absentee, which is the error a reader can act on.
  */
-export const TERMINAL_OPERATIONS = [
+type Exhaustive<T extends readonly TerminalOperation[]> =
+  [Exclude<TerminalOperation, T[number]>] extends [never]
+    ? T
+    : readonly [...T, Exclude<TerminalOperation, T[number]>];
+
+const DISPATCHED_OPERATIONS = [
   "sandbox",
   "reserveFirstGeneration",
   "claimOperation",
@@ -85,6 +96,10 @@ export const TERMINAL_OPERATIONS = [
   "completePublication",
   "markPublicationAmbiguous",
 ] as const satisfies readonly TerminalOperation[];
+
+/** Every operation the endpoint will dispatch, proven complete both ways. */
+export const TERMINAL_OPERATIONS: Exhaustive<typeof DISPATCHED_OPERATIONS> =
+  DISPATCHED_OPERATIONS;
 
 const TERMINAL_OPERATION_SET = new Set<string>(TERMINAL_OPERATIONS);
 

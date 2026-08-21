@@ -565,7 +565,6 @@ export class WorkstreamTerminalStorage {
    */
   resetSandbox(input: { generation: number | null; now: number }): { deleted: boolean } {
     return this.storage.transactionSync(() => {
-      this.sql.exec(`DELETE FROM terminal_imported_resources`);
       const deleted = input.generation === null
         ? this.sql.exec(`DELETE FROM terminal_workspace WHERE id = 1 RETURNING id`)
         : this.sql.exec(
@@ -573,6 +572,19 @@ export class WorkstreamTerminalStorage {
             input.generation,
           );
       const removed = deleted.toArray().length > 0;
+      // Fenced on a surviving sandbox, not on `removed`, and deliberately so.
+      // The caller reads a generation, then awaits the provider's delete before
+      // reaching this — long enough for another run to replace the generation
+      // and import into the new one. An unconditional delete here would erase
+      // that live generation's provenance while the fenced delete above missed,
+      // and `hasRevokedImportedResource` reads an empty set as "nothing was
+      // revoked", so the next acquire would reuse files whose authorization can
+      // no longer be revalidated. This guard also still clears rows orphaned by
+      // a sandbox that was already gone, which is why it is not `if (removed)`.
+      this.sql.exec(
+        `DELETE FROM terminal_imported_resources
+          WHERE NOT EXISTS (SELECT 1 FROM terminal_workspace WHERE id = 1)`,
+      );
       this.sql.exec(
         `UPDATE terminal_repository
             SET bootstrapped_sandbox_generation = NULL, read_token_expires_at = NULL,
