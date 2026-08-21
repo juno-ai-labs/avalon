@@ -1835,6 +1835,41 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("closes a revoked listener on the work-stream state path too", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000504");
+    try {
+      const closed = nextClose(socket);
+      await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+        .bind("2026-08-21T00:00:00.000Z", SESSION_ID).run();
+      // The other publish path. It carries the same viewer-visible fields —
+      // title, preview, unread — so it needs the same sweep, and it has no
+      // topic to judge, which makes this the interval-gated form. The object
+      // is fresh, so the interval has already elapsed.
+      await stub.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope({
+          kind: "directory_common",
+          title: "Published while the session was gone",
+          description: "State path",
+          preview: "idle",
+          scope: "workspace",
+          state: "idle",
+          systemKind: null,
+          lastActivityAt: "2026-08-21T20:00:00.000Z",
+          completedAt: null,
+          archivedAt: null,
+        }, "00000000-0000-7000-8000-000000000505")],
+      });
+      expect((await closed).code).toBe(1008);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("sweeps a suspended member out immediately when a retracting topic is published", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
