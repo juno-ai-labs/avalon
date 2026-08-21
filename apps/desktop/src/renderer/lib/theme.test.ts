@@ -215,11 +215,18 @@ describe('theme', () => {
    * as it was is the behaviour this removes.
    */
   describe('following a choice made in another window', () => {
-    function installBridge(): { fire: () => void; listeners: number } {
-      const state = { fire: () => undefined as void, listeners: 0 };
+    function installBridge(): { fire: (choice?: unknown) => void; listeners: number; reported: unknown[] } {
+      const state = {
+        fire: (() => undefined) as (choice?: unknown) => void,
+        listeners: 0,
+        reported: [] as unknown[],
+      };
       vi.stubGlobal('avalon', {
-        setWindowTheme: () => Promise.resolve(),
-        onThemeChanged: (listener: () => void) => {
+        setWindowTheme: (choice: unknown) => {
+          state.reported.push(choice);
+          return Promise.resolve();
+        },
+        onThemeChanged: (listener: (choice: unknown) => void) => {
           state.listeners += 1;
           state.fire = listener;
           return () => { state.listeners -= 1; };
@@ -228,17 +235,12 @@ describe('theme', () => {
       return state;
     }
 
-    it('re-reads the stored choice rather than trusting the message', () => {
+    it('applies the choice the message carries', () => {
       installMatchMedia(false);
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      // What the other window wrote. This one has not applied it yet.
-      window.localStorage.setItem(
-        DEVICE_PREFERENCES_STORAGE_KEY,
-        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'dark' } }),
-      );
-      bridge.fire();
+      bridge.fire({ family: 'air', mode: 'dark' });
 
       expect(document.documentElement.dataset['theme']).toBe('air-dark');
       expect(document.documentElement.dataset['themeFamily']).toBe('air');
@@ -246,21 +248,59 @@ describe('theme', () => {
       stop();
     });
 
-    // Re-reading rather than stamping the payload is what keeps a window that is
-    // following the Mac still following it.
+    // The payload carries the choice, not the appearance, which is what keeps a
+    // window that is following the Mac still following it — against *its* Mac.
     it('re-resolves the system mode against this window’s own Mac', () => {
       installMatchMedia(true);
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      window.localStorage.setItem(
-        DEVICE_PREFERENCES_STORAGE_KEY,
-        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'system' } }),
-      );
-      bridge.fire();
+      bridge.fire({ family: 'air', mode: 'system' });
 
       expect(document.documentElement.dataset['theme']).toBe('air-dark');
       expect(document.documentElement.dataset['themeMode']).toBe('system');
+      stop();
+    });
+
+    /**
+     * Each window is its own renderer process, and a `localStorage` write in the
+     * window that made the choice is not ordered against an IPC round trip
+     * through main. A window that re-read the store instead of applying the
+     * payload could read a value the write had not reached yet, re-apply the
+     * *old* choice, and report it back — main would see a difference and
+     * broadcast again, turning the echo guard into an oscillator. Here the store
+     * is deliberately left stale.
+     */
+    it('does not follow a store the other window’s write has not reached yet', () => {
+      installMatchMedia(false);
+      window.localStorage.setItem(
+        DEVICE_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+      );
+      const bridge = installBridge();
+      const stop = watchThemeBroadcast();
+
+      bridge.fire({ family: 'air', mode: 'dark' });
+
+      expect(document.documentElement.dataset['theme']).toBe('air-dark');
+      // And it reports what it drew, so main's comparison matches and stops.
+      expect(bridge.reported).toEqual([{ family: 'air', mode: 'dark' }]);
+      stop();
+    });
+
+    /** A payload this build cannot read leaves the store as the only meaning. */
+    it('falls back to the stored choice when the message makes no sense', () => {
+      installMatchMedia(false);
+      window.localStorage.setItem(
+        DEVICE_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'dark' } }),
+      );
+      const bridge = installBridge();
+      const stop = watchThemeBroadcast();
+
+      bridge.fire({ family: 'sepia', mode: 'dark' });
+
+      expect(document.documentElement.dataset['theme']).toBe('air-dark');
       stop();
     });
 
