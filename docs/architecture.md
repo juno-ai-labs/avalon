@@ -784,24 +784,29 @@ subscribers and letting clients filter.* Audience here is per person — a
 personal work stream is invisible to non-participants — so a shared frame would
 put rows on the wire for viewers who may not read them, and make the client the
 enforcement point for a visibility rule that belongs to the object. *Replacing
-the Queue with the direct call.* The Queue is the durability guarantee across a
-WorkspaceDO that is evicted, overloaded, or mid-deploy; the eager call is an
-optimization that must be allowed to fail silently. *Awaiting it inside the
+the Queue with the direct call, or letting the direct call consume the outbox.*
+The Queue is the durability guarantee across a WorkspaceDO that is evicted,
+overloaded, or mid-deploy; the eager call is an optimization that must be
+allowed to fail silently, and anything it consumes is something another path
+was relying on finding. *Awaiting it inside the
 child's effect application.* That would make committing a child's state
 conditional on the workspace being reachable, which inverts the ownership the
 outbox exists to establish.
 
-**Consequences:** The eager path and the Queue path can both deliver the same
-effect; they converge because application is keyed by `messageId` and
-`payloadHash` and the outbox row is deleted only against a confirmed apply. A
-failed eager attempt pushes `not_before` forward by the retry base and so
-delays the Queue path it was racing — accepted because both paths end in the
-same RPC to the same object, and a workspace refusing one would refuse the
-other. The in-flight guard is memory-only, so a hibernated object wakes willing
-to try again; that costs a redundant call the receiver deduplicates, where the
-opposite would silently drop the push. And `publishWorkstreamState` now runs on
-a hot path: it is one directory query per subscribed socket, so the cost of a
-state change scales with connected viewers of that workspace.
+**Consequences:** The eager call delivers but deliberately does **not**
+acknowledge, so the outbox lifecycle is untouched and the two paths are purely
+additive: the Queue's later copy of the same effect finds WorkspaceDO's receipt
+for that `messageId` and `payloadHash`, reports no change, and publishes nothing
+a second time. Acknowledging was the first attempt and was wrong — draining the
+outbox eagerly left the activation fence reporting it had flushed nothing,
+because the effects it gates on had already gone, and it moved `not_before`
+forward on the Queue path it was racing. Delivery is worth racing the Queue at;
+ownership of the outbox is not, and a later change here has to keep that line.
+The in-flight guard is memory-only, so a hibernated object wakes willing to try
+again, costing a redundant call the receiver deduplicates where the opposite
+would silently drop the push. And `publishWorkstreamState` now runs on a hot
+path: one directory query per subscribed socket, so a state change costs
+O(connected viewers of that workspace).
 
 ### 2026-08-21 — Canonical reconciliation is served by the room, not refetched
 
