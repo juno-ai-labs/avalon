@@ -8,9 +8,9 @@ import {
   AutomationDraftStreamEventSchema,
   AutomationRunSchema,
   AutomationSummarySchema,
+  ActivitySourceBindingKeySchema,
   ActivitySourcePluginIdsSchema,
   CompileAutomationRequestSchema,
-  ConnectorActivityTriggerDescriptorSchema,
   CreateAutomationRequestSchema,
   IdSchema,
   ModelPluginIdSchema,
@@ -52,16 +52,41 @@ const StartedRunSchema = z.object({
   harnessRunId: IdSchema.optional(),
   reused: z.boolean(),
 });
+/**
+ * One connector an installer has to bind before a template can run — the shape
+ * `AutomationService.listTemplates` derives from a version's stored triggers.
+ *
+ * This is deliberately not `ConnectorActivityTriggerDescriptorSchema`, which
+ * names a *connector manifest's* event type (`eventType`, `label`,
+ * `digestible`) and shares no field with a binding. Declaring that one here
+ * failed the whole page's parse — a 500 for the entire catalog — the moment any
+ * shared template carried an activity or webhook trigger.
+ *
+ * Each field is bounded by the same schema the write path already enforced:
+ * `TriggerDefinitionSchema` validates `sourceBindingKey` and
+ * `suggestedSourcePluginId` when a version is published, so the read boundary
+ * can restate them without being able to reject a row publishing accepted.
+ */
+const TemplateActivitySourceSchema = z.object({
+  bindingKey: ActivitySourceBindingKeySchema,
+  connectorType: z.string().min(1),
+  suggestedPluginId: ModelPluginIdSchema.optional(),
+});
 const TemplatePageSchema = z.object({
   items: z.array(z.object({
     id: IdSchema,
     name: z.string(),
-    author: z.string().nullable(),
+    // Not nullable: the service coalesces a missing owner name to
+    // "Unknown member", and the desktop parses this field as a plain string —
+    // so a contract that permits `null` here licenses a change that would fail
+    // the client's parse of the whole page. Same defect as the one below,
+    // pointed the other way across the same wire.
+    author: z.string(),
     description: z.string(),
     usedBy: z.number().int().nonnegative(),
     requiredCapabilities: z.array(z.string()),
     latestVersion: z.number().int().positive(),
-    activitySources: z.array(ConnectorActivityTriggerDescriptorSchema),
+    activitySources: z.array(TemplateActivitySourceSchema),
   })),
 });
 const PublishedTemplateSchema = z.object({ templateId: IdSchema, latestVersionId: IdSchema });
