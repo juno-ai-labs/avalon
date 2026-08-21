@@ -75,6 +75,16 @@ context the rest of them had. `workstream_list_resources` is how the agent finds
 out what it may read; a resource nobody remembered to attach is a resource that
 does not exist as far as the run is concerned.
 
+**Where this came from.** The proposal is a direct product request — groups (or
+projects) as a sidebar section, created from a plus button, with an icon, a
+colour, drag-to-add, a per-row marker, a small home page, default resources that
+propagate, and a workspace setting choosing the word. That request is the
+evidence that this is wanted now; the rest of this section is the case that the
+product has a matching gap. Recording it here rather than implying a support
+thread nobody can find: no incident, no ticket queue, and no measurement stands
+behind this document, and a reader deciding whether to build it should weigh it
+on that basis.
+
 **We cannot put numbers on either cost.** There is no usage telemetry that counts
 scroll depth in the sidebar or resource re-attachment, and per [the rule
 sheet](../../../AGENTS.md#where-we-are) that is a constraint on how this decision
@@ -146,6 +156,15 @@ and leave everything that would need evidence to justify in
 11. **Groups in the macOS menu bar or the ⌘1–9 shortcut run.** Both surfaces stay
     exactly as [`menu-bar.md`](../../menu-bar.md) and
     [`workstream-pinning.md`](../../workstream-pinning.md) describe them.
+12. **A mutation audit log.** Who renamed a group, who removed a work stream from
+    one, and who deleted one are not recorded. Attachment provenance is kept;
+    mutation history is not. Deferred — see
+    [the appendix](#8-a-mutation-audit-log).
+13. **A cap on how many work streams a group holds.** The group's list pages
+    instead. Rejected on the precedent in
+    [`workstream-pinning.md`](../../workstream-pinning.md), where a pin cap was
+    shipped, narrowed to a visibility-filtered count, and then removed outright
+    because neither form worked.
 
 ## Product behavior
 
@@ -173,9 +192,27 @@ Each group renders as a disclosure:
   do the obvious thing (open the group) without the collapse becoming
   unreachable.
 - **The work streams in it**, rendered with the same row component the rest of
-  the sidebar uses, ordered by last activity, newest first.
+  the sidebar uses, ordered by last activity, newest first — and **paged the same
+  way the main list is**, following `nextCursor` as the scroll approaches the
+  bottom. A group is not capped: pinning tried a cap twice and removed it
+  (`docs/workstream-pinning.md`, 2026-08-11 — "the cap could not be made to work
+  in either of its two possible forms"), and a group is more likely to be large
+  than a pin list, not less. Paging rather than capping is also what keeps
+  `GET /groups/:id` and the fan-out honest at the top end; see [group
+  size](#how-large-a-group-gets).
 - **When empty**, one light italic line: *Add a work stream to Blogs* — the
   group's own name, so the instruction names the thing it is about.
+
+**Archived work streams are not in a group's list.** A work stream leaves the
+sidebar by `archived_at`, not by deletion, and every existing read filters on it —
+`visibleWorkstreamIds`, the list query, and the pinned rows all do. A group
+filters the same way, so archiving removes a row from its group exactly as it
+removes it from *Yesterday*, and the header's count on the group's home page
+counts only what that viewer can actually see. The membership row is left alone:
+un-archiving puts the work stream back in its groups with nothing to redo. This is
+the failure pinning already had and fixed — a pinned row that renders nothing and
+offers no menu is a slot that cannot be freed — and a group inherits the answer
+rather than rediscovering it.
 
 Collapse state is per person and per device, kept beside the sidebar width in
 `ui-store` and `localStorage`, not on the server. It is a viewport preference
@@ -279,10 +316,17 @@ is `block: 'nearest'` so a group already on screen is not moved, it is `smooth`
 unless the reader has asked for reduced motion, and the intent expires after
 `REVEAL_DEADLINE_MS` rather than sitting armed against a later socket update.
 
-The marker is a `button` inside the row's `NavLink`, so its handler stops the
-event; the row's own click handler already bails on `event.defaultPrevented`. Its
-accessible name is *In group Blogs. Show it in the sidebar.* and it is reachable
-by keyboard, because it is the only route from a row to its group.
+**The markers sit beside the `NavLink`, not inside it.** An interactive button
+nested in an anchor is invalid, and the obvious shortcut does not work:
+`stopPropagation()` does not set `defaultPrevented` and does not cancel the
+ancestor anchor's navigation, so a marker written that way would follow the link
+to the work stream instead of revealing the group — the row's own handler
+(`sidebar.tsx:470-472`) only checks `defaultPrevented`. The markers are therefore
+siblings of the link inside the row wrapper, laid out into the gap between the
+status dot and the title, and each one calls `preventDefault()` as well.
+
+Each marker's accessible name is *In group Blogs. Show it in the sidebar.* and it
+is reachable by keyboard, because it is the only route from a row to its group.
 
 ### The group home page
 
@@ -350,15 +394,45 @@ so the two cannot drift. Its contract:
 
 Steps 2–5 are what make the operation safe to retry, which matters because the
 queue delivers at least once.
+
+**The drain tolerates a group that is gone.** Because removing a default — or
+deleting the group entirely — deliberately does not cancel an attach already in
+flight, the alarm and the consumer must both treat a missing group, a missing
+default row, or an archived target work stream as an ordinary outcome: complete
+the attach if the work stream is still there, drop the intent if it is not, and
+in neither case throw. An outbox row that raises on a vanished parent would wedge
+the drain for every other group in the workspace behind it.
 - **Removing a default from the group detaches it from nothing.** Later work
   streams stop being given it; every work stream that has it keeps it. The
   confirmation says so in those words.
 - **Removing a work stream from a group detaches nothing**, for the same reason.
 - **Deleting a group detaches nothing.**
-- Only **workspace-scoped** resources can be a group default — see [the security
-  section](#security-and-trust-model).
+- Only a resource that is visible workspace-wide can be a group default — see
+  [the security section](#security-and-trust-model).
 - A group holds at most 20 default resources; a workspace holds at most 200
   groups.
+
+### How large a group gets
+
+**Group membership is deliberately unbounded**, which makes its size the number
+three other things have to survive.
+
+- **The sidebar** pages a group's rows and follows `nextCursor`, exactly as the
+  main list does. An expanded group of 800 renders a page, not 800 rows.
+- **`GET /groups/:id`** pages its **Work streams** section the same way.
+- **The fan-out** is one message per member, so adding a default to a group of N
+  enqueues N. That is the number [key design decision
+  4](#key-design-decisions) rests on, and it is why the outbox is drained in
+  bounded batches on the alarm rather than enqueued in one burst inside the
+  request: the queue absorbs 5,000 messages a second and 25 GB of backlog, and
+  the object hands it work at its own pace. A large group makes the fan-out take
+  longer; it does not make it fail.
+
+A cap was considered and rejected on the precedent that already exists: pinning
+shipped `MAX_PINNED_WORKSTREAMS`, moved it onto a visibility-filtered count, and
+then removed it outright, because a cap counted against stored rows is wrong
+whenever the run has a hole and a cap counted against visible rows can be wedged
+shut by rows nobody can free. A group, being shared, would hit both faster.
 
 **Live.** A newly inserted link publishes `resource_attached` on that work
 stream's socket — the same event the existing attach path emits from
@@ -448,8 +522,12 @@ None yet.
    the socket the sidebar converges on. Groups are the same shape of state — a
    workspace-scoped opinion about which rows go where — and putting them in the
    same object means membership and the directory rows it references are read in
-   one query and written in one transaction, with a foreign key that cascades
-   when a work stream is deleted. *Rejected:* a D1 table in the regional control
+   one query and written in one transaction, with a foreign key that cascades if a
+   directory row is ever removed. That cascade is insurance, not a live path:
+   nothing deletes from `workspace_workstream_directory` today — a work stream
+   goes quiet by `archived_at` — so the FK matches what
+   `workspace_workstream_pins` and its siblings already declare rather than
+   describing something that fires. *Rejected:* a D1 table in the regional control
    plane. It would put group membership and the directory it annotates in two
    authorities that converge asynchronously, which is exactly the split
    [`0079_workstream_do_authority_cutover.sql`](../../../packages/db/migrations/0079_workstream_do_authority_cutover.sql)
@@ -514,9 +592,11 @@ None yet.
 
 ## Data model
 
-All of it is WorkspaceDO-local SQL, added by a WorkspaceDO migration. **No D1
-migration.** Sketch level; the migration is authoritative, and
-[`data-model.md`](../../data-model.md) is updated in the same change as the code.
+Groups themselves are WorkspaceDO-local SQL, added by a WorkspaceDO migration.
+**One D1 migration is needed, and it is not for groups** — see [the terminology
+column](#the-one-d1-migration) below. Sketch level; the migrations are
+authoritative, and [`data-model.md`](../../data-model.md) is updated in the same
+change as the code.
 
 ```sql
 CREATE TABLE workspace_groups (
@@ -529,7 +609,13 @@ CREATE TABLE workspace_groups (
   created_at         INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at         INTEGER NOT NULL CHECK (updated_at >= 0)
 ) STRICT;
-CREATE UNIQUE INDEX workspace_groups_name_idx ON workspace_groups(name COLLATE NOCASE);
+-- Scoped now, not later. Private groups (appendix 1) need a per-owner rule —
+-- two people each having a private "Blogs" is not a constraint anybody would
+-- choose — so a workspace-wide unique name would have to be dropped and rebuilt.
+-- Carrying the predicate from the start is what makes the unused `scope` column
+-- actually buy what the paragraph below claims it buys.
+CREATE UNIQUE INDEX workspace_groups_name_idx
+  ON workspace_groups(name COLLATE NOCASE) WHERE scope = 'workspace';
 
 CREATE TABLE workspace_group_members (
   group_id         TEXT NOT NULL REFERENCES workspace_groups(group_id) ON DELETE CASCADE,
@@ -577,6 +663,17 @@ CREATE TABLE workspace_group_resource_fanout (
 ) STRICT;
 ```
 
+**`NOCASE` folds ASCII only.** *Café* and *CAFÉ* are therefore two different
+groups under a rule [key design decision 6](#key-design-decisions) states without
+qualification. That is accepted rather than solved — a normalized Unicode
+case-folded key is a stored column and a fold to keep current with, for a
+collision between two names that differ only in the case of an accented letter —
+but it is written down here, because the decision is argued from the marker being
+unambiguous and this is the case where it is not. The list read sorts with the
+same `COLLATE NOCASE`, so ordering and uniqueness agree about names differing
+only in case; a read that sorted binary while the index folded would disagree
+with itself.
+
 `scope` is written `'workspace'` by every path and read by none, per non-goal 1.
 It is present rather than deferred because adding a column later means a
 migration *and* a read path that has to tolerate its absence, whereas an unused
@@ -611,6 +708,29 @@ Contracts (`packages/contracts/src/index.ts`):
 
 A `GroupId` brand is added per [`branded-ids.md`](../../branded-ids.md), and flows
 from the route parameter through the service to the object without a cast.
+
+### The one D1 migration
+
+`groupTerminology` is a workspace preference sitting in the same settings card as
+**Default timezone** and **Log agent inference**, and those are D1 columns on the
+`workspaces` row: `WorkspaceService.getWorkspace` selects
+`w.timezone, w.log_agent_inference` and `updateWorkspace` writes exactly those two
+behind `COALESCE`. There is no path by which a WorkspaceDO-local table makes a
+field of the D1-backed workspace profile durable, so putting the setting on
+`PATCH /workspace` — which is where it belongs — requires one migration:
+
+```sql
+-- packages/db/migrations/NNNN_workspace_group_terminology.sql
+ALTER TABLE workspaces
+  ADD COLUMN group_terminology TEXT NOT NULL DEFAULT 'group'
+  CHECK (group_terminology IN ('group', 'project'));
+```
+
+One nullable-free column with a default, applied identically in both regions, and
+the select, map, and update paths in `workspace-service.ts` extended alongside it.
+The alternative — a WorkspaceDO-owned terminology API — was rejected: it would put
+one row of a settings card on a different authority from the two above it, for a
+value read on every render of the sidebar.
 
 Routes (`apps/api/src/routes/groups.ts`, new):
 
@@ -685,12 +805,39 @@ route (to decide what it accepts):
 | Connector-backed (`connection_id` non-null) | The connection's scope is `workspace`. |
 | Note (`notes.resource_id` matches) | `notes.scope = 'workspace'` and the note is not archived. |
 | Inbound email (`provider = 'resend'`, `resource_type = 'email'`) | Never — its visibility derives from an existing attachment. |
+| Upload (`connection_id IS NULL`, no note row) | Admitted. It has no scope of its own because it never had an owner other than the workspace — it was uploaded into it. |
 | Anything else | Never. A resource class the predicate has not been taught is refused until somebody decides what it means. |
 
 Default-deny is the point: a new resource class added later is refused rather
 than silently inheriting group-wide disclosure, and the refusal is the thing that
-prompts the decision. The predicate is new code, not a reuse of the existing
-check, and the tests it needs are named in acceptance criteria 9.
+prompts the decision. Note that "workspace-scoped" is shorthand throughout this
+document and **not a column** — `resources` has no `scope` — which is exactly why
+the predicate has to enumerate classes rather than read a field. The predicate is
+new code, not a reuse of the existing check, and the tests it needs are named in
+acceptance criterion 9.
+
+**Scope is mutable, and the gate is not the last word.** A note admitted as a
+group default can be changed from `workspace` to `personal` afterwards. The
+product already treats that transition as significant: `0045_notes.sql` carries an
+outbox and a trigger for it, drained by `note-privacy-notification-service.ts`.
+Left alone, an add-time-only gate would keep fanning that note out to every work
+stream that joins the group later, with no user behind the attach — the precise
+situation the gate exists to prevent. So:
+
+- **The predicate re-runs at fan-out time**, in the consumer, against current
+  state. It reads scope from stored columns, needs no `AuthContext` to do it, and
+  a resource that has stopped qualifying is dropped rather than attached.
+- **A note going private drops itself from every group's defaults**, written by
+  the same note-privacy drain that already notices the transition. The group's
+  **Default resources** list stops showing it, so the change is visible where it
+  was made rather than silent.
+- **Nothing already attached is retracted.** That follows non-goal 7 and is the
+  same answer the product gives today: the note-privacy path notifies, it does not
+  claw back. What changes is only what happens next.
+
+Add-time and fan-out-time both, therefore — the door check is for the person, so
+they get an immediate refusal with a reason; the fan-out check is for correctness,
+because time passes between the two.
 
 **Group membership grants nothing.** It does not make a work stream readable to
 somebody who could not read it, and it does not make a group's contents visible
@@ -707,10 +854,23 @@ can see the row to add it, so this is its owner's own action. It is still worth
 stating plainly: putting a work stream in a group is how content gets pushed into
 it.
 
-**Deletion is bounded and audited.** Deleting a group deletes group rows only.
-Every mutation records the acting user (`created_by_user_id`, `added_by_user_id`),
-so a resource that arrived in a work stream by a group rule still names the
-person whose action caused it. That promise is why the fan-out outbox carries
+**Deletion is bounded, and attachment provenance survives it — but there is no
+mutation history.** Deleting a group deletes group rows only. What is retained is
+*attachment provenance*: `created_by_user_id` on the group and
+`added_by_user_id` on a membership or default row, so a resource that arrived in
+a work stream by a group rule still names the person whose action caused it.
+
+What is **not** retained is a record of the mutations themselves. A rename or a
+restyle overwrites without recording who did it, and removing a member, removing a
+default, or deleting a group destroys the only row carrying that actor. So "who
+renamed this group" and "who took that work stream out" are questions this design
+cannot answer, deliberately: an append-only audit table is a subsystem, nobody has
+asked for one, and inventing one here would be building for a requirement that
+does not exist yet. It is named in [the appendix](#8-a-mutation-audit-log) so the
+gap is a decision rather than an oversight. Do not read `added_by_user_id` as an
+audit log; it is provenance for the row it sits on and disappears with it.
+
+That distinction is why the fan-out outbox carries
 `attached_by_user_id` of its own rather than joining back to
 `workspace_group_default_resources`: the group, or just that default, may be
 deleted after the transaction commits and before the alarm drains, and a join to
@@ -744,7 +904,13 @@ changes. Flagship's flags are model-routing decisions per
 [`feature-flags.md`](../../feature-flags.md), and adding the product's first
 UI flag to gate an additive section costs more than removing the section would.
 
-The order that does matter is the queue: Wrangler binds a producer to a queue
+**Two orderings matter.** The D1 column lands before the Worker that selects it:
+`NNNN_workspace_group_terminology.sql` adds `group_terminology NOT NULL DEFAULT
+'group'`, so an older Worker ignores a column it does not name and a newer one
+reads a value every row already has. There is no backfill and no window in which
+the setting is absent.
+
+The second is the queue: Wrangler binds a producer to a queue
 but does not create it, so the regional queues exist before the Worker that
 produces to them is deployed. `scripts/check-cloudflare-queues.mjs` is the
 preflight that proves it — the new queues are declared in both Wrangler files and
@@ -802,15 +968,30 @@ does not establish that any of this is visible or legible.
     case that a join back to `workspace_group_default_resources` cannot serve.
 12. Switching **Group terminology** to **Project** changes the sidebar heading,
     the plus button, the context-menu item, the modal, the marker's accessible
-    name, the group home page, and the settings row itself, with no reload. A
-    grep of the renderer finds no user-visible `"Group"` or `"Project"` literal
-    outside the terminology helper, and a test asserts it.
-13. Membership and defaults survive a WorkspaceDO restart, and a deleted work
-    stream leaves no orphaned membership row.
-14. A fan-out whose target work stream is unreachable retries and lands in the
+    name, the group home page, and the settings row itself, with no reload. The
+    setting survives a reload, proving the D1 column is written and read back.
+13. The terminology invariant is enforced by a rule a test can apply
+    mechanically: **no string in a JSX text position, `aria-label`, `title`, or
+    `placeholder` matches `/\b(group|project)s?\b/i` outside the terminology
+    helper.** A bare grep is not the check — the renderer legitimately contains
+    `role="group"`, Radix's `*.Group` parts, and the recency identifiers this PRD
+    asks be renamed — and a check that needs an allowlist to stay quiet proves
+    nothing.
+14. Archiving a work stream removes it from its groups' lists and from the group
+    home page's count, exactly as it removes it from *Yesterday*; un-archiving
+    puts it back with its membership intact. An expanded group of more work
+    streams than one page pages them.
+15. Membership and defaults survive a WorkspaceDO restart.
+16. A fan-out whose target work stream is unreachable retries and lands in the
     dead-letter queue; the group keeps the default, and nothing else in the
-    workspace is affected.
-15. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
+    workspace is affected. A fan-out whose group, default row, or target work
+    stream has vanished or been archived in the meantime drops the intent without
+    throwing, and the drain keeps going for every other group in the workspace.
+17. A note admitted as a group default and then made private stops being fanned
+    out: it leaves the group's default list, later joiners do not receive it, and
+    work streams that already hold it keep it. The fan-out-time re-check refuses
+    it even if the list write is lost.
+18. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
     `pnpm test:scripts`, both Wrangler dry-run builds, and
     `pnpm --filter @avalon/api test:workers` are green. Anything that depends on
     Durable Object storage, alarms, or the socket is a `test-workers/` test on
@@ -892,3 +1073,13 @@ Three markers and a `+N` is a guess at how many groups a work stream is
 realistically in. If workspaces routinely exceed it, the answer is probably not a
 fourth marker but a way to filter the sidebar to one group — which is a different
 feature, and closer to search than anything Avalon has today.
+
+### 8. A mutation audit log
+
+Non-goal 12. Today a rename overwrites and a removal destroys the row carrying
+its actor, so group mutations leave no history. The version that works is an
+append-only WorkspaceDO table — actor, target, action, timestamp — written in the
+same transaction as each mutation, and a retention answer to go with it. It is a
+subsystem, and it should be built when somebody actually needs to ask one of
+these questions rather than pre-emptively; `added_by_user_id` must not be quietly
+pressed into the role in the meantime, because it disappears with its row.
