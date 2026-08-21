@@ -106,6 +106,7 @@ function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata
     nextPendingWakeup: null,
     nextTerminalActionAt: null,
     viewer: {
+      blockDashboardPreference: { visible: false, updatedAt: null },
       isParticipant: true,
       listable: true,
       unreadCount: 3,

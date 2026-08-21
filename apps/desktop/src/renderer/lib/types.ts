@@ -433,6 +433,20 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   suggestions?: ActivitySuggestionData[];
 }
 
+/**
+ * A work stream detail plus everything else opening one needs.
+ *
+ * `resumeFeed` is the window around where this viewer stopped reading, and is
+ * null when that is already inside `messageFeed`. Render one of the two; they
+ * are not contiguous, and the transcript is a single ordered run.
+ */
+export interface WorkstreamBoot extends WorkstreamDetail {
+  /** Undefined from a Worker that predates the field; absent is not empty. */
+  messageFeed?: MessagePage;
+  resumeFeed: MessagePage | null;
+  blockDashboardPreference?: BlockDashboardPreference;
+}
+
 export interface WorkstreamDeferredContext {
   backgroundTasks: BackgroundTask[];
   automationRuns: AutomationRunSummary[];

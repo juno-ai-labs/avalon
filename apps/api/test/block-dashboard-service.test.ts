@@ -152,10 +152,14 @@ describe("BlockDashboardService", () => {
       blocks: [],
     })).rejects.toMatchObject({ status: 409, code: "block_dashboard_version_conflict" });
 
-    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
+    // Read through the detail path now: the preference has no REST route of its
+    // own, and is answered on `GET /workstreams/:id` and the control socket's
+    // boot frame instead.
+    await expect(owner.preferenceForDetail(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
     const visible = await owner.updatePreference(WORKSTREAM_ID, { visible: true });
-    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual(visible);
-    await expect(member.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
+    await expect(owner.preferenceForDetail(WORKSTREAM_ID)).resolves.toEqual(visible);
+    // Still per viewer: one person opening the panel does not open it for another.
+    await expect(member.preferenceForDetail(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
     expect(requests.map((request) => request.operation)).toEqual(expect.arrayContaining([
       "get",
       "update_configuration",

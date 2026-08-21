@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
@@ -124,6 +124,16 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
     backgroundTasks: [],
     automationRuns: [],
     ...overrides,
+  };
+}
+
+/** `getWorkstream` answers the whole of an open now, not just the detail. */
+function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
+  return {
+    ...workstreamDetail(overrides),
+    messageFeed: { items: [], nextCursor: null, newerCursor: null },
+    resumeFeed: null,
+    blockDashboardPreference: { visible: false, updatedAt: null },
   };
 }
 
@@ -1519,7 +1529,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
@@ -1637,7 +1647,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
@@ -2047,7 +2057,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async (workstreamId: string) => workstreamDetail({
+      getWorkstream: vi.fn(async (workstreamId: string) => workstreamBoot({
         id: workstreamId,
         harnessStatus: 'running',
       })),
@@ -2295,7 +2305,7 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const canonicalWorkstream = workstreamDetail({
+    const canonicalWorkstream = workstreamBoot({
       id: 'workstream-one',
       title: 'Canonical',
       harnessStatus: 'running',
