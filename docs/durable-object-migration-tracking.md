@@ -373,6 +373,32 @@ seed or repair it.
 
 ## Changelog
 
+### 2026-08-21 — The deployment check waits for a route it just created
+
+**What changed:** the site reachability half of
+`check-migration-tracker-health.mjs` retries a connection failure, six attempts
+over roughly a minute, instead of asking once.
+
+**Why:** the first production run of the tracker's deploy workflow failed on a
+deploy that was entirely correct. Wrangler returns as soon as the script
+uploads; the custom domain it had just provisioned was not resolvable yet, and
+the check ran one second later. Everything it was built to catch, it caught —
+the queue consumer was attached with the declared batch settings — and then it
+reported a broken deployment because it had measured its own impatience. A
+verification step that cries wolf on its own first run is worse than none: the
+next real failure gets waved through as "the DNS thing again".
+
+Only a connection failure is retried. Any response means the route is live and
+the question is answered, so a `2xx` that should have been a redirect still
+fails on the first attempt rather than being asked five more times — the
+security assertion must not become slower to report than the liveness one.
+
+**What a future change has to respect:** the backoff is linear because what is
+being waited on is DNS and route propagation for a new hostname, not an
+overloaded service. The bound matters in both directions: long enough that
+propagation is never mistaken for breakage, short enough that a genuinely
+broken deploy fails the job instead of hanging it.
+
 ### 2026-08-21 — The operator site moves to migrations.internal.rallywith.ai
 
 **What changed:** the tracker's custom domain gained an `internal.` label, and
