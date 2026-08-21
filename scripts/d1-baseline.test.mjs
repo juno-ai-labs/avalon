@@ -748,3 +748,26 @@ test("the two real control-row timestamps pass the volatile shape check", () => 
   const snapshot = snapshotChain(MIGRATIONS_DIRECTORY, files);
   assert.doesNotThrow(() => assertVolatileValuesAreTimestamps(snapshot.rows, manifest.volatileColumns));
 });
+
+test("a column volatile in only some of a table's seeded rows stops generation", () => {
+  // The renderer substitutes per column, so it would rewrite the hardcoded row
+  // too. `stableRows` strips volatile columns from both sides of the
+  // equivalence comparison, so nothing downstream would see the overwrite.
+  assert.throws(
+    () => detectVolatileColumns(
+      { ctl: [{ id: 1, at: "2026-08-21 10:00:00" }, { id: 2, at: "2020-01-01 00:00:00" }] },
+      { ctl: [{ id: 1, at: "2026-08-21 10:00:01" }, { id: 2, at: "2020-01-01 00:00:00" }] },
+    ),
+    /ctl\.at moved in 1 of 2 seeded rows/u,
+  );
+});
+
+test("a column volatile in every seeded row is still just volatile", () => {
+  assert.deepEqual(
+    detectVolatileColumns(
+      { ctl: [{ id: 1, at: "2026-08-21 10:00:00" }, { id: 2, at: "2026-08-21 10:00:00" }] },
+      { ctl: [{ id: 1, at: "2026-08-21 10:00:01" }, { id: 2, at: "2026-08-21 10:00:01" }] },
+    ),
+    { ctl: ["at"] },
+  );
+});
