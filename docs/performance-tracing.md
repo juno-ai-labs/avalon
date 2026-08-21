@@ -468,12 +468,16 @@ or keep the attributes as opaque correlation values and never promote them to
 identity. What is not fine is letting a destination's default identity mapping
 decide.
 
-Note also that an OTLP destination is account configuration and covers **both**
-regional Workers. Today no EU telemetry reaches PostHog at all — `POSTHOG_HOST`
-is set only in `wrangler.global.jsonc`, the EU Worker holds no destination
-credential, and [`telemetry.md`](telemetry.md) records that an EU PostHog
-project would require a new recorded decision. A trace export configured without
-noticing would route around that boundary rather than change it.
+Note also how an export is scoped, because it is easy to get backwards. The
+destination is account configuration; the **attachment is per Worker**, through
+`observability.<signal>.destinations`. Creating a destination exports nothing —
+a Worker exports when its own config names one.
+
+Global does; EU does not, and `telemetry.md` records that changing that requires
+a new recorded decision. But what enforces it is the absence of a line in
+`wrangler.eu.jsonc`, which is why
+`apps/api/test/telemetry-export-destinations.test.ts` asserts that absence in
+both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
