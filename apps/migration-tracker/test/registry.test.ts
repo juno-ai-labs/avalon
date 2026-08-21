@@ -606,6 +606,52 @@ describe("retiring a namespace that has left the account", () => {
   });
 
   /**
+   * Retirement is per region, not per class.
+   *
+   * The same Durable Object classes are deployed in `avalon-api-global` and
+   * `avalon-api-eu`, so a class has one namespace per region and the tracker
+   * holds a `component_versions` row per region. Deriving retirement from the
+   * class alone — asking whether *any* namespace for `SubstreamAgent` is still
+   * live — leaves the global component reading live after the global namespace
+   * is deleted, purely because the EU one still exists, which is the case the
+   * marker exists to show.
+   */
+  it("retires only the region whose namespace is gone", async () => {
+    const EU = {
+      namespaceId: "ns-eu",
+      scriptName: "avalon-api-eu",
+      className: "SubstreamAgent",
+      usesSqlite: true,
+    };
+
+    const components = await withRegistry((registry) => {
+      record(
+        registry,
+        report({ objectId: objectId("a"), region: "global" }),
+        report({ objectId: objectId("e"), region: "eu" }),
+      );
+      registry.recordSweep(sweep({
+        namespaces: [
+          { ...LIVE, objects: [{ objectId: objectId("a"), hasStoredData: true }] },
+          { ...EU, objects: [{ objectId: objectId("e"), hasStoredData: true }] },
+        ],
+      }));
+      // Only the global namespace goes; the EU one keeps running the class.
+      registry.recordSweep(sweep({
+        namespaces: [{ ...EU, objects: [{ objectId: objectId("e"), hasStoredData: true }] }],
+      }));
+      return registry.overview().components;
+    });
+
+    const global = components.find((entry) => entry.region === "global");
+    const eu = components.find((entry) => entry.region === "eu");
+    expect(global?.retired).toBe(true);
+    expect(global?.absent).toBe(1);
+    expect(eu?.retired).toBe(false);
+    expect(eu?.absent).toBe(0);
+  });
+
+  /**
    * The discriminator for the test above. A class whose instances are all gone
    * looks identical in the object counts to a class that has been deleted, and
    * only the namespace evidence tells them apart — so a component with zero

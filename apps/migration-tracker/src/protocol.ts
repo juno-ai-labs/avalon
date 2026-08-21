@@ -112,9 +112,12 @@ export interface ComponentSummary {
   /** Live objects only; `absent` is reported beside it rather than inside it. */
   total: number;
   /**
-   * The class no longer has a namespace in the account — it was deleted from
-   * the Worker. Not the same as every object being absent, which is ordinary
-   * for a class whose instances are created on demand.
+   * The namespaces this component's objects live in are all retired — the class
+   * was deleted from the Worker that serves this region. Not the same as every
+   * object being absent, which is ordinary for a class whose instances are
+   * created on demand, and per region rather than per class: the same classes
+   * are deployed in both, and deleting one from a single region retires only
+   * that region's component.
    */
   retired: boolean;
 }
