@@ -666,6 +666,10 @@ ordering, sockets, local agent execution, and cross-object projection delivery.
 It exposes typed product RPCs, four ticketed socket roles, and hash-checked regional
 effects.
 
+Whether a given payload belongs on one of these sockets at all, rather than
+behind a REST read, is decided by
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
+
 It does not own workspace identity/membership, global provider-to-workspace
 routing before a workspace is known, Daytona execution, raw R2 bytes, or
 operational audit/telemetry. Those remain regional/global services. It also
