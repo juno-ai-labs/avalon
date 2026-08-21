@@ -309,6 +309,28 @@ A theme that flattens the frame has to say what focus looks like.
 `send-background` follows the same frame. A flat composer carrying a raised
 button reads as two surfaces disagreeing about which one the page is.
 
+### Rendered markdown
+
+Markdown's colours were tokens from the start — heading colour, links, the
+blockquote rule, `li::marker`, the table header's fill, syntax highlighting.
+Its **measurements** were not, and that is a different kind of gap:
+`.markdown-body` takes its own size from `sys.font.size.prose`, so a theme that
+raised its prose got larger paragraphs and headings that stayed where they were.
+Air did exactly that, and rendered an `h2` at 16px under 16.5px body text.
+
+`cmp.markdown.*` is the scale and the rhythm: four heading sizes, their leading
+and margin, the weight `strong` and a table header share, list margin and
+indent, blockquote and rule margins, table leading, and cell padding. The note
+detail keeps a second, larger scale under `article-*`, because a note is read as
+a document rather than as a turn in a transcript.
+
+Two tests hold it. One asserts every heading is at least as large as its own
+theme's prose and that the levels descend — `>=` rather than `>`, because a
+level carried by weight alone is a decision, while one *below* the prose is a
+caption. The other rejects a bare `px` font-size, weight or line-height inside a
+`.markdown-body` rule, which is the guard that would have caught this: the
+engine had one for colour and none for size.
+
 ### The navigation is translucent
 
 `--av-cmp-sidebar-background` is a translucent tint rather than an opaque colour,
@@ -472,6 +494,9 @@ next report.
 - **The renderer never names a remote font host.** It names
   `avalon-font://cache/<id>.woff2`; the main process is the only thing that
   fetches. A stylesheet pointing at `https://` is a per-launch beacon.
+- **A markdown heading is never smaller than its prose**, and rendered markdown
+  takes no size from a literal. The colour guard could not see a type scale, and
+  a whole one leaked past it.
 - **A row's mark keeps its state colour.** A theme may reshape it; a theme that
   recoloured it would be a theme that removed information.
 - **Every family brings both appearances, and no appearance belongs to two.**
@@ -577,7 +602,34 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — Choosing a theme repaints every window, not just the one you chose it in
+### 2026-08-20 — Rendered markdown takes its scale from the theme
+
+**What changed:** `cmp.markdown.*` — heading sizes, leading and margin, `strong`
+weight, list rhythm, blockquote and rule margins, table leading and cell
+padding, plus a second `article-*` scale for the note detail. Terra keeps every
+value it already had; Air takes a scale that sits above its prose.
+
+**Why:** `.markdown-body` scaled with `sys.font.size.prose` and the headings
+inside it did not. Air raised prose to 16.5px, so its `h2` rendered at 16px and
+its `h3` at 14.5px — headings *smaller* than the paragraphs beneath them. The
+same fixed rhythm meant Air's doubled vertical spacing stopped at the edge of
+any markdown block.
+
+**The guard that was missing.** The engine had one invariant about literals and
+it was about colour, so a type scale walked straight past it. There is now a
+second: no bare `px` font-size, weight or line-height inside a `.markdown-body`
+rule. Writing it found two more offenders immediately — the note detail's own
+`22px`/`17px` headings, which in Air would have put its `h2` *below* the shared
+`h3` and inverted the hierarchy rather than merely flattening it.
+
+**One assertion is deliberately `>=`.** A heading level that matches the prose
+and is carried by weight alone is a legitimate decision, and Terra's `h4` is
+exactly that. A level below the prose is not; that is a caption.
+
+Terra and Terra Light were measured before and after across every heading,
+margin, weight and padding, and are unchanged in all of them.
+
+8-20 — Choosing a theme repaints every window, not just the one you chose it in
 
 **What changed:** the main process relays a theme change to every other open
 window, and each re-reads the stored choice and re-applies it.

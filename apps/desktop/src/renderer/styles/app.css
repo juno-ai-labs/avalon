@@ -2272,14 +2272,22 @@ pre {
 .markdown-body h3,
 .markdown-body h4,
 .markdown-body h5,
-.markdown-body h6 { color: var(--av-ref-color-neutral-11); line-height: 1.3; margin: 21px 0 9px; }
-.markdown-body h1 { font-size: 18px; font-weight: var(--av-sys-font-weight-heading); }
-.markdown-body h2 { font-size: 16px; font-weight: var(--av-sys-font-weight-heading); }
-.markdown-body h3 { font-size: 14.5px; font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h6 {
+  color: var(--av-ref-color-neutral-11);
+  line-height: var(--av-cmp-markdown-heading-leading);
+  margin: var(--av-cmp-markdown-heading-margin);
+}
+/* The scale is a token because `.markdown-body` takes its own size from
+   `--av-sys-font-size-prose`. A theme that raises its prose and leaves these
+   fixed ends up with an h2 smaller than the paragraph under it, which is what
+   Air did: 16px headings under 16.5px body text. */
+.markdown-body h1 { font-size: var(--av-cmp-markdown-heading-1); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h2 { font-size: var(--av-cmp-markdown-heading-2); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h3 { font-size: var(--av-cmp-markdown-heading-3); font-weight: var(--av-sys-font-weight-heading); }
 .markdown-body h4,
 .markdown-body h5,
-.markdown-body h6 { font-size: 14px; font-weight: var(--av-sys-font-weight-heading); }
-.markdown-body strong { color: var(--av-ref-color-neutral-14); font-weight: 660; }
+.markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body strong { color: var(--av-ref-color-neutral-14); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
@@ -2313,7 +2321,7 @@ pre {
 .markdown-body :is(ul, ol) :is(ul, ol) ul { list-style: square; }
 .markdown-body ol { list-style: decimal; }
 .markdown-body ul,
-.markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
+.markdown-body ol { margin: var(--av-cmp-markdown-list-margin); padding-left: var(--av-cmp-markdown-list-indent); }
 .markdown-body li { margin: calc(var(--av-sys-space-prose-gap) / 3) 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: 7px; }
 .markdown-body li::marker { color: var(--av-ref-color-neutral-13); }
@@ -2330,14 +2338,14 @@ pre {
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
 .markdown-code-block > button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 28px; justify-content: center; opacity: 0.88; padding: 0; position: absolute; right: 10px; top: 10px; width: 28px; }
 .markdown-code-block > button:hover { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); }
-.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: 16px 0; padding: 1px 0 1px 15px; }
+.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--av-cmp-markdown-blockquote-margin); padding: 1px 0 1px 15px; }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
-.markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: 22px 0; }
+.markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--av-cmp-markdown-rule-margin); }
 .markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: 15px -2px 18px; overflow-x: auto; }
-.markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: 1.45; margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
+.markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
-.markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: 6px 8px; text-align: left; vertical-align: top; }
-.markdown-body th { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); font-weight: 660; }
+.markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--av-cmp-markdown-cell-padding); text-align: left; vertical-align: top; }
+.markdown-body th { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body del { color: var(--av-ref-color-neutral-10); text-decoration-color: var(--av-ref-color-neutral-9); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: 16px 0; max-width: 100%; }
 .agent-message-actions { align-items: center; display: flex; gap: 8px; margin-top: 9px; opacity: 0; transition: opacity 120ms; }
@@ -3099,10 +3107,10 @@ pre {
    won only by source order — which is the precise hazard this arrangement exists
    to avoid, so splitting the stylesheet or moving either block would have put a
    note quietly back on the transcript's headings with nothing going red. */
-.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--av-sys-color-text-default); margin: 28px 0 10px; }
-.note-detail-article .markdown-body h1 { font-size: 22px; }
-.note-detail-article .markdown-body h2 { font-size: 17px; }
-.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: 14px; }
+.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--av-sys-color-text-default); margin: var(--av-cmp-markdown-article-heading-margin); }
+.note-detail-article .markdown-body h1 { font-size: var(--av-cmp-markdown-article-heading-1); }
+.note-detail-article .markdown-body h2 { font-size: var(--av-cmp-markdown-article-heading-2); }
+.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: var(--av-cmp-markdown-article-heading-3); }
 .note-detail-empty,
 .note-transcript-empty {
   align-items: center;

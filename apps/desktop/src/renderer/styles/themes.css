@@ -361,6 +361,32 @@
   --av-cmp-feed-author-font-size: 10.5px;
   --av-cmp-feed-author-font-weight: 560;
 
+  /* Rendered markdown. Its colours were already tokens; its *measurements*
+   * were not, which is why Air's headings were smaller than the prose beneath
+   * them — `.markdown-body` scaled with `sys.font.size.prose` and the headings
+   * it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose
+   * size has to be able to move the scale above it, and the rhythm with it.
+   * The `article-*` values are the note detail's own scale: a note is read as
+   * a document rather than as a turn in a transcript, so its headings run
+   * larger than the feed's. */
+  --av-cmp-markdown-heading-1: 18px;
+  --av-cmp-markdown-heading-2: 16px;
+  --av-cmp-markdown-heading-3: 14.5px;
+  --av-cmp-markdown-heading-4: 14px;
+  --av-cmp-markdown-heading-leading: 1.3;
+  --av-cmp-markdown-heading-margin: 21px 0 9px;
+  --av-cmp-markdown-strong-weight: 660;
+  --av-cmp-markdown-list-margin: 9px 0 15px;
+  --av-cmp-markdown-list-indent: 26px;
+  --av-cmp-markdown-blockquote-margin: 16px 0;
+  --av-cmp-markdown-rule-margin: 22px 0;
+  --av-cmp-markdown-table-leading: 1.45;
+  --av-cmp-markdown-cell-padding: 6px 8px;
+  --av-cmp-markdown-article-heading-1: 22px;
+  --av-cmp-markdown-article-heading-2: 17px;
+  --av-cmp-markdown-article-heading-3: 14px;
+  --av-cmp-markdown-article-heading-margin: 28px 0 10px;
+
   /* A surface that deliberately opposes the theme: light on a dark theme and
    * dark on a light one, so it cannot be a ramp step in either. */
   --av-cmp-tooltip-background: #e9e8e1;
@@ -633,6 +659,24 @@
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
+  --av-cmp-markdown-heading-1: 25px;
+  --av-cmp-markdown-heading-2: 21px;
+  --av-cmp-markdown-heading-3: 18.5px;
+  --av-cmp-markdown-heading-4: 17px;
+  --av-cmp-markdown-heading-leading: 1.35;
+  --av-cmp-markdown-heading-margin: 40px 0 16px;
+  --av-cmp-markdown-strong-weight: 560;
+  --av-cmp-markdown-list-margin: 16px 0 26px;
+  --av-cmp-markdown-list-indent: 24px;
+  --av-cmp-markdown-blockquote-margin: 28px 0;
+  --av-cmp-markdown-rule-margin: 38px 0;
+  --av-cmp-markdown-table-leading: 1.7;
+  --av-cmp-markdown-cell-padding: 11px 13px;
+  --av-cmp-markdown-article-heading-1: 30px;
+  --av-cmp-markdown-article-heading-2: 23px;
+  --av-cmp-markdown-article-heading-3: 19px;
+  --av-cmp-markdown-article-heading-margin: 48px 0 18px;
+
   --av-cmp-tooltip-background: #2a241d;
   --av-cmp-tooltip-foreground: #f7f3ec;
 
@@ -898,6 +942,24 @@
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
+  --av-cmp-markdown-heading-1: 25px;
+  --av-cmp-markdown-heading-2: 21px;
+  --av-cmp-markdown-heading-3: 18.5px;
+  --av-cmp-markdown-heading-4: 17px;
+  --av-cmp-markdown-heading-leading: 1.35;
+  --av-cmp-markdown-heading-margin: 40px 0 16px;
+  --av-cmp-markdown-strong-weight: 560;
+  --av-cmp-markdown-list-margin: 16px 0 26px;
+  --av-cmp-markdown-list-indent: 24px;
+  --av-cmp-markdown-blockquote-margin: 28px 0;
+  --av-cmp-markdown-rule-margin: 38px 0;
+  --av-cmp-markdown-table-leading: 1.7;
+  --av-cmp-markdown-cell-padding: 11px 13px;
+  --av-cmp-markdown-article-heading-1: 30px;
+  --av-cmp-markdown-article-heading-2: 23px;
+  --av-cmp-markdown-article-heading-3: 19px;
+  --av-cmp-markdown-article-heading-margin: 48px 0 18px;
+
   --av-cmp-tooltip-background: #efe8dc;
   --av-cmp-tooltip-foreground: #17130d;
 
@@ -1162,6 +1224,24 @@
   --av-cmp-feed-padding-x: 34px;
   --av-cmp-feed-author-font-size: 10.5px;
   --av-cmp-feed-author-font-weight: 560;
+
+  --av-cmp-markdown-heading-1: 18px;
+  --av-cmp-markdown-heading-2: 16px;
+  --av-cmp-markdown-heading-3: 14.5px;
+  --av-cmp-markdown-heading-4: 14px;
+  --av-cmp-markdown-heading-leading: 1.3;
+  --av-cmp-markdown-heading-margin: 21px 0 9px;
+  --av-cmp-markdown-strong-weight: 660;
+  --av-cmp-markdown-list-margin: 9px 0 15px;
+  --av-cmp-markdown-list-indent: 26px;
+  --av-cmp-markdown-blockquote-margin: 16px 0;
+  --av-cmp-markdown-rule-margin: 22px 0;
+  --av-cmp-markdown-table-leading: 1.45;
+  --av-cmp-markdown-cell-padding: 6px 8px;
+  --av-cmp-markdown-article-heading-1: 22px;
+  --av-cmp-markdown-article-heading-2: 17px;
+  --av-cmp-markdown-article-heading-3: 14px;
+  --av-cmp-markdown-article-heading-margin: 28px 0 10px;
 
   --av-cmp-tooltip-background: #2b2823;
   --av-cmp-tooltip-foreground: #f4f2ed;
