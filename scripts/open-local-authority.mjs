@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { workspaceProductAuthorityRouteUpsertSql } from "./open-local-authority-sql.mjs";
 
 const apiDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "apps", "api");
 
@@ -109,16 +110,7 @@ advance(`INSERT INTO workstream_authority_routes (
     target_hash='seeded_in_do', row_counts_json='{}', imported_at=NULL,
     verified_at=NULL, activated_at=NULL, last_error_code=NULL,
     updated_at=excluded.updated_at`);
-advance(`INSERT INTO workspace_product_authority_routes (
-    workspace_id, generation, state, stage_index, source_cursor,
-    row_counts_json, last_error_code, updated_at
-  )
-  SELECT id, ${generation}, 'pending', 0, 0, '{}', NULL,
-         strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM workspaces
-  ON CONFLICT(workspace_id) DO UPDATE SET
-    generation=excluded.generation, state='pending', stage_index=0,
-    source_cursor=0, row_counts_json='{}', last_error_code=NULL,
-    updated_at=excluded.updated_at`);
+advance(workspaceProductAuthorityRouteUpsertSql(generation));
 
 // Route states move with the phases: verified before the verified gate, active
 // before the open gate. `importing` first because the route machine is also

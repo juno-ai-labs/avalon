@@ -3754,6 +3754,29 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("retries an empty completion even when the host has an end-of-turn hook", async () => {
+    const responses = [
+      streamResponse([{ choices: [{ delta: {}, finish_reason: "stop" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "recovered" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const onTurnWouldEnd = vi.fn(() => null);
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      acceptEmptyCompletion: false,
+      onTurnWouldEnd,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "recovered" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onTurnWouldEnd).toHaveBeenCalledTimes(1);
+    expect(onTurnWouldEnd).toHaveBeenCalledWith({
+      assistantContent: "recovered",
+      cumulativeToolCalls: 0,
+    });
+  });
+
   it("heals dangling and orphaned tool protocol rows before provider inference", async () => {
     const requestBodies: Array<{ messages: Array<{ role: string; tool_call_id?: string }> }> = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {

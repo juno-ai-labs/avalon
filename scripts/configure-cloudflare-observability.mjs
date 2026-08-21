@@ -181,6 +181,34 @@ export function savedQueryMatchesDefinition(query, definition) {
     === canonicalJson(normalizeSavedQueryValue(definition.parameters));
 }
 
+export function assessSavedQueries(existing = [], definitions = SAVED_QUERY_DEFINITIONS) {
+  const verified = [];
+  const differences = [];
+  for (const definition of definitions) {
+    const matches = existing.filter((query) => query.name === definition.name);
+    if (matches.length === 0) {
+      differences.push({ kind: "missing", definition });
+    } else if (matches.length > 1) {
+      differences.push({ kind: "duplicated", definition, count: matches.length });
+    } else if (!savedQueryMatchesDefinition(matches[0], definition)) {
+      differences.push({ kind: "stale", definition });
+    } else {
+      verified.push(definition);
+    }
+  }
+  return { verified, differences };
+}
+
+function savedQueryDifferenceMessage(difference) {
+  if (difference.kind === "missing") {
+    return `${difference.definition.name}: saved Workers Observability query is missing`;
+  }
+  if (difference.kind === "duplicated") {
+    return `${difference.definition.name}: ${difference.count} saved queries exist; remove duplicates in the Cloudflare dashboard`;
+  }
+  return `${difference.definition.name}: saved query differs from Avalon; remove the stale query in the Cloudflare dashboard`;
+}
+
 export function reconcileLifecycleRules(rules = []) {
   const current = rules.find((rule) => rule.id === RETENTION_RULE_ID);
   const condition = current?.deleteObjectsTransition?.condition;
@@ -335,20 +363,21 @@ async function ensureLifecycle(cloudflare, configuration, headers, checkOnly) {
 }
 
 async function ensureSavedQueries(cloudflare, checkOnly) {
-  const existing = await cloudflare("/workers/observability/queries");
-  for (const definition of SAVED_QUERY_DEFINITIONS) {
-    const matches = (existing ?? []).filter((query) => query.name === definition.name);
-    if (matches.length > 1) {
-      throw new Error(`Saved Workers Observability query "${definition.name}" is duplicated; remove the duplicates in the Cloudflare dashboard and rerun`);
-    }
-    if (matches.length === 1) {
-      if (!savedQueryMatchesDefinition(matches[0], definition)) {
-        throw new Error(`Saved Workers Observability query "${definition.name}" differs from Avalon; Cloudflare does not expose an update or delete API, so remove the stale query in the dashboard and rerun`);
-      }
-      console.info(`${definition.name}: saved query verified`);
-      continue;
-    }
-    if (checkOnly) throw new Error(`${definition.name}: saved Workers Observability query is missing`);
+  const assessment = assessSavedQueries(await cloudflare("/workers/observability/queries") ?? []);
+  for (const definition of assessment.verified) {
+    console.info(`${definition.name}: saved query verified`);
+  }
+  if (assessment.differences.length === 0) return;
+
+  const unrepairable = assessment.differences.filter((difference) => difference.kind !== "missing");
+  if (checkOnly || unrepairable.length > 0) {
+    throw new Error([
+      "Saved Workers Observability query drift:",
+      ...assessment.differences.map((difference) => `- ${savedQueryDifferenceMessage(difference)}`),
+    ].join("\n"));
+  }
+  for (const difference of assessment.differences) {
+    const definition = difference.definition;
     await cloudflare("/workers/observability/queries", {
       method: "POST",
       body: JSON.stringify(definition),

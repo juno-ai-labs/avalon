@@ -84,6 +84,17 @@ after current authorization through read, search, or summarize. The platform
 prompt requires the active agent—work-stream agent or automation architect—to
 inspect a referenced attachment before answering and to use `charactersBefore`
 and `charactersAfter` rather than treating one page as the whole resource.
+The host also enforces that promise: if a read, search, view, or summary call
+fails or a completed multi-image view skips a requested resource, and no later
+successful content access resolves the same resource, the model receives one
+corrective turn and cannot publish attachment facts. Cursor reads attach their
+resolved resource identity to structured failures so a successful restart by
+resource ID clears the same guard entry instead of leaving a tool-call-only
+false positive. A run
+that still ends replaces its prose with a deterministic, content-free
+`Attachment content unverified` boundary carrying only resource/tool/error
+provenance. `attachment_grounding_guard_triggered` records the same bounded
+identities without content.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -212,12 +223,21 @@ unchanged source hash and extractor version reuses the selected objects without
 reading or converting the original again.
 
 UTF-8 text retains its full ordering and is rejected rather than replacement-
-decoded when invalid. DOCX becomes semantic Markdown with headings, lists,
+decoded when invalid. Extractor v2 recognizes CSV and TSV as plain UTF-8 even
+when classification labels them as spreadsheets; a terminal failed or
+unsupported v2 result is reused instead of rereading R2 on every tool retry.
+DOCX becomes semantic Markdown with headings, lists,
 tables, hyperlinks, headers, footers, footnotes, and endnotes. PPTX preserves
 slide order, tables, and speaker-note text. XLSX identifies sheets, cell
 references, display values, and formulas. PDFs are page-delimited; a bounded OCR
 adapter is required when the text layer is materially empty, and incomplete OCR
 is a failure rather than empty success.
+
+Every uncached attempt emits one content-free
+`attachment_derivative_phase_finished` event for `source_read`, `claim`,
+`convert`, and `publish`, correlated by workspace, work stream, harness run,
+tool call, and resource. Operators can therefore locate a slow retry phase
+without logging the filename or extracted bytes.
 
 The message-feed preview endpoint reuses this same current derivative after the
 ordinary resource visibility query authorizes the signed-in person. Images,
@@ -434,6 +454,31 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-20 — Attachment failures cannot become model-authored facts
+
+**What changed:** CSV/TSV extraction now reaches the UTF-8 converter under
+extractor v2, terminal v2 derivative results are reused, each conversion phase
+emits content-free correlated timing, and the host replaces an answer when its
+attachment content access remained unresolved. Mixed image-view results remain
+unverified per skipped resource, while cursor failures carry their resolved
+resource identity so a later successful restart can clear them.
+
+**Why:** End-to-end QA found a CSV labeled as a spreadsheet taking an early
+unsupported branch. The failed tool result then remained advisory, allowing a
+model to answer with plausible facts it had never read; retries also exposed no
+phase boundary for distinguishing R2, claim, conversion, and publication delay.
+
+**Considered and rejected:** Prompt-only grounding, retrying every terminal
+conversion forever, and logging extracted text for diagnosis. None is a
+correctness boundary, and the last would move workspace content into account
+logs.
+
+**Consequences:** New content-bearing attachment tools must participate in the
+grounding guard, and a completed call counts only the content its output proves
+was delivered. Changing converter coverage requires a new extractor version,
+and new materialization stages must retain content-free run/tool/resource
+correlation.
 
 ### 2026-08-18 — Resource authority moves into WorkspaceDO
 

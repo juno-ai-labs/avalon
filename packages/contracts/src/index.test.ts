@@ -977,9 +977,14 @@ describe("boundary contracts", () => {
     expect(readStructuredFailure(new ProviderError("invalid_payload", "Wrong id family", {
       reason: "wrong_id_family",
       field: "messageId",
+      resourceId: "019ff769-f7a4-70c8-87a7-16722ff2ce43",
     }))).toEqual({
       code: "invalid_payload",
-      details: { reason: "wrong_id_family", field: "messageId" },
+      details: {
+        reason: "wrong_id_family",
+        field: "messageId",
+        resourceId: "019ff769-f7a4-70c8-87a7-16722ff2ce43",
+      },
     });
     // Details are an allowlist, not a convention: adapters already attach whole
     // parsed provider error bodies, and forwarding those would put raw provider
