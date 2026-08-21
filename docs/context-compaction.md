@@ -27,7 +27,7 @@ weeks ago.
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
-| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_jobs`/`compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
+| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
 
 ## How it works
 
@@ -133,7 +133,7 @@ deletes it only when run ID, harness attempt ID, and compaction index all match;
 a delayed finish from an abandoned attempt cannot clear a recovered attempt at
 the same index. Any terminal harness status also clears it defensively.
 Immutable compaction identity and replay remain the responsibility of
-`compaction_jobs` and `compaction_checkpoints`.
+`compaction_checkpoints`.
 
 ## Invariants
 
@@ -270,6 +270,27 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-21 — `compaction_jobs` retired from the object schema
+
+**What changed:** WorkstreamDO schema migration 11 drops `compaction_jobs`.
+The reconnect-only `active_agent_compaction` singleton and the immutable
+`compaction_checkpoints` history are unchanged and remain the whole story.
+
+**Why:** `compaction_jobs` modelled a compaction as a claimable, retryable job
+row with its own status machine. The agent never adopted that model: it runs
+compaction inside the owning loop, publishes the indicator through the
+singleton, and records identity in the checkpoint. The job table was left
+behind with no reader or writer, while three documents still described it as
+holding compaction identity alongside the checkpoints.
+
+**Considered and rejected:** Keeping it as the seam for a future out-of-band
+compaction worker. If that worker is ever built it needs fencing against the
+in-loop path, which this row's status machine does not encode; inheriting the
+shape would hide that work rather than force it.
+
+**Consequences:** `compaction_checkpoints` is the only immutable compaction
+history. Any claim to the contrary in prose is now wrong.
 
 ### 2026-08-18 — Compaction becomes explicit reconnect-safe agent activity
 

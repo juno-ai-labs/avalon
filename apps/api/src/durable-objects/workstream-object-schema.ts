@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 11;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 12;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1063,7 +1063,7 @@ const WORKSTREAM_SUBSTREAM_AGENT_SCHEMA = [
      ON agent_run_dispatches(state, available_at, created_at, run_id)`,
   // One SubstreamAgent owns one independently ordered loop. This singleton is
   // only the reconnect-safe activity indicator; immutable compaction history
-  // remains in compaction_jobs/compaction_checkpoints.
+  // remains in compaction_checkpoints.
   `CREATE TABLE IF NOT EXISTS active_agent_compaction (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
@@ -1223,6 +1223,41 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       ...repairStrandedToolTranscriptParts(),
       ...rebuiltMessagesInsertTriggerForToolSettlement(),
+    ],
+  },
+  {
+    version: 12,
+    description: "drop the four tables the cutover left without a reader or writer",
+    statements: [
+      // v1 still creates these, and it must: its statements are hashed into
+      // `_sql_schema_migrations`, so editing them strands every deployed
+      // object on `workstream_schema_hash_mismatch:1`. A new object therefore
+      // creates them and drops them again in the same bootstrap transaction,
+      // which is the cost of an append-only history and is paid once.
+      //
+      // `terminal_commands` was provisioned for per-command receipts during
+      // the D1 retirement, but the Terminal runtime settles every command
+      // through `terminal_tasks` — the durable task carries the command hash,
+      // deadline, exit, termination reason, byte counts, and head/tail that
+      // this table duplicates. Nothing ever wrote it.
+      `DROP TABLE IF EXISTS terminal_commands`,
+      // `compaction_jobs` modelled compaction as a claimable job row. The
+      // agent instead keeps `active_agent_compaction` as the singleton
+      // activity indicator and `compaction_checkpoints` as the immutable
+      // history; both are read and written, this third table never was. The
+      // comment above `active_agent_compaction` still points at it and is
+      // corrected in this change.
+      `DROP TABLE IF EXISTS compaction_jobs`,
+      // Bookkeeping for the one-time D1 authority cutover campaign. The code
+      // that drove it was removed in "Retire the authority cutover campaign
+      // machinery"; the tables outlived their driver. A future campaign gets
+      // its own schema rather than inheriting a shape nothing has exercised.
+      `DROP TABLE IF EXISTS _migration_command_receipts`,
+      `DROP TABLE IF EXISTS _data_migrations`,
+      // Deliberately kept: `content_refs`. It has no reader either, but
+      // `parts.content_ref_id` carries a foreign key, two CHECK constraints,
+      // and a partial index pointing at it, so retiring it means rebuilding
+      // the transcript's hottest table. That is its own change.
     ],
   },
 ];
