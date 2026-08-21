@@ -16,6 +16,12 @@
  * people. What changes is that members who join *later* are not included —
  * which is what being private means.
  *
+ * One exactness worth keeping, because the rest of this comment leans on it:
+ * `participantVisible` passes on `created_by_user_id` as well as participation,
+ * so an unseated *creator* would keep `GET` access by id and lose only the
+ * listing entry and the socket — `WorkstreamDO.canRead` carries no such
+ * exception. Everyone else outside the room loses the work stream outright.
+ *
  * That is blunt on purpose. A work stream born from a private Slack channel is
  * workspace-scoped only because of the bug this release fixed, and its
  * participants are already the right room; seating the whole workspace into it
@@ -239,7 +245,9 @@ export function buildRecord(context, workstreams) {
  * created through the object path already has a participant. The real
  * population is a work stream whose room is one person, its creator, and
  * narrowing that to a room of one takes it away from everyone else who can read
- * it today. Seating every active member first turns implicit workspace-wide
+ * it today — outright, not merely from their sidebar, since the
+ * `created_by_user_id` exception in `participantVisible` covers only the
+ * creator. Seating every active member first turns implicit workspace-wide
  * access into an explicit room holding the same people; the only thing that
  * changes is that members who join *later* are not included, which is what
  * being private means.

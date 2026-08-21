@@ -1464,7 +1464,9 @@ the visibility it was created with.
 participant list, so narrowing a work stream whose room is smaller than the
 workspace takes it away from everyone outside that room — and almost every room
 is smaller, because `initialize()` seats only the creator plus anyone explicitly
-named. Every work stream the pass touches therefore has all active members
+named. (Precisely: `participantVisible` also passes on `created_by_user_id`, so
+an unseated creator would keep `GET` access by id and lose only the listing
+entry and the socket. Everyone else loses the work stream outright.) Every work stream the pass touches therefore has all active members
 seated into it *first*, turning implicit workspace-wide access into an explicit
 room holding the same people. The only change for them is that members who join
 later are not included, which is what being private means.
