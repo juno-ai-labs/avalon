@@ -296,7 +296,9 @@ Electron to stop retrying; each role then marks, reconciles, or removes its
 surface according to that role's product contract. Periodic
 revalidation bounds a missed retraction without putting an authorization query
 on every token frame. The complete role-specific protocol lives in
-[`realtime-sockets.md`](realtime-sockets.md).
+[`realtime-sockets.md`](realtime-sockets.md), and the rule for deciding whether
+a given payload travels on one of these sockets or over REST is
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 
 The socket responsibilities are deliberately not interchangeable:
 
