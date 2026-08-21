@@ -19,6 +19,19 @@
  *   the Access login or the Worker's own `403` are both correct; `5xx` or a
  *   connection failure means the deploy is broken.
  *
+ *   This one retries. Wrangler returns as soon as the script uploads, and on a
+ *   deploy that provisions a *new* custom domain the route and its DNS record
+ *   are not resolvable for some seconds afterwards. The first run of this check
+ *   in CI failed for exactly that reason, one second after a deploy that was
+ *   entirely correct — so a single attempt reports "the deploy is broken" when
+ *   what it has actually measured is its own impatience.
+ *
+ *   Two conditions are treated as "not settled yet": a connection failure, and
+ *   a `5xx`. They are the same phenomenon one layer apart — the name not
+ *   resolving, and the route resolving to an edge that does not have the Worker
+ *   yet. A `2xx`, `3xx`, or `4xx` is an answer and ends the loop immediately,
+ *   so the security finding a `2xx` represents is never delayed.
+ *
  * The expectations come from `apps/migration-tracker/wrangler.jsonc`, so this
  * cannot drift from what the deploy applies — there is no second copy of the
  * batch size here to keep in step.
@@ -122,6 +135,105 @@ export function siteProblems(status) {
   return [];
 }
 
+/**
+ * How long to keep asking the hostname before believing it is not there.
+ *
+ * Linear rather than exponential, because the thing being waited on is DNS and
+ * route propagation for a domain that was just created — a few seconds in the
+ * ordinary case — not an overloaded service that needs backing off.
+ *
+ * The per-attempt timeout is what makes the budget a wall-clock bound rather
+ * than a wish. `fetch` with no signal does not time out on any useful scale: a
+ * connection that is accepted and then never answered leaves it pending for
+ * undici's default five minutes, so six attempts could occupy half an hour —
+ * past this workflow's twenty-minute cap, holding a serialized concurrency
+ * group and blocking the next release behind a check that was supposed to take
+ * a minute. Verified against a socket that accepts and stays silent.
+ *
+ * Worst case is therefore 6 × 10s of requests plus 4+8+12+16+20s of waiting:
+ * two minutes, whatever the far end does.
+ */
+const SITE_ATTEMPTS = 6;
+const SITE_RETRY_BASE_MS = 4_000;
+const SITE_ATTEMPT_TIMEOUT_MS = 10_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeFailure(error) {
+  if (error?.name === "TimeoutError") return `no response within ${SITE_ATTEMPT_TIMEOUT_MS / 1_000}s`;
+  return String(error?.message ?? error);
+}
+
+/**
+ * Ask the hostname until it settles, or until the attempts run out.
+ *
+ * "Settled" means a response below `5xx`. A connection failure and a `5xx` are
+ * both retried, for the same reason: immediately after a deploy they mean the
+ * name or the Worker has not reached this edge yet. Every other response is an
+ * answer and returns at once — a `2xx` is the security failure this check
+ * exists to catch, and delaying it by a minute would be exactly backwards.
+ *
+ * On exhaustion the last `5xx` is returned rather than a synthetic failure, so
+ * a Worker that is genuinely throwing is reported as the status it served
+ * instead of as an unreachable host.
+ */
+async function reachSite(url, fetchImpl, { attempts, timeoutMs, wait, log }) {
+  let lastError = null;
+  let lastResponse = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let outcome;
+    try {
+      const response = await fetchImpl(url, {
+        // `manual` on purpose: Access answers with a 302 to its login page, and
+        // following it would report the identity provider's health rather than
+        // this Worker's.
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (response.status < 500) return response;
+      lastResponse = response;
+      lastError = null;
+      outcome = `answered HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error;
+      lastResponse = null;
+      outcome = `not reachable (${describeFailure(error)})`;
+    }
+
+    if (attempt === attempts) break;
+    const delay = SITE_RETRY_BASE_MS * attempt;
+    log(
+      `${url} ${outcome} on attempt ${attempt}/${attempts};`
+      + ` the route or the Worker may not have propagated yet, retrying in ${delay / 1_000}s`,
+    );
+    await wait(delay);
+  }
+
+  // Giving up is logged as loudly as waiting was. `checkRegion` in
+  // `check-regional-health.mjs` does the same, and without it the job output
+  // shows five "retrying" lines and then a bare failure, with nothing saying
+  // the budget was spent rather than the attempt abandoned early.
+  log(`${url} never settled after ${attempts} attempts`);
+  return lastResponse ?? { status: 0, error: lastError };
+}
+
+/**
+ * Run both checks and throw with everything that is wrong, or return the
+ * expectation that was verified.
+ *
+ * Every dependency is injectable so the suite can drive this without a network
+ * or real timers:
+ *
+ * - `environment` — where the Cloudflare credentials are read from.
+ * - `fetchImpl` — used for both the Queues API and the site request.
+ * - `expected` — skips reading `wrangler.jsonc`, for tests that want a fixture.
+ * - `siteAttempts` / `siteTimeoutMs` / `wait` — the retry budget. Tests shrink
+ *   the timeout and no-op the wait so the loop runs at full speed.
+ * - `log` — collected by tests to assert on what an operator would read.
+ */
 export async function checkMigrationTrackerHealth(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -144,16 +256,18 @@ export async function checkMigrationTrackerHealth(options = {}) {
 
   if (expected.hostname) {
     const url = `https://${expected.hostname}/`;
-    // `redirect: manual` on purpose: Access answers with a 302 to its login
-    // page, and following it would report the identity provider's health
-    // instead of this Worker's.
-    const response = await fetchImpl(url, { redirect: 'manual' })
-      .catch((error) => ({ status: 0, error }));
+    const response = await reachSite(url, fetchImpl, {
+      attempts: options.siteAttempts ?? SITE_ATTEMPTS,
+      timeoutMs: options.siteTimeoutMs ?? SITE_ATTEMPT_TIMEOUT_MS,
+      wait: options.wait ?? sleep,
+      log,
+    });
     if (response.status === 0) {
-      problems.push(`${url} could not be reached: ${String(response.error)}`);
+      problems.push(`${url} could not be reached: ${describeFailure(response.error)}`);
     } else {
-      problems.push(...siteProblems(response.status));
-      if (siteProblems(response.status).length === 0) {
+      const siteIssues = siteProblems(response.status);
+      problems.push(...siteIssues);
+      if (siteIssues.length === 0) {
         log(`Site refuses an unauthenticated request: ${url} answered HTTP ${response.status}`);
       }
     }
