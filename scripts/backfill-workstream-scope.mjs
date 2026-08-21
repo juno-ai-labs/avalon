@@ -9,19 +9,20 @@
  * This is the deliberate retroactive pass over them.
  *
  * **It preserves who can read what.** `personal` is enforced against the
- * participant list, and the rows this touches were never rooms: a work stream
- * created workspace-scoped often has no participant at all, because nothing
- * ever needed to seat one. Narrowing one of those on its own would leave it
- * readable by whoever ran this script and nobody else. So a work stream with an
- * empty room has every active workspace member seated into it first, which
+ * participant list, so narrowing a work stream whose room is smaller than the
+ * workspace takes it away from everyone outside that room. Every work stream
+ * the pass touches therefore has all active members seated into it first, which
  * turns implicit workspace-wide access into an explicit room holding the same
- * people. What changes is that members who join *later* are no longer included
- * — which is what being private means.
+ * people. What changes is that members who join *later* are not included —
+ * which is what being private means.
  *
- * A work stream that already has participants keeps them and gains nobody. Its
- * room means something: one started from a private Slack channel carries that
- * channel's members, and seating the workspace on top would re-publish exactly
- * what this release made private.
+ * That is blunt on purpose. A work stream born from a private Slack channel is
+ * workspace-scoped only because of the bug this release fixed, and its
+ * participants are already the right room; seating the whole workspace into it
+ * widens rather than corrects it, and undoing that means removing participants
+ * rather than narrowing scope again. The two cannot be told apart from the
+ * product API, so the trade is deliberate: nobody loses access, and the leaked
+ * set is corrected by hand.
  *
  * Which is why `--record` is not optional. Every target is written to a file
  * with the scope it held, *before* the first change is attempted, and
@@ -228,32 +229,43 @@ export function buildRecord(context, workstreams) {
 }
 
 /**
- * Narrow one work stream, seating the workspace first when its room is empty.
+ * Narrow one work stream, seating the whole workspace into it first.
  *
- * This is what keeps the pass from taking access away. A workspace-scoped work
- * stream with no participants is readable by every member today; narrowing it
- * without seating anyone would leave it readable by whoever ran this script and
- * nobody else. Seating every active member first converts that implicit
- * workspace-wide access into an explicit room holding exactly the same people —
- * the only thing that changes is that members who join *later* are no longer
- * included, which is the whole point of a private work stream.
+ * This is what keeps the pass from taking access away, and it applies to every
+ * work stream it touches rather than only the ones with an empty room. The
+ * distinction that used to be here — seat an empty room, leave a populated one
+ * alone — turned out to describe almost nothing: `initialize()` builds its
+ * member list as `[creatorUserId, ...participantUserIds]`, so every work stream
+ * created through the object path already has a participant. The real
+ * population is a work stream whose room is one person, its creator, and
+ * narrowing that to a room of one takes it away from everyone else who can read
+ * it today. Seating every active member first turns implicit workspace-wide
+ * access into an explicit room holding the same people; the only thing that
+ * changes is that members who join *later* are not included, which is what
+ * being private means.
  *
- * A work stream that already has participants is left alone on this front. Its
- * room means something: a work stream started from a private Slack channel
- * carries that channel's members, and seating the workspace on top of it would
- * re-publish the very thing this release made private.
+ * **This is blunt on purpose, and it has a cost.** A work stream born from a
+ * private Slack channel is workspace-scoped only because of the bug this
+ * release fixed, and its participants are already the right room — that
+ * channel's members. Seating the whole workspace into it cements the wider
+ * audience rather than correcting it, and undoing that afterwards means
+ * removing participants rather than just narrowing scope again. The two cannot
+ * be told apart from the product API (both are `ad_hoc` with a populated room),
+ * so this is a deliberate trade rather than an oversight: no one loses access,
+ * and the leaked set is handled by hand.
  *
- * Seating happens before the narrowing, so the work stream is never private
- * with an empty room, not even between two requests.
+ * Members already in the room are skipped rather than re-posted, so `seated`
+ * counts people actually added. Seating happens before the narrowing, so the
+ * work stream is never private with a smaller room than it started with, not
+ * even between two requests.
  */
 async function narrow(context, entry) {
-  let seated = [];
-  if (context.membersForEmptyRooms) {
-    const participants = await activeParticipants(context, entry.workstreamId);
-    if (participants.length === 0) {
-      for (const userId of context.membersForEmptyRooms) {
-        if (await addParticipant(context, entry.workstreamId, userId)) seated.push(userId);
-      }
+  const seated = [];
+  if (context.membersToSeat) {
+    const already = new Set(await activeParticipants(context, entry.workstreamId));
+    for (const userId of context.membersToSeat) {
+      if (already.has(userId)) continue;
+      if (await addParticipant(context, entry.workstreamId, userId)) seated.push(userId);
     }
   }
   const result = await setScope(context, entry.workstreamId, "personal");
@@ -296,11 +308,11 @@ export async function flip(context) {
   }
 
   const members = await listActiveMembers(context);
-  context.log(`${members.length} active members will be seated into any work stream with an empty room.`);
+  context.log(`${members.length} active members will be seated into every work stream below.`);
   const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
   let consecutiveFailures = 0;
   for (const entry of record.entries) {
-    const result = await narrow({ ...context, membersForEmptyRooms: members }, entry);
+    const result = await narrow({ ...context, membersToSeat: members }, entry);
     totals[result.outcome] += 1;
     consecutiveFailures = result.outcome === "failed" ? consecutiveFailures + 1 : 0;
     if (result.seated.length > 0) totals.seated += 1;
