@@ -1,5 +1,6 @@
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
+import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type { TelemetryEventProperties } from '@avalon/contracts';
 
@@ -304,6 +305,30 @@ export interface AvalonDesktopBridge {
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
   resetApplicationIcon: () => Promise<DesktopApplicationIconState>;
   onApplicationIconChanged: (listener: (state: DesktopApplicationIconState) => void) => () => void;
+  /**
+   * Records the *choice* the renderer is drawing — both axes, not the
+   * appearance they resolve to — so that the next window the main process
+   * constructs is given a matching `backgroundColor`, and so that every other
+   * open window can follow. The renderer is still the authority on which theme
+   * is active; main only re-resolves and relays.
+   *
+   * The choice rather than the appearance, because the appearance is not enough
+   * to reconstruct it. Under `system` it depends on what the Mac is set to *at
+   * the moment it is read*, which is not the same moment across a quit and a
+   * relaunch — and two different choices can resolve to the same appearance, so
+   * an appearance cannot tell main that anything changed.
+   */
+  setWindowTheme: (choice: ThemeChoice) => Promise<void>;
+  /**
+   * Fires when *another* window changed the theme.
+   *
+   * A theme is one device preference, not one window's — choosing it in the
+   * Settings window and having the work stream behind it stay as it was is the
+   * behaviour this removes. The payload is the choice now in force, but a
+   * listener should re-read the stored choice rather than trust it: the store is
+   * what every window resolves from.
+   */
+  onThemeChanged: (listener: (choice: ThemeChoice) => void) => () => void;
   getSession: () => Promise<DesktopSession | null>;
   createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: AvalonRegion }) => Promise<DesktopAuthAttempt>;
   cancelDesktopAuthAttempt: (attemptId: string) => Promise<void>;

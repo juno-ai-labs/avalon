@@ -18,6 +18,7 @@ import {
   telemetrySurfaceForPath,
   uuidV7,
 } from './lib/telemetry';
+import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { AutomationOverviewScreen } from './screens/automation-overview';
@@ -317,6 +318,10 @@ export function SessionGate(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   useEffect(() => installRendererErrorTelemetry(), []);
+  // Only a `system` choice follows the Mac; the watcher decides that for itself
+  // so that a later change of choice does not need to re-subscribe.
+  useEffect(() => watchSystemAppearance(), []);
+  useEffect(() => watchThemeBroadcast(), []);
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

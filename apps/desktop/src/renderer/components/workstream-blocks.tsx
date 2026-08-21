@@ -41,10 +41,15 @@ import { AgentWorkTiming } from './agent-work-timing';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Button, InlineError } from './primitives';
 
+/**
+ * A stable colour per participant. The values are the theme's, reached through
+ * custom properties rather than named here, so a light theme can darken all six
+ * without this function knowing there is more than one theme.
+ */
 function personAccent(id: string): string {
-  const palette = ['#8db6de', '#c79bd5', '#81bfa5', '#d2a47f', '#a6a0d9', '#cf9ba2'];
+  const palette = ['--av-sys-color-person-1', '--av-sys-color-person-2', '--av-sys-color-person-3', '--av-sys-color-person-4', '--av-sys-color-person-5', '--av-sys-color-person-6'];
   const hash = [...id].reduce((total, character) => total + character.charCodeAt(0), 0);
-  return palette[hash % palette.length] ?? palette[0]!;
+  return `var(${palette[hash % palette.length] ?? palette[0]!})`;
 }
 
 function safeJson(value: unknown): string {
@@ -56,22 +61,31 @@ function safeJson(value: unknown): string {
   }
 }
 
+/**
+ * The syntax palette, in the theme's own colours.
+ *
+ * `prism-react-renderer` takes a JavaScript object and writes it into inline
+ * styles, so nothing here can be a class — but a custom property in an inline
+ * style resolves against the element's cascade like any other, which is why
+ * these are `var()` rather than literals. Literals were the previous shape and
+ * they pinned every code block to the dark theme.
+ */
 const markdownCodeTheme: PrismTheme = {
-  plain: { backgroundColor: 'transparent', color: '#e5e4df' },
+  plain: { backgroundColor: 'transparent', color: 'var(--av-sys-color-syntax-plain)' },
   styles: [
-    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#777772' } },
-    { types: ['punctuation'], style: { color: '#aaa9a3' } },
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: 'var(--av-sys-color-syntax-comment)' } },
+    { types: ['punctuation'], style: { color: 'var(--av-sys-color-syntax-punctuation)' } },
     { types: ['namespace'], style: { opacity: 0.72 } },
-    { types: ['tag', 'constant', 'symbol', 'deleted'], style: { color: '#ff8a50' } },
-    { types: ['boolean', 'number'], style: { color: '#e6a06b' } },
-    { types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: { color: '#b995f5' } },
-    { types: ['operator', 'entity', 'url'], style: { color: '#d8d7d2' } },
-    { types: ['atrule', 'attr-value', 'keyword'], style: { color: '#ff7b2c' } },
-    { types: ['function'], style: { color: '#17a9f5' } },
-    { types: ['regex', 'important', 'variable'], style: { color: '#e8b75c' } },
+    { types: ['tag', 'constant', 'symbol', 'deleted'], style: { color: 'var(--av-sys-color-syntax-tag)' } },
+    { types: ['boolean', 'number'], style: { color: 'var(--av-sys-color-syntax-number)' } },
+    { types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: { color: 'var(--av-sys-color-syntax-string)' } },
+    { types: ['operator', 'entity', 'url'], style: { color: 'var(--av-sys-color-syntax-operator)' } },
+    { types: ['atrule', 'attr-value', 'keyword'], style: { color: 'var(--av-sys-color-syntax-keyword)' } },
+    { types: ['function'], style: { color: 'var(--av-sys-color-syntax-function)' } },
+    { types: ['regex', 'important', 'variable'], style: { color: 'var(--av-sys-color-syntax-variable)' } },
     { types: ['important', 'bold'], style: { fontWeight: '700' } },
     { types: ['italic'], style: { fontStyle: 'italic' } },
-    { types: ['class-name', 'maybe-class-name'], style: { color: '#b995f5' } },
+    { types: ['class-name', 'maybe-class-name'], style: { color: 'var(--av-sys-color-syntax-string)' } },
   ],
 };
 

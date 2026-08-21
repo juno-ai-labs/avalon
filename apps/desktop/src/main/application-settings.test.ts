@@ -114,8 +114,31 @@ describe('desktop application settings', () => {
         productAnalyticsEnabled: true,
         productAnalyticsPreferenceVersion: 0,
         productAnalyticsPreferencePending: false,
+        themeChoice: { family: 'terra', mode: 'system' },
       });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
+  });
+
+  /**
+   * The stored theme is the choice, not the appearance it resolves to. A file
+   * naming a design this build does not have — or written before the field
+   * existed — falls back to the default rather than to a family nothing can
+   * draw.
+   */
+  it('reads back a stored theme choice, and refuses one it cannot draw', () => {
+    const stored = (themeChoice: unknown): unknown => ({
+      version: 1, lockdownMode: false, themeChoice,
+    });
+
+    expect(parseStoredApplicationSettings(stored({ family: 'air', mode: 'dark' })).themeChoice)
+      .toEqual({ family: 'air', mode: 'dark' });
+    expect(parseStoredApplicationSettings(stored({ family: 'sepia', mode: 'dark' })).themeChoice)
+      .toEqual({ family: 'terra', mode: 'system' });
+    expect(parseStoredApplicationSettings(stored(undefined)).themeChoice)
+      .toEqual({ family: 'terra', mode: 'system' });
+    // An appearance is not a choice: it cannot say which mode produced it.
+    expect(parseStoredApplicationSettings(stored('air-dark')).themeChoice)
+      .toEqual({ family: 'terra', mode: 'system' });
   });
 
   it('updates one preference without disturbing the others', async () => {

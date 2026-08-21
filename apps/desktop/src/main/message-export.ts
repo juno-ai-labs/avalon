@@ -6,6 +6,7 @@ import {
   type MessageExportRequest,
   type MessageExportResult,
 } from '../common/message-export';
+import { exportSyntaxPalette } from '../common/theme-assets';
 
 /**
  * Rendering a message to a picture or a PDF, in the main process.
@@ -204,10 +205,24 @@ function escapeHtml(value: string): string {
  * at. Code blocks stay dark on purpose — the highlighter's colours are inline
  * styles chosen for a dark background, and repainting them on white would mean
  * overriding every one of them.
+ *
+ * Those inline styles are `var(--av-sys-color-syntax-*)` references, and this
+ * document is the one place `MarkdownBody`'s markup is re-hosted outside the
+ * application, where nothing declares them. So `:root` declares them here, from
+ * the generated `exportSyntaxPalette` rather than from a second copy of the
+ * values. Without it every reference is invalid at computed-value time, `color`
+ * falls back to the inherited near-black, and the code block is near-black text
+ * on a near-black ground.
  */
 function stylesheet(format: MessageExportFormat, logoDataUrl: string, seed: number): string {
   const splash = splashBackground(seed);
+  const syntax = Object.entries(exportSyntaxPalette)
+    .map(([property, value]) => `    ${property}: ${value};`)
+    .join('\n');
   return `
+  :root {
+${syntax}
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
