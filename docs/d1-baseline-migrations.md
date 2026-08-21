@@ -120,7 +120,10 @@ for one.
 - **The guard fires.** The command fails with
   `CHECK constraint failed: baseline_requires_empty_database` and nothing of the
   baseline's schema is created. The database is left as it was — apart from the
-  guard table itself, which is empty and inert. D1 rejects `CREATE TEMP TABLE`
+  guard table and an empty `d1_migrations`, both inert. The ledger is created
+  before the guard runs, so a database that had tables but no ledger keeps one
+  afterwards; it holds no rows and changes no decision, because the wrapper
+  gates on the table count. D1 rejects `CREATE TEMP TABLE`
   with `SQLITE_AUTH`, so the guard has to be a real table, and the `DROP` that
   would remove it is the statement after the `INSERT` that aborts. Every
   emptiness check excludes it by name, so a database that refused once can still
@@ -158,6 +161,15 @@ for one.
 Numbers as of the 0090 baseline: 95 migrations subsumed, 42 tables, 61 indexes,
 26 triggers, 2 seeded control rows, one 45 KB file. Applying it takes about four
 seconds per region against about forty-three for the chain.
+
+The **warm** path pays for the question rather than the answer, and it is the one
+setup takes on every session after the first. Asking a database what it holds
+costs one `wrangler d1 execute` start-up per region, so `pnpm db:migrate` on an
+already-migrated pair went from about 8.6s to about 13.7s on the sandbox. The
+ledger count is deliberately skipped once a database has tables — it cannot
+change the answer there, and counting it anyway roughly tripled the warm path
+instead of adding to it. Anything that adds a third query to this path is
+spending that budget again.
 
 ## Testing
 
@@ -249,7 +261,14 @@ of 95.
   it with `SQLITE_AUTH`. The leftover is instead excluded from every emptiness
   check by name.
 
-**Consequences:** Schema comparison must keep lexing rather than pattern-matching
+**Consequences:** The generator refuses rather than guesses in two places, and
+both are load-bearing: an object type it cannot render (a view) would otherwise
+vanish from the baseline with nothing offline to catch it, and a volatile column
+`datetime('now')` could not have produced would be silently retyped, since every
+downstream check either strips volatile columns before comparing or reads schema
+without rows. A new object type or a control row seeded with another expression
+is a generator that stops and a person who teaches it, not a baseline that is
+quietly wrong. Schema comparison must keep lexing rather than pattern-matching
 SQL: two different schemas hashing equal is the one failure the fingerprint
 exists to detect, and it is worse than no check because `db:baseline:verify` is
 trusted. `packages/db/baselines/` is generated output — regenerate it,
