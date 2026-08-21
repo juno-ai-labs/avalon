@@ -54,6 +54,11 @@ import { logStructuredEvent } from "../observability/logger";
  * A report is re-sent this long after the last accepted one even when nothing
  * about the object changed. Long enough that a fleet of idle objects is not a
  * write load; short enough that a rebuilt tracker converges overnight.
+ *
+ * It is also the other half of the tracker's hourly inventory sweep. The sweep
+ * discovers objects but cannot learn their version; this heartbeat is what
+ * drains the `unreported` set it produces, so the two together bound how long an
+ * object can sit unexplained at roughly a day.
  */
 const REPORT_HEARTBEAT_MS = 24 * 60 * 60 * 1_000;
 

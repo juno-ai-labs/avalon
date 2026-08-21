@@ -18,6 +18,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import { applyRegistrySchema, REGISTRY_SCHEMA_VERSION } from "./schema";
 import type { Env } from "./env";
+import { ObjectStatusSchema } from "./protocol";
 import type {
   ComponentSummary,
   InventorySweep,
@@ -89,9 +90,39 @@ type EventRow = {
 };
 
 /**
+ * The Durable Object classes that run `withMigrationReport`.
+ *
+ * The sweep enumerates every namespace in the account, which is more than the
+ * classes this Worker observes: the tracker's own `MigrationRegistry` is created
+ * by the sweep that discovers it, and `CrashSymbolicatorContainer` is a
+ * container rather than a migrated object. Neither will ever report, so without
+ * this list they accumulate in `unreported` forever and make that count
+ * worthless for its actual job — spotting an API object that should have
+ * reported and has not.
+ *
+ * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
+ * class missing from here reads as permanently silent; a class listed here that
+ * does not report reads as stranded.
+ */
+export const REPORTING_CLASSES = [
+  "SubstreamAgent",
+  "BlockDashboardAgent",
+  "WorkstreamDO",
+  "WorkspaceDO",
+  "WorkspaceScheduler",
+] as const;
+
+const REPORTING_CLASS_LIST = REPORTING_CLASSES.map((name) => `'${name}'`).join(", ");
+
+/**
  * The derived status, computed in SQL so that filtering, counting, and paging
  * all agree on one definition. Recomputing it in TypeScript would mean the
  * status column and the status filter could drift apart without a test noticing.
+ *
+ * The status strings here, `ObjectStatusSchema`, and `isObjectStatus` in
+ * `toTrackedObject` must all agree. A value produced here that the enum does not
+ * know degrades silently to `unreported` rather than throwing, so a mismatch
+ * shows up as a wrong count rather than an error.
  */
 const RESOLVED_OBJECTS = `
   WITH resolved AS (
@@ -101,6 +132,8 @@ const RESOLVED_OBJECTS = `
       CASE
         WHEN o.absent_since IS NOT NULL THEN 'absent'
         WHEN o.report_status = 'failed' THEN 'failed'
+        WHEN o.class_name IS NOT NULL
+          AND o.class_name NOT IN (${REPORTING_CLASS_LIST}) THEN 'not_reporting'
         WHEN o.report_status IS NULL THEN 'unreported'
         WHEN c.latest_version IS NOT NULL
           AND o.schema_version IS NOT NULL
@@ -447,6 +480,7 @@ export class MigrationRegistry extends DurableObject<Env> {
       behind: 0,
       unreported: 0,
       current: 0,
+      not_reporting: 0,
       absent: 0,
       all: 0,
     };
@@ -495,20 +529,11 @@ export class MigrationRegistry extends DurableObject<Env> {
          FROM durable_object_namespaces ORDER BY script_name, class_name`,
     ).toArray();
 
-    const sweep = sql.exec<{
-      id: number;
-      started_at: number;
-      finished_at: number;
-      status: string;
-      namespace_count: number;
-      object_count: number;
-      truncated_namespaces: string;
-      error_message: string | null;
-    }>(
-      `SELECT id, started_at, finished_at, status, namespace_count, object_count,
-              truncated_namespaces, error_message
-         FROM inventory_sweeps ORDER BY id DESC LIMIT 1`,
-    ).toArray()[0];
+    const sweep = this.readSweep();
+    // A failed sweep enumerated nothing but still wrote a receipt with a fresh
+    // timestamp, so measuring staleness against the newest receipt would let a
+    // continuing Cloudflare outage suppress the stale banner indefinitely.
+    const enumeration = this.readSweep("WHERE status != 'failed'");
 
     const recentFailures = sql.exec<ObjectRow>(
       `${RESOLVED_OBJECTS}
@@ -550,20 +575,44 @@ export class MigrationRegistry extends DurableObject<Env> {
         objectCount: row.object_count,
         lastSweptAt: row.last_swept_at,
       })),
-      latestSweep: sweep
-        ? {
-            id: sweep.id,
-            startedAt: sweep.started_at,
-            finishedAt: sweep.finished_at,
-            status: sweep.status,
-            namespaceCount: sweep.namespace_count,
-            objectCount: sweep.object_count,
-            truncatedNamespaces: parseJsonArray(sweep.truncated_namespaces).map(String),
-            errorMessage: sweep.error_message,
-          } satisfies SweepSummary
-        : null,
+      latestSweep: sweep,
+      latestEnumeration: enumeration,
       recentFailures: recentFailures.map(toTrackedObject),
       recentEvents: recentEvents.map(toMigrationEvent),
+    };
+  }
+
+  /**
+   * The newest sweep receipt matching an optional filter, already mapped.
+   *
+   * Shared so the "latest receipt" and "latest receipt that enumerated
+   * anything" reads cannot drift apart in their column list or mapping.
+   */
+  private readSweep(where = ""): SweepSummary | null {
+    const row = this.storage.sql.exec<{
+      id: number;
+      started_at: number;
+      finished_at: number;
+      status: string;
+      namespace_count: number;
+      object_count: number;
+      truncated_namespaces: string;
+      error_message: string | null;
+    }>(
+      `SELECT id, started_at, finished_at, status, namespace_count, object_count,
+              truncated_namespaces, error_message
+         FROM inventory_sweeps ${where} ORDER BY id DESC LIMIT 1`,
+    ).toArray()[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      status: row.status,
+      namespaceCount: row.namespace_count,
+      objectCount: row.object_count,
+      truncatedNamespaces: parseJsonArray(row.truncated_namespaces).map(String),
+      errorMessage: row.error_message,
     };
   }
 
@@ -581,9 +630,16 @@ export class MigrationRegistry extends DurableObject<Env> {
   }
 }
 
+/**
+ * Derived from the schema rather than hand-written.
+ *
+ * This guard is the third party to the agreement the CTE's comment describes,
+ * and it fails in the quietest possible way: a status the guard does not know
+ * is mapped to `unreported`, so a new status shows up as a wrong count with no
+ * error anywhere. Reading the enum's own options makes that drift impossible.
+ */
 function isObjectStatus(value: string): value is ObjectStatus {
-  return value === "failed" || value === "behind" || value === "unreported"
-    || value === "current" || value === "absent";
+  return (ObjectStatusSchema.options as readonly string[]).includes(value);
 }
 
 function toTrackedObject(row: ObjectRow): TrackedObject {

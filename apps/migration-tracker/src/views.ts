@@ -19,13 +19,21 @@ import type {
   TrackedObjectPage,
 } from "./protocol";
 
-const STATUS_ORDER: ObjectStatus[] = ["failed", "behind", "unreported", "current", "absent"];
+const STATUS_ORDER: ObjectStatus[] = [
+  "failed",
+  "behind",
+  "unreported",
+  "current",
+  "not_reporting",
+  "absent",
+];
 
 const STATUS_LABEL: Record<ObjectStatus, string> = {
   failed: "Failed",
   behind: "Behind",
   unreported: "Unreported",
   current: "Current",
+  not_reporting: "Not reporting",
   absent: "Absent",
 };
 
@@ -105,7 +113,8 @@ const STYLES = `
           font-size: 12px; font-weight: 600; }
   .pill.failed { color: var(--failed); background: var(--failed-bg); }
   .pill.behind { color: var(--behind); background: var(--behind-bg); }
-  .pill.unreported, .pill.absent { color: var(--unreported); background: var(--unreported-bg); }
+  .pill.unreported, .pill.absent, .pill.not_reporting {
+    color: var(--unreported); background: var(--unreported-bg); }
   .pill.current, .pill.applied { color: var(--current); background: var(--current-bg); }
   .muted { color: var(--muted); }
   .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
@@ -126,6 +135,7 @@ const STYLES = `
   dl.facts dd { margin: 0; }
   .banner { border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;
             background: var(--behind-bg); color: var(--behind); }
+  .banner.banner-bad { background: var(--failed-bg); color: var(--failed); }
 `;
 
 export function layout(
@@ -179,13 +189,25 @@ export function refusalPage(message: string): HtmlEscapedString | Promise<HtmlEs
 
 export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Promise<HtmlEscapedString> {
   const sweep = overview.latestSweep;
-  const staleSweep = sweep === null || overview.generatedAt - sweep.finishedAt > 3 * 60 * 60 * 1_000;
+  const enumeration = overview.latestEnumeration;
+  // Staleness is measured against the last sweep that enumerated anything. A
+  // failing sweep writes a receipt with a fresh timestamp, so trusting the
+  // newest receipt would hide this banner for the whole of an outage.
+  const staleSweep = enumeration === null
+    || overview.generatedAt - enumeration.finishedAt > 3 * 60 * 60 * 1_000;
+  const sweepFailing = sweep !== null && sweep.status === "failed";
   return html`
-    ${staleSweep
+    ${sweepFailing
+      ? html`<div class="banner banner-bad">The last inventory sweep failed, so nothing below
+          has been reconciled against the account since
+          ${enumeration === null ? "ever" : timestamp(enumeration.finishedAt)}.
+          ${sweep.errorMessage ? html`<span class="mono">${sweep.errorMessage}</span>` : ""}</div>`
+      : ""}
+    ${staleSweep && !sweepFailing
       ? html`<div class="banner">The inventory sweep has not completed recently, so the object
-          list below may be missing objects that never reported. ${sweep === null
-            ? "No sweep has run yet."
-            : html`Last sweep finished ${timestamp(sweep.finishedAt)}.`}</div>`
+          list below may be missing objects that never reported. ${enumeration === null
+            ? "No sweep has enumerated the account yet."
+            : html`Last enumeration finished ${timestamp(enumeration.finishedAt)}.`}</div>`
       : ""}
 
     <section>
