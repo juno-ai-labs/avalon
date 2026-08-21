@@ -533,8 +533,17 @@ export class MigrationRegistry extends DurableObject<Env> {
       // `retired` is decided by the namespaces, not by the object counts. Every
       // object being absent means only that no instance is alive right now,
       // which is ordinary for an on-demand class; the class no longer having a
-      // namespace in the account means it is gone. A class never yet swept has
-      // no namespace row at all, and defaults to live rather than retired.
+      // namespace behind it means it is gone.
+      //
+      // The link from a component to its namespaces runs through the objects,
+      // which is the only place the two halves of the tracker meet: a sweep
+      // gives an object its `namespace_id`, and a report gives it its
+      // `component` and `region`. Grouping the namespaces by class instead
+      // would make retirement account-wide, and the same classes are deployed
+      // in both regions — deleting a class from `avalon-api-global` while
+      // `avalon-api-eu` still runs it would leave the global component looking
+      // live because the EU namespace is. A component whose objects have no
+      // namespace yet has no evidence either way, and defaults to live.
       `${RESOLVED_OBJECTS}
        SELECT c.component, c.region, c.class_name, c.latest_version,
               c.worker_version_id, c.observed_at,
@@ -544,13 +553,16 @@ export class MigrationRegistry extends DurableObject<Env> {
               COALESCE(SUM(r.status = 'unreported'), 0) AS unreported,
               COALESCE(SUM(r.status = 'absent'), 0) AS absent,
               COALESCE(SUM(r.status != 'absent'), 0) AS total,
-              COALESCE(MAX(n.live), 1) = 0 AS retired
+              COALESCE(MAX(ns.live), 1) = 0 AS retired
          FROM component_versions c
          LEFT JOIN resolved r
            ON r.component = c.component AND r.region = c.region
-         LEFT JOIN (SELECT class_name, SUM(retired_at IS NULL) AS live
-                      FROM durable_object_namespaces GROUP BY class_name) n
-           ON n.class_name = c.class_name
+         LEFT JOIN (SELECT o.component, o.region, SUM(n.retired_at IS NULL) AS live
+                      FROM durable_objects o
+                      JOIN durable_object_namespaces n ON n.namespace_id = o.namespace_id
+                     WHERE o.component IS NOT NULL AND o.region IS NOT NULL
+                     GROUP BY o.component, o.region) ns
+           ON ns.component = c.component AND ns.region = c.region
         GROUP BY c.component, c.region
         ORDER BY retired, failed DESC, behind DESC, c.component, c.region`,
     ).toArray();
