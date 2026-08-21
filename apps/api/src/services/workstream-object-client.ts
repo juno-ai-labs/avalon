@@ -29,7 +29,7 @@ import type {
 } from "../durable-objects/substream-agent";
 import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type {
-  InitializeWorkstreamObjectInput,
+  InitializeWorkstreamObjectRequest,
   WorkstreamObjectCreateMessageInput,
 } from "../durable-objects/workstream-object-product";
 import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/workstream-object-product";
@@ -224,7 +224,7 @@ export class WorkstreamObjectClient {
     return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
   }
 
-  async initialize(input: InitializeWorkstreamObjectInput): Promise<{
+  async initialize(input: InitializeWorkstreamObjectRequest): Promise<{
     workstream: Workstream;
     messageId: string;
     harnessRunId: string;

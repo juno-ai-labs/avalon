@@ -150,7 +150,10 @@ connector-wide for the same reason: **a work stream starts with the audience of 
 conversation it came from.**
 
 - A conversation the provider calls public opens a public work stream by storing the existing
-  `workspace` scope, readable by the workspace like any other.
+  `workspace` scope, readable by the workspace like any other. This is the branch that has to
+  *say* something: a work stream is born private, and a public channel's thread seats no
+  participants, so a create that lost this scope on the way through would hand the channel a
+  work stream none of its members could open.
 - A private conversation — a private channel, a direct message, a group message — opens a
   private work stream by storing the existing `personal` scope, whose participant room starts
   with that conversation's resolved members. A conversation the connector cannot classify is
@@ -721,6 +724,32 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-21 — A private conversation's work stream is private again
+
+**What changed:** The scope `connectorWorkstreamScope` computes now reaches the
+work stream it is computed for. `WorkstreamService.create` passed its input to
+`WorkstreamObjectCreationService`, which parses it with
+`CreateWorkstreamRequestSchema` — not `.strict()`, so `scope` was silently
+stripped — and the object then hardcoded `'workspace'` into its authoritative
+row. The scope is now an explicit input to `initialize`, and a work stream with
+nothing said about it is born `personal` rather than `workspace`.
+
+**Why:** Since the Durable Object cutover, a work stream summoned from a
+private Slack channel or a DM by a member with an *account link* was created
+readable by the whole workspace. The rule this section states was written and
+enforced at the ingress; the enforcement was being dropped one layer below it,
+where nothing looked. Making private the default is what stops the next such
+omission from publishing anything: only the branch that means `workspace` — the
+public channel, whose room is the channel rather than a participant list — now
+has to say so.
+
+**Consequences:** The unlinked-member path
+(`SlackWorkspaceWorkstreamService`) was already carrying the scope correctly
+and is unchanged. Existing work streams keep the scope they were created with,
+including the ones this bug made public; a member of one moves it back from the
+sidebar's right-click menu. See
+[`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
 
 ### 2026-08-20 — The OAuth attempt table regains the telemetry columns its service reads
 

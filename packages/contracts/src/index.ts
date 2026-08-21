@@ -342,9 +342,12 @@ export const WorkstreamSchema = z.object({
    * Who may read it, in the same vocabulary `notes` uses: `personal` is only the
    * people in it, `workspace` is anyone in the workspace. Declared on the row
    * and enforced from it, so "private" is a property rather than a rule a caller
-   * has to remember.
+   * has to remember. A work stream is born `personal` and is opened by somebody
+   * in it, so the default here is the fail-closed one: a payload that somehow
+   * carries no scope is read as the narrower of the two rather than announced
+   * to the workspace.
    */
-  scope: ScopeSchema.default("workspace"),
+  scope: ScopeSchema.default("personal"),
   /**
    * Non-null on a work stream that exists so a subsystem can use the agent loop
    * rather than because somebody started it. A separate question from `scope`:

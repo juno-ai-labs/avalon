@@ -1,0 +1,178 @@
+import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { AuthContext, Env } from "../src/env";
+import type * as NamingService from "../src/services/workstream-naming-service";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  testWorkstreamContract,
+} from "./helpers/durable-authority";
+
+/**
+ * What a create writes into `scope`, at the layer that decides it.
+ *
+ * The work stream's own object owns the rule — the Workers-runtime suite proves
+ * the row it writes and who may then read it. What is proved here is the step
+ * in front of that: whether the scope a caller *knows* survives the trip to the
+ * object, and what the object is asked for when nobody names one.
+ *
+ * Both halves come from one defect. `CreateWorkstreamRequestSchema` is not
+ * `.strict()`, so the `scope` the Slack ingress computes for a private channel
+ * was stripped by the `parse` inside the creation service and never reached
+ * `initialize`, which hardcoded `'workspace'` — every work stream summoned from
+ * a private conversation by a linked member was created readable by the whole
+ * workspace. The scope is now an explicit argument, and the case nobody names
+ * is `personal` rather than `workspace`.
+ */
+
+vi.mock("../src/services/integrations", () => ({
+  classifyWorkstreamMessage: vi.fn(async () => ({
+    classification: "human_only",
+    confidence: 1,
+    rationaleCode: "test",
+  })),
+  publishWorkstreamEvent: vi.fn(async () => undefined),
+  startWorkstreamWorkflow: vi.fn(async () => "workflow-instance"),
+}));
+vi.mock("../src/services/workstream-naming-service", async (importOriginal) => ({
+  ...await importOriginal<typeof NamingService>(),
+  nameWorkstream: vi.fn(async () => undefined),
+}));
+vi.mock("../src/services/workstream-email-routing-service", () => ({
+  WorkstreamEmailRoutingService: class {
+    async reserve(input: { workstreamId: string }) {
+      return { emailAddress: `otter-${input.workstreamId}@automation.with-avalon.com` };
+    }
+    async activateWorkstreamRoute() {
+      return undefined;
+    }
+    async setStatus() {
+      return undefined;
+    }
+  },
+}));
+
+import { WorkstreamService } from "../src/services/workstream-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
+
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
+const memberId = asUserId("00000000-0000-7000-8000-000000000002");
+const at = "2026-08-21T09:00:00.000Z";
+
+const databases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  vi.restoreAllMocks();
+});
+
+const auth: AuthContext = {
+  sessionId: "session-1",
+  userId: memberId,
+  workspaceId,
+  region: "global",
+  role: "member",
+};
+
+function seededDatabase(): DatabaseSync {
+  const database = preRetirementProductSqliteDatabase();
+  databases.push(database);
+  database.exec(`
+    INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES ('${memberId}', 'google-member', 'member@example.com', 'Member', '${at}', '${at}');
+    INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('${workspaceId}', 'Avalon Studio', 'avalon-studio', 'global', '${memberId}', '${at}', '${at}');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES ('${workspaceId}', '${memberId}', 'owner', 'active', '${at}');
+  `);
+  openWorkstreamAuthorityForTest(database);
+  return database;
+}
+
+/** The environment, plus the `initialize` payloads the object was handed. */
+function environment(database: DatabaseSync): {
+  env: Env;
+  initializeInputs: Array<Record<string, unknown>>;
+} {
+  const initializeInputs: Array<Record<string, unknown>> = [];
+  const env = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    LOG_LEVEL: "error",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      product: {
+        initialize: (request) => {
+          const input = request.input as Record<string, unknown>;
+          initializeInputs.push(input);
+          return {
+            workstream: testWorkstreamContract({
+              id: input.workstreamId,
+              workspaceId: input.workspaceId,
+              title: input.title,
+              objective: input.objective,
+              createdByUserId: input.creatorUserId,
+              emailAddress: input.emailAddress,
+              scope: input.scope,
+            }),
+            messageId: crypto.randomUUID(),
+            harnessRunId: crypto.randomUUID(),
+          };
+        },
+      },
+      extra: { flushEffectsToWorkstreamDO: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+    }),
+    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+      extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+    }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+    }),
+  });
+  return { env, initializeInputs };
+}
+
+function createInput(overrides: Record<string, unknown> = {}) {
+  return {
+    title: "A work stream",
+    objective: "Do the thing",
+    openingMessage: "Start it",
+    clientMessageId: `client-${crypto.randomUUID()}`,
+    participantUserIds: [] as string[],
+    attachmentIds: [] as string[],
+    ...overrides,
+  };
+}
+
+describe("the audience a new work stream is created with", () => {
+  it("asks the object for a private work stream when the caller names no audience", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+
+    const created = await new WorkstreamService(env, auth).create(createInput());
+
+    expect(initializeInputs).toHaveLength(1);
+    expect(initializeInputs[0]).toMatchObject({ scope: "personal" });
+    expect(created.workstream.scope).toBe("personal");
+  });
+
+  it("carries the audience a connector ingress resolved through to the object", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+
+    // What the Slack ingress computes for a thread in a public channel. Nothing
+    // seats a participant on this branch — the room is the channel — so a scope
+    // dropped on the way through leaves that channel a work stream none of its
+    // members can open.
+    const open = await service.create(createInput({ scope: "workspace" }));
+    // And a private channel or a DM, whose members are seated instead.
+    const closed = await service.create(createInput({ scope: "personal" }));
+
+    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
+    expect(open.workstream.scope).toBe("workspace");
+    expect(closed.workstream.scope).toBe("personal");
+  });
+});
