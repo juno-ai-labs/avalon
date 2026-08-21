@@ -27,3 +27,32 @@ export type ThemeWithBackdrop = (typeof themesWithBackdrop)[number];
  */
 export const cachedFonts: Record<string, { url: string; integrity?: string }> = {
 };
+
+/**
+ * The syntax colours a document *outside* the application has to declare for
+ * itself.
+ *
+ * `MarkdownBody` colours highlighted code with `var(--av-sys-color-syntax-*)`
+ * in inline styles, which resolve against the cascade — everywhere except the
+ * one place that markup is re-hosted. The message exporter serializes it into
+ * a standalone document that loads no stylesheet of ours, where every one of
+ * those references is invalid at computed-value time and `color` falls back
+ * to the inherited near-black, on a near-black code block.
+ *
+ * These are the default theme's values because the exported card is
+ * deliberately not themed: a fixed light sheet with a fixed dark code block,
+ * so that a saved file looks the same whoever saved it. Generated rather than
+ * copied so the two cannot drift.
+ */
+export const exportSyntaxPalette: Record<string, string> = {
+  '--av-sys-color-syntax-plain': '#e5e4df',
+  '--av-sys-color-syntax-comment': '#777772',
+  '--av-sys-color-syntax-punctuation': '#aaa9a3',
+  '--av-sys-color-syntax-tag': '#ff8a50',
+  '--av-sys-color-syntax-number': '#e6a06b',
+  '--av-sys-color-syntax-string': '#b995f5',
+  '--av-sys-color-syntax-operator': '#d8d7d2',
+  '--av-sys-color-syntax-keyword': '#ff7b2c',
+  '--av-sys-color-syntax-function': '#17a9f5',
+  '--av-sys-color-syntax-variable': '#e8b75c',
+};

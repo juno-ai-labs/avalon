@@ -538,7 +538,12 @@ depend on that:
   `prism-react-renderer` theme and the per-participant accent, both of which take
   JavaScript values. Both pass `var(--av-sys-color-syntax-*)` and `var(--person-accent)` strings into
   inline styles, which resolve against the element's cascade like any other
-  reference.
+  reference — **in the renderer**. The message exporter re-hosts that same markup
+  in a standalone document that loads none of this, so it declares the syntax
+  tokens itself from the generated `exportSyntaxPalette`; a `var()` that resolves
+  nowhere is invalid at computed-value time and falls back to the inherited
+  colour, which for a code block is near-black on near-black. Anything else that
+  serializes rendered markup out of the renderer inherits that obligation.
 - **`themeWindowBackground` equals each theme's own `--av-sys-color-surface-canvas`.** It is the one
   value written down twice, and a test compares the copies.
 - **The Tailwind palette resolves to tokens, never to literals.** It is currently
@@ -557,7 +562,11 @@ It deliberately does **not** theme two surfaces:
 - **The exported message card** (`apps/desktop/src/main/message-export.ts`) is a
   fixed light artefact rendered in a hidden window outside the renderer's
   document, and stays that way whatever the app theme is — a saved PNG is a
-  document, not a screenshot of the app. See [`message-export.md`](message-export.md).
+  document, not a screenshot of the app. Being unthemed is not the same as being
+  token-free: its `:root` declares the default theme's `sys.color.syntax.*` from
+  the generated `exportSyntaxPalette`, because the highlighted code it embeds
+  names those tokens in inline styles and nothing else in that document defines
+  them. See [`message-export.md`](message-export.md).
 - **The application icon** has its own light/dark pair driven by `nativeTheme` in
   the main process, and follows the Mac rather than the in-app theme. Choosing
   Air does not change the Dock icon.
@@ -617,6 +626,42 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-21 — Highlighted code survives being exported
+
+**What changed:** the generator emits `exportSyntaxPalette` into
+`common/theme-assets.ts`, and `message-export.ts` declares it on the export
+document's `:root`.
+
+**Why:** tokenising the `prism-react-renderer` theme replaced ten literal hexes
+with `var(--av-sys-color-syntax-*)`. In the renderer those resolve against the
+cascade, which is what the invariant said and it was right. But `MarkdownBody`'s
+markup does not stay in the renderer — the exporter serializes it into a
+standalone document that loads no stylesheet of ours. There every reference was
+invalid at computed-value time, so `color` fell back to the inherited
+`#24251c` on a `#1b1c18` code block: about 1.05:1, and silent. A saved PNG or PDF
+of any message containing code shipped with the code invisible.
+
+**Why generated rather than a constant in the exporter:** the values are already
+in the theme JSON, and a hand-copied second set is the thing the whole generator
+exists to prevent. `exportSyntaxPalette` resolves the default theme's syntax
+tokens — aliases followed, since a document that declares none of the ramp cannot
+resolve one — and a test asserts the exported document declares every entry.
+
+**Why the default theme's values and not the active one:** the card is
+deliberately unthemed. A saved file should look the same whoever saved it, and
+its code block is a fixed dark panel, so the palette has to be the one built for
+that panel. A second test checks every entry clears 3:1 against it, which is the
+property that actually matters and the one that failed.
+
+**What a future change has to respect:** "no component reads a colour" holds
+only while the markup stays inside the application. Anything that serializes
+rendered markup out of the renderer — an export, an email body, a clipboard
+flavour — has to carry the tokens it names, or resolve them before it leaves.
+
+**Found in review, not by tests.** The invariant list reasoned that an inline
+`var()` always resolves against the cascade, which is true everywhere except the
+one place this markup is re-hosted, and no test covered that place.
 
 ### 2026-08-21 — A rebase can demote a heading, and nothing noticed
 

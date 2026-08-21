@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest } from '../common/message-export';
+import { exportSyntaxPalette } from '../common/theme-assets';
 import {
   isMessageExportUrl,
   MESSAGE_EXPORT_SCHEME,
@@ -150,6 +151,50 @@ describe('the exported document', () => {
     expect(html).not.toContain('<div class="export-signature">');
     expect(messageExportFooter(LOGO)).toContain(`src="${LOGO}"`);
     expect(messageExportFooter(LOGO)).toContain('Saved from Avalon');
+  });
+
+  /**
+   * `MarkdownBody` colours highlighted code with `var(--av-sys-color-syntax-*)`
+   * in inline styles. Everywhere else those resolve against the application's
+   * cascade; this document is the one place that markup is re-hosted outside it,
+   * and it loads no stylesheet of ours. Without these declarations every
+   * reference is invalid at computed-value time, `color` falls back to the
+   * inherited near-black, and the code block renders near-black on near-black —
+   * about 1.05:1, which is to say invisible, and silently so.
+   */
+  it('declares every syntax token the highlighter names, so code survives the trip out', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>Hello</p>', logoDataUrl: LOGO });
+
+    expect(Object.keys(exportSyntaxPalette).length).toBeGreaterThan(0);
+    for (const [property, value] of Object.entries(exportSyntaxPalette)) {
+      expect(html).toContain(`${property}: ${value};`);
+    }
+  });
+
+  /**
+   * The card is deliberately not themed — a fixed light sheet with a fixed dark
+   * code block — so the palette it declares has to be legible against that
+   * block whatever the person exporting it happens to be looking at.
+   */
+  it('gives the code block a palette light enough to read on its dark ground', () => {
+    const luminance = (hex: string): number => {
+      const channel = (pair: string): number => {
+        const value = Number.parseInt(pair, 16) / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(hex.slice(1, 3))
+        + 0.7152 * channel(hex.slice(3, 5))
+        + 0.0722 * channel(hex.slice(5, 7));
+    };
+    // `.markdown-code-block`'s background, which this document fixes at #1b1c18.
+    const ground = luminance('#1b1c18');
+
+    for (const [property, value] of Object.entries(exportSyntaxPalette)) {
+      const contrast = (luminance(value) + 0.05) / (ground + 0.05);
+      expect({ property, contrast: Math.round(contrast * 10) / 10 })
+        .toEqual({ property, contrast: expect.any(Number) });
+      expect(contrast).toBeGreaterThan(3);
+    }
   });
 
   it('hides the code block copy button, which is a control rather than content', () => {
