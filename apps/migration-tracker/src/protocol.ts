@@ -23,7 +23,8 @@ import { z } from "zod";
  *   the account, including this Worker's own registry object and the API's
  *   container class; without this they would sit in `unreported` forever and
  *   make that count useless for spotting a genuinely stranded object.
- * - `absent` — it was in a previous sweep and is not in the latest one.
+ * - `absent` — it was in a previous sweep and is not in the latest one, either
+ *   because the object itself was deleted or because its whole class was.
  */
 export const ObjectStatusSchema = z.enum([
   "failed",
@@ -69,6 +70,13 @@ export interface TrackedObject {
   lastReportedAt: number | null;
   lastFailedAt: number | null;
   absentSince: number | null;
+  /**
+   * When this object's namespace was retired, or null. It is what turns an
+   * unexplained `absent` on the detail page into "the class is gone" — the
+   * overview tables say so, and without this the one page an operator opens
+   * after clicking through does not.
+   */
+  namespaceRetiredAt: number | null;
 }
 
 export interface TrackedObjectPage {
@@ -107,7 +115,18 @@ export interface ComponentSummary {
   behind: number;
   failed: number;
   unreported: number;
+  absent: number;
+  /** Live objects only; `absent` is reported beside it rather than inside it. */
   total: number;
+  /**
+   * The namespaces this component's objects live in are all retired — the class
+   * was deleted from the Worker that serves this region. Not the same as every
+   * object being absent, which is ordinary for a class whose instances are
+   * created on demand, and per region rather than per class: the same classes
+   * are deployed in both, and deleting one from a single region retires only
+   * that region's component.
+   */
+  retired: boolean;
 }
 
 export interface SweepSummary {
@@ -128,6 +147,8 @@ export interface NamespaceSummary {
   usesSqlite: boolean;
   objectCount: number;
   lastSweptAt: number;
+  /** When a completed sweep first failed to find this namespace, or null. */
+  retiredAt: number | null;
 }
 
 export interface RegistryOverview {
