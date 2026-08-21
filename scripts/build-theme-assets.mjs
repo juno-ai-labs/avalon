@@ -306,6 +306,7 @@ export function backdropDocument(theme, registry, values) {
  */
 export function assetManifest(themes) {
   const withBackdrop = themes.filter((theme) => theme.backdrop);
+  const syntax = exportSyntaxPalette(themes);
   const remote = fontFaces(themes).filter((font) => font.src.url);
 
   const entries = remote.map((font) => [
@@ -347,7 +348,53 @@ export function assetManifest(themes) {
     ...entries,
     '};',
     '',
+    '/**',
+    ' * The syntax colours a document *outside* the application has to declare for',
+    ' * itself.',
+    ' *',
+    ' * `MarkdownBody` colours highlighted code with `var(--av-sys-color-syntax-*)`',
+    ' * in inline styles, which resolve against the cascade — everywhere except the',
+    ' * one place that markup is re-hosted. The message exporter serializes it into',
+    ' * a standalone document that loads no stylesheet of ours, where every one of',
+    ' * those references is invalid at computed-value time and `color` falls back',
+    ' * to the inherited near-black, on a near-black code block.',
+    ' *',
+    ' * These are the default theme\'s values because the exported card is',
+    ' * deliberately not themed: a fixed light sheet with a fixed dark code block,',
+    ' * so that a saved file looks the same whoever saved it. Generated rather than',
+    ' * copied so the two cannot drift.',
+    ' */',
+    'export const exportSyntaxPalette: Record<string, string> = {',
+    ...syntax,
+    '};',
+    '',
   ].join('\n');
+}
+
+/**
+ * The default theme's syntax tokens, fully resolved.
+ *
+ * An alias would be meaningless in a document that declares none of the ramp it
+ * points at, so anything still shaped like `{ref.…}` is followed here rather
+ * than emitted.
+ */
+export function exportSyntaxPalette(themes) {
+  const theme = defaultTheme(themes);
+  const values = resolvedTokens(theme, themes);
+  return Object.keys(values)
+    .filter((path) => path.startsWith('sys.color.syntax.'))
+    .map((path) => {
+      let value = values[path];
+      const seen = new Set();
+      while (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+        const target = value.slice(1, -1);
+        if (seen.has(target)) throw new Error(`${theme.id}: ${path} aliases in a cycle`);
+        seen.add(target);
+        if (!(target in values)) throw new Error(`${theme.id}: ${path} aliases ${target}, which no theme sets`);
+        value = values[target];
+      }
+      return `  '${customProperty(path)}': '${value}',`;
+    });
 }
 
 export function generate({ registry, themes }) {
