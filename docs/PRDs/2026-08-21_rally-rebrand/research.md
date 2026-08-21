@@ -37,7 +37,7 @@ these categories.
 | Identifier | Where |
 | --- | --- |
 | HTTP headers `avalon-workspace-id`, `avalon-user-id`, `avalon-session-id`, `avalon-workstream-id`, `avalon-substream-id`, `avalon-operation-id`, `avalon-socket-ticket-id`, `avalon-socket-ticket-expires-at` | Renderer ↔ regional APIs; governed by [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md) |
-| WebSocket subprotocol `avalon-ws-stream` | Socket admission ([`realtime-sockets.md`](../../realtime-sockets.md)) |
+| WebSocket subprotocol sentinel `avalon.ticket.v1` | Offered in `Sec-WebSocket-Protocol` alongside the ticket by every shipped build (`SOCKET_TICKET_SUBPROTOCOL` in `packages/contracts/src/socket-tickets.ts`; [`realtime-sockets.md`](../../realtime-sockets.md)). The deprecated `ticket` query parameter carries no branding |
 | Model-visible tool namespace `avalon_core.<tool>` | Bind runtime tool naming (`packages/agent-harness/src/bind-runtime.ts`); regenerated per run, but present in stored transcripts |
 
 Old desktop builds keep sending the `avalon-*` forms until they auto-update;
@@ -94,6 +94,10 @@ resources behind the automated reviewers).
 - Any `avalon_*`-prefixed names inside Durable Object SQLite storage; a
   rename there is a migration in every object of every class, tracked by the
   migration tracker.
+- Terminal sandbox stable names, `avalon-<hash>`, stored per work stream and
+  matched against the live Daytona sandbox
+  (`apps/api/src/services/terminal/coordinator.ts`); renaming one orphans
+  the sandbox it names.
 
 ## 8. Frozen by policy
 

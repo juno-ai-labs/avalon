@@ -65,8 +65,8 @@ to the pile this PRD has to move.
    into Rally with its login, drafts, and settings intact.
 4. Shipped desktop builds never break against the servers: every wire-level
    identifier that carries the old name (`avalon-*` headers, the
-   `avalon-ws-stream` subprotocol) is accepted alongside its `rally-*`
-   replacement until the update fleet has moved.
+   `avalon.ticket.v1` socket-ticket sentinel) is accepted alongside its
+   Rally replacement until the update fleet has moved.
 5. The contributor surface is renamed: the repository becomes
    `juno-ai-labs/rally`, packages become `@rally/*`, environment variables
    become `RALLY_*`, code symbols and docs say Rally, and CI, release
@@ -94,10 +94,11 @@ to the pile this PRD has to move.
    tolerant of the old spellings forever. Rejected outright: fleet-wide data
    rewrites carry real risk for zero behavior change.
 4. **Renaming identifiers inside production storage.** Durable Object SQLite
-   names and D1 values keep their spelling; code refers to them through
+   names, D1 values, and per-work-stream terminal sandbox stable names
+   (`avalon-<hash>`) keep their spelling; code refers to them through
    constants whose *symbol* names say Rally. Rejected outright, same reasoning
    as non-goal 3 — a storage rename is a migration in every object of every
-   class.
+   class, and a sandbox rename orphans the sandbox.
 5. **Retiring `with-avalon.com`.** The old domain is kept registered, serving
    redirects and accepting email, for as long as any artifact references it —
    which is indefinitely. Goal 3 depends on this non-goal.
@@ -148,9 +149,11 @@ registry.
 point at `withrally.ai`. The old apex serves redirects, not content.
 
 **Wire protocol.** The renderer sends `rally-*` headers and offers the
-`rally-ws-stream` subprotocol once its build ships; the Workers accept both
-generations for every renamed header, subprotocol, and scheme (goal 4). Each
-addition follows
+`rally.ticket.v1` sentinel in the socket handshake once its build ships; the
+Workers negotiate whichever sentinel a client offers and accept both
+generations for every renamed header and scheme (goal 4). The scheme itself
+is unchanged — only the sentinel token moves — and the deprecated `ticket`
+query parameter is untouched. Each addition follows
 [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md).
 The compatibility set is removed only after the release-retention tooling
 shows no supported build sending the old forms.
