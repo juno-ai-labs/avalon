@@ -95,11 +95,14 @@ to the pile this PRD has to move.
    tolerant of the old spellings forever. Rejected outright: fleet-wide data
    rewrites carry real risk for zero behavior change.
 4. **Renaming identifiers inside production storage.** Durable Object SQLite
-   names, D1 values, and per-work-stream terminal sandbox stable names
-   (`avalon-<hash>`) keep their spelling; code refers to them through
-   constants whose *symbol* names say Rally. Rejected outright, same reasoning
-   as non-goal 3 — a storage rename is a migration in every object of every
-   class, and a sandbox rename orphans the sandbox.
+   names, D1 values, per-work-stream terminal sandbox stable names
+   (`avalon-<hash>`), and the canonical `avalon:*` plugin IDs that
+   activation hints store and replay keep their spelling; code refers to
+   them through constants whose *symbol* names say Rally. Rejected outright,
+   same reasoning as non-goal 3 — a storage rename is a migration in every
+   object of every class, a sandbox rename orphans the sandbox, and a
+   plugin-ID rename silently deactivates plugins on every existing work
+   stream.
 5. **Retiring `with-avalon.com`.** The old domain is kept registered, serving
    redirects and accepting email, for as long as any artifact references it —
    which is indefinitely. Goal 3 depends on this non-goal.
@@ -123,6 +126,10 @@ item, window titles, About panel, and `Rally.app` / `Rally-<version>` release
 artifacts. On first launch after the update, the app migrates its existing
 user data directory (`…/Application Support/Avalon` → `…/Rally`) so login,
 drafts, theme, and caches survive; a fresh install never sees the old path.
+One residue is accepted: the updater replaces the bundle's contents at its
+existing path, so an upgraded install stays at `/Applications/Avalon.app`
+on disk even as its Dock entry, menu bar, and About panel say Rally — only
+a fresh install gets `Rally.app` as the filename.
 Both `rally://` and `avalon://` deep links open the app — the old scheme stays
 registered so links and auth flows minted before the flip keep working. The
 export renderer moves to a `rally-export` scheme with no compatibility
@@ -155,10 +162,14 @@ naming, and surfaces that display an address show the Rally form.
 
 **The agent.** Prompts, tool catalogs, and skills say Rally; the agent
 introduces and refers to itself as Rally. The standing-contract line "Avalon
-is inherent in every work stream" becomes Rally's. The model-visible tool
-namespace becomes `rally_core.<tool>`; old spellings persist only inside
-already-stored transcripts, which nothing replays against the live tool
-registry.
+is inherent in every work stream" becomes Rally's. The model-visible wire
+prefixes — `avalon_core.<tool>` and its sibling namespaces — render as their
+`rally_*` forms, while the canonical `avalon:*` plugin IDs beneath them keep
+their values: those are persisted in `workstream_plugin_activation_hints`
+and replayed against the live plugin set on every run, so renaming a value
+would silently deactivate every previously activated plugin (see Agent
+behavior). Old wire spellings persist inside already-stored transcripts as
+prose, carrying no authority.
 
 **Public site.** Copy, metadata, OpenGraph, and download links say Rally and
 point at `withrally.ai`. The old apex serves redirects, not content.
@@ -173,8 +184,10 @@ origin, and scheme (goal 4). The ticket scheme itself is unchanged — only
 the sentinel token moves — and the deprecated `ticket` query parameter is
 untouched. Each addition follows
 [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md).
-The compatibility set is removed only after the release-retention tooling
-shows no supported build sending the old forms.
+The compatibility set is removed only after the phase-1 generation counters
+(Rollout below) show no supported build sending the old forms — no existing
+tooling can answer that question, so the counters land with the acceptance
+they gate.
 
 **Contributors.** The repository is `juno-ai-labs/rally` (GitHub redirects
 the old name), the root package is `rally`, workspace packages are
@@ -227,7 +240,10 @@ None yet.
    moved. Alternative rejected: a sunset window for links and addresses —
    [`workstream-email-addresses.md`](../../workstream-email-addresses.md)
    calls the addresses permanent, and a rebrand is not licence to break that
-   contract.
+   contract. The fleet signal is measured, not guessed: phase 1 counts which
+   generation each request carries, because nothing existing can — the
+   release-retention Worker only prunes R2 artifacts and never sees an
+   installed build.
 3. **The macOS bundle identifier stays `app.avalon.desktop`.** It is invisible
    to users, and changing `CFBundleIdentifier` makes macOS treat Rally as a
    different application: keychain items, notification and TCC permission
@@ -293,10 +309,30 @@ isolation are name-independent and unchanged. Secrets are renamed alongside
 ([`security.md`](../../security.md)); the Gitleaks history scan is unaffected
 by renames going forward.
 
+## Agent behavior
+
+This change renames what the model sees, never what it may do: no tool is
+added, removed, or reshaped, and no capability, authority boundary, or
+idempotency class moves. The model-visible wire prefixes —
+`avalon_discovery`, `avalon_core`, `avalon_skills`, `avalon_workstream`,
+`avalon_web`, `avalon_tables`, `avalon_automation_architect`, and any
+sibling in the family — render as their `rally_*` forms from the flip,
+through the stable short name Bind applies when it renders a wire name
+([`agent-harness.md`](../../agent-harness.md)). The canonical `avalon:*`
+plugin IDs beneath them do not move (non-goal 4): they are persisted in
+activation hints and replayed against the live plugin set every run, where
+an unrecognized value is dropped as `"unknown"` — their values are
+permanent storage literals on goal 7's allowlist. Prompt, catalog, and
+skill text says Rally in the same flip, as one deliberate byte change per
+[`writing-prompts.md`](../../writing-prompts.md). Acceptance: a work stream
+with plugins activated before the flip lists the same plugins active on its
+first post-flip run.
+
 ## Provider configuration
 
 Each registration changes outside the repository; sequence per phase 1/2, and
-nothing old is removed until release retention and webhook logs show it idle.
+nothing old is removed until the phase-1 generation counters and provider
+webhook logs show it idle.
 
 - **Cloudflare** — `withrally.ai` zone: custom domains for both API Workers,
   the site, `downloads.`, and provider ingress hosts; redirect rules on the
@@ -329,24 +365,35 @@ predecessor, and sequenced so every state the fleet can observe is valid.
   ([`desktop-icons.md`](../../desktop-icons.md)); provision zones,
   certificates, and provider-side additions.
 - **Phase 1 — accept both.** Workers serve on both domain families; accept
-  both header/subprotocol/scheme generations; inbound email accepts both
-  domains; desktop registers `rally://` alongside `avalon://`. Nothing
-  user-visible changes; everything old still works. Ships first and soaks.
+  both header/subprotocol/origin/scheme generations; inbound email accepts
+  both domains; desktop registers `rally://` alongside `avalon://`. Phase 1
+  also lands the instrumentation phase 4 gates on: a per-request count of
+  which generation arrived, written to the Analytics Engine datasets both
+  API Workers already bind — without it, phase 4 has no history to read.
+  Nothing user-visible changes; everything old still works. Ships first and
+  soaks.
 - **Phase 2 — flip.** One coordinated desktop release + Worker deploy:
   product name, artwork, site, prompts, emitted links and addresses, export
   cards, emails all become Rally; `with-avalon.com` becomes redirects; the
   update feed publishes Rally artifacts **at the old feed URL as well as the
   new one** until the fleet moves; userData migrates on first run. The CI
-  rename guard lands.
+  rename guard lands. The release tooling that touches artifacts flips in
+  this phase, not phase 3: the release-retention Worker's hardcoded
+  `Avalon.dmg` / `Avalon-<semver>` key patterns fail closed on any
+  unrecognized key, so its cron dies the day the first Rally artifact lands
+  unless it accepts both generations — which it must, since the bucket holds
+  pre-flip Avalon artifacts and post-flip Rally ones simultaneously. The
+  desktop release invariants (`pnpm --filter @avalon/desktop test:release`)
+  move with it.
 - **Phase 3 — contributor surface.** Repository rename, packages, env vars
   and secrets, symbols, docs sweep, CI/sandbox/release tooling. Coordinated
   with (not inside) a deploy: Worker vars and `.dev.vars` rename with the
   code that reads them.
-- **Phase 4 — long tail.** When release retention shows no supported build on
-  the old forms: drop `avalon-*` header/subprotocol acceptance and the old
-  feed URL, tighten the rename guard's allowlist to the permanent set (links,
-  addresses, schemes, bundle id, storage literals, history). The redirects
-  and email alias never leave.
+- **Phase 4 — long tail.** When the phase-1 generation counters show no
+  supported build on the old forms: drop `avalon-*` header, sentinel, and
+  origin acceptance and the old feed URL, tighten the rename guard's
+  allowlist to the permanent set (links, addresses, schemes, bundle id,
+  storage literals, history). The redirects and email alias never leave.
 
 ## Acceptance
 
