@@ -2324,8 +2324,8 @@ describe("Durable Objects in the Workers runtime", () => {
         type: string;
         requestId: string;
         workstreams: { items: Array<{ id: string; title: string }>; nextCursor: string | null };
-        automations: Array<{ id: string; name: string; emailAddress: string | null }>;
-        notes: Array<{ id: string; title: string }>;
+        automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
+        notes: { waterline: number; items: Array<{ id: string; title: string }> };
       };
 
       expect(page.type).toBe("workspace_sidebar_page");
@@ -2336,14 +2336,18 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Opened in one round trip",
       });
       expect(page.workstreams.nextCursor).toBeNull();
-      expect(page.automations).toHaveLength(1);
-      expect(page.automations[0]).toMatchObject({ id: subscriptionId, name: "Monday brief" });
+      expect(page.automations.items).toHaveLength(1);
+      expect(page.automations.items[0]).toMatchObject({ id: subscriptionId, name: "Monday brief" });
       // Served as stored: reconciling a route is a Global-registry call, and
       // this handler runs on the object's single thread beside the directory
       // read. The REST refresh is what fills it in.
-      expect(page.automations[0]?.emailAddress).toBeNull();
-      expect(page.notes).toHaveLength(1);
-      expect(page.notes[0]).toMatchObject({ id: noteId, title: "Standup" });
+      expect(page.automations.items[0]?.emailAddress).toBeNull();
+      expect(page.notes.items).toHaveLength(1);
+      expect(page.notes.items[0]).toMatchObject({ id: noteId, title: "Standup" });
+      // The batch carries the same counters the pushes carry, so the client
+      // can order the opening list against everything that follows it.
+      expect(page.automations.waterline).toBeGreaterThan(0);
+      expect(page.notes.waterline).toBeGreaterThan(0);
     } finally {
       socket!.close(1000, "test complete");
     }
@@ -2433,6 +2437,7 @@ describe("Durable Objects in the Workers runtime", () => {
       const event = JSON.parse(String((await pushed).data)) as {
         type: string;
         list: string;
+        waterline: number;
         items: Array<{ id: string; nextRunAt: string | null; lastRunAt: string | null }>;
       };
       expect(event.type).toBe("workspace_sidebar_list");
@@ -2443,6 +2448,26 @@ describe("Durable Objects in the Workers runtime", () => {
         nextRunAt: "2026-09-04T09:00:00.000Z",
         lastRunAt: "2026-08-21T21:00:00.000Z",
       });
+
+      // A second write moves the counter again, and a write to the other list
+      // leaves this one alone: two lists that change independently keep
+      // independent counters, or a note write would hide an automation update.
+      const secondPush = nextMessage(socket!);
+      await expect(stub.executeRuntimeSql({
+        workspaceId: WORKSPACE_ID,
+        requestId: "00000000-0000-7000-8000-000000000807",
+        statements: [{
+          sql: `UPDATE automation_subscriptions SET status = 'paused', updated_at = ?1
+                 WHERE id = ?2 AND workspace_id = ?3`,
+          params: ["2026-08-21T22:00:00.000Z", subscriptionId, WORKSPACE_ID],
+        }],
+      })).resolves.toMatchObject({ status: 200 });
+      const second = JSON.parse(String((await secondPush).data)) as {
+        waterline: number;
+        items: Array<{ status: string }>;
+      };
+      expect(second.waterline).toBeGreaterThan(event.waterline);
+      expect(second.items[0]?.status).toBe("paused");
     } finally {
       socket!.close(1000, "test complete");
     }

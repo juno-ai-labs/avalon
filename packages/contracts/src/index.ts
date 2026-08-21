@@ -1692,36 +1692,52 @@ export const WorkspaceSidebarPageEventSchema = z.object({
   requestId: IdSchema,
   workstreams: z.object(workspaceWorkstreamPageFields).strict()
     .superRefine(refineWorkstreamPagePairing),
-  automations: z.array(AutomationSummarySchema).max(250),
-  notes: z.array(NoteSummarySchema).max(250),
+  // Each carries the same per-list waterline its pushes carry, so the opening
+  // batch and every later push are judged by one comparison rather than by
+  // which arrived first.
+  automations: z.object({
+    waterline: z.number().int().nonnegative(),
+    items: z.array(AutomationSummarySchema).max(250),
+  }).strict(),
+  notes: z.object({
+    waterline: z.number().int().nonnegative(),
+    items: z.array(NoteSummarySchema).max(250),
+  }).strict(),
 }).strict();
 
 /**
- * A sidebar list, re-sent whole because WorkspaceDO changed one of its rows.
+ * One sidebar list and the version WorkspaceDO stamped on it.
  *
- * Whole rather than a patch, and without the per-row waterlines the work-stream
- * row carries, because the situations are not alike. A work-stream row is
- * assembled from child objects over an unordered, at-least-once Queue, so it
- * needs a version per field to reject a delayed update. These two lists are
- * read and written inside the single object that owns them, on one thread, and
- * sent down a transport that preserves order — the last send is always the
- * newest state, and a list of at most 250 summaries is small enough that
- * diffing it would buy nothing but a way to be wrong.
+ * Sent whole rather than as a patch: a row the viewer can no longer see is
+ * expressed by its absence, so archive and delete need no tombstone, and at
+ * most 250 summaries there is nothing a diff would buy but a way to be wrong.
  *
- * A row that is gone is simply absent from the next list, so deletion and
- * archive need no tombstone of their own.
+ * `waterline` is per list, monotonic within WorkspaceDO, and advanced inside
+ * the transaction of the write that earned it. Two counters rather than one
+ * because the lists change independently, and one counter would let a note
+ * write hide an automation update. It is the same number the opening
+ * `workspace_sidebar_page` carries for that list, which is what lets the batch
+ * and the pushes be ordered against each other instead of racing: both land in
+ * one receiver that applies only a strictly greater version.
+ *
+ * The rows carry no per-row version of their own — unlike a work-stream row,
+ * which is assembled from child objects over an unordered Queue and needs one
+ * per field. Here the list is the unit, one authority produces it, and the
+ * whole list is replaced or ignored together.
  */
 export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
   z.object({
     type: z.literal("workspace_sidebar_list"),
     occurredAt: TimestampSchema,
     list: z.literal("automations"),
+    waterline: z.number().int().positive(),
     items: z.array(AutomationSummarySchema).max(250),
   }).strict(),
   z.object({
     type: z.literal("workspace_sidebar_list"),
     occurredAt: TimestampSchema,
     list: z.literal("notes"),
+    waterline: z.number().int().positive(),
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
 ]);

@@ -709,13 +709,14 @@ describes behaviour to replace, not a pattern to copy into something new.**
 
 | Surface | Channel today | Matches this document |
 | --- | --- | --- |
-| Work-stream directory pages (membership, order, pins) | Requested with `list_workstreams` on the workspace socket; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** It stays on the socket and never falls back to a D1 list endpoint, but the first page is requested rather than pushed, and a pin or a reorder arrives as news rather than as the changed row. |
+| Work-stream directory pages (membership, order, pins) | Requested with `list_sidebar` for the first page and `list_workstreams` for later ones, on the workspace socket; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** It stays on the socket and never falls back to a D1 list endpoint, but the first page is requested rather than pushed, and a pin or a reorder arrives as news rather than as the changed row. |
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | HyperSight block output | BlockDashboardAgent socket, checkpoint on connect | Yes. |
 | Transcript pagination | Correlated request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority. |
 | Opening a work stream | `GET /workstreams/:id`, whose response embeds the metadata **and** the first message window, then sockets take over | Partly. One round trip instead of a push, but one — not one per surface. |
-| Workspace profile, members, invitations, connectors, automations, notes, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
+| Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
+| The sidebar's automations and notes | Carried in the `list_sidebar` answer, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | **Partly.** The data is on the socket and no REST read serves it, but the first copy still arrives in answer to a request rather than in the connect payload. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
 | Sending a message | Command frame on the WorkspaceDO command socket, answered with a private receipt | **No** — and deliberately, for now. See below. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
@@ -733,22 +734,30 @@ argued-for carve-out.**
 answered with a single `workspace_sync` event whose topic list is *every* topic
 and whose reason is `initial`. The client reads that as "all of it may be new"
 and refetches each mounted surface, so the home screen's first paint waits on
-`GET /workspace`, `GET /workspace/members`, `GET /automations`, `GET /notes`,
-and `GET /work-opportunities?limit=4`. Three of those five read tables in the
-object that sent the frame; the other two are one D1 read away from it. Closing
-this means giving the connect path a payload rather than a topic list, per-topic
+`GET /workspace`, `GET /workspace/members`, and
+`GET /work-opportunities?limit=4`. One of those three reads tables in the object
+that sent the frame; the other two are one D1 read away from it. Closing this
+means giving the connect path a payload rather than a topic list, per-topic
 waterlines so a later push can order against it, and a client that applies
 frames instead of invalidating query keys. Until then, `initial` is the boundary
 between what this document describes and what runs.
 
-The sidebar is inside that boundary even though it never leaves the socket. The
-first directory page is requested with `list_workstreams` rather than pushed by
-`subscribe`, and a pin, an unpin, or a reorder calls `publishDirectorySync`,
-which emits only the `workstream_directory` topic — so the client invalidates
-and asks again. Row state is the part that is genuinely pushed: a title or a run
-state arrives as a waterlined `workspace_workstream_state`. Closing this half
-means the connect carrying the first page and pin changes publishing the changed
-row.
+The sidebar is inside that boundary even though it never leaves the socket, and
+it is the half-closed case worth reading before adding a surface. Its three
+lists — the first directory page, the automations and the notes — arrive
+together in the answer to one `list_sidebar` request, and the two that used to
+be REST reads are now pushed whole on every write, each carrying a waterline the
+client orders against. What is still divergent is the shape of the first
+delivery: `list_sidebar` is a request naming a page size and a filter, which is
+exactly what [Designing a connect
+payload](#designing-a-connect-payload) says a subscribe frame must not become.
+It replaced three round trips with one rather than with none, and it is not a
+pattern to copy into a fourth list — the next one belongs in the connect
+payload. Pins are the other unclosed half: a pin, an unpin, or a reorder calls
+`publishDirectorySync`, which emits only the `workstream_directory` topic, so
+the client invalidates and asks again. Work-stream row state is genuinely
+pushed, as a waterlined `workspace_workstream_state`. Closing the rest means the
+connect carrying the first page, and pin changes publishing the changed row.
 
 **The connector list re-reads itself on window focus.**
 `apps/desktop/src/renderer/screens/workspace-settings.tsx` sets
