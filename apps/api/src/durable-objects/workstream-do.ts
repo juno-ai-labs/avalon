@@ -470,6 +470,13 @@ export { workstreamDOName } from "./names";
 export class WorkstreamDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
+  /**
+   * Whether an eager directory delivery is already running. In memory only: a
+   * hibernated object wakes with no attempt outstanding, which is the
+   * conservative direction — it costs one redundant call the receiving object
+   * deduplicates, where the opposite would silently suppress the push.
+   */
+  private eagerDirectoryDeliveryInFlight = false;
 
   constructor(
     state: DurableObjectState,
@@ -558,6 +565,47 @@ export class WorkstreamDO extends DurableObject<Env> {
     await this.initialized;
     const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
     return this.ack(parsed.messageId, parsed.payloadHash);
+  }
+
+  /**
+   * Hand this commit's directory effects to WorkspaceDO now, rather than
+   * leaving them for the alarm.
+   *
+   * A harness status change reaches the open work stream immediately, over the
+   * control socket that `broadcastMetadata` writes to. It reaches every *other*
+   * surface — the sidebar row, a second window, another member watching the
+   * same workspace — only once the effect has gone outbox, alarm, Queue,
+   * consumer batch, RPC. Queues is at-least-once and unordered by design, and
+   * the alarm adds its own delay on top, so a transition a person is actively
+   * waiting on arrived seconds after the thing that caused it.
+   *
+   * Nothing about durability moves. The outbox row is still the authority and
+   * is deleted only against a confirmed application; `deliverWorkspaceDirectoryEffects`
+   * returns the rows to `pending` if the call fails, and the alarm and the
+   * Queue remain exactly the delivery guarantee they were. This is one bounded
+   * attempt to get there first — never awaited by the caller, because the
+   * child's effect must not be held open on the workspace being reachable.
+   *
+   * The failure case is worth naming: a failed attempt pushes `not_before`
+   * forward by the retry base, so it delays the Queue path it was racing. That
+   * is acceptable because the two paths end in the same RPC to the same object
+   * — a workspace that refuses this call would have refused the consumer's.
+   */
+  private deliverDirectoryEffectsEagerly(): void {
+    if (this.eagerDirectoryDeliveryInFlight) return;
+    const effects = this.dueWorkspaceDirectoryEffects(25);
+    if (effects.length === 0) return;
+    this.eagerDirectoryDeliveryInFlight = true;
+    this.state.waitUntil((async () => {
+      try {
+        await this.deliverWorkspaceDirectoryEffects(effects);
+      } catch {
+        // Already handled: the delivery path returns its rows to `pending`
+        // rather than throwing, and the alarm owns every retry after this one.
+      } finally {
+        this.eagerDirectoryDeliveryInFlight = false;
+      }
+    })());
   }
 
   /** Maintenance activation fence: do not open a route before WorkspaceDO has its directory row. */
@@ -1405,6 +1453,11 @@ export class WorkstreamDO extends DurableObject<Env> {
       }
       await this.armAlarm();
       await this.broadcastMetadata();
+      // `broadcastMetadata` has just told everyone reading *this* work stream.
+      // The same transition is what a sidebar row, a second window, and every
+      // other member of the workspace are waiting on, and their only path to it
+      // is the workspace socket — so start it here instead of at the alarm.
+      this.deliverDirectoryEffectsEagerly();
       const configuration = this.latestBlockDashboardConfiguration();
       const blockIds = configuration
         ? parseBlockDashboardBlocks(configuration.blocks_json).map((block) => block.id)

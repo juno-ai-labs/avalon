@@ -1549,6 +1549,125 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
+    await seedOpenAuthority();
+    const outsiderId = "00000000-0000-7000-8000-000000000401";
+    // Two members of the same workspace, each with a live session, so the only
+    // thing separating them is participation in the work stream itself.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-21T20:00:00.000Z')`).bind(WORKSPACE_ID, outsiderId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`${SESSION_ID}-${USER_ID}`, USER_ID, WORKSPACE_ID),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`${SESSION_ID}-${outsiderId}`, outsiderId, WORKSPACE_ID),
+    ]);
+    const workspaceStub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspaceStub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const connect = async (userId: string, ticketId: string): Promise<WebSocket> => {
+      const response = await workspaceStub.fetch("https://workspace.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-avalon-workspace-id": WORKSPACE_ID,
+          "x-avalon-placement-affinity": "wnam",
+          "x-avalon-user-id": userId,
+          "x-avalon-session-id": `${SESSION_ID}-${userId}`,
+          "x-avalon-socket-ticket-id": ticketId,
+          "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      if (response.status !== 101) {
+        throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+      }
+      const socket = response.webSocket!;
+      socket.accept();
+      const initial = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      expect(JSON.parse(String((await initial).data))).toMatchObject({ type: "workspace_sync" });
+      return socket;
+    };
+
+    const participant = await connect(USER_ID, "00000000-0000-7000-8000-000000000402");
+    const outsider = await connect(outsiderId, "00000000-0000-7000-8000-000000000403");
+
+    const participantPush = nextMessage(participant);
+    const outsiderPush = nextMessage(outsider);
+    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const at = "2026-08-21T20:00:00.000Z";
+    // A run finishing, as the child reports it. Nothing here touches the
+    // alarm or the Queue: `alarm()` is never called in this test, so a push
+    // that arrives can only have come from the eager delivery.
+    const accepted = await fetchAndDrain(
+      workstreamStub,
+      "https://workstream.test/internal/substream-effects",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: "0",
+          envelopes: [effectEnvelope({
+            kind: "directory_common",
+            title: "Finished while the sidebar watched",
+            description: "Pushed without the Queue",
+            preview: "completed",
+            // Personal, so the outsider is not an audience for it.
+            scope: "personal",
+            state: "completed",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: at,
+            archivedAt: null,
+            originType: "ad_hoc",
+            createdByUserId: USER_ID,
+            latestAttentionOrdinal: 3,
+            unreadTrackingStartOrdinal: 0,
+            createdAt: at,
+            updatedAt: at,
+          }, "00000000-0000-7000-8000-000000000404"),
+          effectEnvelope({
+            kind: "directory_user",
+            userId: USER_ID,
+            isParticipant: true,
+            unreadCount: 1,
+            youAreMentioned: false,
+            listable: true,
+            seenAttentionOrdinal: 2,
+            manualUnreadFromOrdinal: null,
+            manualUnreadGeneration: 0,
+            latestMentionAttentionOrdinal: 0,
+          }, "00000000-0000-7000-8000-000000000405")],
+        }),
+      },
+    );
+    expect(accepted.status).toBe(200);
+
+    // The participant sees the transition itself, not an invalidation to go
+    // and fetch it with.
+    expect(JSON.parse(String((await participantPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: { harnessStatus: "completed", title: "Finished while the sidebar watched" },
+    });
+    // The outsider is subscribed to the same workspace and gets the frame, but
+    // it carries a tombstone rather than the row: a personal work stream they
+    // do not participate in must not become readable because someone else's
+    // run finished.
+    expect(JSON.parse(String((await outsiderPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: null,
+    });
+  });
+
   it("owns and pages the viewer-specific work-stream directory in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

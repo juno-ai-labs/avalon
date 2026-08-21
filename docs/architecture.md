@@ -315,11 +315,22 @@ The socket responsibilities are deliberately not interchangeable:
 Electron's header/detail/sidebar use one shared work-stream cache and one
 per-work-stream ledger keyed by authority generation plus separate common and
 viewer waterlines. The direct WorkstreamDO event gives an open work stream the
-fast path; the Queue-delayed WorkspaceDO event gives inactive rows and global
+fast path; the WorkspaceDO event gives inactive rows and global
 sidebar/discovery surfaces the complete path. Whichever copy arrives second is
 field-wise ignored unless its corresponding waterline is newer. UUIDv7 makes
 the same event searchable and millisecond-time-sortable across both paths, but
 does not replace authority-local waterlines for causal correctness.
+
+WorkstreamDO hands its directory effects to WorkspaceDO **directly, as the
+commit that produced them returns**, rather than leaving them for the alarm and
+the Queue. WorkspaceDO then re-runs the directory query once per subscribed
+socket and pushes `workspace_workstream_state` to each viewer separately, so
+audience is decided per person and per frame: a viewer who may not read the
+work stream receives the same frame carrying `workstream: null`, a versioned
+tombstone, rather than nothing or the row. The Queue is unchanged and remains
+the delivery guarantee — the eager call is one bounded, unawaited attempt to
+arrive first, and the outbox row it would ack is returned to `pending` if it
+fails.
 
 The WorkspaceDO command receipt is private and outside the published version
 sequence. If a connection drops before that receipt, Electron reconnects and
@@ -745,6 +756,52 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-21 — A child's state change reaches the workspace socket immediately
+
+**What changed:** After WorkstreamDO commits a batch of child effects, it hands
+the resulting directory effects straight to WorkspaceDO over the existing RPC
+instead of leaving them for its alarm. The call is bounded to one batch, never
+awaited by the child's response, and swallows its own failures. Everything else
+already existed: `publishWorkstreamState` was already the per-viewer fan-out,
+and the desktop already applied `workspace_workstream_state` through the
+waterline ledger.
+
+**Why:** A run going from running to completed reached the *open* work stream
+at once, over the control socket `broadcastMetadata` writes to. Every other
+surface — the sidebar row, a second window, another member watching the same
+workspace — could only learn about it after the effect had gone outbox, alarm,
+Queue, consumer batch, RPC. Queues is at-least-once and unordered by design and
+the alarm adds its own delay in front of it, so the surfaces a person actually
+watches while waiting for a run were the slowest to know it had finished. The
+push itself was never the missing piece; its trigger was.
+
+**Considered and rejected:** *Publishing state from WorkstreamDO's own control
+socket to every workspace member.* That socket is per-work-stream and only its
+readers are connected to it, so the sidebar of someone with the work stream
+closed is exactly who it cannot reach. *Broadcasting one frame to all workspace
+subscribers and letting clients filter.* Audience here is per person — a
+personal work stream is invisible to non-participants — so a shared frame would
+put rows on the wire for viewers who may not read them, and make the client the
+enforcement point for a visibility rule that belongs to the object. *Replacing
+the Queue with the direct call.* The Queue is the durability guarantee across a
+WorkspaceDO that is evicted, overloaded, or mid-deploy; the eager call is an
+optimization that must be allowed to fail silently. *Awaiting it inside the
+child's effect application.* That would make committing a child's state
+conditional on the workspace being reachable, which inverts the ownership the
+outbox exists to establish.
+
+**Consequences:** The eager path and the Queue path can both deliver the same
+effect; they converge because application is keyed by `messageId` and
+`payloadHash` and the outbox row is deleted only against a confirmed apply. A
+failed eager attempt pushes `not_before` forward by the retry base and so
+delays the Queue path it was racing — accepted because both paths end in the
+same RPC to the same object, and a workspace refusing one would refuse the
+other. The in-flight guard is memory-only, so a hibernated object wakes willing
+to try again; that costs a redundant call the receiver deduplicates, where the
+opposite would silently drop the push. And `publishWorkstreamState` now runs on
+a hot path: it is one directory query per subscribed socket, so the cost of a
+state change scales with connected viewers of that workspace.
 
 ### 2026-08-21 — Canonical reconciliation is served by the room, not refetched
 
