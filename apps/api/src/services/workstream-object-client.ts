@@ -4,7 +4,6 @@ import {
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
-  WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
   type Elicitation,
@@ -14,7 +13,6 @@ import {
   asWorkstreamId,
   type Resource,
   type Workstream,
-  type WorkstreamContext,
   type WorkstreamDetail,
 } from "@avalon/contracts";
 import type {
@@ -234,9 +232,6 @@ export class WorkstreamObjectClient {
     return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
   }
 
-  async context(): Promise<WorkstreamContext> {
-    return WorkstreamContextSchema.parse(await this.request({ operation: "context" }));
-  }
 
   async update(input: z.infer<typeof UpdateWorkstreamRequestSchema>): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "update", input }));

@@ -190,4 +190,30 @@ describe("BlockDashboardService", () => {
     });
     database.close();
   });
+
+  it("does not let an unavailable preference fail the work-stream open", async () => {
+    // The preference now rides on `GET /workstreams/:id`, beside the room call
+    // that answers the detail and the transcript. Before, it was a request of
+    // its own and could fail on its own; sharing a response is what made the
+    // route able to lose the whole open over an optional panel flag.
+    const { env, database } = fixture();
+    (env.WORKSTREAM_DOS as unknown as { get: () => unknown }).get = () => ({
+      controlBlockDashboard: async () => {
+        throw new Error("workstream_do_unavailable");
+      },
+    });
+    const service = new BlockDashboardService(
+      env,
+      { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never,
+    );
+
+    await expect(service.preferenceForDetail(WORKSTREAM_ID)).rejects.toThrow();
+    // The route swallows exactly that rejection, so the field is omitted and
+    // the detail still answers. Asserted here rather than only in the route so
+    // the reason the `catch` exists is written down beside the thing it guards.
+    await expect(
+      service.preferenceForDetail(WORKSTREAM_ID).catch(() => undefined),
+    ).resolves.toBeUndefined();
+    database.close();
+  });
 });

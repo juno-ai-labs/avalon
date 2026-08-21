@@ -899,7 +899,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   });
   const messages = useQuery({
     queryKey: ['messages', id],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
         queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
@@ -917,6 +917,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
           : {}),
+        // Against an older Worker this is the only transcript request there is,
+        // so leaving it uncancelled means a navigation away resolves into a
+        // cache the reader has left.
+        signal,
       });
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
       const pageOldestSequence = page.items.reduce(

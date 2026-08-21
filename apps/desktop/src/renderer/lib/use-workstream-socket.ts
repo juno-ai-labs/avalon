@@ -578,6 +578,14 @@ export function useWorkstreamSocket(
      * first will already carry.
      */
     let snapshotRequestInFlight = false;
+    /**
+     * Whether this socket has yet applied a snapshot.
+     *
+     * Only the first one is an arrival, and only an arrival wants the reader's
+     * resume window; a later snapshot is a repair, and a repair that moved the
+     * transcript backwards would undo what the reader just watched.
+     */
+    let initialSnapshotPending = true;
     const pendingMessagePages = new Map<string, {
       timeout: number;
       resolve: (page: MessagePage) => void;
@@ -777,14 +785,32 @@ export function useWorkstreamSocket(
       if (event.type === 'snapshot') {
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
-        // Whichever window this reader is about to look at. The screen scrolls
-        // to `firstUnreadSequenceNumber`, so when the room sends a resume
-        // window that is the one being rendered and the newest page is the one
-        // that would have been thrown away. Rendering one and paging to the
-        // other keeps the transcript a contiguous run: holding both at once
-        // would put a gap in the middle of an array nothing models a gap in.
-        const feed = event.resumeFeed ?? event.messageFeed;
-        const downloaded = feed.items.map(mapMessage);
+        // The resume window is for *arriving* at a work stream, and only then.
+        //
+        // Every snapshot carries it, including the ones answering a
+        // reconciliation or a reconnect, and this branch replaces the transcript
+        // wholesale. Read acknowledgement stops while the window is unfocused,
+        // so a reader who tabs away during a run keeps a stale first-unread —
+        // and the reconciliation that fires when the run completes would then
+        // throw away the messages they just watched arrive and put a 20-message
+        // window from far behind in their place. Worse, `activeStreams` below
+        // appends rows at the newest sequence, which would leave a hole in the
+        // middle of a transcript nothing models a hole in.
+        //
+        // So: resume only on the first snapshot this socket receives, which is
+        // the initial subscribe. After that the newest page is what continuity
+        // means, and paging back is how a reader reaches anything older.
+        const feed = initialSnapshotPending && event.resumeFeed
+          ? event.resumeFeed
+          : event.messageFeed;
+        initialSnapshotPending = false;
+        // Restores what the deleted REST reconciliation did and the initial
+        // subscribe never has: collapse an elicitation and its durable answer
+        // into one row, and synthesise a row for an open elicitation that has
+        // no canonical message yet. Without it a question the agent is waiting
+        // on vanishes from the transcript the moment the run goes idle.
+        const detail = mapWorkstreamDetail(event.workstream);
+        const downloaded = messagesWithTransientBlocks(feed.items.map(mapMessage), detail);
         queryClient.setQueryData<Message[]>(['messages', workstreamId],
           applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
         queryClient.setQueryData(['messages-cursor', workstreamId], feed.nextCursor);
