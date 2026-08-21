@@ -104,14 +104,19 @@ means turning off `observability.traces` for the Worker.
 The practical consequence is about *destination*, not about instrumentation.
 Traces held in Cloudflare's dashboard sit inside the same regional trust
 boundary as the D1 database the content already lives in. An OTLP export sends
-them somewhere else, and an export destination is account configuration — it
-covers **both** regional Workers at once. Today no EU telemetry leaves the
-region: `POSTHOG_HOST` is set only in `wrangler.global.jsonc`, the EU Worker
-holds no destination credential, and [`telemetry.md`](telemetry.md) records that
-an EU PostHog project would require a new decision. A trace export configured
-without noticing would route around that boundary rather than change it. Note
-too that `persist: false` makes this worse rather than better: it removes the
-Cloudflare copy and leaves the third party holding the only one.
+them somewhere else, and the two halves of that live in different places: the
+**destination** is account configuration, shared by everything in the account,
+while the **attachment** is per Worker — `observability.<signal>.destinations` in
+one `wrangler.*.jsonc`. Creating a destination sends nothing on its own. A
+Worker exports when, and only when, its own config names one.
+
+That is what protects the EU boundary, and it is a weaker protection than it
+sounds: it is the absence of a line in one file. The EU Worker holds no
+destination credential and [`telemetry.md`](telemetry.md) records that an EU
+PostHog project would require a new decision, but neither of those stops an
+attachment being added by someone copying the Global config. Note too that
+`persist: false` makes this worse rather than better: it removes the Cloudflare
+copy and leaves the third party holding the only one.
 
 **This was decided on 2026-08-20, and only for Global.** That Worker now exports
 logs and traces to the US PostHog project, message content in the Durable Object
@@ -308,7 +313,11 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 **What changed:** Recorded that an OTLP destination is account configuration but
 the opt-in is per Worker, through `observability.<signal>.destinations` in each
 `wrangler.*.jsonc`. The page previously said "nothing in this repository decides
-where telemetry is sent", which was wrong in the way that mattered.
+where telemetry is sent", which was wrong in the way that mattered — and, in a
+first pass at this entry, said so in a new section while two earlier passages
+here and in [`performance-tracing.md`](performance-tracing.md) still claimed a
+destination "covers both regional Workers at once". Review caught the
+contradiction; both passages now describe the split.
 
 **Why:** Pointing Global at PostHog while leaving EU alone depends entirely on
 that distinction. Read the old sentence and the only conclusions available were
@@ -318,7 +327,11 @@ say — either of which turns a per-region decision into an account-wide one.
 **Consequences:** The warnings on this page about an export crossing the EU
 boundary now describe a thing that has to be done deliberately in
 `wrangler.eu.jsonc`, rather than something that could happen as a side effect of
-account configuration.
+account configuration. That cuts both ways, and the weaker half is the one worth
+holding on to: what keeps EU telemetry in the EU is the absence of one line in
+one file, which a copy-paste from the Global config would supply. The assertion
+in `apps/api/test/telemetry-export-destinations.test.ts` exists because prose
+cannot fail a build.
 
 Shipped in #207.
 
