@@ -13,6 +13,7 @@
     "env:sync": "node scripts/sync-dev-env.mjs",
     "tokens:build": "node scripts/build-theme-assets.mjs",
     "tokens:check": "node scripts/build-theme-assets.mjs --check",
+    "docs:check": "node scripts/check-document-headings.mjs",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
     "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs",

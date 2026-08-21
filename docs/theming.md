@@ -618,6 +618,31 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-21 — A rebase can demote a heading, and nothing noticed
+
+**What changed:** the eight changelog headings a rebase had truncated are
+restored, and `scripts/check-document-headings.mjs` fails the build on the shape
+they left behind.
+
+**Why:** rebasing this branch onto a `main` 124 commits ahead ate `### 2026-0`
+off the front of eight headings — seven here and one in `docs/security.md` that
+was not even this branch's entry. The result is still valid Markdown, so nothing
+failed: the line stays in the file, keeps its text, and merely stops being a
+heading. It leaves the outline, and the entry it titled is swallowed into the
+one above it. `docs/module-documents.md` makes the changelog the one section a
+module document may not lose, so it earns a gate.
+
+**Why the check is shaped the way it is:** it looks for the residue — a
+date-like fragment followed by an em dash on a line that is not a heading —
+rather than trying to validate headings in general. A general rule argues with
+every document that has a reason to be unusual; this one only fires on damage
+that has actually occurred. Fenced code is skipped, so a document explaining
+this failure can show it.
+
+**What a future change has to respect:** a merge conflict in prose does not
+announce itself the way one in code does. There is no parser to reject it and no
+test that reads for sense. When a rebase touches documents, diff the headings.
+
 ### 2026-08-21 — The main process carries the choice, not the appearance
 
 **What changed:** `theme:set-window` now sends a `ThemeChoice`, the settings
@@ -709,7 +734,7 @@ exactly that. A level below the prose is not; that is a caption.
 Terra and Terra Light were measured before and after across every heading,
 margin, weight and padding, and are unchanged in all of them.
 
-8-20 — Choosing a theme repaints every window, not just the one you chose it in
+### 2026-08-20 — Choosing a theme repaints every window, not just the one you chose it in
 
 **What changed:** the main process relays a theme change to every other open
 window, and each re-reads the stored choice and re-applies it.
@@ -736,7 +761,7 @@ echoing between windows.
 Verified with two real windows: Terra in both, Air chosen in Settings, both at
 `air-dark` a moment later.
 
-8-20 — The System swatch shows both halves, and the preview shows who speaks where
+### 2026-08-20 — The System swatch shows both halves, and the preview shows who speaks where
 
 **What changed:** three things in the Settings preview, and one name.
 
@@ -768,7 +793,7 @@ the bubble and was still an inline span, where `height` and `width` do nothing.
 stored choice naming the old family is migrated rather than dropped, the same way
 a flat pre-axes choice is.
 
-8-20 — A theme choice has two axes, and the appearances are named
+### 2026-08-20 — A theme choice has two axes, and the appearances are named
 
 **What changed:** the picker was one flat list — System, Light, Dark, Airy, Airy
 Dark. It is now two: a lighting row (System / Light / Dark) above a row of
@@ -800,7 +825,7 @@ difference between a rename and a reset.
 `data-theme-family` and `data-theme-mode`. Anything that wants to know whether
 `dark` is deliberate or a resolved `system` reads the mode.
 
-8-20 — Airy became two themes, and the light one multiplies
+### 2026-08-20 — Airy became two themes, and the light one multiplies
 
 **What changed:** the theme formerly called `airy` is now `airy-dark`, and
 `airy` is its light counterpart — warm paper, the same structure, the same four
@@ -836,7 +861,7 @@ Airy removes something, both variants remove it.
 Nothing is deployed, so nobody is switched from under themselves; if that changes
 before release, the rename needs a migration rather than a note.
 
-8-20 — The navigation marks selection with a line, and the composer is a rule
+### 2026-08-20 — The navigation marks selection with a line, and the composer is a rule
 
 **What changed:** two component shapes became a theme's decision.
 
@@ -873,7 +898,7 @@ before it changes. The reference's composer also labels its send control `SEND`
 in letterspaced caps rather than drawing an arrow; that is markup, not a value,
 and no token was invented to fake it.
 
-8-20 — A theme may bring fonts and a document that moves
+### 2026-08-20 — A theme may bring fonts and a document that moves
 
 **What changed:** three things a theme could not previously carry.
 
@@ -920,7 +945,7 @@ against a stubbed fetch rather than a live host, because a shipped theme that
 fetched a font would put a first-run flash and a first-run request into every
 install to demonstrate a feature nobody had asked for yet.
 
-8-20 — Airy is lit by two circles, not two corners
+### 2026-08-20 — Airy is lit by two circles, not two corners
 
 **What changed:** `sys.backdrop.image` in Airy is two overlapping amber discs
 sitting in the field — one at 67%/28%, one lower and left of centre at 52%/84% —
