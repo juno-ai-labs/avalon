@@ -878,13 +878,17 @@ export class WorkspaceScheduler extends DurableObject<Env> {
           workstreamId,
         });
         await executionEnv.DB.prepare(
+          // `scope` is stated rather than defaulted, for the reason
+          // `AutomationService.createRun` states it: an automation's work stream
+          // carries no participants, so the participant-only default would leave
+          // it readable by nobody at all.
           `INSERT INTO workstreams (
              id, workspace_id, title, objective, email_address, email_route_status, origin_type,
              created_by_user_id, automation_subscription_id, automation_run_id,
              planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at,
-             model_override
+             model_override, scope
            ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, ?7,
-                     'scheduled', ?8, ?8, ?8, NULL, ?9)`
+                     'scheduled', ?8, ?8, ?8, NULL, ?9, 'workspace')`
         )
           .bind(
             workstreamId,
