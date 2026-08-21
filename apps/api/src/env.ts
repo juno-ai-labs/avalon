@@ -22,7 +22,6 @@ import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
-import type { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
 import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
@@ -48,7 +47,6 @@ export interface Env {
   BLOCK_DASHBOARD_AGENTS: DurableObjectNamespace<BlockDashboardAgent>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
-  WORKSPACE_SCHEDULERS: DurableObjectNamespace<WorkspaceScheduler>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -265,7 +263,6 @@ const EnvContractSchema = z.object({
   BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
-  WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace<WorkspaceScheduler>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),

@@ -27,7 +27,7 @@ import { createDaytonaTerminalRuntime } from "./runtime";
 import { createTerminalRepositorySelector } from "./repository-selection";
 import { createGitHubTerminalCatalogGateway } from "./workstream-state";
 import { createTerminalToolExecutors, TerminalToolError } from "./tools";
-import { refreshWorkspaceSchedulerAlarm } from "../workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "../workstream-wakeup-service";
 import {
   emitProductUsageTelemetry,
   telemetryJourneyDuration,
@@ -59,7 +59,7 @@ export async function createAvalonTerminalPlugin(
     terminalPort,
     provider,
     undefined,
-    (workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId),
+    (workspaceId) => refreshWorkspaceSchedule(env, workspaceId),
     configuration.emergencyDisabled,
     async (context, observation) => emitProductUsageTelemetry(env, {
       workspaceId: asWorkspaceId(context.workspaceId),

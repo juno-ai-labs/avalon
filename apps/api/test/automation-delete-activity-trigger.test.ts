@@ -7,7 +7,7 @@ import type * as AgentModelFlags from "../src/services/agent-model-flags";
 import { __testing } from "../src/queues/activity-consumer";
 import { AutomationService } from "../src/services/automation-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
 const createWorkflow = vi.hoisted(() => vi.fn(async () => ({ status: 200, bodyJson: "{}" })));
@@ -89,10 +89,6 @@ function envFor(database: DatabaseSync, objectStore: DatabaseSync): Env {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-    },
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: { dispatchRun: createWorkflow },
     }),

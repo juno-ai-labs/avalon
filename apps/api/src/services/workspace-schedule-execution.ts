@@ -1,13 +1,14 @@
 /**
  * What a workspace's alarm actually runs.
  *
- * These functions were the body of the `WorkspaceScheduler` Durable Object.
- * They are here, as plain functions over a context, because the object that
- * arms the alarm is now WorkspaceDO — the object that already owns every table
- * they read. A separate scheduler object had to reach those tables through
- * routed SQL and reach the work-stream directory through an RPC hop; running
- * in-object turns both into local reads, and removes the window in which a
- * schedule row and the alarm meant to fire it lived in two different objects.
+ * These functions were the body of a separate per-workspace scheduler Durable
+ * Object, deleted in the same change that moved them here. They are plain
+ * functions over a context because the object that arms the alarm is now
+ * WorkspaceDO — the object that already owns every table they read. The
+ * scheduler had to reach those tables through routed SQL and the work-stream
+ * directory through an RPC hop; running in-object turns both into local reads,
+ * and removes the window in which a schedule row and the alarm meant to fire it
+ * lived in two different objects.
  *
  * Nothing here decides *when* to run: `workspaceScheduleTargets` reports what
  * is due and `runWorkspaceScheduleTarget` runs exactly one target. The single

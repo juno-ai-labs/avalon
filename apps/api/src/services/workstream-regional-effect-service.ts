@@ -24,7 +24,7 @@ import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 function workspaceTopicsForEffect(
   effect: WorkstreamRegionalEffectEnvelope["effect"],
@@ -233,13 +233,13 @@ export async function processWorkstreamNotificationIntent(
     ).bind(intentId).first<{ state: string }>();
     if (!settled) return "skipped";
     if (settled.state === "skipped") {
-      await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+      await refreshWorkspaceSchedule(env, workspaceId);
       return "skipped";
     }
     if (settled.state === "delivered") {
       // A prior delivery may have committed before scheduler refresh failed.
       // Retrying the Queue item repairs that alarm edge without re-sending.
-      await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+      await refreshWorkspaceSchedule(env, workspaceId);
       return "delivered";
     }
     return "busy";
@@ -363,7 +363,7 @@ async function settleNotificationIntent(
             delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE NULL END
       WHERE intent_id = ? AND lease_id = ?`,
   ).bind(state, at, state, at, intentId, leaseId).run();
-  await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+  await refreshWorkspaceSchedule(env, workspaceId);
 }
 
 /** Remove an acknowledged DO outbox row; the replay receipt stays in WorkspaceDO. */
