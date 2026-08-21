@@ -221,7 +221,14 @@ so a socket presenting someone else's session is not permitted by it.
 Concurrent publications join the sweep already running instead of each starting
 their own — a directory batch fans out to one publication per changed work
 stream, and all of them would otherwise pass the interval check before the first
-sweep recorded itself. When the query
+sweep recorded itself. Publications are also serialized: `publishSync`
+allocates its waterline and sends inside a queue, one at a time. The sweep
+between those two steps is a D1 round trip and the input gate is open across it,
+so without the queue a cheaper concurrent publication — one that skips the sweep
+because the interval is fresh — allocates the higher waterline and sends first,
+and the desktop's `waterline <= lastWaterline` guard then discards the parked
+payload along with every topic it named. A `member_directory` publication is the
+guaranteed victim, because forcing the sweep is what it does. When the query
 itself fails during a retraction the object closes every socket with `1011`
 instead: a reconnect is authorized at connect time, so everyone still entitled
 returns within a second rather than being stranded on an access-revoked screen by
@@ -681,6 +688,7 @@ misrouted product statement now fails because the table or column is absent.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
+- **Sync waterlines are allocated and sent one publication at a time.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. Anything that lets two publications interleave between their allocation and their send silently drops the slower one's invalidation.
 - **A socket that has stopped being authorized is closed, not merely skipped.** Every role that pushes to a listening socket bounds its authorization: `SubstreamAgent` and `WorkspaceDO` sweep the connected set before publishing — immediately on a retraction, otherwise once per 30 seconds — and `BlockDashboardAgent` revalidates its attachment after 60. A push may then trust an open socket, which is what keeps an authorization query off the token path. Without the sweep a revoked session keeps receiving whatever that object publishes until the window closes.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** HyperSight attachments carry only a bounded 60-second authorization cache and receive explicit parent sweeps; no long-lived ticket or attachment is continuing authority for a new write.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1034,7 +1042,15 @@ the cost proportional to publication rather than to traffic. Also rejected:
 asking `sessionAuth` once per socket, which is N queries per sweep where one
 batched query answers the whole connected set.
 
-**Consequences:** A push may trust an open socket, and that is now a rule the
+**Consequences:** Sync publication is serialized, and has to stay that way. The
+sweep introduced an await between the waterline allocation and the send, which
+let a concurrent publication overtake a parked one and take its invalidation
+down with it. The obvious repair — moving the sweep ahead of the allocation so
+nothing awaits between allocation and send — was tried and abandoned: it makes
+workerd die with `kj/async.c++: Promise callback destroyed itself` partway
+through the runtime suite, reproducibly, while the queue is stable over repeated
+runs. A future change that wants to remove the queue has to answer that crash
+first. A push may trust an open socket, and that is now a rule the
 next socket-bearing object inherits rather than a property of this one — closing
 on retraction is the mechanism, not a per-frame check. Anything that retracts
 access needs a topic in `ACCESS_RETRACTING_TOPICS` to be enforced promptly;
