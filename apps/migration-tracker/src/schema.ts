@@ -1,9 +1,10 @@
 /**
  * The registry's own SQLite schema, and the append-only runner that applies it.
  *
- * Version 1 is still unshipped, so it is edited in place rather than appended
- * to; once this Worker is deployed the same append-only rule applies here as in
- * `apps/api`.
+ * Version 1 is deployed, so it is now frozen: every later change is appended as
+ * a new entry, exactly as in `apps/api`. Editing a shipped statement would be
+ * applied to a fresh registry and skipped on the live one, which is the one
+ * failure mode a migration ledger exists to prevent.
  *
  * This is a deliberate second copy of the runner in
  * `apps/api/src/durable-objects/sqlite-migrations.ts`, not an import: the
@@ -148,6 +149,25 @@ const V1_NAMESPACES = `
   ) STRICT
 `;
 
+/**
+ * When a namespace stopped existing in the account.
+ *
+ * Added in v2 because v1 had no way to say it: absence was decided per
+ * namespace, inside the loop over the namespaces a sweep returned, so a class
+ * deleted from the Worker simply stopped appearing and nothing ever visited it
+ * again. Its objects kept whatever status they last held — `current`, or worse,
+ * `behind` — with a frozen sweep time, and a retired component went on
+ * contributing a red count that nobody could clear.
+ *
+ * A column rather than a delete, for the same reason objects are marked
+ * `absent` rather than removed: "this class used to exist and no longer does"
+ * is the answer to a question somebody asks during an incident, and a deleted
+ * row cannot answer it. It is cleared again if the namespace comes back.
+ */
+const V2_NAMESPACE_RETIREMENT = `
+  ALTER TABLE durable_object_namespaces ADD COLUMN retired_at INTEGER
+`;
+
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
   description: "durable object inventory, migration reports, and sweep receipts",
@@ -170,6 +190,10 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
     `CREATE INDEX IF NOT EXISTS migration_events_by_time
        ON migration_events (occurred_at DESC)`,
   ],
+}, {
+  version: 2,
+  description: "retire namespaces that have left the account",
+  statements: [V2_NAMESPACE_RETIREMENT],
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;

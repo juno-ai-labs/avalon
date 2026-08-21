@@ -97,6 +97,17 @@ An object that a *complete* namespace listing no longer contains is marked
 `absent`. A listing that was truncated at the page cap, or that failed, marks
 nothing: it says nothing about the objects it did not reach.
 
+A whole namespace can leave too, when a class is deleted from the Worker. That
+is a second pass rather than the same one, because the first iterates the
+namespaces the sweep *returned* and a deleted namespace is not among them: after
+a `complete` sweep, any namespace the registry knows and the sweep did not
+return is stamped `retired_at`, and its objects are marked `absent`. Both guards
+on that pass exist to stop it retiring the fleet — the sweep must be `complete`,
+and it must have found at least one namespace, since a successful call returning
+an empty list would otherwise read as "the account has no Durable Objects". A
+namespace that comes back — a rollback restoring a binding — clears its
+retirement and its objects' absence on the next sweep.
+
 ### What the site shows
 
 The two sources join on the Durable Object ID, which is the only identifier both
@@ -120,6 +131,15 @@ forever and make the count worthless for its actual job — spotting an API obje
 that should have reported and has not. `REPORTING_CLASSES` in
 `apps/migration-tracker/src/registry.ts` is the list, and it has to stay in step
 with the call sites of `withMigrationReport`.
+
+A component is shown as **retired** when its class no longer has any namespace
+in the account. That is deliberately not the same test as "all of its objects
+are absent": a class whose instances are created on demand can legitimately have
+none alive, and only the namespace evidence separates a component that is idle
+from one that has been deleted. A retired component and a retired namespace both
+stay in their tables, dimmed and sorted last — what used to be deployed is
+exactly what somebody wants to see when a class disappeared and its objects went
+absent on the same sweep.
 
 The **head** is the highest version a component has been seen running in a
 region. Nothing in the account publishes it, so the tracker learns it from the
@@ -166,6 +186,9 @@ full report history. Every page has a JSON twin under `/api/`.
   or a partial rollback would mark a stale fleet current.
 - **A truncated or failed namespace listing marks nothing absent.** Otherwise
   the sweep erases exactly the objects a large namespace is most likely to hide.
+- **A sweep that returned no namespaces at all retires nothing.** It is the same
+  claim as a failed listing arriving by a different route, and acting on it
+  would mark every object in the account absent at once.
 - **Every route on the site is authorized, including the JSON ones.** There is no
   second credential and no exempt path; an unconfigured Access setup refuses
   every request rather than serving the fleet's shape unauthenticated.
@@ -263,7 +286,15 @@ component and region), `durable_object_namespaces`, and `inventory_sweeps`
 
 Absence is decided by comparing an object's `last_sweep_id` against the current
 sweep's row id, not by timestamp: two sweeps inside one millisecond would make a
-clock comparison silently skip the step.
+clock comparison silently skip the step. Namespace retirement is decided by set
+difference instead — the namespaces the registry holds, minus the ones the sweep
+returned — because a namespace that is gone has no row in the current sweep to
+compare against.
+
+The registry's own schema is at v2 and is append-only from v1 onwards, which is
+now deployed: the retirement column reaches the live object as an `ALTER TABLE`
+inside the constructor's `blockConcurrencyWhile`, so a statement it rejected
+would take the tracker down for every read rather than just the new column.
 
 ## Regional impact
 
@@ -372,6 +403,52 @@ due schedules, watches, and wake-ups, or an operator pass walking the fleet to
 seed or repair it.
 
 ## Changelog
+
+### 2026-08-21 — A deleted class stops looking deployed
+
+**What changed:** registry schema v2 adds `retired_at` to
+`durable_object_namespaces`, and a completed sweep now retires every namespace
+it did not return, marking that namespace's objects `absent`. The Components
+table gained an Absent count and a retired marker, and the site's `Build` column
+was renamed `Worker version`.
+
+**Why:** absence was decided inside the loop over the namespaces a sweep
+returned, so it could only ever reach an object whose *namespace* was still
+there. Deleting a Durable Object class from the Worker — or deleting the script
+— made its namespace vanish from the listing, and nothing visited its objects
+again. They kept whatever status they held on the day the class was removed,
+with a frozen sweep time; the namespace kept its row; the component kept its
+row and its counts. A class that happened to be `behind` when it was retired
+stayed red forever, with nothing an operator could do to clear it, which is the
+worst possible failure for a dashboard whose entire job is that a red count
+means act.
+
+**The alternative that was rejected** was deleting the rows. "This class used to
+exist and no longer does" is the answer to a question somebody asks during an
+incident — usually while working out whether a deploy removed something it
+should not have — and a deleted row cannot answer it. Objects were already
+marked `absent` rather than removed for that reason; namespaces now match.
+
+**What a future change has to respect:** the two guards on the retirement pass
+are the whole safety argument, because its blast radius is the entire fleet. It
+runs only for a `complete` sweep, and only when that sweep found at least one
+namespace. The second is not redundant: a `failed` namespace listing arrives as
+`namespaces: []`, and so does a successful call that returns an empty list, and
+neither is evidence that the account was emptied. Both are covered by tests that
+were proved to fail without them.
+
+`retired` on a component is deliberately decided by the namespaces, not by the
+object counts. Every object being absent means only that no instance is alive
+right now, which is ordinary for a class whose instances are created on demand;
+the class having no namespace left means it is gone. Deriving it from the counts
+instead is a one-line change that passes every test but one, and that test —
+"does not call a component retired merely because its objects are gone" — is
+there to catch exactly it.
+
+The rename is UI-only. `worker_version_id` keeps its name in the schema, the
+report contract, and the JSON API; only the four labels changed. `Build`
+suggested a commit, and the value is `APP_VERSION` from the API's Wrangler
+files — a hand-maintained version string, not a build identifier.
 
 ### 2026-08-21 — The hourly sweep starts running
 

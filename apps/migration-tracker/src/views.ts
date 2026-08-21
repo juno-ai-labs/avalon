@@ -117,6 +117,9 @@ const STYLES = `
     color: var(--unreported); background: var(--unreported-bg); }
   .pill.current, .pill.applied { color: var(--current); background: var(--current-bg); }
   .muted { color: var(--muted); }
+  /* A retired namespace or component is kept for the record, not for the
+     dashboard's headline: legible, obviously not live. */
+  tr.retired td { opacity: 0.55; }
   .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
   .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
                    color: var(--muted); }
@@ -234,14 +237,17 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
               <thead>
                 <tr>
                   <th>Component</th><th>Class</th><th>Region</th><th>Head</th>
-                  <th>Build</th><th>Current</th><th>Behind</th><th>Failed</th>
-                  <th>Unreported</th><th>Seen</th>
+                  <th>Worker version</th><th>Current</th><th>Behind</th><th>Failed</th>
+                  <th>Unreported</th><th>Absent</th><th>Seen</th>
                 </tr>
               </thead>
               <tbody>
                 ${overview.components.map((component) => html`
-                  <tr>
-                    <td><a href="/objects?component=${component.component}"><code>${component.component}</code></a></td>
+                  <tr class="${component.retired ? "retired" : ""}">
+                    <td>
+                      <a href="/objects?component=${component.component}"><code>${component.component}</code></a>
+                      ${component.retired ? html` <span class="pill absent">retired</span>` : ""}
+                    </td>
                     <td>${component.className}</td>
                     <td>${component.region}</td>
                     <td class="mono">v${component.latestVersion}</td>
@@ -250,6 +256,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                     <td>${component.behind > 0 ? html`<span class="pill behind">${component.behind}</span>` : "0"}</td>
                     <td>${component.failed > 0 ? html`<span class="pill failed">${component.failed}</span>` : "0"}</td>
                     <td class="muted">${component.unreported}</td>
+                    <td class="muted">${component.absent}</td>
                     <td class="muted">${timestamp(component.observedAt)}</td>
                   </tr>`)}
               </tbody>
@@ -282,16 +289,25 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
           ? html`<p class="empty">No inventory sweep has enumerated the account yet.</p>`
           : html`<table>
               <thead>
-                <tr><th>Script</th><th>Class</th><th>Storage</th><th>Objects</th><th>Swept</th></tr>
+                <tr>
+                  <th>Script</th><th>Class</th><th>Storage</th><th>Objects</th><th>Swept</th>
+                </tr>
               </thead>
               <tbody>
                 ${overview.namespaces.map((namespace) => html`
-                  <tr>
-                    <td><a href="/objects?script=${namespace.scriptName}">${namespace.scriptName}</a></td>
+                  <tr class="${namespace.retiredAt === null ? "" : "retired"}">
+                    <td>
+                      <a href="/objects?script=${namespace.scriptName}">${namespace.scriptName}</a>
+                      ${namespace.retiredAt === null
+                        ? ""
+                        : html` <span class="pill absent">retired</span>`}
+                    </td>
                     <td>${namespace.className}</td>
                     <td class="muted">${namespace.usesSqlite ? "SQLite" : "key-value"}</td>
                     <td>${namespace.objectCount}</td>
-                    <td class="muted">${timestamp(namespace.lastSweptAt)}</td>
+                    <td class="muted">${namespace.retiredAt === null
+                      ? timestamp(namespace.lastSweptAt)
+                      : html`gone since ${timestamp(namespace.retiredAt)}`}</td>
                   </tr>`)}
               </tbody>
             </table>`}
@@ -401,7 +417,7 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
               ? ""
               : html` <span class="muted">of v${object.componentLatestVersion}</span>`}
           </dd>
-          <dt>Build</dt><dd class="mono">${object.workerVersionId ?? "—"}</dd>
+          <dt>Worker version</dt><dd class="mono">${object.workerVersionId ?? "—"}</dd>
           <dt>Stored data</dt><dd>${object.hasStoredData ? "yes" : "no"}</dd>
           <dt>First seen</dt><dd class="muted">${timestamp(object.firstSeenAt)}</dd>
           <dt>Last swept</dt><dd class="muted">${timestamp(object.lastSweptAt)}</dd>
@@ -476,7 +492,7 @@ function eventTable(
     <thead>
       <tr>
         <th>When</th>${withObject ? html`<th>Object</th>` : ""}<th>Status</th>
-        <th>Version</th><th>Head</th><th>Applied</th><th>Build</th><th>Detail</th>
+        <th>Version</th><th>Head</th><th>Applied</th><th>Worker version</th><th>Detail</th>
       </tr>
     </thead>
     <tbody>
