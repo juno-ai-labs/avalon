@@ -32,6 +32,7 @@ serve workspace product state or transcripts after cutover.
 | --- | --- |
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, work-stream, and substream object names. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative workspace product database, work-stream directory, hibernating synchronization/command socket, typed product SQL RPC, local product alarm, bounded topic replay, and one-time workspace-ticket receipts. |
+| `apps/api/src/durable-objects/workspace-socket-authorization.ts` | The one question a workspace-socket sweep asks D1 — which connected session-and-user pairs may still hold a socket — batched under D1's bound-parameter limit. Separate from the object so it can be proved against the checked-in migrations in the Node suite. |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
@@ -209,9 +210,18 @@ send: immediately when the payload names a topic that can retract access
 (`member_directory` today), and otherwise at most once per 30 seconds
 (`AUTHORIZATION_REVALIDATE_MS`). The sweep asks the same question the connection
 was admitted with — an unrevoked, unexpired regional session joined to an active
-membership in this region — of every connected session at once, in batches of 48
-to stay inside D1's 100-parameter statement limit, and closes the sockets that
-fail it with `1008`, which is the code the desktop reads as final. When the query
+membership in this region — of every connected identity at once, in batches of
+48 to stay inside D1's 100-parameter statement limit, and closes the sockets
+that fail it with `1008`, which is the code the desktop reads as final. An
+identity is a session *and* a user, never a session alone: the development
+bypass issues the id `development` to everyone, so a sweep keyed on the session
+would let one member's membership decide every local window's fate. The answer
+is also keyed by the session row's own `user_id` rather than the socket's claim,
+so a socket presenting someone else's session is not permitted by it.
+Concurrent publications join the sweep already running instead of each starting
+their own — a directory batch fans out to one publication per changed work
+stream, and all of them would otherwise pass the interval check before the first
+sweep recorded itself. When the query
 itself fails during a retraction the object closes every socket with `1011`
 instead: a reconnect is authorized at connect time, so everyone still entitled
 returns within a second rather than being stranded on an access-revoked screen by
@@ -1033,7 +1043,13 @@ reason the interval is short. The batch size of 48 exists because D1 permits 100
 bound parameters per statement and the fixed predicate takes four. The
 development bypass in `sessionAuth` admits a socket with no session row, so the
 sweep carries a matching membership-only branch; a change to either has to move
-both or local windows close on the first publication.
+both or local windows close on the first publication. The unit a sweep decides
+about is a session *and* a user, because that bypass gives every user the same
+session id — a future authorization path that introduces another shared
+credential inherits the same requirement. Sweeps coalesce, so a caller may
+assume publishing does not multiply the query, but a *certain* caller never
+joins an uncertain sweep: an uncertain sweep leaves everyone connected when its
+query fails, which is the wrong answer for a retraction.
 
 Shipped in #220.
 
