@@ -423,11 +423,15 @@ filters for the same reason the transport is a queue: neither side's release
 should wait on the other's. The commands above are the manual path, for a first
 deployment or a rollback.
 
-The tracker workflow runs against a **`migration-tracker-production`**
-environment, which needs `CLOUDFLARE_API_TOKEN` as a secret (Account · Workers
-Scripts · Edit, and Account · Queues · Edit) and `CLOUDFLARE_ACCOUNT_ID` as a
-variable. This is a *deployment* token and a different one from the read-only
-token in step 3 below, which the Worker uses at runtime for the sweep.
+The tracker workflow runs against the same **`api-production`** environment as
+the API deploy, and uses the same `CLOUDFLARE_API_TOKEN` secret and
+`CLOUDFLARE_ACCOUNT_ID` variable. It needs no permission the API deploy does not
+already have: Workers Scripts to upload, and Queues to attach a consumer, which
+the API deploy uses for its own activity queues. A separate environment would be
+a second copy of the same credential to rotate and would isolate nothing, since
+a token that can deploy `avalon-api-global` can already deploy anything in the
+account. Note this is the *deployment* token, and a different one from the
+read-only runtime token in step 3 below, which the Worker uses for the sweep.
 
 After deploying, the workflow proves the deployment rather than trusting the
 upload:
