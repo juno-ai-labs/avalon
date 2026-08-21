@@ -18,7 +18,13 @@ The product reason is the whole reason: Avalon should feel like the data was
 already there. A screen that renders from a payload that arrived unasked is
 instant; a screen that mounts, discovers it needs four things, asks for them,
 and reflows as each lands is a web page. Read this before adding an endpoint, a
-socket frame, or a client query.
+streamed event, or a client query.
+
+Every section states the principle first and ends with a **do and don't**
+distillation. The principles are meant to survive this codebase: they apply to a
+stream nobody has built yet, and Avalon's current mechanisms appear as worked
+examples of them rather than as the rule itself. Where a section describes what
+the code does today, it says so.
 
 The mechanics of each channel live elsewhere and are not restated here: how a
 socket is admitted is [`realtime-sockets.md`](realtime-sockets.md), what each
@@ -37,20 +43,21 @@ follows it is a client spending a round trip to tell the server something the
 server just proved. That is the cost of a question whose answer was already
 determined.
 
-**The state is already in the object that holds the socket.** WorkspaceDO owns
-the work-stream directory, the suggestion tables (`work_opportunities`,
-`suggested_work_sets`), automations, notes, resources, and connector
-connections. It is a single-threaded object with that data in its own SQLite,
-and the socket is already open to it. A REST read of the same rows is a second
-entry into the same object, through a Worker, with a fresh authorization pass —
-to produce bytes the object could have written to a socket it is holding.
+**The state is already in the authority that holds the socket.** In Avalon that
+is WorkspaceDO, which owns the work-stream directory, the suggestion tables
+(`work_opportunities`, `suggested_work_sets`), automations, notes, resources,
+and connector connections in its own SQLite. The general form of the argument
+matters more than the example: when the process holding the connection is also
+the process holding the rows, a REST read of those rows is a second entry into
+the same place, through another hop, with a fresh authorization pass — to
+produce bytes that could have been written to a connection already open.
 
 **One channel is one order.** Two channels means two orders, and the interesting
 bugs live in the gap: a refetch triggered by an invalidation that overtakes a
 push, a screen patched by a socket event and then reverted by a slower response,
 a cache entry written by two producers with different shapes. When the same
-authority sends the same shape down one ordered channel with its own waterline,
-the client's rule is a comparison, not a reconciliation.
+authority sends the same shape down one ordered channel carrying its own
+version, the client's rule is a comparison, not a reconciliation.
 
 **Changing data is the common case, not the exception.** A work stream's title
 lands when the model names it; a run's state moves several times a minute;
@@ -64,6 +71,14 @@ mount.
 screen the person using it reports. A refetch storm is latency spread over
 whichever surfaces happened to be mounted, which presents as "the app is slow
 today" and needs tooling this repository does not have to attribute.
+
+| Do | Don't |
+| --- | --- |
+| Choose the channel by who owns the field and how often it changes. | Choose by what is reachable from the component or route you happen to be editing. |
+| Push anything an open window keeps looking at, from the authority that owns it. | Add a REST read for the first value of a field the socket will push later — that is two code paths to one field, and the second one is used once per mount. |
+| Let the connection's proven identity decide what is sent. | Make the client restate identity, scope, or filters the handshake already established. |
+| Keep one authority per field, and let it be the only sender. | Serve the same field from a second projection because that one was easier to reach. |
+| Let a stale screen be the failure mode, since somebody reports it. | Accept a failure mode that only shows up as diffuse latency; nothing here can attribute that. |
 
 ## Push before it is asked for
 
@@ -80,6 +95,8 @@ different from an ordinary subscription:
   the server is not proactive — it is an HTTP API with a persistent connection.
 - **A cold connect and a resume differ only in the position.** The server
   decides what to send from what the client has, not from a different code path.
+  Two paths drift, and the one that drifts is always the one that runs less
+  often.
 
 ### What opening a workspace owes the client
 
@@ -121,6 +138,217 @@ not move any other reader's cursor. That is a pull, but it is a pull the person
 asked for by scrolling — which is exactly the case this document does not try to
 push.
 
+### Designing a connect payload
+
+The two lists above are what Avalon's two connects owe today. The way to derive
+the next one:
+
+1. **Start from the screen, not the schema.** List what the surface renders in
+   its first frame. That list is the payload; anything else is a later concern.
+2. **Cut anything the surface does not paint.** A connect payload is paid on
+   every connection, by every window, on every reconnect — Main, Settings, and
+   Meeting each hold their own socket. Generosity here is multiplied by all of
+   them.
+3. **Bound every collection.** First page plus a cursor. A collection that is
+   small today is a collection whose size nobody has constrained.
+4. **Give every value its ordering**, so the first push and the fiftieth are
+   judged by the same rule. See [Ordering and
+   de-duplication](#ordering-and-de-duplication).
+5. **Decide what a reconnect re-sends.** Current-state pushes are not replayed
+   frame by frame, so the payload has to be sufficient on its own — a client
+   that reconnects must end up correct without replaying the gap.
+6. **Leave room for the surface to be wrong.** Something must be able to ask for
+   canonical state again; that request should be answered with the same
+   authoritative frame the connect sent, not a special one.
+
+| Do | Don't |
+| --- | --- |
+| Send everything the opened surface paints, in the connect exchange. | Require a follow-up frame or a REST call for something the connect could have carried. |
+| Carry a resume position in the subscribe frame. | Carry a query — a collection name, a filter, a page size — in it; that is a fetch wearing a socket. |
+| Keep cold connect and resume on one code path that differs only in position. | Write a separate first-connect path; the rarely-run one drifts and fails when it is finally needed. |
+| Bound every collection to a first page and a cursor. | Push a whole collection because it happens to be small today. |
+| Budget the payload against what that specific window renders. | Load one payload with every surface the app has — every window and every reconnect pays it. |
+| Answer a "resend canonical state" request with the ordinary authoritative frame. | Invent a second, special reply shape for it; two shapes for one truth diverge. |
+
+## Ordering and de-duplication
+
+### Duplicates are normal, and arrival order proves nothing
+
+**Two sockets will tell you the same thing, and which one gets there first is a
+race.** This is not an edge case to be designed out — it is the normal operation
+of any hierarchy where a child owns the truth and a parent owns the list, and it
+appears the moment a client subscribes to both levels at once.
+
+Avalon's instance of it: a work stream's state change commits in
+`WorkstreamDO`. That object publishes the committed row on its own control
+socket immediately, and *also* projects it through the regional Queue to
+`WorkspaceDO`, which publishes it on the workspace socket. A desktop window
+sitting on that work stream holds both sockets, so it receives both copies. The
+direct one is usually first, because it does not wait for a Queue hop — but
+Cloudflare Queues is at-least-once and unordered, so "usually" is not something
+a client may assume, and a redelivery can put the second copy *behind* a change
+that superseded it.
+
+Neither copy can simply be dropped, either. The workspace copy is the only one
+an inactive sidebar row ever gets; the direct copy is the only one that arrives
+while the Queue is backed up. Suppressing a channel to avoid duplicates trades a
+visible bug for an invisible one.
+
+The generalization worth carrying to the next stream: **a client cannot
+de-duplicate by channel, by arrival order, or by timestamp.** Channels are not
+comparable to each other, arrival order is a property of the network, and clocks
+belong to different machines. Only a version stamped by the authority that owns
+the data can order two payloads.
+
+### The mechanism: version, ledger, compare
+
+**Every pushed payload carries the version its authority stamped, and the client
+keeps a ledger of the newest version it has applied. Applying is a comparison
+against that ledger, not a reaction to a frame arriving.** The same change
+delivered twice applies once, because the second copy's version is not newer
+than what the ledger already holds. Which socket won the race stops mattering,
+which is the point: correctness stops depending on a timing property nobody
+controls.
+
+A version that can carry this weight has four properties, whatever the stream:
+
+- **It is stamped by the owner of the data**, at commit time, not by the sender
+  at send time. A version minted per connection can only be compared against
+  other frames from that connection — precisely the comparison that does not
+  help.
+- **It is monotonic within one authority and one field family**, so "newer"
+  is a total order where it is used and nothing is being compared across
+  authorities that never agreed on a clock.
+- **It survives the transport.** Every path that can carry the payload carries
+  the same version unchanged, or the two paths cannot be reconciled.
+- **It is a function of the state, not of the delivery.** Two payloads at the
+  same version must be the same data — see [A version has to be a function of
+  the payload](#a-version-has-to-be-a-function-of-the-payload).
+
+An authority identity belongs beside the counter whenever the counter can
+restart — a re-import, a rebuild, a cutover to a new object. Without one, a
+fresh authority's low numbers look like ancient history and the client discards
+everything it is told.
+
+### How Avalon stamps it today
+
+`WorkstreamStateVersion` in `packages/contracts/src/index.ts` is the shape both
+work-stream paths carry, and it is worth reading as a design rather than a
+struct:
+
+| Field | What it decides |
+| --- | --- |
+| `authorityGeneration` | Which incarnation of the authority produced this — it advances when a work stream is imported into a new object. A payload from an older generation is rejected outright, and a newer one applies unconditionally, because its waterlines come from a different counter and are not comparable to the stored ones. |
+| `commonWaterline` | Monotonic within WorkstreamDO for the shared row — title, state, activity, preview. |
+| `viewerWaterline` | Monotonic within WorkstreamDO for *this* viewer's overlay — unread, mention, read-through, listability. |
+| `commonEventId` / `viewerEventId` | The UUIDv7 identity of the state row each half came from. Time-sortable trace identities for correlating the two paths — deliberately **not** a distributed clock, and never the thing a comparison is made on. |
+
+**The two waterlines are independent on purpose, and that is the load-bearing
+detail.** Queue delivery is unordered, so a viewer row can arrive after a common
+row that was produced before it. One counter for both would let the late viewer
+row suppress a common update that had not been delivered yet, and the sidebar
+would keep a title that no longer exists. Advancing one half never advances the
+other.
+
+The general rule behind it: **fields that change independently need independent
+counters.** Two families that advance together may share one; two that can move
+without each other must not, or the faster one censors the slower one.
+
+WorkspaceDO-owned fields are a third ledger again. Pin position is ordered by
+the directory waterline that WorkspaceDO stamps on its own page results, because
+that ordering is the parent's and has nothing to do with the child's revisions.
+A field's version belongs to whoever owns the field.
+
+### One receiver, not one per socket
+
+**Every sender of a field family funnels into a single receiver that owns the
+ledger and the comparison.** Sockets are transports into it, not decision
+points. Two handlers each with their own comparison is how the race comes back:
+the ledger stops being one ordering and becomes two opinions that diverge the
+moment one of the sockets reconnects.
+
+Avalon's receiver is
+`apps/desktop/src/renderer/lib/workstream-state-store.ts`. The control-socket
+hook and the workspace-socket provider both call
+`applyVersionedWorkstreamState`; neither writes the work-stream caches directly.
+The predicate it applies, exactly:
+
+- A payload whose `authorityGeneration` is older than the ledger's is discarded
+  whole. Neither half of a stale-authority payload is trustworthy.
+- A newer generation applies both halves unconditionally, because the waterlines
+  it carries are not comparable to the stored ones.
+- At the same generation, each half applies **only if its own waterline is
+  strictly greater** than the stored one. Equal is not newer: an equal waterline
+  is the duplicate this whole mechanism exists to absorb.
+- Whichever halves applied are written back to the ledger, and the halves that
+  did not are left at their stored values. A payload can therefore be
+  half-applied, which is the correct outcome when one half is behind the other.
+
+A useful test when adding a sender: if the new call site needs its own "have I
+seen this?" check, the receiver is in the wrong place. Move the comparison, not
+the check.
+
+### A version has to be a function of the payload
+
+The client's guard is only sound if two payloads at the same version are the
+same data. That is an invariant to enforce, not an assumption to make — a
+version reused for different data turns every dropped duplicate into silent data
+loss, and the symptom appears on a screen far away from the cause.
+
+WorkspaceDO enforces it: a projection applies when the generation is newer, or
+the generation matches and the source version is higher — and a delivery
+arriving at the *same* generation and version with a different payload hash
+throws `workspace_directory_projection_version_conflict` instead of quietly
+picking one. A duplicate is then genuinely a no-op, and a reused version is a
+loud failure at the point of ingestion.
+
+The general shape: **hash what you version, compare the hash when the version
+repeats, and fail rather than choose.** A conflict here is a bug in the producer;
+the only useful client behavior is to make it impossible to ignore.
+
+### The same discipline on the other streams
+
+Each of these owns a different kind of position, and each is worth copying
+rather than inventing another:
+
+- **The transcript feed** orders on the room sequence. A frame at or below the
+  last applied sequence is dropped. The one exception is a `snapshot`, which may
+  apply at an *equal* sequence — a snapshot is a repair, and a repair that
+  refused to replace state at the position it was asked about would repair
+  nothing. Applying one clears the per-message stream cursors, because it is
+  authoritative for everything it covers.
+- **Token frames within a message**, on that same feed, carry a turn, an epoch,
+  and a stream sequence, and a per-message cursor drops a fragment from an older
+  turn, an older epoch, a lower stream sequence, or any fragment arriving after
+  that message completed. This is why a reconnect can replay overlapping text
+  without the reader seeing it twice.
+- **Block output** carries `{ blockRunId, revision }` per block, and a
+  checkpoint that is not newer for the same run is ignored. That is what makes
+  the reconnect snapshot idempotent instead of appending a second copy of the
+  text already on screen.
+
+Three streams, three position types, one rule: **the receiver decides from a
+stored position, and the frame never decides for itself.** The variation is in
+what a position means — a room sequence, a per-message cursor, a per-run
+revision — and each stream must say which, including what an *equal* position
+means. A delta at an equal position is a duplicate and is dropped; a snapshot at
+an equal position is the truth and is applied. A stream that has not made that
+call will eventually do both, and the bug will be intermittent.
+
+| Do | Don't |
+| --- | --- |
+| Stamp the version at the authority that owns the data, at commit time. | Stamp it at the socket, the connection, or the moment of send. |
+| Apply by comparing against a stored position. | Apply because a frame arrived, or infer order from arrival, a timestamp, or which channel it came on. |
+| Carry the same version unchanged down every path that can deliver the payload. | Let a relaying hop re-number, re-wrap, or drop the version it forwards. |
+| Give independently-moving field families independent counters. | Share one counter across fields that different authorities advance — the faster one will censor the slower. |
+| Pair the counter with an authority identity wherever it can restart. | Assume a counter is monotonic across a re-import, a rebuild, or a cutover. |
+| Funnel every sender into one receiver per family. | Let each socket handler write the cache with its own comparison. |
+| State what an equal position means for this stream, and make snapshots the explicit exception. | Leave equal undefined; the stream will drop repairs sometimes and duplicate deltas other times. |
+| Make the version a pure function of the state, and fail loudly when one version carries two payloads. | Assume duplicates are byte-identical, or resolve a conflict by picking the newer arrival. |
+| Keep event ids for tracing and correlation. | De-duplicate on a set of seen ids: it grows without bound and answers "have I seen exactly this", never "is this older than what I have". |
+| Reload the surfaces a socket holds after it reconnects. | Assume the ledger still covers the gap — current-state pushes are not replayed frame by frame. |
+| Design for the second sender before it exists. | Skip the comparison because only one socket sends this today; the second one arrives as a feature and finds a rewrite. |
+
 ## Why mutations go up over REST
 
 Everything that changes state is an HTTP request: create a work stream, accept a
@@ -152,44 +380,21 @@ So the shape of every mutation is: **REST request → authoritative write →
 response to the caller → push to every socket that cares.** The response is a
 convenience for the caller; the push is the truth for everyone.
 
-`SubstreamAgent` enforces this on the wire rather than by convention. A feed
-socket that receives a mutation frame is answered `rest_required` — "persist
-this action through the work-stream API before publishing it" — and a
-`create_message` frame is answered `workspace_socket_required`, which names the
-one socket that does take it. A frame type existing in the shared client schema
-is therefore not permission to send it; the room decides.
+Enforce that at the room rather than by convention. `SubstreamAgent` answers any
+mutation frame with `rest_required` — "persist this action through the
+work-stream API before publishing it" — and answers a `create_message` frame
+with `workspace_socket_required`. A frame type existing in a shared client
+schema is not permission to send it; the authority decides, and it says so in an
+error a client author can act on.
 
-## The rules
-
-- **A socket frame carries state, not the news that state changed.** An
-  invalidation the client answers with a fetch is a fallback for a surface not
-  yet converted, never a design for a new one. Break this and every new surface
-  costs a REST endpoint, a query key, a cache-invalidation entry, and a refetch
-  on every reconnect.
-- **Never require a request for something the connect could have carried.** If
-  a screen's first render needs it and the server could know it, it belongs in
-  the connect payload. The test is "would this screen have asked for it in its
-  first 50 ms" — if yes, push it.
-- **Every pushed payload carries its own ordering.** A waterline, a sequence, or
-  a version, compared by the client before it applies anything. Unordered pushes
-  over an at-least-once, unordered Queue path silently resurrect old values.
-- **A push and a REST response for the same thing are the same shape from the
-  same authority.** Two projections of one row drift, and the drift shows up as
-  a field that changes when you reload and changes back when you navigate.
-- **A push is never the only copy.** Reconnect reconverges by snapshot, not by
-  replaying every missed delta. The client needs current state, not the history
-  that produced it — a bounded replay window that cannot cover a cursor answers
-  with "resync" and a full snapshot.
-- **Authorization is rechecked at push time.** A connect-time decision is a
-  cached decision; membership and visibility change while a socket is open, and
-  the object sweeps readers when they do. Never push to a socket because it was
-  once allowed to receive.
-- **The connect payload is bounded.** First page plus a cursor, never a
-  collection. It is paid per window — Main, Settings, and Meeting each hold
-  their own socket — so it holds what that window paints and nothing else.
-- **No polling, ever.** No interval refetch, no "just in case" revalidation on
-  focus. If a surface goes stale without user action, the fix is a push from its
-  authority, not a timer in the renderer.
+| Do | Don't |
+| --- | --- |
+| Send state changes as HTTP, with a status code and an idempotency key. | Build a command frame, correlation id, timeout, and error envelope on a socket — that is HTTP rebuilt by hand and maintained by us. |
+| Return the authoritative result when the caller needs read-your-write. | Make a caller learn the outcome of its own write by waiting for a broadcast. |
+| Publish the durable consequence to every subscriber, the mutator included. | Let the caller's response be the only place the change appears; the mutator's view then merely resembles everyone else's. |
+| Refuse mutation frames at the authority, with an error naming the right path. | Rely on a shared schema, a code review, or a comment to keep them off the socket. |
+| Treat a socket command as an exception that has to be argued for, in writing. | Add one because it is fewer lines in the renderer, or because a similar one already exists. |
+| Let the push be the ordering for everyone, including the caller. | Apply the response optimistically in a way the later push cannot correct. |
 
 ## When a REST read is still right
 
@@ -212,6 +417,13 @@ Not every read is a push. Reach for a `GET` when one of these holds:
 The common thread: push what a window will paint and keep painting; fetch what a
 person went looking for.
 
+| Do | Don't |
+| --- | --- |
+| Fetch what a person explicitly went looking for. | Push a surface almost nobody opens to every window on every connect. |
+| Keep the pre-socket bootstrap to what is needed to open the socket. | Let the bootstrap grow into a second data plane that shadows the first. |
+| Say at the call site why this one is a fetch. | Leave a fetch whose reason nobody can reconstruct; it will be copied into the next surface. |
+| Re-read over HTTP when the socket has told you to resync. | Use HTTP to paper over a surface that goes stale for any other reason — that is a missing push. |
+
 ## How to decide
 
 In order. The first answer that applies decides it.
@@ -227,6 +439,53 @@ In order. The first answer that applies decides it.
    not a connect payload; give it a cursor or leave it a fetch.
 6. **Otherwise it is a fetch**, and the reason it is a fetch belongs in a comment
    at the call site.
+
+Three smells that mean the answer above was wrong:
+
+- **You are writing a timer.** An interval refetch, a focus revalidation, a
+  retry that exists to catch a change rather than a failure. Staleness without
+  user action is a missing push.
+- **You are writing infrastructure for the channel you picked.** Correlation
+  ids, timeouts, and receipt frames on a socket mean the mutation wanted HTTP.
+  Cache invalidation, poll intervals, and refetch cascades on a fetch mean the
+  read wanted a push.
+- **Two places produce the same field.** Whatever the reason, the next bug is
+  the two of them disagreeing, and it will be reported as a value that changes
+  when you navigate and changes back when you reload.
+
+## Invariants
+
+The rules a change to this boundary is checked against, each with the
+consequence of breaking it.
+
+- **A socket frame carries state, not the news that state changed.** An
+  invalidation the client answers with a fetch is a fallback for a surface not
+  yet converted, never a design for a new one. Break this and every new surface
+  costs a REST endpoint, a query key, a cache-invalidation entry, and a refetch
+  on every reconnect.
+- **Never require a request for something the connect could have carried.** The
+  test is "would this screen have asked for it in its first 50 ms" — if yes,
+  push it. Break this and first paint waits on a round trip per surface.
+- **Every pushed payload carries its own ordering, stamped by its authority** —
+  see [Ordering and de-duplication](#ordering-and-de-duplication). Break this
+  and a duplicate from a second channel overwrites newer state, intermittently,
+  in a way no test that runs one channel will catch.
+- **A push and a REST response for the same thing are the same shape from the
+  same authority.** Two projections of one row drift, and the drift shows up as
+  a field that changes when you reload and changes back when you navigate.
+- **A push is never the only copy.** Reconnect reconverges by snapshot, not by
+  replaying every missed delta. Break this and a client that missed a window is
+  wrong until something unrelated refreshes it.
+- **Authorization is rechecked at push time.** A connect-time decision is a
+  cached decision; membership and visibility change while a socket is open.
+  Break this and revocation is bounded only by how long someone leaves a window
+  open.
+- **The connect payload is bounded**, and it is paid per window — Main,
+  Settings, and Meeting each hold their own socket. Break this and the cost
+  lands on every window and every reconnect at once.
+- **No polling, ever.** No interval refetch, no "just in case" revalidation on
+  focus. If a surface goes stale without user action, the fix is a push from its
+  authority, not a timer in the renderer.
 
 ## Where Avalon stands today
 
