@@ -15,10 +15,19 @@ what the first screen of that workspace needs. Anything the client would have
 requested first is something the server should already be sending.
 
 The product reason is the whole reason: Avalon should feel like the data was
-already there. A screen that renders from a payload that arrived unasked is
-instant; a screen that mounts, discovers it needs four things, asks for them,
-and reflows as each lands is a web page. Read this before adding an endpoint, a
-streamed event, or a client query.
+already there. A screen that renders from a payload that arrived unasked paints
+once and paints immediately. A screen that mounts, discovers it needs four
+things, requests them, and re-renders as each one lands shows the person four
+intermediate states they did not ask to see. Read this before adding an
+endpoint, a streamed event, or a client query.
+
+**How to read this document.** Rules are written as imperatives, and a bullet
+that begins with "Don't" describes something to avoid — never an instruction to
+follow. Two sections near the end, [Where Avalon stands
+today](#where-avalon-stands-today) and [Known
+divergences](#known-divergences), describe how the code behaves right now,
+including in the places where it contradicts these rules. Those two sections are
+a record of the current state, not examples to copy.
 
 Every section states the principle first and ends with a **do and don't**
 distillation. The principles are meant to survive this codebase: they apply to a
@@ -67,8 +76,8 @@ the socket eventually — so serving its first value over REST means writing and
 maintaining two paths to the same field, with the REST one used exactly once per
 mount.
 
-**Prefer the failure you will notice.** A push that never arrives is a stale
-screen the person using it reports. A refetch storm is latency spread over
+**Prefer the failure mode you will find out about.** A push that never arrives
+leaves a stale screen, and the person looking at it reports it. A refetch storm is latency spread over
 whichever surfaces happened to be mounted, which presents as "the app is slow
 today" and needs tooling this repository does not have to attribute.
 
@@ -111,8 +120,10 @@ different from an ordinary subscription:
   the server is not proactive — it is an HTTP API with a persistent connection.
 - **A cold connect and a resume differ only in the position.** The server
   decides what to send from what the client has, not from a different code path.
-  Two paths drift, and the one that drifts is always the one that runs less
-  often.
+  Two paths drift, and the one that drifts is the one that runs less often.
+
+The two lists that follow are requirements. They describe what these connects
+are supposed to deliver, not what the code delivers today.
 
 ### What opening a workspace owes the client
 
@@ -150,23 +161,26 @@ Opening a work stream should deliver, without being asked:
 
 Deeper history is paged **on the same socket**, correlated by request id,
 because the room is the authority for its own transcript and a page reply must
-not move any other reader's cursor. That is a pull, but it is a pull the person
-asked for by scrolling — which is exactly the case this document does not try to
-push.
+not move any other reader's cursor. That is a request rather than a push, and it
+is allowed to be one: the reader asked for it by scrolling. This document asks
+the server to anticipate the first screen, not to guess where somebody will
+scroll to next.
 
 ### Designing a connect payload
 
-The two lists above are what Avalon's two connects owe today. The way to derive
-the next one:
+The two lists above are the contract for Avalon's two connects, not a
+description of what the code sends today — the workspace connect still answers
+with an invalidation the client turns into REST reads, as [Known
+divergences](#known-divergences) records. The way to derive the next one:
 
 1. **Start from the screen, not the schema.** List what the surface renders in
    its first frame. That list is the payload; anything else is a later concern.
-2. **Cut anything the surface does not paint.** A connect payload is paid on
-   every connection, by every window, on every reconnect — Main, Settings, and
-   Meeting each hold their own socket. Generosity here is multiplied by all of
-   them.
+2. **Cut anything the surface does not paint.** A connect payload is sent on
+   every connection, to every window, on every reconnect — Main, Settings, and
+   Meeting each hold their own socket. Every field added here is sent that many
+   times.
 3. **Bound every collection.** First page plus a cursor. A collection that is
-   small today is a collection whose size nobody has constrained.
+   small today is one whose maximum size nothing enforces.
 4. **Give every value its ordering**, so the first push and the fiftieth are
    judged by the same rule. See [Ordering and
    de-duplication](#ordering-and-de-duplication).
@@ -177,6 +191,22 @@ the next one:
    canonical state again; that request should be answered with the same
    authoritative frame the connect sent, not a special one.
 
+**Sizing a payload to a window requires the handshake to say which window it
+is**, and that belongs in the ticket rather than the subscribe frame. A ticket
+already establishes a purpose at admission — Avalon mints separate workspace,
+control, feed, and block audiences — so a per-surface payload is a purpose the
+server was told at issue time, not a query the client sends afterwards. The
+distinction is the whole of the rule above: the client may declare *what this
+connection is for*, never *what data it would like*.
+
+Avalon's workspace ticket carries no such purpose today.
+`getWorkspaceSocketTicket()` takes no arguments and the subscribe frame carries
+only a waterline, so Main, Settings, and Meeting each receive the same payload
+and each pays for everything in it. Until a purpose is added there, "budget it
+against the window" reduces to "keep it small, because three windows pay for
+it" — which is still the right instinct, and is the reason the rule is worth
+stating before the mechanism exists.
+
 **Do**
 
 - Send everything the opened surface paints, in the connect exchange.
@@ -184,7 +214,9 @@ the next one:
 - Keep the cold connect and the resume on one code path that differs only in
   the position it starts from.
 - Bound every collection to a first page plus a cursor.
-- Budget the payload against what that specific window renders.
+- Size the payload to the surface the connection serves, and declare that
+  surface as a purpose on the ticket when different surfaces need different
+  payloads.
 - Answer a "resend canonical state" request with the ordinary authoritative
   frame the connect already sends.
 
@@ -193,12 +225,15 @@ the next one:
 - Don't require a follow-up frame or a REST call for something the connect
   could have carried.
 - Don't carry a query — a collection name, a filter, a page size — in the
-  subscribe frame. That is a fetch wearing a socket.
+  subscribe frame. A connection that answers queries is a request/response API
+  again, and the server has stopped deciding what to send.
 - Don't write a separate first-connect path. The rarely-run one drifts, and it
   fails when it is finally needed.
 - Don't push a whole collection because it happens to be small today.
 - Don't load one payload with every surface the app has. Every window and every
   reconnect pays it.
+- Don't infer which surface a connection serves from anything the client sends
+  after the handshake. A purpose is established at admission or not at all.
 - Don't invent a second, special reply shape for a canonical-state request; two
   shapes for one truth diverge.
 
@@ -215,7 +250,7 @@ Avalon's instance of it: a work stream's state change commits in
 `WorkstreamDO`. That object publishes the committed row on its own control
 socket immediately, and *also* projects it through the regional Queue to
 `WorkspaceDO`, which publishes it on the workspace socket. A desktop window
-sitting on that work stream holds both sockets, so it receives both copies. The
+viewing that work stream holds both sockets, so it receives both copies. The
 direct one is usually first, because it does not wait for a Queue hop — but
 Cloudflare Queues is at-least-once and unordered, so "usually" is not something
 a client may assume, and a redelivery can put the second copy *behind* a change
@@ -284,7 +319,8 @@ other.
 
 The general rule behind it: **fields that change independently need independent
 counters.** Two families that advance together may share one; two that can move
-without each other must not, or the faster one censors the slower one.
+without each other must not, or updates to the faster one will hide updates to
+the slower one.
 
 WorkspaceDO-owned fields are a third ledger again. Pin position is ordered by
 the directory waterline that WorkspaceDO stamps on its own page results, because
@@ -296,7 +332,7 @@ A field's version belongs to whoever owns the field.
 **Every sender of a field family funnels into a single receiver that owns the
 ledger and the comparison.** Sockets are transports into it, not decision
 points. Two handlers each with their own comparison is how the race comes back:
-the ledger stops being one ordering and becomes two opinions that diverge the
+the ledger stops being one ordering and becomes two, and the two diverge the
 moment one of the sockets reconnects.
 
 Avalon's receiver is
@@ -330,9 +366,12 @@ loss, and the symptom appears on a screen far away from the cause.
 WorkspaceDO enforces it: a projection applies when the generation is newer, or
 the generation matches and the source version is higher — and a delivery
 arriving at the *same* generation and version with a different payload hash
-throws `workspace_directory_projection_version_conflict` instead of quietly
-picking one. A duplicate is then genuinely a no-op, and a reused version is a
-loud failure at the point of ingestion.
+throws instead of quietly picking one. Each projection carries its own guard,
+so the error names which one disagreed:
+`workspace_directory_projection_version_conflict` for the common row and
+`workspace_directory_viewer_version_conflict` for a viewer's. A duplicate is
+then genuinely a no-op, and a reused version is a loud failure at the point of
+ingestion.
 
 The general shape: **hash what you version, compare the hash when the version
 repeats, and fail rather than choose.** A conflict here is a bug in the producer;
@@ -345,10 +384,10 @@ rather than inventing another:
 
 - **The transcript feed** orders on the room sequence. A frame at or below the
   last applied sequence is dropped. The one exception is a `snapshot`, which may
-  apply at an *equal* sequence — a snapshot is a repair, and a repair that
-  refused to replace state at the position it was asked about would repair
-  nothing. Applying one clears the per-message stream cursors, because it is
-  authoritative for everything it covers.
+  apply at an *equal* sequence: a snapshot repairs state, and a client sitting
+  at that sequence is exactly the client that asked to be repaired. Applying one
+  clears the per-message stream cursors, because it is authoritative for
+  everything it covers.
 - **Token frames within a message**, on that same feed, carry a turn, an epoch,
   and a stream sequence, and a per-message cursor drops a fragment from an older
   turn, an older epoch, a lower stream sequence, or any fragment arriving after
@@ -364,8 +403,8 @@ stored position, and the frame never decides for itself.** The variation is in
 what a position means — a room sequence, a per-message cursor, a per-run
 revision — and each stream must say which, including what an *equal* position
 means. A delta at an equal position is a duplicate and is dropped; a snapshot at
-an equal position is the truth and is applied. A stream that has not made that
-call will eventually do both, and the bug will be intermittent.
+an equal position is the truth and is applied. A stream that has not decided
+will do both, in different code paths, and the resulting bug is intermittent.
 
 **Do**
 
@@ -391,8 +430,8 @@ call will eventually do both, and the bug will be intermittent.
 - Don't apply a payload because a frame arrived, and don't infer order from
   arrival, from a timestamp, or from which channel carried it.
 - Don't let a relaying hop re-number, re-wrap, or drop the version it forwards.
-- Don't share one counter across fields that different authorities advance. The
-  faster one will censor the slower.
+- Don't share one counter across fields that different authorities advance.
+  Updates to the faster field will hide updates to the slower one.
 - Don't assume a counter is monotonic across a re-import, a rebuild, or a
   cutover.
 - Don't let each socket handler write the cache with its own comparison.
@@ -431,8 +470,8 @@ channel means one of the two contracts is a lie.
 the caller needs read-your-write — the created work stream's id to navigate to,
 the compiled automation to display — the response returns it. The durable
 consequence still goes out on the socket to every client including this one,
-which is what keeps the mutator's view and everyone else's identical rather than
-merely similar.
+which is what keeps the mutator's view identical to every other client's rather
+than close to it.
 
 So the shape of every mutation is: **REST request → authoritative write →
 response to the caller → push to every socket that cares.** The response is a
@@ -461,8 +500,9 @@ error a client author can act on.
   socket. That is HTTP rebuilt by hand and maintained by us.
 - Don't make a caller learn the outcome of its own write by waiting for a
   broadcast.
-- Don't let the caller's response be the only place a change appears; the
-  mutator's view then merely resembles everyone else's.
+- Don't let the caller's response be the only place a change appears. The
+  mutator's view can then differ from every other client's, and nothing will
+  correct it.
 - Don't rely on a shared schema, a code review, or a comment to keep mutations
   off a socket.
 - Don't add a socket command because it is fewer lines in the renderer, or
@@ -522,11 +562,12 @@ In order. The first answer that applies decides it.
 6. **Otherwise it is a fetch**, and the reason it is a fetch belongs in a comment
    at the call site.
 
-Three smells that mean the answer above was wrong:
+Three signs the answer above was wrong:
 
-- **You are writing a timer.** An interval refetch, a focus revalidation, a
-  retry that exists to catch a change rather than a failure. Staleness without
-  user action is a missing push.
+- **You are writing a timer.** An interval refetch, a revalidation on window
+  focus, or a retry whose purpose is to notice a change rather than to recover
+  from a failure. A surface that goes stale without the user doing anything is a
+  missing push.
 - **You are writing infrastructure for the channel you picked.** Correlation
   ids, timeouts, and receipt frames on a socket mean the mutation wanted HTTP.
   Cache invalidation, poll intervals, and refetch cascades on a fetch mean the
@@ -555,24 +596,34 @@ consequence of breaking it.
 - **A push and a REST response for the same thing are the same shape from the
   same authority.** Two projections of one row drift, and the drift shows up as
   a field that changes when you reload and changes back when you navigate.
-- **A push is never the only copy.** Reconnect reconverges by snapshot, not by
-  replaying every missed delta. Break this and a client that missed a window is
+- **A client must be able to recover without the pushes it missed.** Reconnect
+  reconverges by asking for a snapshot, not by replaying every delta that went
+  out while it was gone. Break this and a client that missed a window stays
   wrong until something unrelated refreshes it.
-- **Authorization is rechecked at push time.** A connect-time decision is a
-  cached decision; membership and visibility change while a socket is open.
-  Break this and revocation is bounded only by how long someone leaves a window
-  open.
+- **Revocation closes the socket, and a push trusts an open one.** Authorizing
+  is the job of the code that admits a connection and the code that retracts
+  access — the authority sweeps the readers who lost it and closes them with a
+  policy close, which also tells the client to stop retrying. A sender may
+  therefore write to an open socket without asking again. Put an authorization
+  query on the push path instead and the hot path pays continuously for a
+  decision that changes rarely, which is why `SubstreamAgent` skips its periodic
+  revalidation for `stream_delta` entirely. Break it the other way — never
+  sweeping — and someone who was removed keeps receiving until they close the
+  window.
 - **The connect payload is bounded**, and it is paid per window — Main,
-  Settings, and Meeting each hold their own socket. Break this and the cost
-  lands on every window and every reconnect at once.
+  Settings, and Meeting each hold their own socket, and none of them is
+  distinguishable at admission today. Break this and the cost lands on every
+  window and every reconnect at once.
 - **No polling, ever.** No interval refetch, no "just in case" revalidation on
   focus. If a surface goes stale without user action, the fix is a push from its
   authority, not a timer in the renderer.
 
 ## Where Avalon stands today
 
-The parts of this that are already true, and the parts that are not. This table
-is the honest state as of the last edit to this file, not a target.
+The parts of this that are already true, and the parts that are not, as of the
+last edit to this file. The middle column says what the code does; the right-hand
+column says whether that is what this document asks for. **A row marked No
+describes behaviour to replace, not a pattern to copy into something new.**
 
 | Surface | Channel today | Matches this document |
 | --- | --- | --- |
@@ -589,7 +640,11 @@ is the honest state as of the last edit to this file, not a target.
 
 ## Known divergences
 
-Two, both recorded here rather than quietly left for the next person to find.
+Two places where the running code does not follow this document. They are
+written down so that nobody reproduces them by copying what is already there,
+and so the work to close them is legible to whoever picks it up. **Neither is an
+exception you may extend; the first is a gap and the second is a single
+argued-for carve-out.**
 
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
 answered with a single `workspace_sync` event whose topic list is *every* topic
