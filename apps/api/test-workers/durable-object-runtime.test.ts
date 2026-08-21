@@ -2616,6 +2616,104 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.close(1000, "done");
   });
 
+  it("sends the newest page and the reader's own position in one snapshot", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000601",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // 60 messages, with this reader stopped a long way behind the end.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Two windows', next_attention_ordinal = 61, updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      // Stopped at 30, so the first unread is 31 — well behind the newest page.
+      state.storage.sql.exec(
+        `INSERT INTO member_attention
+           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+            manual_unread_from_ordinal, latest_mention_attention_ordinal, version,
+            last_seen_at, updated_at)
+         VALUES (?, 0, 30, NULL, 0, 1, ?, ?)`,
+        USER_ID,
+        Date.now(),
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 60; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8003-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `message ${sequence}`,
+          3_000 + sequence,
+          3_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      workstream: { firstUnreadSequenceNumber: number | null };
+      messageFeed: { items: { sequenceNumber: number }[] };
+      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+    };
+    expect(frame.type).toBe("snapshot");
+    // The newest page is bounded now: a scroll-back buffer is not worth paying
+    // for on the frame a person waits to see.
+    const newest = frame.messageFeed.items.map((item) => item.sequenceNumber);
+    expect(newest).toHaveLength(20);
+    expect(newest.at(-1)).toBe(60);
+    expect(newest[0]).toBe(41);
+
+    // And the reader's own position arrives with it, so opening on it costs no
+    // second request. `around` splits its limit either side of the sequence.
+    const resumeAt = frame.workstream.firstUnreadSequenceNumber!;
+    expect(resumeAt).toBeLessThan(41);
+    const resume = frame.resumeFeed!.items.map((item) => item.sequenceNumber);
+    expect(resume).toContain(resumeAt);
+    expect(Math.min(...resume)).toBeLessThan(resumeAt);
+    expect(Math.max(...resume)).toBeGreaterThan(resumeAt);
+  });
+
   it("re-serves canonical state to a subscribed viewer and puts it back in the room", async () => {
     await seedOpenAuthority();
     // The snapshot is assembled from D1 as well as object-local SQL, and this

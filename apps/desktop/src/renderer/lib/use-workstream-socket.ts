@@ -777,11 +777,18 @@ export function useWorkstreamSocket(
       if (event.type === 'snapshot') {
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
-        const downloaded = event.messageFeed.items.map(mapMessage);
+        // Whichever window this reader is about to look at. The screen scrolls
+        // to `firstUnreadSequenceNumber`, so when the room sends a resume
+        // window that is the one being rendered and the newest page is the one
+        // that would have been thrown away. Rendering one and paging to the
+        // other keeps the transcript a contiguous run: holding both at once
+        // would put a gap in the middle of an array nothing models a gap in.
+        const feed = event.resumeFeed ?? event.messageFeed;
+        const downloaded = feed.items.map(mapMessage);
         queryClient.setQueryData<Message[]>(['messages', workstreamId],
           applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
-        queryClient.setQueryData(['messages-cursor', workstreamId], event.messageFeed.nextCursor);
-        queryClient.setQueryData(['messages-newer-cursor', workstreamId], event.messageFeed.newerCursor);
+        queryClient.setQueryData(['messages-cursor', workstreamId], feed.nextCursor);
+        queryClient.setQueryData(['messages-newer-cursor', workstreamId], feed.newerCursor);
         // The direct socket snapshot is canonical for the newest page. REST is
         // now used only to page older history or recover after resync_required.
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });

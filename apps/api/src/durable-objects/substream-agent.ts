@@ -235,6 +235,18 @@ export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
 const MAX_SOCKET_SNAPSHOT_BYTES = 900_000;
+/**
+ * How much transcript an initial snapshot carries.
+ *
+ * The newest page was 250, which is a scroll-back buffer being paid for on the
+ * frame a person waits to see. A screen shows tens of messages, not hundreds,
+ * and scrolling past these asks the same socket for the next page. Cutting it
+ * shrinks the frame, the assembly, and the trim loop that re-serializes the
+ * whole thing per dropped message.
+ */
+const SNAPSHOT_LATEST_MESSAGES = 20;
+/** Ten either side of where the reader stopped, which `around` splits for us. */
+const SNAPSHOT_RESUME_MESSAGES = 20;
 const MAX_SOCKET_MESSAGE_PAGE_BYTES = 900_000;
 /**
  * How stale the room lets its picture of who may read this work stream get.
@@ -2810,8 +2822,20 @@ export class SubstreamAgent extends DurableObject<Env> {
         this.socketAuth(attachment));
       if (!auth) throw new Error("Snapshot viewer is no longer authorized");
       const canonicalFeed = await span.step("workstream.room.snapshot.transcript", () =>
-        this.product.messages(auth, 250));
+        this.product.messages(auth, SNAPSHOT_LATEST_MESSAGES));
       const messageFeed = { ...canonicalFeed, items: [...canonicalFeed.items] };
+      // The reader's own position, when it is not already on this page. Loaded
+      // here rather than left to a follow-up request because the screen opens
+      // on it: `workstream.tsx` scrolls to `firstUnreadSequenceNumber`, so for
+      // anyone with unread messages the newest page above is the window they
+      // are *not* looking at.
+      const resumeAt = workstream.firstUnreadSequenceNumber;
+      const oldestOnPage = messageFeed.items[0]?.sequenceNumber;
+      const resumeFeed = resumeAt !== null
+        && (oldestOnPage === undefined || resumeAt < oldestOnPage)
+        ? await span.step("workstream.room.snapshot.resume_transcript", () =>
+          this.product.messages(auth, SNAPSHOT_RESUME_MESSAGES, undefined, undefined, resumeAt))
+        : null;
       const sequence = knownSequence ?? await this.currentSequence();
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
       const activeStreams = workstream.harnessStatus === "running"
@@ -2829,6 +2853,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           occurredAt: new Date().toISOString(),
           workstream,
           messageFeed,
+          resumeFeed,
           activeStreams,
           activeCompaction,
         });
