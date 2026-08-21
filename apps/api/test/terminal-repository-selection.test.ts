@@ -20,6 +20,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  testTerminalPortFactory,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -220,7 +221,7 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
       env,
       provider,
       catalog,
-      new TerminalSandboxCoordinator(env.DB, provider),
+      new TerminalSandboxCoordinator(env.DB, testTerminalPortFactory(objectStore), provider),
     ),
   };
 }
@@ -230,12 +231,12 @@ describe("Terminal model repository selection", () => {
     const { objectStore, provider, payloadPut, context, selector } = await fixture();
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-        authority_fingerprint, applied_network_revision, version, last_activity_at,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, last_command_at,
         created_at, updated_at)
-       VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-      W, S, "2026-08-13", "2026-08-13", "2026-08-13",
+       VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
     );
 
     await expect(selector.checkout(context, {
@@ -262,8 +263,7 @@ describe("Terminal model repository selection", () => {
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT connection_id, repository_full_name FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "SELECT connection_id, repository_full_name FROM terminal_repository WHERE id = 1",
     )).toEqual({ connection_id: PERSONAL, repository_full_name: "acme/widget" });
     expect(workstreamObjectGet(
       objectStore,
@@ -302,8 +302,7 @@ describe("Terminal model repository selection", () => {
     });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT remote_access FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "SELECT remote_access FROM terminal_repository WHERE id = 1",
     )).toEqual({ remote_access: "read_only" });
   });
 
@@ -343,18 +342,16 @@ describe("Terminal model repository selection", () => {
     const { objectStore, context, selector } = await fixture({ baseSha: nextBase });
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_terminal_repositories
-       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+      `INSERT INTO terminal_repository
+       (id, connection_id, repository_id, repository_full_name,
         base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
-       VALUES (?, ?, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?)`,
-      W,
-      S,
+       VALUES (1, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?)`,
       PERSONAL,
       "a".repeat(40),
       "avalon/bright-coastal-exact-heron",
       U,
-      "2026-08-13",
-      "2026-08-13",
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
     );
 
     await expect(selector.checkout(context, {
@@ -367,8 +364,7 @@ describe("Terminal model repository selection", () => {
     });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT base_sha FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "SELECT base_sha FROM terminal_repository WHERE id = 1",
     )).toEqual({ base_sha: nextBase });
   });
 
@@ -387,18 +383,16 @@ describe("Terminal model repository selection", () => {
     );
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
         authority_fingerprint, applied_network_revision, version, operation_run_id,
-        operation_lease_expires_at, last_activity_at, created_at, updated_at)
-       VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?, ?, ?)`,
-      W,
-      S,
+        operation_lease_expires_at, last_command_at, created_at, updated_at)
+       VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?, ?, ?)`,
       otherRun,
-      "2099-01-01T00:00:00.000Z",
-      "2026-08-13",
-      "2026-08-13",
-      "2026-08-13",
+      Date.parse("2099-01-01T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
     );
 
     await expect(selector.checkout(context, {
@@ -415,12 +409,12 @@ describe("Terminal model repository selection", () => {
       const { objectStore, provider, context, selector } = await fixture();
       workstreamObjectRun(
         objectStore,
-        `INSERT INTO workstream_sandboxes
-         (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-          authority_fingerprint, applied_network_revision, version, last_activity_at,
+        `INSERT INTO terminal_workspace
+         (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+          authority_fingerprint, applied_network_revision, version, last_command_at,
           created_at, updated_at)
-         VALUES (?, ?, ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-        W, S, state, "2026-08-13", "2026-08-13", "2026-08-13",
+         VALUES (1, 'daytona', ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+        state, Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
       );
       vi.mocked(provider.runCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
 
@@ -440,12 +434,12 @@ describe("Terminal model repository selection", () => {
     const { objectStore, provider, context, selector } = await fixture({ backupResult: "TOO_LARGE 60000000\n" });
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-        authority_fingerprint, applied_network_revision, version, last_activity_at,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, last_command_at,
         created_at, updated_at)
-       VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-      W, S, "2026-08-13", "2026-08-13", "2026-08-13",
+       VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
     );
 
     await expect(selector.checkout(context, {
@@ -455,13 +449,11 @@ describe("Terminal model repository selection", () => {
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT provider_sandbox_id FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
-    )).toEqual({ provider_sandbox_id: "provider-1" });
+      "SELECT sandbox_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ sandbox_id: "provider-1" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS count FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "SELECT COUNT(*) AS count FROM terminal_repository",
     )).toEqual({ count: 0 });
   });
 

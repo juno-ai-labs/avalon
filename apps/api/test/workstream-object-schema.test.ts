@@ -208,6 +208,81 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("carries a Terminal lifecycle blob into real columns when version 12 applies", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      // Stop before the promotion so the row exists in the shape a deployed
+      // object holds it: epoch columns for the two the table already had, and
+      // ISO-8601 strings inside `lifecycle_json` for the nine it did not.
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 12),
+        component: "workstream",
+        workerVersionId: "worker-before",
+        now: 1_000,
+      });
+      database.prepare(
+        `INSERT INTO terminal_workspace
+           (id, provider, sandbox_id, lifecycle_state, authority_epoch, last_command_at,
+            idle_expires_at, created_at, updated_at, generation, stable_name,
+            applied_network_revision, version, lifecycle_json)
+         VALUES (1, 'daytona', 'daytona-1', 'stopped', 4, ?, ?, ?, ?, 3, 'sandbox', 1, 4, ?)`,
+      ).run(
+        Date.parse("2026-08-17T12:00:00.000Z"),
+        Date.parse("2026-08-17T12:05:00.000Z"),
+        Date.parse("2026-08-17T11:00:00.000Z"),
+        Date.parse("2026-08-17T12:00:00.000Z"),
+        JSON.stringify({
+          authorityFingerprint: "authority",
+          operationRunId: RUN_ID,
+          operationLeaseExpiresAt: "2026-08-17T12:16:00.000Z",
+          lifecycleClaimId: null,
+          lifecycleClaimExpiresAt: null,
+          archiveDueAt: "2026-08-17T13:00:00.000Z",
+          expireDueAt: "2026-09-16T12:00:00.000Z",
+          finalDiffResourceId: "resource-1",
+          failureCode: null,
+        }),
+      );
+
+      applyWorkstreamObjectSchema(storage, "worker-after", 2_000);
+
+      expect(database.prepare(
+        `SELECT authority_fingerprint, operation_run_id, operation_lease_expires_at,
+                lifecycle_claim_id, lifecycle_claim_expires_at, archive_due_at,
+                expire_due_at, final_diff_resource_id, failure_code, generation
+           FROM terminal_workspace WHERE id = 1`,
+      ).get()).toEqual({
+        authority_fingerprint: "authority",
+        operation_run_id: RUN_ID,
+        // The deadlines were ISO-8601 inside the blob and are epoch
+        // milliseconds as columns. A rounding error here would move an alarm.
+        operation_lease_expires_at: Date.parse("2026-08-17T12:16:00.000Z"),
+        lifecycle_claim_id: null,
+        lifecycle_claim_expires_at: null,
+        archive_due_at: Date.parse("2026-08-17T13:00:00.000Z"),
+        expire_due_at: Date.parse("2026-09-16T12:00:00.000Z"),
+        final_diff_resource_id: "resource-1",
+        failure_code: null,
+        generation: 3,
+      });
+      // `authority_epoch` and the blob are both gone; nothing read the former
+      // and nothing may reach the latter again.
+      const columns = database.prepare(`PRAGMA table_info(terminal_workspace)`)
+        .all().map((column) => String(column.name));
+      expect(columns).not.toContain("lifecycle_json");
+      expect(columns).not.toContain("authority_epoch");
+      // The compatibility views the blob existed for are gone with it.
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM sqlite_schema
+          WHERE name LIKE '_runtime_terminal%' OR name LIKE '_runtime_repository_publications%'`,
+      ).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("enforces substream, semantic-part, and suggested-action shapes in SQLite", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
@@ -411,19 +486,10 @@ describe("the Workstream Durable Object relational schema", () => {
           `2026-08-17T12:00:0${compactedThroughSequence}.000Z`,
         );
       }
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `INSERT INTO workstream_sandboxes
-           (workspace_id, workstream_id, state, stable_name, provider_sandbox_id,
-            generation, authority_fingerprint, applied_network_revision, version,
-            last_activity_at, created_at, updated_at)
-         VALUES (?, ?, 'running', 'sandbox', 'daytona-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-      )).run(
-        WORKSPACE_ID,
-        WORKSTREAM_ID,
-        "2026-08-17T12:00:02.000Z",
-        "2026-08-17T12:00:02.000Z",
-        "2026-08-17T12:00:02.000Z",
-      );
+      // Terminal is deliberately absent here. Its tables left the legacy
+      // vocabulary in schema version 12: the services hold a typed port onto
+      // `terminal_workspace` and friends, so there is no compatibility view
+      // left for a `workstream_sandboxes` statement to be rewritten onto.
 
       expect(database.prepare("SELECT run_id, status FROM runs").get()).toEqual({
         run_id: RUN_ID,
@@ -435,9 +501,6 @@ describe("the Workstream Durable Object relational schema", () => {
       });
       expect(database.prepare("SELECT COUNT(*) AS count FROM compaction_checkpoints").get())
         .toEqual({ count: 2 });
-      expect(database.prepare(
-        "SELECT sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1",
-      ).get()).toEqual({ sandbox_id: "daytona-1", lifecycle_state: "running" });
     } finally {
       database.close();
     }

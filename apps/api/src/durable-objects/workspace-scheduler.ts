@@ -42,6 +42,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
 } from "../services/workstream-runtime-database";
+import { createTerminalPortFactory } from "../services/terminal/object-port";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
@@ -394,19 +395,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
         id: target.workstreamId,
         due_at: target.dueAt,
       }))
-      : (await this.env.DB.prepare(
-        `SELECT 'wakeup' AS target_kind, workstream_id AS id, MIN(due_at) AS due_at
-           FROM workstream_wakeups
-          WHERE workspace_id = ?1 AND status = 'pending'
-          GROUP BY workstream_id
-         UNION ALL
-         SELECT 'terminal' AS target_kind, workstream_id AS id,
-                COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) AS due_at
-           FROM workstream_sandboxes
-          WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
-            AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-            AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) IS NOT NULL`,
-      ).bind(parsedWorkspaceId).all<AlarmTargetRow>()).results;
+      : [];
     const targets = [...regionalTargets.results, ...workstreamTargets];
 
     if (targets.length === 0) {
@@ -497,15 +486,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
             through: now.toISOString(),
             limit: 100,
           }).then((ids) => ({ results: ids.map((workstream_id) => ({ workstream_id })) }))
-          : this.env.DB.prepare(`SELECT workstream_id
-               FROM workstream_sandboxes
-              WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
-                AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-                AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) <= ?2
-              ORDER BY COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at), workstream_id
-              LIMIT 100`)
-          .bind(workspaceId, now.toISOString())
-          .all<DueTerminalSandboxRow>()
+          : Promise.resolve({ results: [] as DueTerminalSandboxRow[] })
       ]);
 
       // These rows are owned by WorkspaceDO; the scheduler supplies only the
@@ -638,6 +619,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
           );
           const result = await reconcileDueTerminalSandbox(
             executionEnv.DB,
+            createTerminalPortFactory(executionEnv),
             terminalProvider,
             workspaceId,
             sandbox.workstream_id,
@@ -657,10 +639,10 @@ export class WorkspaceScheduler extends DurableObject<Env> {
             });
           }
           if (result.transition === "expired") {
-            const repository = await this.env.DB.prepare(
-              `SELECT 1 AS selected FROM workstream_terminal_repositories
-               WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'`,
-            ).bind(workspaceId, sandbox.workstream_id).first<{ selected: number }>();
+            const repository = await createTerminalPortFactory(this.env)(
+              workspaceId,
+              sandbox.workstream_id,
+            ).selectedRepository();
             await emitProductUsageTelemetry(this.env, {
               workspaceId,
               name: "terminal_workspace_terminal",

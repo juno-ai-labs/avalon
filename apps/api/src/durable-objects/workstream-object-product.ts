@@ -1775,29 +1775,29 @@ export class WorkstreamObjectProductService {
       `SELECT due_at, prompt FROM workstream_wakeups
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
     ));
+    // These four were `json_extract` calls against `lifecycle_json` until the
+    // Terminal lifecycle was promoted to real columns in schema version 12.
+    // They are already epoch milliseconds, so the `Date.parse` that used to
+    // wrap each one is gone with the strings it parsed.
     const terminal = first(this.storage.sql.exec<{
       lifecycle_state: string;
       sandbox_id: string | null;
       idle_expires_at: number | null;
-      lifecycle_json: string;
+      archive_due_at: number | null;
+      expire_due_at: number | null;
+      lifecycle_claim_expires_at: number | null;
     }>(
-      `SELECT lifecycle_state, sandbox_id, idle_expires_at, lifecycle_json
+      `SELECT lifecycle_state, sandbox_id, idle_expires_at, archive_due_at,
+              expire_due_at, lifecycle_claim_expires_at
          FROM terminal_workspace WHERE id = 1`,
     ));
-    const terminalLifecycle = parseJson<{
-      archiveDueAt?: string | null;
-      expireDueAt?: string | null;
-      lifecycleClaimExpiresAt?: string | null;
-    }>(terminal?.lifecycle_json ?? null, {});
     const terminalCandidates = terminal?.sandbox_id
       ? [
           terminal.lifecycle_state === "running" ? terminal.idle_expires_at : null,
-          terminal.lifecycle_state === "stopped"
-            ? Date.parse(terminalLifecycle.archiveDueAt ?? "")
-            : null,
-          Date.parse(terminalLifecycle.expireDueAt ?? ""),
+          terminal.lifecycle_state === "stopped" ? terminal.archive_due_at : null,
+          terminal.expire_due_at,
           ["stopping", "archiving", "expiring"].includes(terminal.lifecycle_state)
-            ? Date.parse(terminalLifecycle.lifecycleClaimExpiresAt ?? "")
+            ? terminal.lifecycle_claim_expires_at
             : null,
         ].filter((value): value is number => value !== null && Number.isFinite(value))
       : [];

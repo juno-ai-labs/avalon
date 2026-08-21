@@ -23,6 +23,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
+| `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
+| `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
 ## How it works
 
@@ -384,6 +386,52 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-21 — Terminal addresses its own tables through a typed port
+
+**What changed:** The Terminal services no longer hold a `D1Database`. A new
+`WorkstreamTerminalStorage` inside the SubstreamAgent is the only reader and
+writer of `terminal_workspace`, `terminal_tasks`,
+`terminal_imported_resources`, `terminal_repository`,
+`terminal_publication_grants`, and `repository_publications`; the services
+reach it through `/internal/terminal` and a typed `TerminalObjectPort` whose
+operation list is derived from the storage class. WorkstreamDO schema
+migration 12 promotes the nine fields that lived in `lifecycle_json` to real
+columns and drops the 32 `_runtime_terminal_*` compatibility view and trigger
+statements. The dead pre-cutover branches in `workspace-scheduler.ts` and
+`connection-service.ts` — which queried tables migration `0090` dropped — go
+with them.
+
+**Why:** The vocabulary the code used stopped describing what it did. A
+statement reading `UPDATE workstream_sandboxes` named a table that had not
+existed in D1 since the legacy product schema was retired; it was rewritten
+onto a compatibility view whose INSTEAD OF triggers converted ISO-8601 to unix
+milliseconds and packed nine fields into a JSON blob. That layer existed so one
+body of code could run against both D1 and the object during the cutover, and
+the cutover is over. Its remaining cost was real: `archive_due_at` — a deadline
+the workspace scheduler sorts alarms by — had no type, no CHECK, and no index,
+because it was a JSON key. Worse, a load-then-claim sequence crossed the Worker
+boundary between its two statements, so the operation lease could be decided on
+state that had already moved; the same sequence now runs inside one
+synchronous object call.
+
+**Considered and rejected:** Keeping the SQL and renaming only the handle. That
+removes the misleading signature and nothing else — the blob, the timestamp
+conversion, and the split transactions all survive. Also rejected: converting
+the whole runtime compatibility vocabulary at once. `tool_invocations`,
+`harness_runs`, `resources`, and `notes` are shared by every subsystem, so
+retiring them is a change per subsystem rather than a wider version of this
+one; `runtime.ts` still reaches `tool_invocations` through the routed handle
+and says so.
+
+**Consequences:** Two invariants the blob could not express are now enforced by
+the table: a lease or a claim without its deadline is rejected, because an
+unreleasable lease holds the workspace forever. `authority_epoch` is gone — the
+compatibility triggers set it equal to `version` on every write and nothing
+read it back. Terminal state is now reachable only with the agent binding, so
+three helpers in `repository.ts` that took `Pick<Env, "DB">` take a full `Env`.
+The Node suite keeps its real-SQL coverage through a local-storage seam on the
+port; what the runtime decides belongs in `test-workers/`.
 
 ### 2026-08-21 — `terminal_commands` retired from the object schema
 
