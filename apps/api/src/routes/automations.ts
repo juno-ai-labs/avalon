@@ -76,7 +76,12 @@ const TemplatePageSchema = z.object({
   items: z.array(z.object({
     id: IdSchema,
     name: z.string(),
-    author: z.string().nullable(),
+    // Not nullable: the service coalesces a missing owner name to
+    // "Unknown member", and the desktop parses this field as a plain string —
+    // so a contract that permits `null` here licenses a change that would fail
+    // the client's parse of the whole page. Same defect as the one below,
+    // pointed the other way across the same wire.
+    author: z.string(),
     description: z.string(),
     usedBy: z.number().int().nonnegative(),
     requiredCapabilities: z.array(z.string()),
