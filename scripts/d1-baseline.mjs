@@ -122,6 +122,13 @@ export function listMigrationFiles(directory) {
  * `0039_workstream_read_state.sql`, and five more), so a numeric comparison
  * would include one of a pair and drop the other, producing a baseline missing
  * a migration that every real database ran.
+ *
+ * The string comparison is the same ordering Wrangler applies migrations in,
+ * and it is correct only because the sequence is zero-padded to four digits —
+ * the convention `classify-pending-d1-migrations.mjs` also encodes. A name that
+ * broke it (`0090a_…`, or a five-digit sequence) would sort somewhere this does
+ * not expect. The manifest digest is the backstop: it fails on any insertion at
+ * or below the boundary, however that file sorts.
  */
 export function subsumedMigrations(allFiles, throughFile) {
   if (!allFiles.includes(throughFile)) {
@@ -355,13 +362,73 @@ export function applyMigrations(database, directory, files) {
  * `node:sqlite` keeps it. `telemetry_eu_events` is the one table in this schema
  * where that happens, and comparing raw text reports it as a difference on
  * every run — a false positive that would train everyone to ignore the check.
+ *
+ * **Quoted tokens are copied verbatim, which is why this lexes rather than
+ * running two regular expressions over the whole statement.** A regex cannot
+ * tell a comment from the characters `--` inside a string, so
+ * `DEFAULT '--a'` and `DEFAULT '--b'` both normalize to `DEFAULT '` and hash
+ * the same, as do `'a  b'` and `'a b'`. Two different schemas comparing equal
+ * is the exact failure this function exists to detect, and it is worse than no
+ * check because `db:baseline:verify` and the recorded production fingerprint
+ * are trusted. Nothing in the schema triggers it today — a CHECK enumerating a
+ * value containing `--`, or a default with a doubled space, would.
  */
 export function normalizeSchemaSql(sql) {
-  return (sql ?? "")
-    .replace(/--[^\n]*/gu, "")
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+  const source = sql ?? "";
+  // Alternating runs of code (comments stripped, whitespace collapsed) and
+  // quoted tokens (copied byte for byte). Collecting them rather than rewriting
+  // in place is what keeps a collapse from reaching inside a literal.
+  const parts = [];
+  let code = "";
+  const flushCode = () => {
+    parts.push(code.replace(/\s+/gu, " "));
+    code = "";
+  };
+
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+
+    // `'` is a string, `"` and `` ` `` and `[` are quoted identifiers. SQLite
+    // escapes a quote by doubling it; `[` has no escape and ends at the first
+    // `]`. An unterminated token runs to the end rather than throwing — this
+    // reads schema from a database, not user input, and a parse error here
+    // would be a worse failure than a conservative comparison.
+    if (character === "'" || character === '"' || character === "`" || character === "[") {
+      const closing = character === "[" ? "]" : character;
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] !== closing) { end += 1; continue; }
+        if (closing !== "]" && source[end + 1] === closing) { end += 2; continue; }
+        end += 1;
+        break;
+      }
+      flushCode();
+      parts.push(source.slice(index, end));
+      index = end;
+      continue;
+    }
+
+    if (character === "-" && source[index + 1] === "-") {
+      const newline = source.indexOf("\n", index);
+      index = newline === -1 ? source.length : newline;
+      code += " ";
+      continue;
+    }
+
+    if (character === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      code += " ";
+      continue;
+    }
+
+    code += character;
+    index += 1;
+  }
+  flushCode();
+
+  return parts.join("").replace(/^ | $/gu, "");
 }
 
 /**
