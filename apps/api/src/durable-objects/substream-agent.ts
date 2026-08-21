@@ -93,6 +93,11 @@ import {
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
 import {
+  WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+  WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+} from "./workstream-object-schema";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
+import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
   WorkstreamObjectCreateSuggestionInputSchema,
@@ -424,8 +429,16 @@ export class SubstreamAgent extends DurableObject<Env> {
    * conservative direction.
    */
   private lastRevalidatedAt = 0;
-  private readonly objectStore: WorkstreamObjectStore;
-  private readonly product: WorkstreamObjectProductService;
+  /**
+   * Not `readonly`, and not assigned in the constructor body: the store applies
+   * this object's schema when it is constructed, and reporting a failed
+   * migration needs an `await` before the throw escapes. Both are assigned in
+   * the first, synchronous, statements of the `blockConcurrencyWhile` callback
+   * below, which runs before the constructor returns and before any handler can
+   * observe either field — every one of them waits on `initialized` first.
+   */
+  private objectStore!: WorkstreamObjectStore;
+  private product!: WorkstreamObjectProductService;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -437,14 +450,28 @@ export class SubstreamAgent extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
-    this.objectStore = new WorkstreamObjectStore(
-      state.storage,
-      env.APP_VERSION ?? "unknown",
-      env.AVALON_REGION,
-    );
-    this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.initialized = state.blockConcurrencyWhile(async () => {
+      // The store applies this object's schema in its own constructor, so the
+      // report wrapper goes around the construction rather than around a
+      // migration call this class makes itself. It happens here rather than in
+      // the constructor body only so that a failed migration can be reported
+      // before the throw leaves this callback — the throw breaks the object's
+      // input gate, and a report still in flight dies with it. The construction
+      // itself is unchanged and still synchronous: this is the first statement
+      // of a callback that `blockConcurrencyWhile` invokes immediately.
+      this.objectStore = await withMigrationReport({
+        state,
+        env,
+        component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+        className: "SubstreamAgent",
+        latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
+      }, () => new WorkstreamObjectStore(
+        state.storage,
+        env.APP_VERSION ?? "unknown",
+        env.AVALON_REGION,
+      ));
+      this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on

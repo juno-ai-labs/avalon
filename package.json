@@ -10,13 +10,14 @@
   "scripts": {
     "dev": "concurrently -k -n api,desktop -c blue,magenta \"pnpm dev:api\" \"pnpm dev:desktop\"",
     "dev:site": "pnpm --filter @avalon/site dev",
+    "dev:migrations": "pnpm --filter @avalon/migration-tracker dev",
     "env:sync": "node scripts/sync-dev-env.mjs",
     "tokens:build": "node scripts/build-theme-assets.mjs",
     "tokens:check": "node scripts/build-theme-assets.mjs --check",
     "docs:check": "node scripts/check-document-headings.mjs",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
-    "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs",
+    "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs && dotenv -e .env.local -- node scripts/check-cloudflare-queues.mjs",
     "terminal:analytics": "dotenv -e .env.local -- node scripts/report-terminal-analytics.mjs",
     "notion:webhook:prepare": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs prepare",
     "notion:webhook:copy-token": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs copy-token",
@@ -48,6 +49,7 @@
     "start:desktop:packaged": "pnpm --filter @avalon/desktop start:packaged",
     "deploy:site": "dotenv -e .env.local -- pnpm --filter @avalon/site run deploy",
     "deploy:release-retention": "dotenv -e .env.local -- pnpm --filter @avalon/release-retention run deploy",
+    "deploy:migration-tracker": "dotenv -e .env.local -- pnpm --filter @avalon/migration-tracker run deploy",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:global",
     "deploy:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:eu"
   },

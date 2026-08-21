@@ -84,6 +84,7 @@ export default tseslint.config(
     files: [
       "apps/api/src/durable-objects/**/*.ts",
       "apps/api/src/crash-symbolicator-container.ts",
+      "apps/migration-tracker/src/registry.ts",
     ],
     rules: {
       "avalon/durable-object-sql-storage": "error",
@@ -221,6 +222,7 @@ export default tseslint.config(
     ],
     ignores: [
       "apps/api/test/helpers/cloudflare-test.ts",
+      "apps/migration-tracker/test/helpers/cloudflare-test.ts",
       "apps/release-retention/test/helpers/cloudflare-test.ts",
     ],
     rules: {
@@ -239,6 +241,7 @@ export default tseslint.config(
     // waiting for the first bare `console` call to need migrating.
     files: [
       "apps/api/src/**/*.ts",
+      "apps/migration-tracker/src/**/*.ts",
       "apps/release-retention/src/**/*.ts",
       "apps/site/src/**/*.ts",
     ],

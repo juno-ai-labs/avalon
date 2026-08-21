@@ -57,6 +57,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const SCHEDULER_RETRY_BASE_MS = 60_000;
@@ -231,6 +232,17 @@ function workflowAlreadyExists(error: unknown): boolean {
 }
 
 /** One serialized alarm coordinator per workspace. */
+/**
+ * The migration runner's component key for this class.
+ *
+ * One constant because two call sites need the identical value: the runner
+ * keys the object's schema ledger by it, and the migration report keys the
+ * tracker's component rollup by it. Two literals that drift put an object
+ * under a component its own ledger does not use, which shows up as a silent
+ * miscount rather than an error.
+ */
+const MIGRATION_COMPONENT = "workspace_scheduler";
+
 export class WorkspaceScheduler extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -243,12 +255,18 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      await withMigrationReport({
+        state,
+        env,
+        component: MIGRATION_COMPONENT,
+        className: "WorkspaceScheduler",
+        latestVersion: latestMigrationVersion(WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS,
-        component: "workspace_scheduler",
+        component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
     });
   }
 
