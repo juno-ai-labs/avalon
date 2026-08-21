@@ -485,6 +485,13 @@ export class WorkstreamDO extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Before the migrations below, not after: the child's cold start is the
+    // expensive half and it does not depend on anything this object is about to
+    // do. A work stream and its main substream are always opened together — the
+    // control socket wakes this object while the feed socket wakes that one —
+    // so waking them in sequence pays for two cold starts a person waits
+    // through end to end.
+    this.wakeMainSubstream(env);
     this.initialized = state.blockConcurrencyWhile(async () => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
@@ -496,6 +503,49 @@ export class WorkstreamDO extends DurableObject<Env> {
       if (next !== null) await state.storage.setAlarm(next);
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Start substream `0` warming, without waiting for it.
+   *
+   * Reads identity straight out of storage rather than waiting for the
+   * migrations: SQLite persists across hibernation, so on every wake but the
+   * first the row is already there. On the first there is no child to wake
+   * either, and no table to read — hence the guard rather than a check.
+   *
+   * Nothing here is awaited or retried. A child that fails to wake is woken by
+   * the request that actually needs it, exactly as before; this only ever
+   * removes latency, and must never be able to add a failure.
+   */
+  private wakeMainSubstream(env: Env): void {
+    let identity: { workspace_id: string; workstream_id: string } | null;
+    try {
+      identity = first(this.state.storage.sql.exec<{ workspace_id: string; workstream_id: string }>(
+        `SELECT workspace_id, workstream_id FROM workstream_metadata WHERE id = 1`,
+      ));
+    } catch {
+      // First wake: the schema does not exist yet, and neither does the child.
+      return;
+    }
+    if (!identity) return;
+    const { workspace_id: workspaceId, workstream_id: workstreamId } = identity;
+    this.state.waitUntil((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(
+          env,
+          env.SUBSTREAM_AGENTS,
+          workspaceId,
+          substreamAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(workspaceId),
+            asWorkstreamId(workstreamId),
+          ),
+        );
+        await stub.wake();
+      } catch {
+        // Warming is best effort by construction.
+      }
+    })());
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -1881,8 +1931,21 @@ export class WorkstreamDO extends DurableObject<Env> {
         manualUnreadFromSequenceNumber: viewer?.manualUnreadFromOrdinal ?? null,
         manualUnreadGeneration: viewer?.manualUnreadGeneration ?? 0,
         latestMentionSequenceNumber: viewer?.latestMentionAttentionOrdinal ?? 0,
+        blockDashboardPreference: this.blockDashboardPreferenceFor(userId),
       },
     });
+  }
+
+  /** Absent means hidden, which is what a work stream opens as. */
+  private blockDashboardPreferenceFor(userId: string): { visible: boolean; updatedAt: string | null } {
+    const row = first(this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
+      `SELECT visible, updated_at FROM block_dashboard_user_preferences WHERE user_id = ?`,
+      userId,
+    ));
+    return {
+      visible: row?.visible === 1,
+      updatedAt: row ? new Date(row.updated_at).toISOString() : null,
+    };
   }
 
   private async broadcastMetadata(): Promise<void> {
