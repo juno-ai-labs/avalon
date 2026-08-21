@@ -267,7 +267,14 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
       "workstream.detail.load",
       () => Promise.all([
         client.boot(),
-        new BlockDashboardService(c.env, getAuth(c)).preferenceForDetail(id),
+        // Never allowed to fail the open. This is a second object answering an
+        // optional field that the control socket's boot frame also carries, so
+        // a preference WorkstreamDO cannot produce is a panel that stays shut
+        // for a moment — not a work stream that will not open. Before the two
+        // calls shared a request that was true by construction; folding them
+        // together is what made it something to state.
+        new BlockDashboardService(c.env, getAuth(c)).preferenceForDetail(id)
+          .catch(() => undefined),
       ]),
     );
     span.setAttributes({

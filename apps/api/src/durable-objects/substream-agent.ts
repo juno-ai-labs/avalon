@@ -119,7 +119,9 @@ const SocketAttachmentSchema = z.object({
   sessionId: z.string().min(1).max(200).optional(),
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
-  subscribed: z.boolean().default(false)
+  subscribed: z.boolean().default(false),
+  /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
+  snapshotInFlight: z.boolean().default(false)
 });
 
 const BroadcastRequestSchema = z.object({
@@ -169,7 +171,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     input: InitializeWorkstreamObjectInputSchema }).strict(),
   z.object({ operation: z.literal("get"), auth: ProductAuthSchema }).strict(),
   z.object({ operation: z.literal("boot"), auth: ProductAuthSchema }).strict(),
-  z.object({ operation: z.literal("context"), auth: ProductAuthSchema }).strict(),
   z.object({
     operation: z.literal("messages"),
     auth: ProductAuthSchema,
@@ -208,7 +209,7 @@ function productRequestFlow(operation: SubstreamProductRequest["operation"]): Pe
   switch (operation) {
     case "initialize": return "workstream_create";
     case "create_message": return "workstream_message_send";
-    case "get": case "boot": case "messages": case "context": return "workstream_open";
+    case "get": case "boot": case "messages": return "workstream_open";
     default: return null;
   }
 }
@@ -915,9 +916,6 @@ export class SubstreamAgent extends DurableObject<Env> {
       }
       if (request.operation === "boot") {
         return jsonResponse(await span.step("workstream.room.product.boot", () => this.product.boot(current)));
-      }
-      if (request.operation === "context") {
-        return jsonResponse(await this.product.context(current));
       }
       if (request.operation === "messages") {
         const query = request;
@@ -1892,14 +1890,26 @@ export class SubstreamAgent extends DurableObject<Env> {
     attachment: SocketAttachment,
   ): Promise<void> {
     if (!attachment.subscribed) {
+      // Two ways to get here, and they are not the same thing. A socket that
+      // never subscribed has no feed to refresh. A socket whose own earlier
+      // request is still assembling is subscribed — it is only flagged
+      // otherwise to keep broadcasts out of the window below — and telling that
+      // reader to subscribe first would be a lie it cannot act on.
+      const assembling = attachment.snapshotInFlight === true;
       this.sendError(
         socket,
-        "subscription_required",
-        "Subscribe to the message feed before requesting a snapshot.",
+        assembling ? "snapshot_in_flight" : "subscription_required",
+        assembling
+          ? "A snapshot for this socket is already being assembled."
+          : "Subscribe to the message feed before requesting a snapshot.",
       );
       return;
     }
-    socket.serializeAttachment({ ...attachment, subscribed: false } satisfies SocketAttachment);
+    socket.serializeAttachment({
+      ...attachment,
+      subscribed: false,
+      snapshotInFlight: true,
+    } satisfies SocketAttachment);
     try {
       await this.fulfillSubscription(
         socket,
@@ -1907,12 +1917,27 @@ export class SubstreamAgent extends DurableObject<Env> {
         attachment.workstreamId,
         0,
       );
+      // `fulfillSubscription` re-marks the socket subscribed; only the
+      // in-flight flag is this method's to clear.
+      const current = this.readAttachment(socket);
+      if (current) {
+        socket.serializeAttachment({ ...current, snapshotInFlight: false } satisfies SocketAttachment);
+      }
     } catch (error) {
       // Put the viewer back in the room rather than leaving it silently out of
       // every future broadcast. It still holds usable state, and a reader that
       // stops receiving frames has no way to tell that from a quiet work
       // stream. `sendSnapshot` reports its own failure to the client.
-      socket.serializeAttachment({ ...attachment, subscribed: true } satisfies SocketAttachment);
+      //
+      // Restored from the attachment as it stands, not the copy captured before
+      // the call: `fulfillSubscription` may have recorded progress before
+      // throwing, and rolling that back would discard it.
+      const current = this.readAttachment(socket) ?? attachment;
+      socket.serializeAttachment({
+        ...current,
+        subscribed: true,
+        snapshotInFlight: false,
+      } satisfies SocketAttachment);
       throw error;
     }
   }
@@ -2359,7 +2384,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       sessionId: identity.data.sessionId,
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
-      subscribed: false
+      subscribed: false,
+      snapshotInFlight: false
     };
 
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
@@ -2834,7 +2860,10 @@ export class SubstreamAgent extends DurableObject<Env> {
       const boot = await span.step("workstream.room.snapshot.transcript", () =>
         this.product.bootFeeds(auth, workstream.firstUnreadSequenceNumber));
       const messageFeed = { ...boot.messageFeed, items: [...boot.messageFeed.items] };
-      const resumeFeed = boot.resumeFeed;
+      // Copied, not aliased: the cap below has to be able to shrink this one too.
+      const resumeFeed = boot.resumeFeed
+        ? { ...boot.resumeFeed, items: [...boot.resumeFeed.items] }
+        : null;
       const sequence = knownSequence ?? await this.currentSequence();
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
       const activeStreams = workstream.harnessStatus === "running"
@@ -2863,9 +2892,27 @@ export class SubstreamAgent extends DurableObject<Env> {
       // iteration replaces the two full encodes the loop used to do per trim.
       let encodedBytes = textEncoder.encode(encoded).byteLength;
       let trims = 0;
-      while (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES && messageFeed.items.length > 1) {
-        messageFeed.items.shift();
-        messageFeed.nextCursor = String(messageFeed.items[0]!.sequenceNumber);
+      /**
+       * Drop the oldest message from one window, or report that it cannot.
+       *
+       * The cap covers the whole frame, so every window in it has to be
+       * reducible. When only the newest page could shrink, a large enough
+       * resume window put the frame over the limit with nothing left to trim
+       * and the open failed outright with `snapshot_unavailable`.
+       */
+      const trimOldest = (feed: typeof messageFeed): boolean => {
+        if (feed.items.length <= 1) return false;
+        feed.items.shift();
+        feed.nextCursor = String(feed.items[0]!.sequenceNumber);
+        return true;
+      };
+      while (
+        encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES
+        // Newest page first. When a resume window exists it is the one being
+        // rendered — the reader is at their unread mark, not at the end — so
+        // the page they are not looking at gives up its messages first.
+        && (trimOldest(messageFeed) || (resumeFeed !== null && trimOldest(resumeFeed)))
+      ) {
         event = buildEvent();
         encoded = JSON.stringify(event);
         encodedBytes = textEncoder.encode(encoded).byteLength;
@@ -2882,7 +2929,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
         // non-ASCII transcript under-reported against a cap measured in UTF-8.
         "avalon.snapshot.bytes": encodedBytes,
-        "avalon.snapshot.message_count": messageFeed.items.length,
+        "avalon.snapshot.message_count": messageFeed.items.length + (resumeFeed?.items.length ?? 0),
         "avalon.snapshot.trims": trims,
       });
       socket.send(encoded);

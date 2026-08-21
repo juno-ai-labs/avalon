@@ -1347,12 +1347,6 @@ export class AvalonApi {
     });
   }
 
-  async getBlockDashboardPreference(id: string, signal?: AbortSignal): Promise<BlockDashboardPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
-      schema: WireBlockDashboardPreferenceSchema,
-      signal,
-    });
-  }
 
   async updateBlockDashboardPreference(id: string, visible: boolean): Promise<BlockDashboardPreference> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {

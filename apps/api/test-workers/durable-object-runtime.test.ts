@@ -2664,6 +2664,94 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
   });
 
+  it("shrinks the resume window too when the snapshot frame is over its cap", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000801",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // The oldest messages are the heavy ones, so the reader's resume window is
+    // what puts the frame over the cap while the newest page stays small. Only
+    // the newest page used to be reducible, which left the loop with nothing to
+    // trim and failed the open outright.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Oversized resume', next_attention_ordinal = 81, updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO member_attention
+           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+            manual_unread_from_ordinal, latest_mention_attention_ordinal, version,
+            last_seen_at, updated_at)
+         VALUES (?, 0, 20, NULL, 0, 1, ?, ?)`,
+        USER_ID,
+        Date.now(),
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 80; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8004-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          sequence <= 40 ? "z".repeat(120_000) : `short ${sequence}`,
+          4_000 + sequence,
+          4_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      code?: string;
+      resumeFeed: { items: unknown[] } | null;
+    };
+    // A snapshot, not `snapshot_unavailable`, and one that still carries the
+    // reader's window rather than dropping it wholesale.
+    expect(frame.type).toBe("snapshot");
+    expect(frame.resumeFeed).not.toBeNull();
+    expect(frame.resumeFeed!.items.length).toBeGreaterThan(0);
+  });
+
   it("sends the newest page and the reader's own position in one snapshot", async () => {
     await seedOpenAuthority();
     await env.DB.batch([

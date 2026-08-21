@@ -87,7 +87,6 @@ describe("a stack that never opened the durable-object authority", () => {
     const elicitationId = "00000000-0000-7000-8000-0000000000e1";
     const calls: Array<Promise<unknown>> = [
       service.get(workstreamId),
-      service.context(workstreamId),
       service.update(workstreamId, { title: "Renamed" }),
       service.messages(workstreamId, 10),
       service.acknowledgeRead(workstreamId, {
