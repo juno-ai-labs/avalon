@@ -99,6 +99,20 @@ same crash-symbolicator Container image; concurrent Wrangler image builds can
 remove one another's transient local tag and leave both Workers unable to start.
 The runner forwards `SIGINT`/`SIGTERM` to both child processes.
 
+Both `dev:local` scripts pass `--enable-containers=false`. Building that
+Container image needs a Docker daemon, and the sandbox image has none, so
+Wrangler aborts before either Worker binds its port:
+
+```
+failed to connect to the docker API at unix:///var/run/docker.sock
+```
+
+Because `concurrently` runs with `-k`, the symptom is again "no server at all"
+rather than "no container". Nothing in the product reaches a container instance
+during ordinary local work, so disabling them costs nothing here; `pnpm dev:api`
+still builds the image and is the path to use when the symbolicator itself is
+what you are working on.
+
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
 session to Cloudflare to serve it. Without Cloudflare credentials, or behind a
