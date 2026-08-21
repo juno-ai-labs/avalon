@@ -765,6 +765,17 @@ interface WorkspaceAuthRoleRow {
   analytics_workspace_id?: string | null;
 }
 
+/**
+ * The migration runner's component key for this class.
+ *
+ * One constant because two call sites need the identical value: the runner
+ * keys the object's schema ledger by it, and the migration report keys the
+ * tracker's component rollup by it. Two literals that drift put an object
+ * under a component its own ledger does not use, which shows up as a silent
+ * miscount rather than an error.
+ */
+const MIGRATION_COMPONENT = "workspace_do";
+
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -780,13 +791,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       await withMigrationReport({
         state,
         env,
-        component: "workspace_do",
+        component: MIGRATION_COMPONENT,
         className: "WorkspaceDO",
         latestVersion: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
       }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-        component: "workspace_do",
+        component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
     });
