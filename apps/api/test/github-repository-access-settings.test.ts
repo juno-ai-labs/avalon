@@ -149,9 +149,9 @@ describe("GitHub repository access settings", () => {
     // connector policy instead of trusting this mounted credential expiry.
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
+      "SELECT read_token_expires_at FROM terminal_repository WHERE connection_id = ?",
       CONNECTION_ID,
-    )).toEqual({ read_token_expires_at: "2099-01-01T00:00:00.000Z" });
+    )).toEqual({ read_token_expires_at: Date.parse("2099-01-01T00:00:00.000Z") });
   });
 
   it("rejects stale revisions and repository identities absent from the current App installation", async () => {
@@ -233,9 +233,9 @@ describe("GitHub repository access settings", () => {
     ).get(CONNECTION_ID)).toEqual({ status: "disabled", encrypted_credentials: null });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
+      "SELECT state, read_token_expires_at FROM terminal_repository WHERE connection_id = ?",
       CONNECTION_ID,
-    )).toEqual({ state: "selected", read_token_expires_at: "2099-01-01T00:00:00.000Z" });
+    )).toEqual({ state: "selected", read_token_expires_at: Date.parse("2099-01-01T00:00:00.000Z") });
   });
 
   it("lets members inspect workspace policy but reserves changes for administrators", async () => {
@@ -359,18 +359,18 @@ function selectedRepositoryObject(workstreamId: string): DatabaseSync {
   seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: WORKSPACE_ID });
   workstreamObjectRun(
     objectStore,
-    `INSERT INTO workstream_terminal_repositories
-       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+    `INSERT INTO terminal_repository
+       (id, connection_id, repository_id, repository_full_name,
         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
         created_at, updated_at)
-     VALUES (?, ?, ?, 101, 'with-avalon/avalon', 'main', ?,
-             'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
-             ?, '2026-01-01', '2026-01-01')`,
-    WORKSPACE_ID,
-    workstreamId,
+     VALUES (1, ?, 101, 'with-avalon/avalon', 'main', ?,
+             'avalon/bright-coastal-exact-heron', 'selected', ?, ?, ?, ?)`,
     CONNECTION_ID,
     "a".repeat(40),
+    Date.parse("2099-01-01T00:00:00.000Z"),
     USER_ID,
+    Date.parse("2026-01-01T00:00:00.000Z"),
+    Date.parse("2026-01-01T00:00:00.000Z"),
   );
   return objectStore;
 }

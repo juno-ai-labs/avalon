@@ -5,12 +5,13 @@ import type {
   TerminalWorkspaceSettings,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
+import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
+import { createTerminalPortFactory } from "./object-port";
 import type { z } from "zod";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
-import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
@@ -198,23 +199,24 @@ export class TerminalSettingsService {
       throw new ApiError(503, "terminal_provider_unavailable", "Terminal is unavailable in this region, so active sandbox network policy cannot be changed.");
     }
 
+    const epochMs = Date.parse(timestamp);
     const failures: string[] = [];
     const deleted = new Set<string>();
     for (const sandbox of affected) {
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
+      const terminal = createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
         sandbox.workstream_id,
       );
-      await executionEnv.DB.prepare(
-        `UPDATE sandbox_tasks SET state = 'cancelled', termination_reason = 'cancelled',
-                completed_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ?
-            AND state IN ('planned', 'submitting', 'running')`,
-      ).bind(timestamp, timestamp, this.auth.workspaceId, sandbox.workstream_id).run();
+      await terminal.cancelUnsettledTasks(epochMs);
       if (sandbox.state === "running") {
+        // Still the routed environment: the preserver writes the resource and
+        // its work-stream link, which are not Terminal tables.
         await createTerminalFinalDiffPreserver(
-          executionEnv,
+          await workstreamExecutionEnvironment(
+            this.env,
+            this.auth.workspaceId,
+            sandbox.workstream_id,
+          ),
           this.provider!,
           this.auth.workspaceId,
           sandbox.workstream_id,
@@ -226,53 +228,40 @@ export class TerminalSettingsService {
         await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
         const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
         if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
-        await executionEnv.DB.prepare(
-          `UPDATE workstream_sandboxes
-              SET state = 'stopped', operation_run_id = NULL, operation_lease_expires_at = NULL,
-                  version = version + 1, updated_at = ?
-            WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-              AND provider_sandbox_id = ?`,
-        ).bind(
-          timestamp,
-          this.auth.workspaceId,
-          sandbox.workstream_id,
-          sandbox.generation,
-          sandbox.provider_sandbox_id,
-        ).run();
+        await terminal.settlePolicyTransition({
+          lifecycleState: "stopped",
+          failureCode: null,
+          clearSandboxId: false,
+          appliedNetworkRevision: null,
+          generation: sandbox.generation,
+          sandboxId: sandbox.provider_sandbox_id,
+          now: epochMs,
+        });
       } catch {
         failures.push(`${sandbox.workstream_id}:stop`);
         try {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id);
           deleted.add(sandbox.workstream_id);
-          await executionEnv.DB.prepare(
-            `UPDATE workstream_sandboxes
-                SET state = 'failed', provider_sandbox_id = NULL,
-                    operation_run_id = NULL, operation_lease_expires_at = NULL,
-                    failure_code = 'policy_stop_failed_deleted', version = version + 1, updated_at = ?
-              WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-                AND provider_sandbox_id = ?`,
-          ).bind(
-            timestamp,
-            this.auth.workspaceId,
-            sandbox.workstream_id,
-            sandbox.generation,
-            sandbox.provider_sandbox_id,
-          ).run();
+          await terminal.settlePolicyTransition({
+            lifecycleState: "failed",
+            failureCode: "policy_stop_failed_deleted",
+            clearSandboxId: true,
+            appliedNetworkRevision: null,
+            generation: sandbox.generation,
+            sandboxId: sandbox.provider_sandbox_id,
+            now: epochMs,
+          });
         } catch {
           failures.push(`${sandbox.workstream_id}:delete`);
-          await executionEnv.DB.prepare(
-            `UPDATE workstream_sandboxes
-                SET state = 'failed', operation_run_id = NULL, operation_lease_expires_at = NULL,
-                    failure_code = 'policy_quarantine_failed', version = version + 1, updated_at = ?
-              WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-                AND provider_sandbox_id = ?`,
-          ).bind(
-            timestamp,
-            this.auth.workspaceId,
-            sandbox.workstream_id,
-            sandbox.generation,
-            sandbox.provider_sandbox_id,
-          ).run();
+          await terminal.settlePolicyTransition({
+            lifecycleState: "failed",
+            failureCode: "policy_quarantine_failed",
+            clearSandboxId: false,
+            appliedNetworkRevision: null,
+            generation: sandbox.generation,
+            sandboxId: sandbox.provider_sandbox_id,
+            now: epochMs,
+          });
         }
       }
     }
@@ -297,11 +286,6 @@ export class TerminalSettingsService {
     if (failures.length > 0) {
       for (const sandbox of affected) {
         if (deleted.has(sandbox.workstream_id)) continue;
-        const executionEnv = await workstreamExecutionEnvironment(
-          this.env,
-          this.auth.workspaceId,
-          sandbox.workstream_id,
-        );
         try {
           await this.provider!.updateNetworkPolicy(
             sandbox.provider_sandbox_id,
@@ -313,18 +297,18 @@ export class TerminalSettingsService {
         } catch {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id).then(async () => {
             deleted.add(sandbox.workstream_id);
-            await executionEnv.DB.prepare(
-              `UPDATE workstream_sandboxes SET state = 'failed', provider_sandbox_id = NULL,
-                      failure_code = 'policy_rollback_deleted', version = version + 1, updated_at = ?
-                WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-                  AND provider_sandbox_id = ?`,
-            ).bind(
-              nowIso(),
+            await createTerminalPortFactory(this.env)(
               this.auth.workspaceId,
               sandbox.workstream_id,
-              sandbox.generation,
-              sandbox.provider_sandbox_id,
-            ).run();
+            ).settlePolicyTransition({
+              lifecycleState: "failed",
+              failureCode: "policy_rollback_deleted",
+              clearSandboxId: true,
+              appliedNetworkRevision: null,
+              generation: sandbox.generation,
+              sandboxId: sandbox.provider_sandbox_id,
+              now: Date.now(),
+            });
           }).catch(() => undefined);
         }
       }
@@ -352,25 +336,18 @@ export class TerminalSettingsService {
        (workspace_id, domain, created_by_user_id, created_at) VALUES (?, ?, ?, ?)`,
     ).bind(this.auth.workspaceId, domain, this.auth.userId, timestamp));
     for (const sandbox of affected.filter((entry) => !deleted.has(entry.workstream_id))) {
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
+      await createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
         sandbox.workstream_id,
-      );
-      await executionEnv.DB.prepare(
-        `UPDATE workstream_sandboxes
-            SET applied_network_revision = ?, state = 'stopped',
-                version = version + 1, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-            AND provider_sandbox_id = ?`,
-      ).bind(
-        resultingRevision,
-        timestamp,
-        this.auth.workspaceId,
-        sandbox.workstream_id,
-        sandbox.generation,
-        sandbox.provider_sandbox_id,
-      ).run();
+      ).settlePolicyTransition({
+        lifecycleState: "stopped",
+        failureCode: null,
+        clearSandboxId: false,
+        appliedNetworkRevision: resultingRevision,
+        generation: sandbox.generation,
+        sandboxId: sandbox.provider_sandbox_id,
+        now: Date.parse(timestamp),
+      });
     }
     await this.env.DB.batch([
       domainDeletes,
@@ -428,19 +405,19 @@ export class TerminalSettingsService {
     for (let offset = 0; offset < entries.length; offset += 20) {
       const page = entries.slice(offset, offset + 20);
       const loaded = await Promise.all(page.map(async (entry) => {
-        const executionEnv = await workstreamExecutionEnvironment(
-          this.env,
+        const sandbox = await createTerminalPortFactory(this.env)(
           this.auth.workspaceId,
           entry.workstream_id,
-        );
-        const sandbox = await executionEnv.DB.prepare(
-          `SELECT workstream_id, provider_sandbox_id, state, generation
-             FROM workstream_sandboxes
-            WHERE workspace_id = ? AND workstream_id = ?
-              AND provider_sandbox_id IS NOT NULL
-              AND state NOT IN ('absent', 'expired', 'failed')`,
-        ).bind(this.auth.workspaceId, entry.workstream_id).first<Omit<SandboxRow, "title">>();
-        return sandbox ? { ...sandbox, title: entry.title } : null;
+        ).policyTarget();
+        return sandbox
+          ? {
+              workstream_id: entry.workstream_id,
+              provider_sandbox_id: sandbox.sandboxId,
+              state: sandbox.lifecycleState,
+              generation: sandbox.generation,
+              title: entry.title,
+            }
+          : null;
       }));
       rows.push(...loaded.filter((row): row is SandboxRow => row !== null));
     }
