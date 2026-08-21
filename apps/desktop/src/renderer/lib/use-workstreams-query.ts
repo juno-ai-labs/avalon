@@ -42,10 +42,11 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * transcript and anything like it. That is a property of the request, not of
  * the identity of the list, which is why it stays out of the key.
  *
- * The cold first page is asked for as `list_sidebar`, which answers with the
+ * The first page is asked for as `list_sidebar`, which answers with the
  * automations and notes beside it and seeds their caches here — the whole
- * sidebar opens on one round trip. That is the only batched read: later pages
- * and every refetch ask for the directory alone.
+ * sidebar opens, and reopens, on one round trip. Those two lists have no
+ * fetcher of their own: WorkspaceDO pushes them whole whenever it changes one
+ * of their rows, and this is where they are seeded and re-seeded.
  *
  * ## Why this pages by hand rather than with `useInfiniteQuery`
  *
@@ -73,10 +74,6 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
   const { listSidebar, listWorkstreams } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
-  // Set once the batch has answered. A batch that failed leaves it false, so
-  // the retry is another batch rather than a directory page that would leave
-  // the automations and notes with nothing to load them.
-  const bootstrapped = useRef(false);
   const pagesLoaded = useRef(1);
   const nextCursor = useRef<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -89,13 +86,13 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       let cursor: string | undefined;
       let walked = 0;
       for (let page = 0; page < pagesLoaded.current; page += 1) {
-        // The cold first page is the whole sidebar in one answer. Every later
-        // page, and every refetch of a sidebar that has already opened, is the
-        // directory alone: the automations and notes have their own topics by
-        // then, and re-seeding them from here would overwrite a fresher list a
-        // REST refresh had just written.
+        // The first page is always the whole sidebar. Nothing else loads the
+        // automations and notes now — no REST fetcher stands behind them — so
+        // every reason this query reloads is also a reason they must be
+        // reloaded: a cold start, a reconnect, a debug toggle. Later pages ask
+        // for the directory alone.
         let result: WorkstreamPage;
-        if (!bootstrapped.current && page === 0) {
+        if (page === 0) {
           const batch = await listSidebar({
             limit: WORKSTREAM_PAGE_SIZE,
             includeSystem: debugEnabled,
@@ -105,9 +102,13 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
           // three arrive in one render rather than three, which is the whole
           // point of asking for them together. The keys are the ones the shell
           // reads them under; `use-workstreams-query.test.tsx` holds them to it.
+          //
+          // Safe against a push that lands mid-flight: WorkspaceDO reads this
+          // batch and sends it before any later write can be applied, and the
+          // socket preserves that order, so a newer pushed list always arrives
+          // after the batch it supersedes.
           queryClient.setQueryData<AutomationSummary[]>(['automations'], batch.automations);
           queryClient.setQueryData<NoteSummary[]>(['notes'], batch.notes);
-          bootstrapped.current = true;
           result = batch;
         } else {
           result = await listWorkstreams({

@@ -945,7 +945,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // cached copy is stale either way. Dropping it is what makes reopening
       // this draft later show the turn it is actually at.
       queryClient.removeQueries({ queryKey: ['automation-draft', response.draftId] });
-      void queryClient.invalidateQueries({ queryKey: ['automations'] });
       // The screen moved to another draft while this turn was compiling. The
       // turn still landed on the server — it is in that draft's saved
       // conversation — but nothing about it belongs on screen, least of all
@@ -1029,7 +1028,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       },
     }),
     onSuccess: (automation) => {
-      void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
     },
   });
@@ -1037,7 +1035,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const subscribe = useMutation({
     mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, defaultPluginIds, activitySourcePluginIds),
     onSuccess: (automation) => {
-      void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
     },
   });

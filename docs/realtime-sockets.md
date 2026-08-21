@@ -151,8 +151,8 @@ complete topic catalog is:
 | `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
 | `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
-| `automations` | Automation definitions, drafts, subscriptions, pause/archive status, trigger schedules, next/last runs, and work-stream-producing changes. |
-| `notes` | Workspace/personal note directory, recording/import state, and note detail invalidation. |
+| `automations` | Automation detail, drafts, and the email-route repair pass. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
+| `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
 | `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
@@ -185,9 +185,29 @@ renders the address, and the next `automations` invalidation refetches a
 reconciled list over REST. And a workspace past either bound is served its first
 250 rows here and reconciled the same way — a bound that truncates keeps a very
 large sidebar loading, where a bound that rejected would fail the whole batch.
-The desktop keeps `automations` and `notes` disabled until the batch settles,
-succeeded or failed, so they never race it on a cold start and a failed batch
-still hands the sidebar back to REST. The renderer applies WorkspaceDO-owned
+Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
+affected list whole as `workspace_sidebar_list` whenever it writes one of their
+rows, so the batch is the only load and the push is the only refresh — which is
+also why *every* first page is a batch, not just the cold one: a reconnect or a
+debug toggle reloads the directory, and those two lists have nothing else to
+reload them.
+
+Change detection sits at `executeRuntimeSql`, the one entry point every write to
+these tables passes through — a desktop REST write, a Workflow, and
+`WorkspaceScheduler` advancing `next_run_at` after a scheduled run. That last
+one is why the push exists rather than another topic: the scheduler carries no
+HTTP request, so the mutation middleware that derives topics from a request path
+never saw it, and a sidebar row's next-run time stayed stale until something
+unrelated refetched the list.
+
+The event carries the whole list and no waterline. A work-stream row needs one
+per field because it is assembled from child objects over an unordered,
+at-least-once Queue; these two lists are read and written inside the single
+object that owns them, on one thread, and sent down a transport that preserves
+order, so the last send is always the newest state. A row the viewer can no
+longer see is expressed by its absence, so archive and delete need no tombstone.
+Each list is read per socket, because a personal automation or note belongs to
+one viewer. The renderer applies WorkspaceDO-owned
 fields such as pin position only when that row's observed directory waterline is
 newer. Every socket reconnect also reloads a resident directory, because current
 state rows intentionally do not retain every intermediate push for replay.
@@ -445,6 +465,47 @@ work stream no longer closes anything until reconnect — those are object-local
 facts the D1-fed queue cannot see.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
+
+### 2026-08-21 — The two sidebar lists are pushed, not invalidated
+
+**What changed:** WorkspaceDO re-sends the automations or the notes whole, per
+viewer, as `workspace_sidebar_list` whenever it writes one of their rows,
+detected at the `executeRuntimeSql` choke point every write passes through.
+Neither list has a REST fetcher on the desktop any more: the opening batch
+seeds them, the push refreshes them, and every first page is a batch so a
+reconnect or debug toggle re-seeds all three. The `automations` and `notes`
+topics keep only the detail surfaces REST still serves.
+
+**Why:** Those topics were derived from the method and path of a mutating REST
+request, so the socket's correctness depended on the REST surface existing —
+and any writer without a request was invisible to it. `WorkspaceScheduler`
+updating `last_run_at`/`next_run_at` after a scheduled run is exactly that
+case: the sidebar's next-run time stayed stale until an unrelated automation
+write or an app restart. Pushing from the write itself fixes the staleness and
+removes the inverted dependency at once.
+
+**Considered and rejected:** Keeping invalidation and adding a publish call at
+every service that writes these tables — many call sites, each able to forget,
+and the scheduler is in a different object; per-row waterlines and tombstones
+mirroring the work-stream row — machinery for an unordered multi-writer
+delivery this path does not have; and diffing the list to push only changed
+rows, which buys nothing at 250 summaries and adds a way to be wrong.
+
+**Consequences:** A user action that writes the table more than once sends the
+list more than once — resuming an automation writes the subscription and then
+its email route, and a real window shows two identical `workspace_sidebar_list`
+frames. Each carries the same whole list, so the extra one is idempotent, and
+deduplicating across separate RPC calls would mean debouncing a push nobody has
+measured a cost for. Invalidating `['automations']` or `['notes']` on the desktop
+now does nothing, by design — the socket is the sole writer, and the shell
+reads them through `useSocketOwnedList`, whose fetcher throws rather than
+returning an empty list if anything ever enables it. A new writer of these
+tables gets the push for free as long as it goes through the workspace runtime
+database; one that reaches the tables another way would not, and there is no
+such writer today. `AutomationService.list` keeps its email-route
+reconciliation and keeps a caller: the pause/resume path defers a failed Global
+transition to it by name, so the desktop retains one deliberate repair query
+that feeds nothing the sidebar renders.
 
 ### 2026-08-21 — The sidebar opens on one answer instead of three
 
