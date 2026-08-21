@@ -1,7 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
-import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
+import {
+  applyWorkstreamObjectSchema,
+  WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+} from "../src/durable-objects/workstream-object-schema";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -94,21 +96,28 @@ describe("the runtime messages insert trigger", () => {
       VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
 
     const id = "00000000-0000-7000-8000-00000000bb01";
-    const write = (status: "started" | "completed", editedAt: string | null) => sql.exec(
+    const write = (
+      status: "started" | "completed",
+      sequenceNumber: number,
+      editedAt: string | null,
+    ) => sql.exec(
       `INSERT INTO _runtime_messages
          (id, client_message_id, workspace_id, workstream_id, author_type,
           message_type, text_content, structured_content_json, sequence_number,
           created_at, edited_at)
-       VALUES (?, ?, 'W', 'S', 'agent', 'tool', '', ?, 5,
+       VALUES (?, ?, 'W', 'S', 'agent', 'tool', '', ?, ?,
                '2026-08-20T12:00:00.000Z', ?)`,
       id,
       `tool:${id}`,
       JSON.stringify({ invocation: { toolName: "workstream_read_resource", status } }),
+      sequenceNumber,
       editedAt,
     );
 
-    write("started", null);
-    write("completed", "2026-08-20T12:00:01.000Z");
+    write("started", 5, null);
+    // Production allocates a fresh sequence number for every lifecycle write.
+    // Settlement still collides on both durable invocation identifiers.
+    write("completed", 6, "2026-08-20T12:00:01.000Z");
 
     const rows = sql.exec<{
       invocation_status: string;
@@ -170,6 +179,7 @@ describe("the runtime messages insert trigger", () => {
       JSON.stringify({ invocation: {
         id: toolId,
         toolName: "workstream_read_resource",
+        activityName: "Reading an attached resource",
         status: "started",
         outputSummary: null,
         completedAt: null,
@@ -193,15 +203,18 @@ describe("the runtime messages insert trigger", () => {
       invocation_status: string;
       output_summary: string;
       completed_at: string;
+      activity_name: string | null;
       tool_status: string;
     }>(`SELECT json_extract(structured_content_json, '$.invocation.status') AS invocation_status,
               json_extract(structured_content_json, '$.invocation.outputSummary') AS output_summary,
               json_extract(structured_content_json, '$.invocation.completedAt') AS completed_at,
+              json_extract(structured_content_json, '$.invocation.activityName') AS activity_name,
               tool_status
          FROM parts WHERE id = ?`, toolId).toArray()).toEqual([{
       invocation_status: "completed",
       output_summary: "Read 47 characters from fixture.txt",
       completed_at: "2026-08-20T12:00:01.000Z",
+      activity_name: null,
       tool_status: "completed",
     }]);
   });

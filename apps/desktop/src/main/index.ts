@@ -198,6 +198,10 @@ const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
  * canonical regional D1 read. Keep the verification bounded without treating
  * a normal cold request as an outage. */
 const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;
+/** Preference verification may outlive the first window. Collection remains
+ * fail-closed until it finishes, while the product never presents a long blank
+ * launch because a regional request is merely slow. */
+const PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS = 2_000;
 /** Well inside the flag's poll interval, so a lost poll costs one round rather
  * than blocking the next. */
 const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
@@ -3344,7 +3348,19 @@ if (!singleInstanceLock) {
     const launchAuth = await loadStoredAuth();
     try {
       await productAnalyticsSettingsController.initialize(launchAuth !== null);
-      if (launchAuth) await productAnalyticsSettingsController.refresh();
+      if (launchAuth) {
+        // Catch on the underlying promise before the launch deadline can win:
+        // verification keeps running in the background and must never become
+        // an unhandled rejection after the first window is allowed through.
+        const refresh = productAnalyticsSettingsController.refresh().catch((error: unknown) => {
+          logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+        });
+        await withDeadline(
+          refresh,
+          PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS,
+          'Product analytics preference verification continues after launch',
+        ).catch(() => undefined);
+      }
     } catch (error) {
       logWarn('avalon', 'could not synchronize the Product analytics preference', error);
     }

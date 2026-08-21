@@ -1402,6 +1402,7 @@ function repairStrandedToolTranscriptParts(): string[] {
            SELECT effect.status FROM tool_effects effect
             WHERE effect.effect_intent_id = parts.id
          ),
+         '$.invocation.activityName', json('null'),
          '$.invocation.outputSummary', (
            SELECT effect.output_summary FROM tool_effects effect
             WHERE effect.effect_intent_id = parts.id

@@ -38,11 +38,23 @@ describe('Electron telemetry wiring', () => {
     )?.[0];
 
     expect(source).toContain('const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;');
+    expect(source).toContain('const PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS = 2_000;');
     expect(request).toBeDefined();
     expect(request).toContain(
       'signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS)',
     );
     expect(request).not.toContain('AbortSignal.timeout(1_000)');
+
+    const launch = source.match(
+      /const launchAuth = await loadStoredAuth\(\);[\s\S]*?await initializeTelemetry\(launchAuth\);/u,
+    )?.[0];
+    expect(launch).toBeDefined();
+    expect(launch).not.toContain(
+      'if (launchAuth) await productAnalyticsSettingsController.refresh();',
+    );
+    expect(launch).toContain('productAnalyticsSettingsController.refresh().catch');
+    expect(launch).toContain('PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS');
+    expect(launch).toContain('await withDeadline(');
   });
 
   it('observes real Electron application focus transitions', () => {
