@@ -36,13 +36,18 @@ function seedSandboxObject(
   objectStores.set(workstreamId, objectStore);
   workstreamObjectRun(
     objectStore,
-    `INSERT INTO workstream_sandboxes
-      (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-       authority_fingerprint, applied_network_revision, version, last_activity_at,
-       warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 1,
-            'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12', '2026-08-13', '2026-08-13')`,
-    W, workstreamId, sandbox.state, sandbox.stableName, sandbox.providerSandboxId,
+    `INSERT INTO terminal_workspace
+      (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+       authority_fingerprint, applied_network_revision, version, last_command_at,
+       idle_expires_at, archive_due_at, expire_due_at, created_at, updated_at)
+    VALUES (1, 'daytona', ?, ?, ?, 1, 'authority', 1, 1, ?, ?, ?, ?, ?, ?)`,
+    sandbox.state, sandbox.stableName, sandbox.providerSandboxId,
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-09-12T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
   );
   return objectStore;
 }
@@ -144,8 +149,8 @@ describe("Terminal workspace settings", () => {
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.updateNetworkPolicy).toHaveBeenCalledWith("provider-1", expect.arrayContaining(["custom.example"]));
     expect(provider.startSandbox).not.toHaveBeenCalled();
-    expect(workstreamObjectGet(objectStore, "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ?", W))
-      .toEqual({ state: "stopped", applied_network_revision: 2 });
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", applied_network_revision: 2 });
   });
 
   it("does not mark a sandbox created after the policy claim as verified", async () => {
@@ -169,9 +174,8 @@ describe("Terminal workspace settings", () => {
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
     expect(workstreamObjectGet(
       objectStores.get(lateWorkstream)!,
-      "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      W, lateWorkstream,
-    )).toEqual({ state: "stopped", applied_network_revision: 1 });
+      "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "stopped", applied_network_revision: 1 });
   });
 
   it("does not mutate a replacement generation created while the old sandbox stops", async () => {
@@ -179,10 +183,10 @@ describe("Terminal workspace settings", () => {
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => {
       workstreamObjectRun(
         objectStore,
-        `UPDATE workstream_sandboxes
-            SET generation = 2, provider_sandbox_id = 'provider-replacement', state = 'running', version = version + 1
-          WHERE workspace_id = ? AND workstream_id = ?`,
-        W, S,
+        `UPDATE terminal_workspace
+            SET generation = 2, sandbox_id = 'provider-replacement',
+                lifecycle_state = 'running', version = version + 1
+          WHERE id = 1`,
       );
     });
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
@@ -191,12 +195,11 @@ describe("Terminal workspace settings", () => {
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT generation, provider_sandbox_id, state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "SELECT generation, sandbox_id, lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1",
     )).toEqual({
       generation: 2,
-      provider_sandbox_id: "provider-replacement",
-      state: "running",
+      sandbox_id: "provider-replacement",
+      lifecycle_state: "running",
       applied_network_revision: 1,
     });
   });
@@ -205,8 +208,7 @@ describe("Terminal workspace settings", () => {
     const { objectStore, provider, service } = fixture();
     workstreamObjectRun(
       objectStore,
-      "UPDATE workstream_sandboxes SET state = 'failed' WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
+      "UPDATE terminal_workspace SET lifecycle_state = 'failed' WHERE id = 1",
     );
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
     expect(preview.affectedWorkstreamIds).toEqual([]);
@@ -217,9 +219,8 @@ describe("Terminal workspace settings", () => {
     expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      W, S,
-    )).toEqual({ state: "failed", applied_network_revision: 1 });
+      "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "failed", applied_network_revision: 1 });
   });
 
   it("rejects members and stale revisions with recovery guidance", async () => {
@@ -252,9 +253,8 @@ describe("Terminal workspace settings", () => {
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-2");
     expect(workstreamObjectGet(
       objectStores.get(second)!,
-      "SELECT state FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      W, second,
-    )).toEqual({ state: "stopped" });
+      "SELECT lifecycle_state FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "stopped" });
     expect(database.prepare(
       "SELECT mode, revision, verification_state FROM workspace_sandbox_network_policies WHERE workspace_id = ?",
     ).get(W)).toEqual({ mode: "trusted_only", revision: 1, verification_state: "verified" });

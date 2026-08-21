@@ -92,6 +92,12 @@ import {
   WorkstreamObjectStore,
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
+import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
+import {
+  TerminalOperationRequestSchema,
+  terminalOperationAffectsDirectory,
+  type TerminalOperationRequest,
+} from "./workstream-terminal-protocol";
 import {
   WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
   WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
@@ -435,13 +441,15 @@ export class SubstreamAgent extends DurableObject<Env> {
   /**
    * Not `readonly`, and not assigned in the constructor body: the store applies
    * this object's schema when it is constructed, and reporting a failed
-   * migration needs an `await` before the throw escapes. Both are assigned in
-   * the first, synchronous, statements of the `blockConcurrencyWhile` callback
-   * below, which runs before the constructor returns and before any handler can
-   * observe either field — every one of them waits on `initialized` first.
+   * migration needs an `await` before the throw escapes. All three are assigned
+   * in the first, synchronous, statements of the `blockConcurrencyWhile`
+   * callback below, which runs before the constructor returns and before any
+   * handler can observe any of them — every one of them waits on `initialized`
+   * first.
    */
   private objectStore!: WorkstreamObjectStore;
   private product!: WorkstreamObjectProductService;
+  private terminal!: WorkstreamTerminalStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -475,6 +483,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         env.AVALON_REGION,
       ));
       this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
+      this.terminal = new WorkstreamTerminalStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -588,6 +597,10 @@ export class SubstreamAgent extends DurableObject<Env> {
       return this.acceptRuntimeSql(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/terminal") {
+      return this.acceptTerminalOperation(request);
+    }
+
     if (request.method === "POST" && url.pathname === "/internal/runtime-resource") {
       return this.acceptRuntimeResource(request);
     }
@@ -684,6 +697,11 @@ export class SubstreamAgent extends DurableObject<Env> {
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
   }
 
+  async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptTerminalOperation(this.rpcRequest(input)));
+  }
+
   async createRuntimeSuggestion(input: SubstreamRuntimeSuggestionRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeSuggestion(this.rpcRequest(input)));
@@ -770,6 +788,48 @@ export class SubstreamAgent extends DurableObject<Env> {
     } catch (error) {
       return jsonResponse({
         error: error instanceof Error ? error.message : "workstream_runtime_sql_failed",
+      }, 409);
+    }
+  }
+
+  /**
+   * Run one Terminal operation against this work stream's own tables.
+   *
+   * Every storage method is synchronous — the object's SQLite API is — so the
+   * whole operation runs inside this call with no interleaving. That is the
+   * property the previous routed-SQL path could not offer: a load-then-claim
+   * sequence crossed the Worker boundary between its two statements, so the
+   * lease it took could be decided on state that had already moved.
+   */
+  private async acceptTerminalOperation(request: Request): Promise<Response> {
+    const parsed = TerminalOperationRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_terminal_operation" }, 400);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId) {
+      return jsonResponse({ error: "workstream_terminal_identity_mismatch" }, 409);
+    }
+    try {
+      const method = this.terminal[parsed.data.operation] as (...args: unknown[]) => unknown;
+      // Through `commitRuntimeMutation`, not directly, for the same reason
+      // `acceptRuntimeSql` does: a write that moves a Terminal deadline has to
+      // enqueue the `directory_common` effect, because
+      // `workspace_workstream_directory.next_terminal_action_at` is the only
+      // thing `WorkspaceScheduler` reads to decide a sandbox is due, and that
+      // effect is its only writer. Calling the storage method on its own
+      // committed the row and told nobody.
+      const value = await this.product.commitRuntimeMutation(
+        () => method.apply(this.terminal, parsed.data.args),
+        terminalOperationAffectsDirectory(parsed.data.operation),
+      );
+      // The deadline this operation just wrote is also this object's own next
+      // alarm, so re-derive it here rather than waiting for the next request.
+      await this.scheduleNextAlarm();
+      return jsonResponse({ ok: true, value: value ?? null });
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "terminal_operation_failed",
       }, 409);
     }
   }

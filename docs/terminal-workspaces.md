@@ -23,6 +23,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
+| `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
+| `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
 ## How it works
 
@@ -286,7 +288,7 @@ workspace policy into WorkspaceDO:
   for the revisioned preview/confirm/read-back protocol and full history;
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state;
-- `terminal_tasks` and `terminal_commands` for durable command submission and one final result;
+- `terminal_tasks` for durable command submission and one final result;
 - `terminal_imported_resources` for generation-scoped deterministic imports;
 - `terminal_repository` for the exact GitHub repository, refs, and
   selected remote-access ceiling;
@@ -384,6 +386,121 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-21 — Terminal writes republish the directory deadline again
+
+**What changed:** `/internal/terminal` runs each operation through
+`commitRuntimeMutation` and then `scheduleNextAlarm`, the way
+`/internal/runtime-sql` always did. Operations that cannot move a deadline —
+reads, and the task, import, and publication writes — are exempted by name;
+anything else, including anything added later, publishes.
+
+**Why:** the typed port called its storage method directly, which committed the
+row and told nobody. `workspace_workstream_directory.next_terminal_action_at`
+is the only input `WorkspaceScheduler` has for Terminal work and the
+`directory_common` effect is its only writer, so a sandbox could hold three
+durable deadlines with nothing enqueued. The pre-cutover path published by
+accident: `affectsDirectory` was a table-name regex naming
+`workstream_sandboxes`, so every Terminal statement matched it. Removing that
+vocabulary removed the publication with it, and the regex — which can no longer
+match anything — is gone too. The sweeper's own transitions were the worst case:
+stop, archive, and expire produced no other directory-affecting write, so the
+chain stalled after whatever value was published last, and nothing ever cleared
+a stale one.
+
+**Considered and rejected:** treating every operation as directory-affecting.
+Task settlement runs once per command, and republishing the whole directory row
+plus a per-participant effect on that path is real parent work for a projection
+that cannot have changed. The exemption list is explicit and the default falls
+the other way, so a new operation over-publishes rather than stranding the
+scheduler.
+
+**Consequences:** an operation added to `WorkstreamTerminalStorage` publishes a
+directory effect unless it is named in `NON_DIRECTORY_OPERATIONS`. Adding a name
+there is a claim that the operation cannot change `terminal_workspace`, and it
+is only checked by review.
+
+### 2026-08-21 — Policy transitions keep their per-path lease semantics
+
+**What changed:** `settlePolicyTransition` takes `clearOperationLease` instead
+of always clearing the mutation lease.
+
+**Why:** the five D1 statements it replaced were not uniform. The stop and the
+two failure paths that lose the sandbox released the lease; the rollback and the
+settle that only records the applied revision left it with its holder. Folding
+them into one operation quietly made all five release it, which is a change to a
+mutual-exclusion guard that nothing asked for.
+
+**Considered and rejected:** keeping the uniform clear and documenting it. The
+lease is what stops two runs mutating one workspace; changing when it drops
+belongs in a change that argues for it, not in a refactor.
+
+**Consequences:** each call site states its own answer, and the two that keep
+the lease are the two that leave a sandbox a run may still be using.
+
+### 2026-08-21 — Terminal addresses its own tables through a typed port
+
+**What changed:** The Terminal services no longer hold a `D1Database`. A new
+`WorkstreamTerminalStorage` inside the SubstreamAgent is the only reader and
+writer of `terminal_workspace`, `terminal_tasks`,
+`terminal_imported_resources`, `terminal_repository`,
+`terminal_publication_grants`, and `repository_publications`; the services
+reach it through `/internal/terminal` and a typed `TerminalObjectPort` whose
+operation list is derived from the storage class. WorkstreamDO schema
+migration 12 promotes the nine fields that lived in `lifecycle_json` to real
+columns and drops the 32 `_runtime_terminal_*` compatibility view and trigger
+statements. The dead pre-cutover branches in `workspace-scheduler.ts` and
+`connection-service.ts` — which queried tables migration `0090` dropped — go
+with them.
+
+**Why:** The vocabulary the code used stopped describing what it did. A
+statement reading `UPDATE workstream_sandboxes` named a table that had not
+existed in D1 since the legacy product schema was retired; it was rewritten
+onto a compatibility view whose INSTEAD OF triggers converted ISO-8601 to unix
+milliseconds and packed nine fields into a JSON blob. That layer existed so one
+body of code could run against both D1 and the object during the cutover, and
+the cutover is over. Its remaining cost was real: `archive_due_at` — a deadline
+the workspace scheduler sorts alarms by — had no type, no CHECK, and no index,
+because it was a JSON key. Worse, a load-then-claim sequence crossed the Worker
+boundary between its two statements, so the operation lease could be decided on
+state that had already moved; the same sequence now runs inside one
+synchronous object call.
+
+**Considered and rejected:** Keeping the SQL and renaming only the handle. That
+removes the misleading signature and nothing else — the blob, the timestamp
+conversion, and the split transactions all survive. Also rejected: converting
+the whole runtime compatibility vocabulary at once. `tool_invocations`,
+`harness_runs`, `resources`, and `notes` are shared by every subsystem, so
+retiring them is a change per subsystem rather than a wider version of this
+one; `runtime.ts` still reaches `tool_invocations` through the routed handle
+and says so.
+
+**Consequences:** Two invariants the blob could not express are now enforced by
+the table: a lease or a claim without its deadline is rejected, because an
+unreleasable lease holds the workspace forever. `authority_epoch` is gone — the
+compatibility triggers set it equal to `version` on every write and nothing
+read it back. Terminal state is now reachable only with the agent binding, so
+three helpers in `repository.ts` that took `Pick<Env, "DB">` take a full `Env`.
+The Node suite keeps its real-SQL coverage through a local-storage seam on the
+port; what the runtime decides belongs in `test-workers/`.
+
+### 2026-08-21 — `terminal_commands` retired from the object schema
+
+**What changed:** WorkstreamDO schema migration 11 drops `terminal_commands`.
+`terminal_tasks` remains the sole durable record of a Terminal command.
+
+**Why:** The table was created during the D1 retirement for per-command
+receipts, but nothing ever wrote it — every field it declared (command hash,
+timeout, status, exit code, settle time) is already carried by the durable task
+row that the run-command path actually settles. Two plausible command
+authorities in one schema is an invitation to write the wrong one.
+
+**Considered and rejected:** Keeping it for a future split between "command"
+and "task". Nothing has needed that split, and a table kept for a hypothesis
+cannot be trusted to have the right columns when the hypothesis arrives.
+
+**Consequences:** A per-command receipt distinct from the task is now an
+explicit design change, not an empty table waiting to be filled.
 
 ### 2026-08-18 — Workspace Terminal policy moves into WorkspaceDO
 

@@ -2,6 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
+import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
+import {
+  createTerminalPortFactory,
+  type TerminalPortFactory,
+} from "../../src/services/terminal/object-port";
 import {
   rewriteWorkstreamRuntimeSql,
   type WorkstreamRuntimeSqlResult,
@@ -248,6 +253,29 @@ export function testWorkstreamRuntimeD1(
   );
 }
 
+/**
+ * A Terminal port backed by the test's own object database.
+ *
+ * The services take a `TerminalPortFactory` so this can hand them real
+ * storage over `node:sqlite` running the checked-in object schema: the SQL,
+ * the constraints, and the transactions are the real ones. What this cannot
+ * prove is anything the runtime decides — serialization against a concurrent
+ * caller, an alarm observing a committed row — which is why the Terminal
+ * runtime tests live in `test-workers/` against real workerd.
+ */
+export function testTerminalPortFactory(objectStore: DatabaseSync): TerminalPortFactory {
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql: objectSqlStorage(objectStore),
+  });
+  return createTerminalPortFactory(
+    createTestEnv({}),
+    new WorkstreamTerminalStorage(storage),
+  );
+}
+
 export type RecordedDispatch = Record<string, unknown>;
 
 /** A wire-shaped `WorkstreamSchema` object for fabricated product responses. */
@@ -351,6 +379,39 @@ export function testSubstreamAgentsBinding(
     return store;
   };
   const stub = {
+    /**
+     * The Terminal port's counterpart, run against the same object database
+     * the SQL port uses. Real storage, real schema, real constraints — the
+     * one thing standing in is the transport, because a Worker-to-object
+     * round trip is what `test-workers/` exists to exercise.
+     */
+    executeTerminalOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = createCloudflareTestBinding<DurableObjectStorage>({
+        getAlarm: async () => null,
+        setAlarm: async () => undefined,
+        transactionSync: (body: () => unknown) => body(),
+        sql: objectSqlStorage(store),
+      });
+      const terminal = new WorkstreamTerminalStorage(storage) as unknown as
+        Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = terminal[input.operation]!.apply(terminal, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "terminal_operation_failed",
+          }),
+        };
+      }
+    }),
     executeRuntimeSql: vi.fn((input: {
       workspaceId: string;
       workstreamId?: string;

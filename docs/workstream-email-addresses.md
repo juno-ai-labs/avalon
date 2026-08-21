@@ -136,9 +136,10 @@ suppressed for email too.
 
 `automation_delivery_targets`, its per-run last-delivery fence, and email
 receipts live in WorkspaceDO. The regional sender uses a stable provider
-idempotency key and settles the target there. Delivery paths that need a
-multi-destination lease may use the object-local `external_delivery_attempts`
-ledger; D1 does not retain an outbound payload or delivery-state projection.
+idempotency key and settles the target there. A delivery path needing a
+multi-destination lease has to model one — the `external_delivery_attempts`
+ledger reserved for it was retired unused — and D1 does not retain an outbound
+payload or delivery-state projection.
 
 ### The frozen v1 vocabulary
 

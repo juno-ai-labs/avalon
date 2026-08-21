@@ -1,11 +1,12 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
+import { createTerminalPortFactory } from "./object-port";
 import {
   createGitHubAppJwt,
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
 } from "@avalon/connectors";
 import type { ExecutionPrincipal } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { githubConnectorConfig } from "../../lib/connector-registry";
@@ -82,28 +83,6 @@ export interface TerminalGitHubReadGateway {
   ): Promise<string>;
 }
 
-interface SelectionRow {
-  workspace_id: string;
-  workstream_id: string;
-  connection_id: string;
-  repository_id: number;
-  repository_full_name: string;
-  base_ref: string;
-  base_sha: string;
-  head_ref: string;
-  remote_access: GitHubRepositoryAccessLevel;
-  bootstrapped_sandbox_generation: number | null;
-  read_token_expires_at: string | null;
-}
-
-interface GrantRow {
-  id: string;
-  principal_key: string;
-  repository_full_name: string;
-  base_ref: string;
-  head_ref: string;
-}
-
 interface InvocationRow { id: string }
 
 interface CompletedPublicationRow {
@@ -116,33 +95,31 @@ interface CompletedPublicationRow {
   title: string;
 }
 
-function selectionFromRow(row: SelectionRow): TerminalRepositorySelection {
-  return {
-    workspaceId: row.workspace_id,
-    workstreamId: row.workstream_id,
-    connectionId: row.connection_id,
-    repositoryId: row.repository_id,
-    repositoryFullName: row.repository_full_name,
-    baseRef: row.base_ref,
-    baseSha: row.base_sha,
-    headRef: row.head_ref,
-    remoteAccess: row.remote_access,
-    bootstrappedSandboxGeneration: row.bootstrapped_sandbox_generation,
-    readTokenExpiresAt: row.read_token_expires_at,
-  };
-}
-
-async function loadSelection(database: D1Database, workspaceId: string, workstreamId: string): Promise<TerminalRepositorySelection | null> {
-  const row = await database.prepare(
-    `SELECT repository.workspace_id, repository.workstream_id, repository.connection_id,
-            repository.repository_id, repository.repository_full_name, repository.base_ref,
-            repository.base_sha, repository.head_ref, repository.remote_access,
-            repository.bootstrapped_sandbox_generation, repository.read_token_expires_at
-       FROM workstream_terminal_repositories repository
-      WHERE repository.workspace_id = ? AND repository.workstream_id = ?
-        AND repository.state = 'selected'`,
-  ).bind(workspaceId, workstreamId).first<SelectionRow>();
-  return row ? selectionFromRow(row) : null;
+async function loadSelection(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+): Promise<TerminalRepositorySelection | null> {
+  const row = await createTerminalPortFactory(env)(workspaceId, workstreamId)
+    .selectedRepository();
+  return row
+    ? {
+        workspaceId,
+        workstreamId,
+        connectionId: row.connectionId,
+        repositoryId: row.repositoryId,
+        repositoryFullName: row.repositoryFullName,
+        baseRef: row.baseRef,
+        baseSha: row.baseSha,
+        headRef: row.headRef,
+        remoteAccess: row.remoteAccess,
+        bootstrappedSandboxGeneration: row.bootstrappedSandboxGeneration,
+        // The object stores epoch milliseconds; this contract is ISO-8601.
+        readTokenExpiresAt: row.readTokenExpiresAt
+          ? new Date(row.readTokenExpiresAt).toISOString()
+          : null,
+      }
+    : null;
 }
 
 async function assertRepositoryRemoteAccess(
@@ -195,7 +172,7 @@ async function assertRepositoryRemoteAccess(
 }
 
 export async function bootstrapTerminalRepository(
-  env: Pick<Env, "DB">,
+  env: Env,
   context: HarnessToolContext,
   sandbox: AcquiredTerminalSandbox,
   provider: TerminalSandboxProvider,
@@ -207,7 +184,7 @@ export async function bootstrapTerminalRepository(
   headRef: string;
   outcome: "cloned" | "refreshed";
 }> {
-  const selection = await loadSelection(env.DB, context.workspaceId, context.workstreamId);
+  const selection = await loadSelection(env, context.workspaceId, context.workstreamId);
   if (!selection) {
     throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with terminal_checkout_repository, then retry the repository operation.");
   }
@@ -304,20 +281,14 @@ export async function bootstrapTerminalRepository(
     );
   }
   if (token || !alreadyBootstrapped) {
-    await env.DB.prepare(
-      `UPDATE workstream_terminal_repositories
-          SET bootstrapped_sandbox_generation = ?, read_token_expires_at = COALESCE(?, read_token_expires_at), updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'
-          AND repository_full_name = ? AND base_sha = ?`,
-    ).bind(
-      sandbox.generation,
-      token?.expiresAt ?? null,
-      nowIso(),
-      context.workspaceId,
-      context.workstreamId,
-      selection.repositoryFullName,
-      selection.baseSha,
-    ).run();
+    await createTerminalPortFactory(env)(context.workspaceId, context.workstreamId)
+      .recordRepositoryBootstrap({
+        generation: sandbox.generation,
+        readTokenExpiresAt: token?.expiresAt ? Date.parse(token.expiresAt) : null,
+        repositoryFullName: selection.repositoryFullName,
+        baseSha: selection.baseSha,
+        now: Date.now(),
+      });
   }
   return {
     repositoryFullName: selection.repositoryFullName,
@@ -329,7 +300,7 @@ export async function bootstrapTerminalRepository(
 }
 
 export async function admitTerminalPublicationGrant(
-  env: Pick<Env, "DB">,
+  env: Env,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -342,7 +313,7 @@ export async function admitTerminalPublicationGrant(
   if (!input.triggerMessageId || input.executionPrincipal.type !== "user") {
     return { admitted: false, reason: "participant_message_required" };
   }
-  const selection = await loadSelection(env.DB, input.workspaceId, input.workstreamId);
+  const selection = await loadSelection(env, input.workspaceId, input.workstreamId);
   if (!selection) return { admitted: false, reason: "repository_not_configured" };
   const message = await env.DB.prepare(
     `SELECT message.text_content
@@ -360,34 +331,26 @@ export async function admitTerminalPublicationGrant(
     input.executionPrincipal.userId,
   ).first<{ text_content: string }>();
   if (!message) return { admitted: false, reason: "participant_message_required" };
-  const id = newId(now.getTime());
-  const createdAt = now.toISOString();
-  const expiresAt = new Date(now.getTime() + 2 * 60 * 60_000).toISOString();
-  await env.DB.prepare(
-    `INSERT INTO terminal_publication_grants
-     (id, workspace_id, workstream_id, harness_run_id, source_message_id, principal_key,
-      repository_full_name, base_ref, head_ref, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(workspace_id, harness_run_id, source_message_id, repository_full_name) DO NOTHING`,
-  ).bind(
-    id,
-    input.workspaceId,
-    input.workstreamId,
-    input.harnessRunId,
-    input.triggerMessageId,
-    executionPrincipalKey(input.executionPrincipal),
-    selection.repositoryFullName,
-    selection.baseRef,
-    selection.headRef,
-    expiresAt,
-    createdAt,
-  ).run();
-  const grant = await env.DB.prepare(
-    `SELECT id FROM terminal_publication_grants
-      WHERE workspace_id = ? AND harness_run_id = ? AND source_message_id = ? AND repository_full_name = ?`,
-  ).bind(input.workspaceId, input.harnessRunId, input.triggerMessageId, selection.repositoryFullName).first<{ id: string }>();
+  const terminal = createTerminalPortFactory(env)(input.workspaceId, input.workstreamId);
+  await terminal.admitPublicationGrant({
+    grantId: newId(now.getTime()),
+    runId: input.harnessRunId,
+    sourcePartId: input.triggerMessageId,
+    principalKey: executionPrincipalKey(input.executionPrincipal),
+    repositoryFullName: selection.repositoryFullName,
+    baseRef: selection.baseRef,
+    headRef: selection.headRef,
+    expiresAt: now.getTime() + 2 * 60 * 60_000,
+    now: now.getTime(),
+  });
+  // Read back rather than trusting the insert: the unique constraint makes a
+  // replayed admission a no-op, and the first grant's id is the one that counts.
+  const grant = await terminal.latestPublicationGrant({
+    runId: input.harnessRunId,
+    repositoryFullName: selection.repositoryFullName,
+  });
   if (!grant) throw new Error("Unable to persist the Terminal publication grant");
-  return { admitted: true, grantId: grant.id };
+  return { admitted: true, grantId: grant.grantId };
 }
 
 async function runInspection(
@@ -422,12 +385,12 @@ function publishedOutput(row: CompletedPublicationRow): TerminalPublishedBranchA
 }
 
 export function createTerminalRepositoryPublisher(
-  env: Pick<Env, "DB">,
+  env: Env,
   gateway: TerminalGitHubPublicationGateway,
 ): TerminalRepositoryPublisher {
   return {
     async publishBranchAndPr(context, input, sandbox, provider) {
-      const selection = await loadSelection(env.DB, context.workspaceId, context.workstreamId);
+      const selection = await loadSelection(env, context.workspaceId, context.workstreamId);
       if (!selection) {
         throw new TerminalToolError(
           "repository_not_configured",
@@ -440,32 +403,39 @@ export function createTerminalRepositoryPublisher(
           WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
       ).bind(context.workspaceId, context.workstreamId, context.harnessRunId, context.toolCallId).first<InvocationRow>();
       if (!invocation) throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable publication receipt. Retry publication.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
-      const completed = await env.DB.prepare(
-        `SELECT published_sha, pull_request_number, pull_request_url, head_ref,
-                repository_full_name, base_ref, title
-           FROM repository_publications
-          WHERE workspace_id = ? AND tool_invocation_id = ? AND state = 'completed'`,
-      ).bind(context.workspaceId, invocation.id).first<CompletedPublicationRow>();
-      if (completed) return publishedOutput(completed);
+      const terminal = createTerminalPortFactory(env)(context.workspaceId, context.workstreamId);
+      const completed = await terminal.completedPublication(invocation.id);
+      // A row in `completed` always carries these three; the columns are
+      // nullable because the row exists from `publishing` onward. Replaying a
+      // receipt that somehow lacks them would report a publish that cannot be
+      // pointed at, so it fails loudly instead.
+      if (completed) {
+        if (
+          completed.publishedSha === null
+          || completed.pullRequestNumber === null
+          || completed.pullRequestUrl === null
+        ) throw new Error("terminal_publication_receipt_incomplete");
+        return publishedOutput({
+          published_sha: completed.publishedSha,
+          pull_request_number: completed.pullRequestNumber,
+          pull_request_url: completed.pullRequestUrl,
+          head_ref: completed.headRef,
+          repository_full_name: completed.repositoryFullName,
+          base_ref: completed.baseRef,
+          title: completed.title,
+        });
+      }
 
-      const grant = await env.DB.prepare(
-        `SELECT id, principal_key, repository_full_name, base_ref, head_ref
-           FROM terminal_publication_grants
-          WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ?
-            AND repository_full_name = ?
-          ORDER BY created_at DESC LIMIT 1`,
-      ).bind(
-        context.workspaceId,
-        context.workstreamId,
-        context.harnessRunId,
-        selection.repositoryFullName,
-      ).first<GrantRow>();
+      const grant = await terminal.latestPublicationGrant({
+        runId: context.harnessRunId,
+        repositoryFullName: selection.repositoryFullName,
+      });
       if (
         !grant
-        || grant.principal_key !== executionPrincipalKey(context.executionPrincipal)
-        || grant.repository_full_name !== selection.repositoryFullName
-        || grant.base_ref !== selection.baseRef
-        || grant.head_ref !== selection.headRef
+        || grant.principalKey !== executionPrincipalKey(context.executionPrincipal)
+        || grant.repositoryFullName !== selection.repositoryFullName
+        || grant.baseRef !== selection.baseRef
+        || grant.headRef !== selection.headRef
       ) {
         throw new TerminalToolError(
           "publication_not_authorized",
@@ -541,48 +511,26 @@ export function createTerminalRepositoryPublisher(
       try {
         await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
         const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
-        const timestamp = nowIso();
-        const consumed = await env.DB.prepare(
-          `UPDATE terminal_publication_grants
-            SET consumed_by_invocation_id = COALESCE(consumed_by_invocation_id, ?),
-                consumed_at = COALESCE(consumed_at, ?)
-          WHERE workspace_id = ? AND id = ?
-          RETURNING id`,
-        ).bind(invocation.id, timestamp, context.workspaceId, grant.id).first<{ id: string }>();
+        const consumed = await terminal.consumePublicationGrant({
+          grantId: grant.grantId,
+          effectIntentId: invocation.id,
+          now: Date.now(),
+        });
         if (!consumed) throw new TerminalToolError("publication_not_authorized", "This run no longer has repository publication authority. Continue from an active participant run with full repository access.");
-        const existingPublication = await env.DB.prepare(
-          `SELECT id FROM repository_publications
-          WHERE workspace_id = ? AND tool_invocation_id = ?`,
-        ).bind(context.workspaceId, invocation.id).first<{ id: string }>();
-        const publicationId = existingPublication?.id ?? newId();
-        await env.DB.prepare(
-          `INSERT INTO repository_publications
-           (id, workspace_id, workstream_id, tool_invocation_id, grant_id,
-            repository_full_name, base_ref, head_ref, expected_old_sha, requested_commit_sha,
-            state, title, body, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?)
-           ON CONFLICT(workspace_id, tool_invocation_id)
-           DO UPDATE SET grant_id = excluded.grant_id,
-                         expected_old_sha = excluded.expected_old_sha,
-                         requested_commit_sha = excluded.requested_commit_sha,
-                         state = 'publishing', title = excluded.title, body = excluded.body,
-                         failure_code = NULL, updated_at = excluded.updated_at`,
-        ).bind(
+        const publicationId = newId();
+        await terminal.beginPublication({
           publicationId,
-          context.workspaceId,
-          context.workstreamId,
-          invocation.id,
-          grant.id,
-          selection.repositoryFullName,
-          selection.baseRef,
-          selection.headRef,
+          effectIntentId: invocation.id,
+          grantId: grant.grantId,
+          repositoryFullName: selection.repositoryFullName,
+          baseRef: selection.baseRef,
+          headRef: selection.headRef,
           expectedOldSha,
-          headSha,
-          input.title,
-          input.body,
-          timestamp,
-          timestamp,
-        ).run();
+          requestedCommitSha: headSha,
+          title: input.title,
+          body: input.body,
+          now: Date.now(),
+        });
         try {
           const published = await provider.publishGitBundle({
             operationId: publicationId,
@@ -608,21 +556,13 @@ export function createTerminalRepositoryPublisher(
           if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
             throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Avalon can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Avalon can reconcile the branch and pull request." });
           }
-          const completedAt = nowIso();
-          await env.DB.prepare(
-            `UPDATE repository_publications
-              SET state = 'completed', published_sha = ?, pull_request_number = ?,
-                  pull_request_url = ?, pull_request_state = 'open', completed_at = ?, updated_at = ?
-            WHERE workspace_id = ? AND tool_invocation_id = ?`,
-          ).bind(
-            published.publishedSha,
-            pullRequest.number,
-            pullRequest.url,
-            completedAt,
-            completedAt,
-            context.workspaceId,
-            invocation.id,
-          ).run();
+          await terminal.completePublication({
+            effectIntentId: invocation.id,
+            publishedSha: published.publishedSha,
+            pullRequestNumber: pullRequest.number,
+            pullRequestUrl: pullRequest.url,
+            now: Date.now(),
+          });
           return {
             repository: selection.repositoryFullName,
             baseRef: selection.baseRef,
@@ -638,15 +578,13 @@ export function createTerminalRepositoryPublisher(
             },
           };
         } catch (error) {
-          await env.DB.prepare(
-            `UPDATE repository_publications SET state = 'ambiguous', failure_code = ?, updated_at = ?
-            WHERE workspace_id = ? AND tool_invocation_id = ? AND state <> 'completed'`,
-          ).bind(
-            error instanceof TerminalToolError ? error.code : "provider_publication_failed",
-            nowIso(),
-            context.workspaceId,
-            invocation.id,
-          ).run();
+          await terminal.markPublicationAmbiguous({
+            effectIntentId: invocation.id,
+            failureCode: error instanceof TerminalToolError
+              ? error.code
+              : "provider_publication_failed",
+            now: Date.now(),
+          });
           throw error;
         }
       } finally {

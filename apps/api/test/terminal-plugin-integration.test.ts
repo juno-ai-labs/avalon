@@ -83,7 +83,7 @@ describe("Terminal Bind integration", () => {
       "read_file", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
   });
 
   it("omits Terminal in unsupported regions", async () => {
