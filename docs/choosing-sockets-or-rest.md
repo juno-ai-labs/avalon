@@ -29,7 +29,7 @@ divergences](#known-divergences), describe how the code behaves right now,
 including in the places where it contradicts these rules. Those two sections are
 a record of the current state, not examples to copy.
 
-Every section states the principle first and ends with a **do and don't**
+Every section states the principle first and ends with a **Do and Don't**
 distillation. The principles are meant to survive this codebase: they apply to a
 stream nobody has built yet, and Avalon's current mechanisms appear as worked
 examples of them rather than as the rule itself. Where a section describes what
@@ -373,9 +373,8 @@ everything it is told.
 
 ### How Avalon stamps it today
 
-`WorkstreamStateVersion` in `packages/contracts/src/index.ts` is the shape both
-work-stream paths carry, and it is worth reading as a design rather than a
-struct:
+`WorkstreamStateVersion` in `@avalon/contracts` is the shape both work-stream
+paths carry, and it is worth reading as a design rather than a struct:
 
 | Field | What it decides |
 | --- | --- |
@@ -707,7 +706,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 
 | Surface | Channel today | Matches this document |
 | --- | --- | --- |
-| Work-stream directory (sidebar rows, pins, order) | WorkspaceDO socket, cursor-paged, pushed on change | Yes. D1 is never a list fallback. |
+| Work-stream directory pages (membership, order, pins) | Requested with `list_workstreams` on the workspace socket; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** It stays on the socket and never falls back to a D1 list endpoint, but the first page is requested rather than pushed, and a pin or a reorder arrives as news rather than as the changed row. |
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | HyperSight block output | BlockDashboardAgent socket, checkpoint on connect | Yes. |
@@ -721,10 +720,10 @@ describes behaviour to replace, not a pattern to copy into something new.**
 
 ## Known divergences
 
-Three places where the running code does not follow this document. They are
+Four places where the running code does not follow this document. They are
 written down so that nobody reproduces them by copying what is already there,
 and so the work to close them is legible to whoever picks it up. **None of them
-is an exception you may extend: two are gaps, and the message send is a single
+is an exception you may extend: three are gaps, and the message send is a single
 argued-for carve-out.**
 
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
@@ -739,6 +738,15 @@ waterlines so a later push can order against it, and a client that applies
 frames instead of invalidating query keys. Until then, `initial` is the boundary
 between what this document describes and what runs.
 
+The sidebar is inside that boundary even though it never leaves the socket. The
+first directory page is requested with `list_workstreams` rather than pushed by
+`subscribe`, and a pin, an unpin, or a reorder calls `publishDirectorySync`,
+which emits only the `workstream_directory` topic — so the client invalidates
+and asks again. Row state is the part that is genuinely pushed: a title or a run
+state arrives as a waterlined `workspace_workstream_state`. Closing this half
+means the connect carrying the first page and pin changes publishing the changed
+row.
+
 **The connector list re-reads itself on window focus.**
 `apps/desktop/src/renderer/screens/workspace-settings.tsx` sets
 `refetchOnWindowFocus: 'always'` on the `connections` query, against a global
@@ -750,6 +758,21 @@ The push path already exists — `connector_connections` is one of the workspace
 sync topics — so closing it means applying pushed connection state on that
 screen instead of re-reading. Until then, this is the one place a timer-like
 read survives, and it is not a precedent.
+
+**The workspace socket keeps pushing to a revoked session until that session
+speaks.** `publishSync` and `publishWorkstreamState` write to every subscribed
+attachment without re-checking the session, and WorkspaceDO has no sweep that
+closes a socket whose D1 session or workspace membership has been revoked.
+`sessionAuth` runs on the upgrade and on each inbound command — `subscribe`,
+`list_workstreams`, `create_message` — so a connection that only listens is
+authorized as of the last thing it said. `SubstreamAgent` and
+`BlockDashboardAgent` do not have this gap: both sweep immediately on an
+access-retracting event and revalidate on a bound. This is the "never sweeping"
+half of the [revocation invariant](#invariants), and it is the one divergence
+here with a security consequence rather than a cost one: workspace and
+work-stream metadata can reach a member after their access ended. Closing it
+means giving WorkspaceDO the same retraction sweep, closing affected sockets
+with a policy close before the next payload goes out.
 
 **Message sends go up the workspace socket, not over REST.** This was decided
 on purpose and the reasoning is recorded in
