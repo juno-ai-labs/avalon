@@ -853,9 +853,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
+  // The one fetcher for `['workstream', id]`. Both this query and the transcript
+  // query below fetch that key, and only one of the two runs — TanStack dedups
+  // onto whichever it starts first, which is hook declaration order. A queryFn
+  // that writes the panel preference sitting beside one that does not would make
+  // that ordering load-bearing, so neither has a side effect the other lacks.
+  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
+    const detail = await api!.getWorkstream(id, signal);
+    // The detail carries the panel preference for the case where it arrives
+    // before the control socket's boot frame. Null means this frame did not
+    // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
+    // it null — so it must not be written as `false`.
+    if (detail.blockDashboardPreference) {
+      queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
+    }
+    return detail;
+  }, [api, id, queryClient]);
   const workstream = useQuery({
     queryKey: ['workstream', id],
-    queryFn: ({ signal }) => api!.getWorkstream(id, signal),
+    queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
@@ -873,16 +889,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       pinned: detail.pinPosition !== null,
     });
   }, [workstream.data]);
-  const terminalWorkspace = useQuery({
-    queryKey: ['terminal-workstream', id],
-    queryFn: ({ signal }) => api!.getTerminalWorkstreamState(id, signal),
-    enabled: Boolean(api && id),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const startFreshTerminal = useMutation({
-    mutationFn: () => api!.startFreshTerminalWorkspace(id),
-    onSuccess: (state) => queryClient.setQueryData(['terminal-workstream', id], state),
-  });
   const messageCursor = useQuery<string | null>({
     queryKey: ['messages-cursor', id],
     queryFn: async () => null,
@@ -902,13 +908,24 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryFn: async ({ signal }) => {
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
-        queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
+        queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
         staleTime: 5_000,
       });
-      const page = await api!.getMessagePage(id, {
+      // No second request: the detail above carries both windows. `resumeFeed`
+      // is where this reader stopped, which is what the screen scrolls to, so
+      // it is preferred whenever the room sent one. They are not contiguous, so
+      // exactly one of them is rendered and the other is paged to.
+      //
+      // The fetch is the rollout fallback, not the normal path: a Worker that
+      // predates the boot payload sends neither window, and an empty transcript
+      // would be the wrong reading of that.
+      const page = detail.resumeFeed ?? detail.messageFeed ?? await api!.getMessagePage(id, {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
           : {}),
+        // Against an older Worker this is the only transcript request there is,
+        // so leaving it uncancelled means a navigation away resolves into a
+        // cache the reader has left.
         signal,
       });
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
@@ -934,11 +951,15 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
     staleTime: 5_000,
   });
-  const blockDashboardPreference = useQuery({
+  // No request of its own any more. Two frames carry it — the control socket's
+  // boot metadata and `GET /workstreams/:id` — and both write this key, so the
+  // query is a cache read with no fetcher behind it.
+  const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
     queryKey: ['block-dashboard-preference', id],
-    queryFn: ({ signal }) => api!.getBlockDashboardPreference(id, signal),
-    enabled: Boolean(api && id),
-    staleTime: 5_000,
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
   const blockDashboardOpen = blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
@@ -1709,8 +1730,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       <InspectorRail
         dropTarget={railDrop}
         error={deferredContext.error?.message
-          ?? terminalWorkspace.error?.message
-          ?? startFreshTerminal.error?.message
           ?? watchResource.error?.message
           ?? detachResource.error?.message
           ?? attachResource.error?.message}
@@ -1720,8 +1739,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         onDetachResource={(resource) => detachResource.mutate(resource)}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
-        onStartFreshTerminal={() => startFreshTerminal.mutate()}
-        terminalWorkspace={terminalWorkspace.data}
         workstream={displayedDetail}
       />
 

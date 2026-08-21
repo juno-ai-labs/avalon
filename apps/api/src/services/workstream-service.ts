@@ -591,9 +591,6 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).get();
   }
 
-  async context(id: string) {
-    return (await this.authoritativeClient(id)).context();
-  }
 
   async update(id: string, input: UpdateWorkstreamInput) {
     return (await this.authoritativeClient(id)).update(input);

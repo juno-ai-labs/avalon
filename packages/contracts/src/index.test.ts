@@ -498,6 +498,17 @@ describe("boundary contracts", () => {
     }).success).toBe(false);
   });
 
+  it("takes a snapshot request with no cursor and rejects one carrying state", () => {
+    expect(ClientSocketEventSchema.parse({ type: "request_snapshot" }))
+      .toEqual({ type: "request_snapshot" });
+    // A viewer asking for canonical state is saying its own may be wrong, so a
+    // cursor it supplied is the one input that must not bound the answer.
+    expect(ClientSocketEventSchema.safeParse({
+      type: "request_snapshot",
+      afterSequence: 42,
+    }).success).toBe(false);
+  });
+
   it("validates ordered socket mutations", () => {
     expect(
       ClientSocketEventSchema.parse({
