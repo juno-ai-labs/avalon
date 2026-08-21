@@ -373,6 +373,41 @@ seed or repair it.
 
 ## Changelog
 
+### 2026-08-21 — The hourly sweep starts running
+
+**What changed:** `CLOUDFLARE_ACCOUNT_ID` is set in the tracker's
+`wrangler.jsonc`, and the credentials guard in `runInventorySweep` gained tests.
+
+**Why:** the variable shipped empty, so the guard returned on every hourly tick
+and the sweep had never run in production. Half of this document's design was
+therefore inert: the tracker only knew about objects that had woken and
+reported — **7 of roughly 811 that exist** — and nothing on the site indicated
+the rest were there.
+
+What made it worth finding was not the count but the question it made
+unanswerable. A component missing from the filter list could mean "no objects of
+this class exist" or "they all exist and are dormant", and those have opposite
+implications. Establishing which required querying Cloudflare by hand, which is
+the work this subsystem exists to remove. Both cases were live at once:
+`BlockDashboardAgent` genuinely has zero objects, while `WorkspaceScheduler` had
+four that had not woken.
+
+The account identifier belongs in checked-in configuration rather than a secret.
+It is not a credential — it appears in every dashboard URL and unmasked in this
+repository's deploy logs — and it sits beside `ACCESS_TEAM_DOMAIN` and
+`ACCESS_APPLICATION_AUD`, which are the same kind of thing. Making it a secret
+would be actively wrong: secrets and `vars` share one runtime namespace, so the
+next deploy's config would overwrite it and silently restore the bug.
+
+**What a future change has to respect:** the sweep needs *both* halves, and the
+second is a Worker secret set outside this repository, so a deploy alone cannot
+prove it works. The guard is the thing to be careful with: it is correct to skip
+when unconfigured, and a skip and a working sweep both look like "no error" from
+outside. `test/sweep.test.ts` therefore asserts on whether the network was
+reached rather than on whether anything threw — an earlier version of those tests
+used a throwing fetch double and passed even with the guard deleted, because
+`sweepInventory` catches its own errors and turns them into a `failed` sweep.
+
 ### 2026-08-21 — The deployment check waits for a route it just created
 
 **What changed:** the site reachability half of
