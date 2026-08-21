@@ -386,18 +386,28 @@ a resource both sides bind to. What both sides do require is that the queues
 exist first. The producer binding is optional at runtime, so an API Worker
 deployed before the tracker existed keeps working and simply reports nothing.
 
-Create the queue and its dead-letter queue once, before the first deployment of
-either side. There is one pair for both regions, not one per region as with the
+The queue's *configuration* — name, batch size, batch timeout, retries, and its
+dead-letter queue — lives in the Wrangler files and is applied on every deploy,
+so it is not something to set by hand anywhere. What Wrangler does not do is
+create the queue a producer binding names; that fails the deploy. So the
+existence of every declared queue is a preflight, exactly as it is for R2:
+
+```text
+pnpm cloudflare:resources:check
+```
+
+That reads all three Wrangler files, proves each queue they declare exists, and
+names the `wrangler queues create` command for any that does not. It runs in the
+API deployment before anything is deployed. `avalon-migration-reports` is
+already provisioned; a dead-letter queue needs no action, because Cloudflare
+creates one named in a consumer's `dead_letter_queue` on first deploy.
+
+There is one report queue for both regions, not one per region as with the
 activity queues: every report converges on the single registry object regardless
 of where it came from, so splitting the transport would isolate nothing. The
 region travels in the message body.
 
-```text
-pnpm --filter @avalon/migration-tracker exec wrangler queues create avalon-migration-reports
-pnpm --filter @avalon/migration-tracker exec wrangler queues create avalon-migration-reports-dead-letter
-```
-
-Then deploy in any order:
+Deploy in any order:
 
 ```text
 pnpm deploy:migration-tracker
