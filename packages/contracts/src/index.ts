@@ -1263,23 +1263,24 @@ export const UpdateDigestScheduleRequestSchema = z.object({
   "An enabled digest needs at least one day, one time, and one destination",
 );
 
-/**
- * How many participants one create may name.
- *
- * Sized for a person naming the people they are starting work with, and the
- * connector ingresses are bounded by it rather than exempt from it: a Slack
- * channel's resolved audience can be far larger, so it seeds the create up to
- * this many and admits the rest immediately afterwards through
- * `admitConnectorAudience`, which is the same idempotent upsert that seats
- * anyone who speaks later. Exported so an ingress truncates against the real
- * number instead of a copy that can drift out of step with this schema.
- */
-export const WORKSTREAM_CREATE_PARTICIPANT_LIMIT = 25;
-
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(4000).optional(),
-  participantUserIds: z.array(IdSchema).max(WORKSTREAM_CREATE_PARTICIPANT_LIMIT).default([]),
+  /**
+   * Everyone the caller means to be in the room, uncapped.
+   *
+   * There used to be a `.max(25)` here, sized for a person naming the people
+   * they are starting work with. A connector conversation is the other kind of
+   * caller and is routinely larger — a Slack channel's resolved audience can be
+   * hundreds — and a cap it exceeded did not degrade, it failed the whole
+   * create on a Zod error. Truncating instead would have been Avalon deciding
+   * that some of the people the conversation contains are not in the room,
+   * which is the provider's fact to state, not ours. Every id here is still
+   * checked against active workspace membership before a participant row is
+   * written, so the list is bounded by the workspace in the only sense that
+   * matters for access.
+   */
+  participantUserIds: z.array(IdSchema).default([]),
   openingMessage: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),

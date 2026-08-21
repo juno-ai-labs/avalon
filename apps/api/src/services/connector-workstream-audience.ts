@@ -61,14 +61,35 @@ export interface ConnectorConversationMember {
  * symmetrical — a private work stream that should have been public is opened by
  * anyone in it with two clicks, while the reverse has already happened.
  *
+ * **A conversation past `workspaceScopeThreshold` people is `workspace`
+ * whatever its privacy says.** Below it, a private conversation is a room and
+ * modelling it as one is what makes the work stream findable by exactly the
+ * people who were in it. Above it, that stops being true in both directions: a
+ * sixty-person channel is not a room anybody experiences as private, and the
+ * participant list standing in for it is a large, stale copy of a membership
+ * the provider already maintains. Widening the scope is the deliberate cost —
+ * it makes the work stream readable by workspace members who are *not* in that
+ * conversation, which the participant model would not have done — taken because
+ * a work stream nobody can find is the worse failure at that size.
+ *
+ * The threshold has no default and every connector states its own: what counts
+ * as "too many to be a room" is a fact about the provider's conversations, not
+ * about Avalon, and a shared default would quietly become one connector's
+ * number applied to everybody else's.
+ *
  * Work streams retain the existing `personal`/`workspace` storage vocabulary.
  * For work streams, `personal` already means participant-only rather than
  * single-owner; the product continues to render those states as private/public.
  */
-export function connectorWorkstreamScope(
-  audience: ConnectorConversationAudience,
-): Scope {
-  return audience === "public" ? "workspace" : "personal";
+export function connectorWorkstreamScope(input: {
+  audience: ConnectorConversationAudience;
+  /** How many people the connector says the conversation holds. */
+  memberCount: number;
+  /** This connector's own answer to "too many to be a room". */
+  workspaceScopeThreshold: number;
+}): Scope {
+  if (input.memberCount > input.workspaceScopeThreshold) return "workspace";
+  return input.audience === "public" ? "workspace" : "personal";
 }
 
 /**

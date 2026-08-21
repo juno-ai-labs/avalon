@@ -102,7 +102,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   openingMessage: z.string().max(50_000),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
-  participantUserIds: z.array(z.string().uuid()).max(100),
+  participantUserIds: z.array(z.string().uuid()),
   attachmentIds: z.array(z.string().uuid()).max(10),
   originResourceIds: z.array(z.string().uuid()).max(8).default([]),
   /**

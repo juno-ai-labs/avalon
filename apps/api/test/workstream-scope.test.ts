@@ -150,7 +150,10 @@ function environment(database: DatabaseSync): {
       extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+      extra: {
+        hasWorkstreamDirectory: vi.fn(async () => true),
+        opportunityOriginEvents: vi.fn(async () => []),
+      },
     }),
   });
   return { env, initializeInputs };
@@ -173,11 +176,14 @@ describe("the audience a new work stream is created with", () => {
     const database = seededDatabase();
     const { env, initializeInputs } = environment(database);
 
-    const created = await new WorkstreamService(env, auth).create(createInput());
+    await new WorkstreamService(env, auth).create(createInput());
 
+    // What the object was *asked* for. The work stream that comes back carries
+    // whatever this file's `initialize` double echoed, so asserting on it would
+    // be asserting on the double's own configuration; the row it really writes
+    // is proved on workerd in `durable-object-runtime.test.ts`.
     expect(initializeInputs).toHaveLength(1);
     expect(initializeInputs[0]).toMatchObject({ scope: "personal" });
-    expect(created.workstream.scope).toBe("personal");
   });
 
   it("carries the audience a connector ingress resolved through to the object", async () => {
@@ -189,13 +195,45 @@ describe("the audience a new work stream is created with", () => {
     // seats a participant on this branch — the room is the channel — so a scope
     // dropped on the way through leaves that channel a work stream none of its
     // members can open.
-    const open = await service.create(createInput({ scope: "workspace" }));
+    await service.create(createInput({ scope: "workspace" }));
     // And a private channel or a DM, whose members are seated instead.
-    const closed = await service.create(createInput({ scope: "personal" }));
+    await service.create(createInput({ scope: "personal" }));
 
     expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
-    expect(open.workstream.scope).toBe("workspace");
-    expect(closed.workstream.scope).toBe("personal");
+  });
+
+  it("gives a suggestion the audience it was shown to", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+
+    // A suggestion Avalon put in front of the whole workspace. Whoever presses
+    // start claims it and everybody else is answered
+    // `work_opportunity_already_claimed`, so landing this on the private default
+    // would take the work away from the people it was just offered to.
+    await service.createFromOpportunity({
+      opportunityId: "00000000-0000-7000-8000-0000000000a1",
+      version: 1,
+      displayPrompt: "Chase the assigned issue",
+      executionPrompt: "Trace ISS-42 and prepare the fix.",
+      displayPromptHash: "display-hash",
+      executionPromptHash: "execution-hash",
+      idempotencyKey: "start-workspace-suggestion",
+      audienceScope: "workspace",
+    });
+    // And one only its owner was ever shown.
+    await service.createFromOpportunity({
+      opportunityId: "00000000-0000-7000-8000-0000000000a2",
+      version: 1,
+      displayPrompt: "Reply to the thread",
+      executionPrompt: "Draft a reply.",
+      displayPromptHash: "display-hash-2",
+      executionPromptHash: "execution-hash-2",
+      idempotencyKey: "start-personal-suggestion",
+      audienceScope: "personal",
+    });
+
+    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
   });
 
   it("refuses a retry of one create key that resolved a different audience", async () => {
@@ -209,7 +247,7 @@ describe("the audience a new work stream is created with", () => {
     const clientMessageId = "event:Ev0PRIVATE1";
 
     const first = await service.create(createInput({ clientMessageId, scope: "workspace" }));
-    expect(first.workstream.scope).toBe("workspace");
+    expect(initializeInputs).toMatchObject([{ scope: "workspace" }]);
 
     // Replaying the *same* audience is still the idempotent replay it was: one
     // work stream, and no second initialize.
