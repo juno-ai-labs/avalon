@@ -96,6 +96,28 @@ const FINAL_D1_TRIGGERS = [
 ] as const;
 
 describe("database migrations", () => {
+  it("refuses to retire a populated region before its authority is open", () => {
+    const database = migrateDatabaseThrough("0089_confine_legacy_bookkeeping_triggers.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('guard-user', 'guard-subject', 'guard@example.com', 'Guard', '2026-08-20', '2026-08-20');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('guard-workspace', 'Guard', 'guard', 'global', 'guard-user', '2026-08-20', '2026-08-20');
+    `);
+
+    expect(() => database.exec(readFileSync(
+      new URL("../migrations/0090_drop_legacy_product_tables.sql", import.meta.url),
+      "utf8",
+    ))).toThrow(/workstream_authority_must_be_open/u);
+    expect(database.prepare(
+      "SELECT phase FROM workstream_authority_control WHERE id = 1",
+    ).get()).toEqual({ phase: "legacy_open" });
+    expect(database.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'messages'",
+    ).get()).toEqual({ name: "messages" });
+    database.close();
+  });
+
   it("keeps the deployed HyperSight filename and renames its tables forward", () => {
     const migrationFiles = readdirSync(migrationsDirectory)
       .filter((fileName) => fileName.endsWith(".sql"));
@@ -722,6 +744,31 @@ describe("database migrations", () => {
       .sort();
     expect(remaining[0]).toBe("0078_rename_hypersight_to_block_dashboard.sql");
     for (const fileName of remaining) {
+      if (fileName === "0090_drop_legacy_product_tables.sql") {
+        // 0090 is a post-cutover retirement, not part of the authority move.
+        // Keep the residual rows above while moving both populated route
+        // ledgers through the same verified/open states production completed.
+        database.exec(`
+          UPDATE workstream_authority_control
+             SET phase = 'maintenance_draining', generation = 1,
+                 serving_contract_version = 1, updated_at = '2026-08-20T00:01:00.000Z'
+           WHERE id = 1;
+          UPDATE workstream_authority_control
+             SET phase = 'maintenance_importing', updated_at = '2026-08-20T00:02:00.000Z'
+           WHERE id = 1;
+          UPDATE workstream_authority_routes SET state = 'verified';
+          UPDATE workspace_product_authority_routes SET state = 'verified';
+          UPDATE workstream_authority_control
+             SET phase = 'maintenance_verified', updated_at = '2026-08-20T00:03:00.000Z'
+           WHERE id = 1;
+          UPDATE workstream_authority_routes SET state = 'active';
+          UPDATE workspace_product_authority_routes SET state = 'active';
+          UPDATE workstream_authority_control
+             SET phase = 'durable_object_open', opened_at = '2026-08-20T00:04:00.000Z',
+                 updated_at = '2026-08-20T00:04:00.000Z'
+           WHERE id = 1;
+        `);
+      }
       database.exec(readFileSync(new URL(`../migrations/${fileName}`, import.meta.url), "utf8"));
     }
     try {

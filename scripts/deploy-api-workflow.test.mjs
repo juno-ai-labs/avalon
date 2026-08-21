@@ -38,7 +38,12 @@ test('retires the destructive D1 product schema only after compatible Workers de
   assert.ok(deployGlobal < retireEu, '0090 must wait for both compatible Workers');
   assert.ok(retireEu < retireGlobal, 'EU 0090 must still precede Global');
   assert.ok(retireGlobal < health, 'health must inspect the final schema');
-  assert.match(workflow, /grep -Fq "0090_drop_legacy_product_tables\.sql"/u);
+  assert.match(workflow, /0090_drop_legacy_product_tables\.sql/u);
+  assert.equal(
+    workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length,
+    2,
+    "both regional ledgers must reject companion migrations around 0090",
+  );
   assert.match(workflow, /steps\.pending_eu\.outputs\.worker_first == 'true'/u);
   assert.match(workflow, /steps\.pending_global\.outputs\.worker_first == 'true'/u);
 });
