@@ -113,7 +113,7 @@ const STYLES = `
           font-size: 12px; font-weight: 600; }
   .pill.failed { color: var(--failed); background: var(--failed-bg); }
   .pill.behind { color: var(--behind); background: var(--behind-bg); }
-  .pill.unreported, .pill.absent, .pill.not_reporting {
+  .pill.unreported, .pill.absent, .pill.not_reporting, .pill.retired {
     color: var(--unreported); background: var(--unreported-bg); }
   .pill.current, .pill.applied { color: var(--current); background: var(--current-bg); }
   .muted { color: var(--muted); }
@@ -246,7 +246,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                   <tr class="${component.retired ? "retired" : ""}">
                     <td>
                       <a href="/objects?component=${component.component}"><code>${component.component}</code></a>
-                      ${component.retired ? html` <span class="pill absent">retired</span>` : ""}
+                      ${component.retired ? html` <span class="pill retired">retired</span>` : ""}
                     </td>
                     <td>${component.className}</td>
                     <td>${component.region}</td>
@@ -300,7 +300,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                       <a href="/objects?script=${namespace.scriptName}">${namespace.scriptName}</a>
                       ${namespace.retiredAt === null
                         ? ""
-                        : html` <span class="pill absent">retired</span>`}
+                        : html` <span class="pill retired">retired</span>`}
                     </td>
                     <td>${namespace.className}</td>
                     <td class="muted">${namespace.usesSqlite ? "SQLite" : "key-value"}</td>
@@ -427,6 +427,11 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
                 <dd class="failure mono">${object.failureMessage}
                   ${object.failureVersion === null ? "" : html` (v${object.failureVersion})`}</dd>`
             : ""}
+          ${object.namespaceRetiredAt === null
+            ? ""
+            : html`<dt>Class retired</dt>
+                <dd class="muted">${timestamp(object.namespaceRetiredAt)} —
+                  this class no longer has a namespace in the account</dd>`}
           ${object.absentSince === null
             ? ""
             : html`<dt>Absent since</dt><dd class="muted">${timestamp(object.absentSince)}</dd>`}

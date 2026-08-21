@@ -100,13 +100,21 @@ nothing: it says nothing about the objects it did not reach.
 A whole namespace can leave too, when a class is deleted from the Worker. That
 is a second pass rather than the same one, because the first iterates the
 namespaces the sweep *returned* and a deleted namespace is not among them: after
-a `complete` sweep, any namespace the registry knows and the sweep did not
-return is stamped `retired_at`, and its objects are marked `absent`. Both guards
-on that pass exist to stop it retiring the fleet — the sweep must be `complete`,
-and it must have found at least one namespace, since a successful call returning
-an empty list would otherwise read as "the account has no Durable Objects". A
-namespace that comes back — a rollback restoring a binding — clears its
-retirement and its objects' absence on the next sweep.
+a `complete` sweep, any namespace still carrying an older `last_sweep_id` is
+stamped `retired_at`, and the objects of every retired namespace are marked
+`absent`. Both guards on that pass exist to stop it retiring the fleet — the
+sweep must be `complete`, and it must have found at least one namespace, since a
+successful call returning an empty list would otherwise read as "the account has
+no Durable Objects". A namespace that comes back — a rollback restoring a
+binding — clears its retirement and its objects' absence on the next sweep.
+
+Because retirement makes a `complete` sweep destructive, the namespace listing
+has to *be* the account. It is paged, it stops on a short page or on a page that
+adds nothing new — which is what an endpoint ignoring `page` returns on the
+second request — and hitting the page cap downgrades the sweep to `partial`. A
+namespace payload whose id cannot be read does the same rather than being
+skipped: a namespace whose existence is known and whose identity is not is not
+one fewer namespace.
 
 ### What the site shows
 
@@ -293,10 +301,15 @@ component and region), `durable_object_namespaces`, and `inventory_sweeps`
 
 Absence is decided by comparing an object's `last_sweep_id` against the current
 sweep's row id, not by timestamp: two sweeps inside one millisecond would make a
-clock comparison silently skip the step. Namespace retirement is decided by set
-difference instead — the namespaces the registry holds, minus the ones the sweep
-returned — because a namespace that is gone has no row in the current sweep to
-compare against.
+clock comparison silently skip the step. Namespaces carry the same stamp, and
+retirement is the same comparison — a namespace still holding an older sweep id
+is one this sweep did not return.
+
+Passing the swept ids into that statement as a `NOT IN` list is the obvious
+alternative and does not survive the platform: Durable Object SQL allows **100
+bound parameters per query**, an account may hold up to 500 Durable Object
+classes, and the statement runs inside the sweep's `transactionSync` — so
+crossing that line would lose the whole sweep, not just the retirement.
 
 The registry's own schema is at v2 and is append-only from v1 onwards, which is
 now deployed: the retirement column reaches the live object as an `ALTER TABLE`
@@ -435,6 +448,30 @@ exist and no longer does" is the answer to a question somebody asks during an
 incident — usually while working out whether a deploy removed something it
 should not have — and a deleted row cannot answer it. Objects were already
 marked `absent` rather than removed for that reason; namespaces now match.
+
+**What review changed, and why it is recorded here:** the first version of this
+change shipped three defects that only a reader outside it would have caught,
+all of the same family — a safe-looking claim that the platform does not
+actually hold up.
+
+- The set difference was a `NOT IN (?, ?, …)` over the swept ids. Durable Object
+  SQL allows 100 bound parameters per query and an account may hold up to 500
+  Durable Object classes, so it would have thrown at 100 namespaces — inside the
+  sweep's `transactionSync`, losing the whole sweep, on every tick, forever.
+  Namespaces now carry `last_sweep_id` and the comparison costs three
+  parameters at any size.
+- Component retirement was derived by asking whether any namespace for the
+  *class* was live. Both regional Workers bind the same classes, so deleting one
+  from a single region would have left that region's component reading live.
+- `sweepInventory` made one unpaged request for the namespace list and silently
+  dropped any payload it could not read, while still calling the sweep
+  `complete`. Retirement is what made that dangerous rather than untidy: a first
+  page mistaken for the account would retire everything behind it.
+
+The through-line is worth keeping: **making a sweep destructive changed what
+"complete" has to mean**, and the producer was not audited against the new
+meaning at the same time as the consumer. A future change that widens what a
+sweep is allowed to delete has to re-audit `inventory.ts` in the same breath.
 
 **What a future change has to respect:** the two guards on the retirement pass
 are the whole safety argument, because its blast radius is the entire fleet. It

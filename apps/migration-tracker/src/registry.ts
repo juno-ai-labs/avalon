@@ -69,6 +69,7 @@ type ObjectRow = {
   last_reported_at: number | null;
   last_failed_at: number | null;
   absent_since: number | null;
+  namespace_retired_at: number | null;
 };
 
 type EventRow = {
@@ -129,6 +130,7 @@ const RESOLVED_OBJECTS = `
     SELECT
       o.*,
       c.latest_version AS component_latest_version,
+      ns.retired_at AS namespace_retired_at,
       CASE
         WHEN o.absent_since IS NOT NULL THEN 'absent'
         WHEN o.report_status = 'failed' THEN 'failed'
@@ -143,6 +145,8 @@ const RESOLVED_OBJECTS = `
     FROM durable_objects o
     LEFT JOIN component_versions c
       ON c.component = o.component AND c.region = o.region
+    LEFT JOIN durable_object_namespaces ns
+      ON ns.namespace_id = o.namespace_id
   )
 `;
 
@@ -150,7 +154,8 @@ const OBJECT_COLUMNS = `
   object_id, object_name, namespace_id, script_name, class_name, component,
   region, app_env, worker_version_id, has_stored_data, schema_version,
   component_latest_version, status, failure_message, failure_version,
-  first_seen_at, last_swept_at, last_reported_at, last_failed_at, absent_since
+  first_seen_at, last_swept_at, last_reported_at, last_failed_at, absent_since,
+  namespace_retired_at
 `;
 
 export class MigrationRegistry extends DurableObject<Env> {
@@ -340,8 +345,8 @@ export class MigrationRegistry extends DurableObject<Env> {
         sql.exec(
           `INSERT INTO durable_object_namespaces
              (namespace_id, script_name, class_name, uses_sqlite, object_count,
-              first_seen_at, last_swept_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+              first_seen_at, last_swept_at, last_sweep_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?9)
            ON CONFLICT(namespace_id) DO UPDATE SET
              script_name = excluded.script_name,
              class_name = excluded.class_name,
@@ -350,6 +355,10 @@ export class MigrationRegistry extends DurableObject<Env> {
                                  ELSE durable_object_namespaces.object_count END,
              last_swept_at = CASE WHEN ?8 THEN excluded.last_swept_at
                                   ELSE durable_object_namespaces.last_swept_at END,
+             -- Stamped whether or not the object listing worked: this records
+             -- that the *namespace* was returned, which is what retirement
+             -- asks about.
+             last_sweep_id = ?9,
              -- Listed again, so it is not retired, whatever a previous sweep
              -- concluded. A class can come back: a rollback restores the
              -- binding a deploy removed.
@@ -362,6 +371,7 @@ export class MigrationRegistry extends DurableObject<Env> {
           now,
           now,
           listed ? 1 : 0,
+          sweepId,
         );
 
         if (!namespace.objects) continue;
@@ -405,7 +415,7 @@ export class MigrationRegistry extends DurableObject<Env> {
         );
       }
 
-      retireMissingNamespaces(sql, sweep, now);
+      retireMissingNamespaces(sql, sweep, sweepId, now);
 
       sql.exec(
         `DELETE FROM inventory_sweeps WHERE id <= (SELECT MAX(id) - ? FROM inventory_sweeps)`,
@@ -675,7 +685,15 @@ export class MigrationRegistry extends DurableObject<Env> {
     };
   }
 
-  /** Distinct component and script names, for the site's filter controls. */
+  /**
+   * Distinct component and script names, for the site's filter controls.
+   *
+   * Retired components stay in the list on purpose. Their objects are `absent`
+   * rather than deleted, and filtering to them is exactly how an operator
+   * confirms what a class took with it when it went — a name missing from this
+   * list has already once been read as "no such objects exist", which is the
+   * wrong answer twice over.
+   */
   filterOptions(): { components: string[]; scripts: string[] } {
     const components = this.storage.sql.exec<{ component: string }>(
       `SELECT DISTINCT component FROM durable_objects
@@ -712,32 +730,46 @@ export class MigrationRegistry extends DurableObject<Env> {
  *   of this account produces it. An account genuinely emptied of Durable
  *   Objects will not be reported by a tracker that is itself a Durable Object.
  *
- * Objects are matched by `namespace_id` rather than by "not swept this time",
- * because an object that has reported but has never been swept has no namespace
- * yet, and it is not absent — it is unenumerated.
+ * The set difference is expressed through `last_sweep_id`, not through a list
+ * of the ids this sweep returned. Durable Object SQL allows 100 bound
+ * parameters per query and an account may hold up to 500 Durable Object
+ * classes, so a `NOT IN (?, ?, …)` over the swept set is correct code that
+ * stops working at a size this account could reach — and it fails inside the
+ * sweep's `transactionSync`, so it would lose the entire sweep rather than just
+ * the retirement. Stamping and comparing costs three parameters at any fleet
+ * size, and it is the same mechanism object absence already uses.
+ *
+ * Objects are then matched through their namespace rather than by "not swept
+ * this time", because an object that has reported but has never been swept has
+ * no namespace yet, and it is not absent — it is unenumerated.
  */
-function retireMissingNamespaces(sql: SqlStorage, sweep: InventorySweep, now: number): void {
+function retireMissingNamespaces(
+  sql: SqlStorage,
+  sweep: InventorySweep,
+  sweepId: number,
+  now: number,
+): void {
   if (sweep.status !== "complete" || sweep.namespaces.length === 0) return;
 
-  const swept = sweep.namespaces.map((namespace) => namespace.namespaceId);
-  const placeholders = swept.map(() => "?").join(", ");
-
+  sql.exec(
+    `UPDATE durable_object_namespaces
+        SET retired_at = ?
+      WHERE retired_at IS NULL
+        AND (last_sweep_id IS NULL OR last_sweep_id < ?)`,
+    now,
+    sweepId,
+  );
+  // Every object of a retired namespace, not only the ones retired just now.
+  // `absent_since IS NULL` makes that idempotent, and it also catches an object
+  // that arrived by report into a namespace that was already gone.
   sql.exec(
     `UPDATE durable_objects
         SET absent_since = ?
       WHERE absent_since IS NULL
         AND namespace_id IS NOT NULL
-        AND namespace_id NOT IN (${placeholders})`,
+        AND namespace_id IN (SELECT namespace_id FROM durable_object_namespaces
+                              WHERE retired_at IS NOT NULL)`,
     now,
-    ...swept,
-  );
-  sql.exec(
-    `UPDATE durable_object_namespaces
-        SET retired_at = ?
-      WHERE retired_at IS NULL
-        AND namespace_id NOT IN (${placeholders})`,
-    now,
-    ...swept,
   );
 }
 
@@ -775,6 +807,7 @@ function toTrackedObject(row: ObjectRow): TrackedObject {
     lastReportedAt: row.last_reported_at,
     lastFailedAt: row.last_failed_at,
     absentSince: row.absent_since,
+    namespaceRetiredAt: row.namespace_retired_at,
   };
 }
 

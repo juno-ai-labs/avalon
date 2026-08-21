@@ -70,6 +70,13 @@ export interface TrackedObject {
   lastReportedAt: number | null;
   lastFailedAt: number | null;
   absentSince: number | null;
+  /**
+   * When this object's namespace was retired, or null. It is what turns an
+   * unexplained `absent` on the detail page into "the class is gone" — the
+   * overview tables say so, and without this the one page an operator opens
+   * after clicking through does not.
+   */
+  namespaceRetiredAt: number | null;
 }
 
 export interface TrackedObjectPage {
