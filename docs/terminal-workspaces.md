@@ -18,7 +18,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
 | `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared work-stream branch, optional typed publisher, and work-stream state API. |
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
-| `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/durable-objects/workspace-scheduler.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and alarms. |
+| `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
@@ -152,7 +152,7 @@ active tasks, preserves a final diff, stops each
 affected sandbox, applies and reads back the provider policy, and does not
 auto-restart it.
 
-The workspace scheduler stops an idle running sandbox after five minutes,
+The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a short
 object-local claim and reconcile observed provider state after ambiguous calls. Before stop
@@ -208,8 +208,10 @@ streaming, and execution-principal context; see
 [`agent-harness.md`](agent-harness.md). The attachment subsystem owns generated
 resource lifecycle and current-authority reads; see
 [`agent-attachments.md`](agent-attachments.md). The GitHub connector owns the App
-installation and webhook boundary. `WorkspaceScheduler` owns alarm serialization,
-while Terminal supplies only its due-row projection and transition reconciler.
+installation and webhook boundary. WorkspaceDO owns alarm serialization through
+its shared alarm list — see [`durable-object-alarms.md`](durable-object-alarms.md)
+— while Terminal supplies only its due-row projection and transition
+reconciler.
 
 Terminal is not a user-visible terminal, a general workflow runtime, a hosted
 development environment, a PTY, a background service runner, a model-managed

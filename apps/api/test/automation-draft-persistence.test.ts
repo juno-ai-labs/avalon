@@ -36,7 +36,7 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 }));
 
 import { AutomationService } from "../src/services/automation-service";
-import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -80,10 +80,6 @@ function serviceFor(database: DatabaseSync, as: AuthContext = auth): AutomationS
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-    },
   });
   return new AutomationService(env, as);
 }

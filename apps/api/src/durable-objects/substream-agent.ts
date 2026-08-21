@@ -22,7 +22,6 @@ import {
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
-import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -104,6 +103,10 @@ import {
   WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
 } from "./workstream-object-schema";
 import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
+import {
+  ScheduledDurableObject,
+  type ScheduledAlarm,
+} from "./scheduled-alarms";
 import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
@@ -270,6 +273,16 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 const OPERATIONAL_FENCE_RETENTION_MS = 180 * 24 * 60 * 60_000;
 /** Matches the Agents SDK default, while keeping Avalon independent of it. */
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
+/** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
+const AGENT_TIMER_ALARM_KIND = "agent_timer";
+/**
+ * Bound on the entries one sync writes.
+ *
+ * Comfortably above `MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM`, which is the real
+ * cap: this exists so a table that somehow outgrew that limit costs a bounded
+ * reconcile rather than an unbounded one.
+ */
+const AGENT_TIMER_ALARM_LIMIT = 100;
 const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
   "message_created",
   "stream_completed",
@@ -398,6 +411,11 @@ export type SocketReplayPlan =
  * After hibernation, clients receive an explicit resync instruction and use
  * the canonical REST surface for the current authority generation.
  */
+/** Cheap gate on re-deriving the timer index from routed SQL. */
+function touchesAgentTimers(statements: readonly { sql: string }[]): boolean {
+  return statements.some((statement) => /\bworkstream_wakeups\b/iu.test(statement.sql));
+}
+
 export function planSocketReplay(
   afterSequence: number,
   currentSequence: number,
@@ -428,7 +446,7 @@ export function planSocketReplay(
  * authoritative for its own transcript and loop state; REST is a recovery
  * surface, never a second writer.
  */
-export class SubstreamAgent extends DurableObject<Env> {
+export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
@@ -454,6 +472,14 @@ export class SubstreamAgent extends DurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /**
+   * Whether the drain this alarm just ran left a run in someone else's hands.
+   *
+   * Read only by `armAlarmAfterDueWork`, and reset at the top of every alarm's
+   * work: a deferral means the dispatch row is still due and still owned, so
+   * re-deriving off it would arm for an instant already past.
+   */
+  private runDrainDeferred = false;
   private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
 
   constructor(
@@ -463,7 +489,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
-    this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
+    this.keepAliveLease = new DurableAgentKeepAlive(async () => { await this.armNextAlarm(); });
     this.initialized = state.blockConcurrencyWhile(async () => {
       // The store applies this object's schema in its own constructor, so the
       // report wrapper goes around the construction rather than around a
@@ -504,7 +530,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       // arm-only helper because the keep-alive lease is in-memory: a new
       // instance inherits none of it, so a heartbeat alarm left behind by the
       // evicted one has to be cleared when no durable work remains.
-      await this.scheduleNextAlarm();
+      this.syncAgentTimerAlarms();
+      await this.armNextAlarm();
     });
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
@@ -644,7 +671,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       }
       try {
         this.ensureSubstreamIdentity(parsed.data.substreamId);
-        await this.scheduleNextAlarm();
+        this.syncAgentTimerAlarms();
+        await this.armNextAlarm();
         return jsonResponse({ ok: true });
       } catch (error) {
         return jsonResponse({
@@ -763,7 +791,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       throw new Error("substream_timer_identity_mismatch");
     }
     this.ensureSubstreamIdentity(parsed.substreamId);
-    await this.scheduleNextAlarm();
+    this.syncAgentTimerAlarms();
+    await this.armNextAlarm();
   }
 
   private rpcRequest(body: unknown): Request {
@@ -812,7 +841,10 @@ export class SubstreamAgent extends DurableObject<Env> {
     // run's dispatch sweep, a later request, and any committed directory effect
     // are the recovery paths for re-deriving the object's next alarm.
     try {
-      await this.scheduleNextAlarm();
+      // The wake-up tool inserts, cancels, and reaps `workstream_wakeups`
+      // through exactly this port, so this is where a timer becomes an alarm.
+      if (touchesAgentTimers(parsed.data.statements)) this.syncAgentTimerAlarms();
+      await this.armNextAlarm();
     } catch (error) {
       logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
         workspace_id: parsed.data.workspaceId,
@@ -928,7 +960,9 @@ export class SubstreamAgent extends DurableObject<Env> {
     // regional effect with the row; otherwise the active dispatch sweep or a
     // later request re-derives the local alarm.
     try {
-      await this.scheduleNextAlarm();
+      // The deadline this operation just wrote is also this object's own next
+      // alarm, so re-derive it here rather than waiting for the next request.
+      await this.armNextAlarm();
     } catch (error) {
       logError(this.env, "terminal_operation_alarm_schedule_failed", {
         workspace_id: parsed.data.workspaceId,
@@ -1953,29 +1987,16 @@ export class SubstreamAgent extends DurableObject<Env> {
             statements,
           }),
         );
+        // Conditional, unlike the routed port above: this executor runs for
+        // every statement a run makes, and re-deriving the alarm for a
+        // transcript write would put a `getAlarm` in the streaming path.
+        if (touchesAgentTimers(statements)) {
+          this.syncAgentTimerAlarms();
+          await this.armNextAlarm();
+        }
         return result.results;
       },
     );
-  }
-
-  private async fireNextAgentTimer(): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (!identity) return;
-    const executionEnv = this.localRuntimeEnvironment(
-      identity.workspaceId,
-      identity.workstreamId,
-      this.externalSubstreamId(),
-    );
-    const wakeup = await executionEnv.DB.prepare(
-      `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-              due_at, status, version, created_at
-         FROM workstream_wakeups
-        WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
-          AND due_at <= ? ORDER BY due_at, id LIMIT 1`,
-    ).bind(identity.workspaceId, identity.workstreamId, new Date().toISOString())
-      .first<WorkstreamWakeupRow>();
-    if (!wakeup) return;
-    await fireWorkstreamWakeup(executionEnv, wakeup);
   }
 
   private async publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void> {
@@ -2342,32 +2363,111 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 1).length > 0) {
       throw new Error("substream_parent_effect_flush_limit");
     }
-    await this.scheduleNextAlarm();
+    await this.armNextAlarm();
     return delivered;
   }
 
-  override async alarm(): Promise<void> {
-    await this.initialized;
-    // Delivery consumes the alarm, so until this line the object has no wake-up
-    // at all. Everything below awaits the network, and a cancelled continuation
-    // never settles — it does not throw, so a `finally` would not run either.
-    // Re-arming first is what makes the sweep floor a floor rather than
-    // something reachable only when the work it guards already succeeded.
-    await this.armAlarmDuringRunDrain();
+  protected override scheduleReady(): Promise<void> {
+    return this.initialized;
+  }
+
+  /**
+   * Hold every due wake reason while this work stream's region is closed.
+   *
+   * Read only when there is work to hold: a keep-alive wake during a streaming
+   * run has nothing to defer, and a D1 round trip every thirty seconds to
+   * establish that would be paid by every active run in the fleet.
+   */
+  protected override async scheduledAlarmDeferral(now: number): Promise<number | null> {
+    if (!this.hasDueAlarmWork(now)) return null;
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (acceptsNewWorkstreamWork(authority)) return null;
+    return now + MAINTENANCE_RECHECK_MS;
+  }
+
+  protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
+    const identity = this.objectStore.identity();
+    logWarn(this.env, "substream_scheduled_alarm_failed", {
+      workspace_id: identity?.workspaceId ?? null,
+      workstream_id: identity?.workstreamId ?? null,
+      alarm_kind: alarm.kind,
+      alarm_key: alarm.key,
+      attempt,
+      code: error instanceof Error ? error.message : "unknown_error",
+    });
+  }
+
+  private hasDueAlarmWork(now: number): boolean {
+    return this.objectStore.pendingBlockDashboardRefresh() !== null
+      || this.objectStore.nextRegionalEffectDueAt() !== null
+      || this.nextRunDispatchAt() !== null
+      || this.scheduledAlarms.due(now, 1).length > 0;
+  }
+
+  /**
+   * Fire one agent-created timer.
+   *
+   * The entry is the index, never the record: `workstream_wakeups` still owns
+   * status, principal, and prompt, and this reloads the row so a wake-up
+   * cancelled since the entry was written is a no-op rather than a run nobody
+   * asked for. Throwing puts this timer — and only this timer — behind the
+   * shared retry gate.
+   */
+  protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
+    if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
+      throw new Error(`substream_unknown_alarm_kind:${alarm.kind}`);
+    }
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    const executionEnv = this.localRuntimeEnvironment(
+      identity.workspaceId,
+      identity.workstreamId,
+      this.externalSubstreamId(),
+    );
+    const wakeup = await executionEnv.DB.prepare(
+      `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+              due_at, status, version, created_at
+         FROM workstream_wakeups
+        WHERE workspace_id = ? AND workstream_id = ? AND id = ? AND status = 'pending'`,
+    ).bind(identity.workspaceId, identity.workstreamId, alarm.key)
+      .first<WorkstreamWakeupRow>();
+    if (!wakeup) return;
+    await fireWorkstreamWakeup(executionEnv, wakeup);
+  }
+
+  /**
+   * Make the `agent_timer` entries match this object's pending wake-ups.
+   *
+   * Called wherever `workstream_wakeups` can have changed — the tool's own
+   * runtime SQL, the timer refresh port, and after a timer fires — because the
+   * writers reach the table through routed SQL and cannot be asked to maintain
+   * an index they do not know about. Reconciling is what makes a wake-up
+   * scheduled *before* the armed alarm pull that alarm in, and a cancelled one
+   * push it back out.
+   */
+  private syncAgentTimerAlarms(): void {
+    const pending = this.state.storage.sql.exec<{ wakeup_id: string; due_at: number }>(
+      `SELECT wakeup_id, due_at FROM workstream_wakeups
+        WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT ?`,
+      AGENT_TIMER_ALARM_LIMIT,
+    ).toArray();
+    this.state.storage.transactionSync(() => {
+      this.scheduledAlarms.reconcile(
+        AGENT_TIMER_ALARM_KIND,
+        pending.map((row) => ({ key: row.wakeup_id, dueAt: row.due_at })),
+      );
+    });
+  }
+
+  protected override async runDueAlarmWork(): Promise<void> {
+    this.runDrainDeferred = false;
     const pending = this.objectStore.pendingBlockDashboardRefresh();
     const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-    const nextAgentTimerAt = this.nextAgentTimerAt();
     const hasRunDispatch = this.nextRunDispatchAt() !== null;
-    if (!pending && nextEffectAt === null && nextAgentTimerAt === null && !hasRunDispatch) {
-      await this.scheduleNextAlarm();
-      return;
-    }
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (!acceptsNewWorkstreamWork(authority)) {
-      await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
-      return;
-    }
+    // A timer that fired above may have left the index behind the table.
+    this.syncAgentTimerAlarms();
+    if (!pending && nextEffectAt === null && !hasRunDispatch) return;
 
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       const effects = this.objectStore.dueRegionalEffects();
@@ -2385,14 +2485,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       }
     }
 
-    if (nextAgentTimerAt !== null && nextAgentTimerAt <= Date.now()) {
-      await this.fireNextAgentTimer();
-    }
-
     if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
-      const disposition = await this.drainRunsToCompletion();
-      if (disposition === "deferred") await this.armAlarmDuringRunDrain();
-      else await this.scheduleNextAlarm();
+      this.runDrainDeferred = await this.drainRunsToCompletion() === "deferred";
       return;
     }
     this.objectStore.deletePendingBlockDashboardRefresh();
@@ -2409,9 +2503,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
-    const disposition = await this.drainRunsToCompletion();
-    if (disposition === "deferred") await this.armAlarmDuringRunDrain();
-    else await this.scheduleNextAlarm();
+    this.runDrainDeferred = await this.drainRunsToCompletion() === "deferred";
   }
 
   /** Best-effort forward of due effects; the alarm retries whatever defers. */
@@ -2932,36 +3024,38 @@ export class SubstreamAgent extends DurableObject<Env> {
     };
   }
 
-  private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
-    const existing = await this.state.storage.getAlarm();
-    if (existing === null || existing > dueAt) await this.state.storage.setAlarm(dueAt);
+  protected override armAlarmBeforeDueWork(): Promise<unknown> {
+    // Delivery consumes the alarm, so until this returns the object has no
+    // wake-up at all. Everything below it awaits the network, and a cancelled
+    // continuation never settles — it does not throw, so a `finally` would not
+    // run either. Arming first is what makes the sweep floor a floor rather
+    // than something reachable only when the work it guards already succeeded.
+    return this.armAlarmDuringRunDrain();
+  }
+
+  protected override armAlarmAfterDueWork(): Promise<unknown> {
+    return this.runDrainDeferred ? this.armAlarmDuringRunDrain() : this.armNextAlarm();
   }
 
   /**
-   * Re-arms before an alarm begins work without immediately redelivering the
-   * same due dispatch that this invocation is responsible for. Other durable
-   * products keep their own deadlines; the run lane gets one heartbeat
-   * horizon, which bounds recovery without turning a live drain into a loop.
+   * Re-arm without redelivering the dispatch this invocation is responsible for.
+   *
+   * Everything else this object waits on keeps its own deadline, so only the
+   * run lane is held back, and only to one heartbeat horizon: that bounds
+   * recovery if this invocation is cancelled without turning a live drain into
+   * an alarm that fires the instant it returns. Pending wake-ups are read from
+   * the entry index rather than `workstream_wakeups` so this and the base agree
+   * on when the next timer is due.
    */
   private async armAlarmDuringRunDrain(): Promise<void> {
     const now = Date.now();
     const dueAt = minimumTimestamp(
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
-      this.nextAgentTimerAt(),
+      this.scheduledAlarms.nextDueAt(),
       now + KEEP_ALIVE_INTERVAL_MS,
     );
     await this.state.storage.setAlarm(Math.max(now + 1, dueAt ?? now + KEEP_ALIVE_INTERVAL_MS));
-  }
-
-  private async ensureNextWorkAlarm(): Promise<void> {
-    await this.scheduleNextAlarm();
-  }
-
-  private nextAgentTimerAt(): number | null {
-    return this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(due_at) AS due_at FROM workstream_wakeups WHERE status = 'pending'`,
-    ).toArray()[0]?.due_at ?? null;
   }
 
   /**
@@ -2982,23 +3076,22 @@ export class SubstreamAgent extends DurableObject<Env> {
     );
   }
 
-  private async scheduleNextAlarm(): Promise<void> {
+  /**
+   * The wake reasons this object derives from its own tables.
+   *
+   * Agent timers are deliberately absent: they live in `_internal_durable_alarms` as
+   * `agent_timer` entries, so every wake-up due at one instant fires in one
+   * alarm and a failing one is gated on its own rather than blocking the
+   * queue behind it. The keep-alive is not a row at all — it is an in-memory
+   * lease held only while a run is streaming — so it stays derived.
+   */
+  protected override nextDerivedAlarmAt(now: number): number | null {
     const durableDueAt = minimumTimestamp(
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
-      this.nextAgentTimerAt(),
       this.nextRunDispatchAt(),
     );
-    const dueAt = this.keepAliveLease.alarmDueAt(
-      durableDueAt,
-      Date.now(),
-      KEEP_ALIVE_INTERVAL_MS,
-    );
-    if (dueAt === null) {
-      await this.state.storage.deleteAlarm();
-      return;
-    }
-    await this.state.storage.setAlarm(Math.max(Date.now() + 1, dueAt));
+    return this.keepAliveLease.alarmDueAt(durableDueAt, now, KEEP_ALIVE_INTERVAL_MS);
   }
 
   private async fulfillSubscription(

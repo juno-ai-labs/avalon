@@ -8,7 +8,6 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { z } from "zod";
 
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logStructuredEvent } from "../observability/logger";
 import {
   advanceOwningPollTarget,
@@ -17,6 +16,7 @@ import {
   type ConnectorCursorCommit,
 } from "../services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
 
 const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
@@ -174,13 +174,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       // attempt may have committed D1 but lost its response before re-arming
       // the workspace alarm.
       await step.do("refresh-workspace-scheduler", async () => {
-        const scheduler = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.WORKSPACE_SCHEDULERS,
-          input.workspaceId,
-          `${input.region}:${input.workspaceId}`,
-        );
-        await scheduler.refresh(input.workspaceId);
+        await refreshWorkspaceSchedulerAlarm(this.env, input.workspaceId);
       });
     }
 

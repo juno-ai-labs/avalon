@@ -1,20 +1,23 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
-import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
+import {
+  runWorkspaceScheduleTarget,
+  workspaceScheduleTargets,
+  type WorkspaceScheduleContext,
+} from "../src/services/workspace-schedule-execution";
 import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
 } from "./helpers/durable-authority";
-import { createTestSqlStorage } from "./helpers/sql-storage";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -62,54 +65,50 @@ function serviceFor(fixture: Fixture, logLevel: Env["LOG_LEVEL"] = "error"): Aut
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-      jurisdiction: () => ({
-        idFromName: () => createTestDurableObjectId("scheduler"),
-        get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
-      }),
-    },
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
   return new AutomationService(env, auth);
 }
 
-function schedulerFor(fixture: Fixture): WorkspaceScheduler {
+/**
+ * The workspace's schedule execution, wired to the fixture's databases.
+ *
+ * WorkspaceDO owns the alarm; this drives the half that decides what a
+ * scheduled automation creates. `test-workers/scheduled-alarms.test.ts` covers
+ * the arming and the drain on real workerd.
+ */
+function scheduleRunnerFor(fixture: Fixture) {
   const { database, objectStore } = fixture;
-  const objectDatabase = new DatabaseSync(":memory:");
-  databases.push(objectDatabase);
-  const storage = createCloudflareTestBinding<DurableObjectStorage>({
-    getAlarm: async () => null,
-    setAlarm: async () => undefined,
-    deleteAlarm: async () => undefined,
-    transactionSync: <T>(body: () => T) => body(),
-    sql: createTestSqlStorage(objectDatabase),
+  const env = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    LOG_LEVEL: "error",
+    OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
-  return new WorkspaceScheduler(
-    createCloudflareTestBinding<DurableObjectState>({
-      blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
-      storage,
-    }),
-    createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      APP_ENV: "test",
-      LOG_LEVEL: "error",
-      OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-      // Post-cutover the scheduler serves workspace product SQL through the
-      // WorkspaceDO port and reads work-stream alarm targets from its
-      // directory. The stub keeps the seeded automation rows in the same
-      // database while answering the directory RPC with no extra targets.
-      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: {
-          workstreamScheduleTargets: async () => ({ items: [] }),
-          dueWorkstreamDirectory: async () => [],
-          plannedWorkstream: async () => null,
-        },
-      }),
-    }),
-  );
+  const ctx: WorkspaceScheduleContext = {
+    env,
+    workspaceEnv: env,
+    workspaceId: WORKSPACE_ID,
+    directory: {
+      workstreamScheduleTargets: async () => ({ items: [] }),
+      plannedWorkstream: async () => null,
+    },
+  };
+  return {
+    runDue: async (now = new Date()) => {
+      for (const target of await workspaceScheduleTargets(ctx)) {
+        if (Date.parse(target.dueAt) > now.getTime()) continue;
+        await runWorkspaceScheduleTarget(ctx, target, now);
+      }
+    },
+  };
 }
 
 function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
@@ -187,10 +186,7 @@ describe("automation model override", () => {
         ('00000000-0000-7000-8000-000000000009', '${WORKSPACE_ID}', '${PINNED_SUBSCRIPTION_ID}', 'calendar', 'FREQ=DAILY', 'America/Los_Angeles',
          '2026-01-02T16:00:00.000Z', 1, 1, '2026-01-01', '2026-01-01');
     `);
-    const scheduler = schedulerFor(fixture);
-
-    await scheduler.refresh(WORKSPACE_ID);
-    await scheduler.alarm();
+    await scheduleRunnerFor(fixture).runDue();
 
     const workstream = runWorkstream(fixture.objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
