@@ -1,9 +1,10 @@
 /**
  * The registry's own SQLite schema, and the append-only runner that applies it.
  *
- * Version 1 is still unshipped, so it is edited in place rather than appended
- * to; once this Worker is deployed the same append-only rule applies here as in
- * `apps/api`.
+ * Version 1 is deployed, so it is now frozen: every later change is appended as
+ * a new entry, exactly as in `apps/api`. Editing a shipped statement would be
+ * applied to a fresh registry and skipped on the live one, which is the one
+ * failure mode a migration ledger exists to prevent.
  *
  * This is a deliberate second copy of the runner in
  * `apps/api/src/durable-objects/sqlite-migrations.ts`, not an import: the
@@ -136,6 +137,11 @@ const V1_SWEEPS = `
   ) STRICT
 `;
 
+/**
+ * One row per Durable Object namespace the account has ever had. Two more
+ * columns arrive in v2 below — `retired_at` and `last_sweep_id` — so this
+ * `CREATE TABLE` is not the whole shape of the deployed table.
+ */
 const V1_NAMESPACES = `
   CREATE TABLE IF NOT EXISTS durable_object_namespaces (
     namespace_id TEXT PRIMARY KEY,
@@ -147,6 +153,37 @@ const V1_NAMESPACES = `
     last_swept_at INTEGER NOT NULL
   ) STRICT
 `;
+
+/**
+ * When a namespace stopped existing in the account.
+ *
+ * Added in v2 because v1 had no way to say it: absence was decided per
+ * namespace, inside the loop over the namespaces a sweep returned, so a class
+ * deleted from the Worker simply stopped appearing and nothing ever visited it
+ * again. Its objects kept whatever status they last held — `current`, or worse,
+ * `behind` — with a frozen sweep time, and a retired component went on
+ * contributing a red count that nobody could clear.
+ *
+ * A column rather than a delete, for the same reason objects are marked
+ * `absent` rather than removed: "this class used to exist and no longer does"
+ * is the answer to a question somebody asks during an incident, and a deleted
+ * row cannot answer it. It is cleared again if the namespace comes back.
+ *
+ * `last_sweep_id` is what decides that, exactly as it does for objects: the
+ * sweep stamps every namespace it returned, and a namespace still carrying an
+ * older stamp is one this sweep did not find. The alternative was to pass the
+ * swept ids into the statement as a `NOT IN` list, which is correct and does
+ * not survive the platform — Durable Object SQL allows **100 bound parameters
+ * per query**, and an account may hold up to 500 Durable Object classes. Past
+ * that the statement throws, and because the sweep runs inside one
+ * `transactionSync`, the whole sweep is lost rather than just the retirement.
+ * Both columns are NULL when they do not apply, including on the rows a v1
+ * registry already holds.
+ */
+const V2_NAMESPACE_RETIREMENT = [
+  `ALTER TABLE durable_object_namespaces ADD COLUMN retired_at INTEGER`,
+  `ALTER TABLE durable_object_namespaces ADD COLUMN last_sweep_id INTEGER`,
+] as const;
 
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
@@ -170,6 +207,10 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
     `CREATE INDEX IF NOT EXISTS migration_events_by_time
        ON migration_events (occurred_at DESC)`,
   ],
+}, {
+  version: 2,
+  description: "retire namespaces that have left the account",
+  statements: V2_NAMESPACE_RETIREMENT,
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;
