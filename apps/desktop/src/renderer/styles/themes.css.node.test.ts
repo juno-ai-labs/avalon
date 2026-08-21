@@ -178,6 +178,33 @@ describe('no colour is written into app.css', () => {
     ]);
   });
 
+  /**
+   * Rendered markdown takes no size from a literal.
+   *
+   * The engine's one guard is about colour, and a whole type scale slipped
+   * through beside it: `.markdown-body` scaled with `sys.font.size.prose` while
+   * the headings inside it stayed at a fixed 18/16/14.5/14, so Air rendered an
+   * h2 smaller than the paragraph under it for as long as that went unnoticed.
+   * A size written here is invisible in whichever theme it was measured
+   * against, exactly as a colour would be.
+   */
+  it('takes every markdown size and weight from a token', () => {
+    const offenders = app
+      .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+      .split('}')
+      .filter((block) => /\.markdown-body\s+(h[1-6]|strong|th|td|ul|ol|blockquote|hr|table)\b/u.test(block))
+      .flatMap((block) => [...block.matchAll(/(font-size|font-weight|line-height)\s*:\s*([^;{}]+)/gu)]
+        .filter((match) => {
+          const value = match[2] ?? '';
+          return !value.includes('var(') && !/^\s*(inherit|normal|0)\s*$/u.test(value);
+        })
+        .map((match) => match[0].trim()));
+
+    // `0.88em` and friends are relative to the prose the theme already sets, so
+    // they scale with it — a bare `px` is what does not.
+    expect(offenders.filter((rule) => !/\d(em|%)/u.test(rule))).toEqual([]);
+  });
+
   // The guard has to be able to see one, or it is asserting that its own
   // regular expressions are broken.
   it('would catch a colour that came back', () => {

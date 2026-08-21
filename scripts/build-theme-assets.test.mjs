@@ -441,3 +441,46 @@ test('the Air variants differ only in colour', () => {
 
   assert.deepEqual(structural(light), structural(dark));
 });
+
+/**
+ * A heading is larger than the prose it sits above.
+ *
+ * `.markdown-body` takes its own size from `sys.font.size.prose`, and the
+ * headings inside it were a fixed 18/16/14.5/14 — so when Air raised its prose
+ * to 16.5px its h2 became *smaller* than the paragraph beneath it and its h3
+ * smaller still. Colour was tokenised from the start and size was not, which is
+ * exactly the gap the no-literal-colour guard cannot see.
+ */
+test('every theme keeps its markdown headings above its prose', () => {
+  const px = (value) => Number.parseFloat(String(value));
+
+  for (const theme of themes) {
+    const values = resolvedTokens(theme, themes);
+    const prose = px(values['sys.font.size.prose']);
+    const headings = [1, 2, 3, 4].map((level) => px(values[`cmp.markdown.heading-${level}`]));
+
+    assert.ok(headings.every(Number.isFinite), `${theme.id} leaves a markdown heading size unset`);
+    for (const [index, size] of headings.entries()) {
+      // `>=`, not `>`: a level that matches the prose and is carried by weight
+      // alone is a design decision. One *below* it is not — that is a heading
+      // the eye reads as a caption.
+      assert.ok(
+        size >= prose,
+        `${theme.id}: h${index + 1} is ${size}px under ${prose}px prose — a heading that does not read as one`,
+      );
+    }
+    // And they descend, or the levels say nothing about depth.
+    const descending = headings.every((size, index) => index === 0 || size <= headings[index - 1]);
+    assert.ok(descending, `${theme.id}: markdown heading sizes are not in descending order`);
+
+    // The note detail runs its own scale, and h4 and below fall back to the
+    // shared one — so an article scale that stops descending too early inverts
+    // the hierarchy rather than merely flattening it.
+    const article = [1, 2, 3].map((level) => px(values[`cmp.markdown.article-heading-${level}`]));
+    assert.ok(article.every(Number.isFinite), `${theme.id} leaves an article heading size unset`);
+    assert.ok(
+      article.every((size, index) => (index === 0 || size <= article[index - 1]) && size >= prose),
+      `${theme.id}: the note article's heading scale does not descend above its prose`,
+    );
+  }
+});
