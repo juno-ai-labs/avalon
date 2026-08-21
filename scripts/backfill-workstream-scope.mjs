@@ -61,6 +61,15 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import { isEntryPoint } from "./entry-point.mjs";
 
+/**
+ * Stop rather than grind through a whole list that cannot succeed.
+ *
+ * An expired token fails every remaining row, one useless request each. A run
+ * of failures this long is a broken precondition, not bad luck, and stopping
+ * leaves the operator a short log and a record they can resume from.
+ */
+export const CONSECUTIVE_FAILURE_LIMIT = 5;
+
 /** The list endpoint's own maximum, so a sweep costs the fewest round trips. */
 export const PAGE_SIZE = 250;
 
@@ -75,11 +84,11 @@ export function parseArguments(argv) {
     else throw new Error(`Unrecognized argument: ${argument}`);
   }
   if (!options.baseUrl) throw new Error("--base-url is required.");
-  // A revert always writes. Accepting `--apply` alongside it would silently
-  // ignore the flag, and somebody who added it meaning "now do it for real"
-  // deserves to be told the flag does not belong there.
-  if (options.apply && options.revert) {
-    throw new Error("--apply cannot be combined with --revert; a revert always applies.");
+  // `--record` names the file a flip writes. A revert reads its own file and
+  // writes none, so passing both is a misunderstanding worth naming rather than
+  // an argument to ignore.
+  if (options.revert && options.record) {
+    throw new Error("--record belongs to a flip; a revert reads the file named by --revert.");
   }
   // A flip with nowhere to write what it changed is a flip nobody can undo.
   if (!options.revert && !options.record) {
@@ -184,18 +193,35 @@ export async function setScope(context, workstreamId, scope) {
   return { outcome: "failed", status, error: body?.error ?? "unknown" };
 }
 
+/**
+ * True for a work stream the object will refuse to re-scope.
+ *
+ * `update()` throws `scope_change_unsupported` when `system_kind` or
+ * `automation_subscription_id` is set, and the listing already carries both —
+ * so this is knowable up front rather than after a wasted round trip. Leaving
+ * them in inflated the one number the runbook tells an operator to read as the
+ * blast radius, and had `--revert` re-attempt rows it could never change.
+ */
+export function refusesScopeChange(workstream) {
+  return (workstream.systemKind ?? null) !== null
+    || (workstream.automationSubscriptionId ?? null) !== null;
+}
+
 /** The reversal file, built from a listing. Written before anything changes. */
 export function buildRecord(context, workstreams) {
   return {
     baseUrl: context.baseUrl,
     recordedAt: context.now(),
     entries: workstreams
-      .filter((workstream) => workstream.scope === "workspace")
+      .filter((workstream) => workstream.scope === "workspace" && !refusesScopeChange(workstream))
       .map((workstream) => ({
         workstreamId: workstream.id,
         title: workstream.title,
         priorScope: workstream.scope,
         systemKind: workstream.systemKind ?? null,
+        // Recorded so the file can tell an automation's work stream apart after
+        // the fact, which the scope alone cannot.
+        automationSubscriptionId: workstream.automationSubscriptionId ?? null,
         originType: workstream.originType,
       })),
   };
@@ -272,9 +298,11 @@ export async function flip(context) {
   const members = await listActiveMembers(context);
   context.log(`${members.length} active members will be seated into any work stream with an empty room.`);
   const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
+  let consecutiveFailures = 0;
   for (const entry of record.entries) {
     const result = await narrow({ ...context, membersForEmptyRooms: members }, entry);
     totals[result.outcome] += 1;
+    consecutiveFailures = result.outcome === "failed" ? consecutiveFailures + 1 : 0;
     if (result.seated.length > 0) totals.seated += 1;
     // Rewritten as each row settles, so the file on disk always describes what
     // has actually happened rather than what was planned.
@@ -282,6 +310,13 @@ export async function flip(context) {
     context.writeRecord(context.record, record);
     if (result.outcome === "failed") {
       context.log(`  ${entry.workstreamId} failed (${result.status} ${result.error}): ${entry.title}`);
+    }
+    if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+      context.log(
+        `Stopping after ${consecutiveFailures} failures in a row — that is a broken `
+        + `precondition, not bad luck. ${context.record} is intact; fix it and re-run.`,
+      );
+      break;
     }
   }
   return totals;
@@ -299,11 +334,20 @@ export async function revert(context) {
   }
   context.log(`Reverting ${record.entries.length} entries from ${context.revert}.`);
   const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
+  let consecutiveFailures = 0;
   for (const entry of record.entries) {
     const result = await setScope(context, entry.workstreamId, entry.priorScope);
     totals[result.outcome] += 1;
+    consecutiveFailures = result.outcome === "failed" ? consecutiveFailures + 1 : 0;
     if (result.outcome === "failed") {
       context.log(`  ${entry.workstreamId} failed (${result.status} ${result.error}): ${entry.title}`);
+    }
+    if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+      context.log(
+        `Stopping after ${consecutiveFailures} failures in a row. ${context.revert} is `
+        + "unchanged; fix the cause and re-run the revert.",
+      );
+      break;
     }
   }
   // Participants the pass seated are left in place. Once the work stream is
