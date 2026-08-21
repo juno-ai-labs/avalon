@@ -87,7 +87,8 @@ today" and needs tooling this repository does not have to attribute.
 - Push anything an open window keeps looking at, from the authority that owns
   it.
 - Let the connection's proven identity decide what is sent.
-- Keep one authority per field, and let it be the only sender of that field.
+- Keep one *authority* per field — one place that decides the value and stamps
+  its version. Other objects may relay it, forwarding that version unchanged.
 - Prefer a design whose failure mode is a stale screen, because somebody
   reports that.
 
@@ -102,8 +103,81 @@ today" and needs tooling this repository does not have to attribute.
   already established.
 - Don't serve the same field from a second projection because that one was
   easier to reach; two projections of one row drift.
+- Don't let a second sender stamp its own version for a field it does not own.
+  A relay forwards the owner's version; it does not mint one.
 - Don't accept a failure mode that shows up only as diffuse latency. Nothing
   here can attribute that to a cause.
+
+## Why holding all these sockets is affordable
+
+A rule that says "keep a socket open for every window and push everything down
+it" invites an obvious objection: that sounds expensive. It is not, and the
+reason is the specific platform choice underneath — **Avalon runs its
+authorities as Cloudflare Durable Objects because they can hibernate a
+WebSocket.**
+
+The connection is held by the runtime, not by a running isolate. An object calls
+`state.acceptWebSocket(server, tags)` instead of `server.accept()`, and from
+that moment the platform owns the socket: the object can be evicted from memory
+while every client stays connected, and it is woken when a frame actually
+arrives or an alarm fires. An idle window therefore costs storage, not duration.
+That is what makes the proactive design in this document affordable — **open is
+not the same as resident**, so a person with three windows and a background work
+stream is not three-and-a-bit processes sitting idle on our bill.
+
+The trade is that the object's memory is not a place to keep anything. Every
+rule below follows from that, and **breaking one of them does not break the
+socket — it breaks hibernation, quietly, and the bill is where you find out**:
+
+- **Connection state lives in the attachment, never in a JavaScript map.**
+  `serializeAttachment` after `acceptWebSocket` — in that order, so the socket
+  is registered before recoverable state is associated with it. Handlers
+  enumerate `state.getWebSockets()` and re-validate `deserializeAttachment()` at
+  every use, because an eviction between two frames is normal and loses
+  everything that was only in memory.
+- **Anything a client needs after a wake is reconstructible from SQL.** The
+  object cannot remember what it sent. This is also why a connect payload is
+  derived from stored state and a client's resume position, rather than from
+  anything the server believes about that client.
+- **Heartbeats must not wake the object.** All four socket roles register
+  `setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"))`,
+  so the runtime answers an exact `ping` frame without loading the object. A
+  heartbeat implemented as an ordinary application message would wake it on
+  every beat, which converts every idle connection into a billed one and defeats
+  the entire arrangement.
+- **An idle socket has no timer.** Application intervals and alarms exist only
+  while real work is in flight. A `setInterval` that exists to keep an object
+  warm, or a poll loop inside the object, is continuous duration bought for
+  nothing.
+- **High-frequency output is batched before it is sent.** Model fragments
+  coalesce into one frame every 100 ms or 2,048 characters. Each frame is a wake
+  and a message, so token-sized frames are token-sized wakes.
+
+None of this is a reason to hold fewer sockets or to push less. It is the
+opposite: hibernation is what buys the responsiveness, and the way to keep it is
+to leave the connection alone while nothing is happening on it.
+
+**Do**
+
+- Hand the connection to the runtime with `state.acceptWebSocket`, then attach
+  its recoverable state.
+- Keep per-connection state in the socket's attachment and durable state in SQL.
+- Register the runtime's ping/pong auto-response for heartbeats.
+- Batch high-frequency output into frames on a time or size boundary.
+- Let an idle connection be idle. Silence is the cheap state.
+
+**Don't**
+
+- Don't call `server.accept()`, or keep a session map, a cache, or a pending
+  request keyed in object memory. An eviction erases it, and the socket that
+  survives will be served by an object that has forgotten it.
+- Don't implement a heartbeat as an application message the object has to
+  answer. That wakes it on every beat.
+- Don't run an interval inside the object to keep it warm, to poll for changes,
+  or to re-send state nobody asked for.
+- Don't send a frame per token, per row, or per keystroke.
+- Don't work around a hibernation constraint by keeping the object awake. Move
+  the state into the attachment or into SQL instead.
 
 ## Push before it is asked for
 
@@ -307,7 +381,7 @@ struct:
 | --- | --- |
 | `authorityGeneration` | Which incarnation of the authority produced this — it advances when a work stream is imported into a new object. A payload from an older generation is rejected outright, and a newer one applies unconditionally, because its waterlines come from a different counter and are not comparable to the stored ones. |
 | `commonWaterline` | Monotonic within WorkstreamDO for the shared row — title, state, activity, preview. |
-| `viewerWaterline` | Monotonic within WorkstreamDO for *this* viewer's overlay — unread, mention, read-through, listability. |
+| `viewerWaterline` | Monotonic within WorkstreamDO for *this* viewer's overlay — unread, mention, read-through, listability. Zero is a sentinel rather than a position: it means the viewer has no overlay row yet, and the schema requires `viewerEventId` to be null exactly then. A payload stamped zero therefore never applies its viewer half, because the receiver's test is strictly greater. |
 | `commonEventId` / `viewerEventId` | The UUIDv7 identity of the state row each half came from. Time-sortable trace identities for correlating the two paths — deliberately **not** a distributed clock, and never the thing a comparison is made on. |
 
 **The two waterlines are independent on purpose, and that is the load-bearing
@@ -572,9 +646,12 @@ Three signs the answer above was wrong:
   ids, timeouts, and receipt frames on a socket mean the mutation wanted HTTP.
   Cache invalidation, poll intervals, and refetch cascades on a fetch mean the
   read wanted a push.
-- **Two places produce the same field.** Whatever the reason, the next bug is
-  the two of them disagreeing, and it will be reported as a value that changes
-  when you navigate and changes back when you reload.
+- **Two places produce the same field and stamp it independently.** A relay is
+  fine and is how a work-stream row reaches both the control socket and the
+  workspace socket — it forwards the owner's version. Two producers that each
+  mint their own version is the problem: the next bug is the two of them
+  disagreeing, reported as a value that changes when you navigate and changes
+  back when you reload.
 
 ## Invariants
 
@@ -616,7 +693,10 @@ consequence of breaking it.
   window and every reconnect at once.
 - **No polling, ever.** No interval refetch, no "just in case" revalidation on
   focus. If a surface goes stale without user action, the fix is a push from its
-  authority, not a timer in the renderer.
+  authority, not a timer in the renderer. A clock that re-renders elapsed time
+  is not polling and is not covered by this — it reads no data. Break the
+  invariant and every window pays for a request whose answer was already on its
+  way.
 
 ## Where Avalon stands today
 
@@ -636,14 +716,15 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Workspace profile, members, invitations, connectors, automations, notes, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
 | Sending a message | Command frame on the WorkspaceDO command socket, answered with a private receipt | **No** — and deliberately, for now. See below. |
+| Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
 | Every other mutation | REST, refused on the feed socket with `rest_required` | Yes. |
 
 ## Known divergences
 
-Two places where the running code does not follow this document. They are
+Three places where the running code does not follow this document. They are
 written down so that nobody reproduces them by copying what is already there,
-and so the work to close them is legible to whoever picks it up. **Neither is an
-exception you may extend; the first is a gap and the second is a single
+and so the work to close them is legible to whoever picks it up. **None of them
+is an exception you may extend: two are gaps, and the message send is a single
 argued-for carve-out.**
 
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
@@ -658,6 +739,18 @@ waterlines so a later push can order against it, and a client that applies
 frames instead of invalidating query keys. Until then, `initial` is the boundary
 between what this document describes and what runs.
 
+**The connector list re-reads itself on window focus.**
+`apps/desktop/src/renderer/screens/workspace-settings.tsx` sets
+`refetchOnWindowFocus: 'always'` on the `connections` query, against a global
+default of `false` in `App.tsx`. That is the "just in case" revalidation the
+[no-polling invariant](#invariants) forbids, on state rather than on a one-shot
+signal, so the OAuth-attempt carve-out above does not cover it: the whole list
+is re-read on every refocus whether or not a provider window was ever opened.
+The push path already exists — `connector_connections` is one of the workspace
+sync topics — so closing it means applying pushed connection state on that
+screen instead of re-reading. Until then, this is the one place a timer-like
+read survives, and it is not a precedent.
+
 **Message sends go up the workspace socket, not over REST.** This was decided
 on purpose and the reasoning is recorded in
 [`architecture.md`](architecture.md#changelog) (2026-08-17): a foreground send
@@ -671,8 +764,9 @@ converting this one back requires answering the ambiguity that produced it.
 
 ## Related documents
 
-- [`realtime-sockets.md`](realtime-sockets.md) — how a socket is admitted, and
-  which object answers each upgrade.
+- [`realtime-sockets.md`](realtime-sockets.md) — how a socket is admitted, which
+  object answers each upgrade, and the hibernation lifecycle every socket role
+  follows.
 - [`workstream-durable-object.md`](workstream-durable-object.md) — the object
   hierarchy that owns the state being pushed, and what each one publishes.
 - [`architecture.md`](architecture.md) — the surfaces, the request path, and the
