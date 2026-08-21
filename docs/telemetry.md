@@ -616,7 +616,7 @@ embedded SQL now also widens what PostHog receives, with no review step that
 would flag it as a logging change. If Cloudflare ships attribute filtering, this
 is the first thing that should use it.
 
-Shipped in #TBD.
+Shipped in #207.
 
 ### 2026-08-20 — The analytics surrogates gain a second reader
 
