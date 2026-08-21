@@ -300,6 +300,26 @@ Membership is many-to-many and additive:
   work stream in a group is still visible only to the people it was already
   visible to; other members see the group without that row in it.
 
+**A shared group can therefore look different to two people, and after #215 that
+is the normal case rather than the exception.** That change makes a new work
+stream `personal` on creation — "its creator and whoever they were started with,
+and nobody else" — so a group filled from the sidebar is mostly rows most of the
+workspace cannot read. Two members open the same group and see different lists;
+one may see it empty. Nothing here is a leak, and the per-viewer filter is
+exactly the behaviour the security section requires. But it is in tension with
+goal 1, which is that everybody sees the same group in the same place, and with
+the whole premise in Motivation that a group is how two people *agree* what
+belongs together.
+
+The design does not resolve that tension, and should not pretend to: a group is
+an index over work streams, and it cannot be more visible than the work streams
+in it. What it does is refuse to hide the consequence — the group's count is the
+viewer's own count, so a group that looks empty to somebody is empty *for them*,
+which is true rather than broken. Whether the product should do something more —
+offer to widen a work stream's scope when it is added to a shared group, or mark
+a group whose rows are mostly invisible to the reader — is [an open
+question](#open-questions), not something this PRD settles.
+
 ### The group marker on a row
 
 On a work-stream row rendered outside a group section, between the status dot and
@@ -853,9 +873,11 @@ count in the header is filtered too, so it does not leak the existence of rows.
 group's defaults are attached to it, which means workspace-scoped resources
 appear in it and become visible to the agent through
 `workstream_list_resources`. For a personal work stream, only its own viewers
-can see the row to add it, so this is its owner's own action. It is still worth
-stating plainly: putting a work stream in a group is how content gets pushed into
-it.
+can see the row to add it, so this is its owner's own action — and since #215
+made `personal` the default for a new work stream, this is the ordinary path into
+a group rather than a rare one. It is still worth stating plainly: putting a work
+stream in a group is how content gets pushed into it, and the person doing it is
+the person who could already read it.
 
 **Deletion is bounded, and attachment provenance survives it — but there is no
 mutation history.** Deleting a group deletes group rows only. What is retained is
@@ -1008,6 +1030,16 @@ does not establish that any of this is visible or legible.
   meaning of a number somebody has learned, which
   [`workstream-pinning.md`](../../workstream-pinning.md) treats as a cost worth
   avoiding. Not blocking; non-goal 11 holds until this is answered.
+- **Should adding a work stream to a shared group offer to widen its scope?**
+  Since #215 a new work stream is `personal`, so a shared group fills up with rows
+  most of the workspace cannot see, and the group reads as emptier to everyone but
+  its authors. Options, none of them free: offer to change scope at the moment of
+  adding (a permission change buried in a filing gesture, which is the kind of
+  thing that surprises people later); show the reader a count of rows they cannot
+  see (honest, but it advertises the existence of work they were not given); or
+  leave it, and accept that groups are as shared as their contents. Worth settling
+  before the build, because it changes what the group home page shows. Not
+  blocking the rest of the design.
 - **Does the group home page belong in the sidebar's active-row state?** When
   `/groups/:id` is open, no work-stream row is active and the group row is. That
   is straightforward, but the same is not obviously true of the header's
