@@ -872,6 +872,8 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   private sweepInFlight: Promise<boolean> | null = null;
   private sweepInFlightCertain = false;
+  /** Tail of the publication queue; see {@link serializePublication}. */
+  private publishQueue: Promise<void> = Promise.resolve();
 
   constructor(
     state: DurableObjectState,
@@ -1109,6 +1111,23 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!parsed.success) throw new Error("invalid_workspace_sync_topics");
     const requested = new Set(parsed.data);
     const ordered = WORKSPACE_SYNC_TOPICS.filter((topic) => requested.has(topic));
+    return this.serializePublication(() => this.deliverSync(ordered));
+  }
+
+  /**
+   * Allocate this event's waterline and send it, one publication at a time.
+   *
+   * The waterline is a monotonic counter and the desktop discards anything at
+   * or below the last one it applied, so allocation order has to be delivery
+   * order. The sweep between them is a D1 round trip, and the input gate is
+   * open across it: without this queue a cheaper concurrent publication —
+   * one that skips the sweep because the interval is fresh — allocates the
+   * higher waterline and sends first, and the parked payload is then dropped
+   * on arrival along with every topic it named. A `member_directory`
+   * publication is the guaranteed victim, because forcing the sweep is what it
+   * does.
+   */
+  private async deliverSync(ordered: WorkspaceSyncTopic[]): Promise<number> {
     const occurredAtMs = Date.now();
     const occurredAt = new Date(occurredAtMs).toISOString();
     const eventId = uuidV7(occurredAtMs);
@@ -3072,6 +3091,18 @@ export class WorkspaceDO extends DurableObject<Env> {
    * simply expired, a membership going inactive — which is why the bound
    * exists rather than trusting an event to arrive.
    */
+  /**
+   * Run publications in the order they were requested.
+   *
+   * A rejected publication must not poison the queue for the next one, so the
+   * chain keeps the settled promise rather than the failed one.
+   */
+  private serializePublication<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.publishQueue.then(operation, operation);
+    this.publishQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   private async revalidateBeforePublish(certain: boolean): Promise<void> {
     if (!certain && Date.now() - this.lastRevalidatedAt < AUTHORIZATION_REVALIDATE_MS) return;
     // A caller joins a sweep already running rather than starting a second one

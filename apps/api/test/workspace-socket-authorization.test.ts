@@ -109,6 +109,24 @@ describe("permittedWorkspaceSocketIdentities", () => {
     expect([...permitted]).toEqual([]);
   });
 
+  it("decides one user's two sessions separately", async () => {
+    // The stated design is to sweep by session rather than by user: a person
+    // with two windows on two sessions loses only the revoked one.
+    const db = seed({
+      members: [{ userId: MEMBER_A, status: "active" }],
+      sessions: [
+        { id: "session-live", userId: MEMBER_A },
+        { id: "session-revoked", userId: MEMBER_A, revokedAt: NOW },
+      ],
+    });
+    const permitted = await permittedWorkspaceSocketIdentities(db, options, [
+      { sessionId: "session-live", userId: MEMBER_A },
+      { sessionId: "session-revoked", userId: MEMBER_A },
+    ]);
+    expect(permitted.has(authorizationKey("session-live", MEMBER_A))).toBe(true);
+    expect(permitted.has(authorizationKey("session-revoked", MEMBER_A))).toBe(false);
+  });
+
   it("keys the answer to the session's own user, not the socket's claim", async () => {
     const db = seed({
       members: [
