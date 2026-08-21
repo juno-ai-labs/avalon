@@ -10,7 +10,6 @@ const AUDIENCE = "test-audience";
 const CONFIGURATION = {
   teamDomain: TEAM_DOMAIN,
   applicationAudience: AUDIENCE,
-  allowedEmailDomains: ["rallywith.ai"],
 };
 
 let signingKey: CryptoKey;
@@ -49,37 +48,30 @@ describe("readAccessConfiguration", () => {
     expect(readAccessConfiguration({
       ACCESS_TEAM_DOMAIN: " Rally.cloudflareaccess.com ",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai, RallyWith.dev ",
     })).toEqual({
       teamDomain: TEAM_DOMAIN,
       applicationAudience: AUDIENCE,
-      allowedEmailDomains: ["rallywith.ai", "rallywith.dev"],
     });
   });
 
   it("refuses an incomplete or non-Access configuration", () => {
     expect(readAccessConfiguration({})).toBeNull();
-    expect(readAccessConfiguration({
-      ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
-      ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "",
-    })).toBeNull();
+    expect(readAccessConfiguration({ ACCESS_TEAM_DOMAIN: TEAM_DOMAIN })).toBeNull();
+    expect(readAccessConfiguration({ ACCESS_APPLICATION_AUD: AUDIENCE })).toBeNull();
     expect(readAccessConfiguration({
       ACCESS_TEAM_DOMAIN: "https://rally.cloudflareaccess.com/x",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai",
     })).toBeNull();
     expect(readAccessConfiguration({
       ACCESS_TEAM_DOMAIN: "attacker.example.com",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai",
     })).toBeNull();
   });
 });
 
 describe("verifyAccessRequest", () => {
-  it("admits a signed assertion from an allowed domain", async () => {
-    const token = await assertion({ email: "Operator@RallyWith.ai" });
+  it("admits a signed assertion and reports who it belongs to", async () => {
+    const token = await assertion({ email: "Operator@Juno-Labs.com" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       CONFIGURATION,
@@ -89,7 +81,7 @@ describe("verifyAccessRequest", () => {
     expect(result).toEqual({
       ok: true,
       principal: {
-        email: "operator@rallywith.ai",
+        email: "operator@juno-labs.com",
         subject: "access-subject",
         audience: AUDIENCE,
       },
@@ -97,7 +89,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("accepts the assertion from the CF_Authorization cookie", async () => {
-    const token = await assertion({ email: "operator@rallywith.ai" });
+    const token = await assertion({ email: "operator@juno-labs.com" });
     const result = await verifyAccessRequest(
       request({ cookie: `other=1; CF_Authorization=${token}` }),
       CONFIGURATION,
@@ -108,7 +100,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("refuses every request while Access is unconfigured", async () => {
-    const token = await assertion({ email: "operator@rallywith.ai" });
+    const token = await assertion({ email: "operator@juno-labs.com" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       null,
@@ -124,7 +116,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("refuses an assertion signed by another key", async () => {
-    const token = await assertion({ email: "operator@rallywith.ai" });
+    const token = await assertion({ email: "operator@juno-labs.com" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       CONFIGURATION,
@@ -136,11 +128,11 @@ describe("verifyAccessRequest", () => {
 
   it("refuses an assertion minted for another team or application", async () => {
     const wrongIssuer = await assertion({
-      email: "operator@rallywith.ai",
+      email: "operator@juno-labs.com",
       issuer: "https://attacker.cloudflareaccess.com",
     });
     const wrongAudience = await assertion({
-      email: "operator@rallywith.ai",
+      email: "operator@juno-labs.com",
       audience: "another-application",
     });
 
@@ -156,36 +148,35 @@ describe("verifyAccessRequest", () => {
     )).toEqual({ ok: false, reason: "access_assertion_invalid" });
   });
 
-  it("refuses a verified assertion whose email domain is not allowed", async () => {
-    const token = await assertion({ email: "operator@example.com" });
+  /**
+   * Who may read the site is the Access application's policy, and this Worker
+   * does not hold a second copy of it. An assertion minted for *this*
+   * application is admitted whatever address it carries — if that address
+   * should not have been let in, the policy is what to change.
+   */
+  it("admits any address the application's own policy let through", async () => {
     const result = await verifyAccessRequest(
-      request({ "cf-access-jwt-assertion": token }),
+      request({ "cf-access-jwt-assertion": await assertion({ email: "contractor@example.com" }) }),
       CONFIGURATION,
       { keySet },
     );
 
-    expect(result).toEqual({ ok: false, reason: "access_email_domain_forbidden" });
+    expect(result).toEqual({
+      ok: true,
+      principal: { email: "contractor@example.com", subject: "access-subject", audience: AUDIENCE },
+    });
   });
 
-  it("takes the domain from the last @, so a crafted local part cannot pass", async () => {
-    const token = await assertion({ email: "attacker@rallywith.ai@example.com" });
+  it("admits a verified assertion that carries no email at all", async () => {
     const result = await verifyAccessRequest(
-      request({ "cf-access-jwt-assertion": token }),
+      request({ "cf-access-jwt-assertion": await assertion({}) }),
       CONFIGURATION,
       { keySet },
     );
 
-    expect(result).toEqual({ ok: false, reason: "access_email_domain_forbidden" });
-  });
-
-  it("refuses a verified assertion that carries no email", async () => {
-    const token = await assertion({});
-    const result = await verifyAccessRequest(
-      request({ "cf-access-jwt-assertion": token }),
-      CONFIGURATION,
-      { keySet },
-    );
-
-    expect(result).toEqual({ ok: false, reason: "access_email_missing" });
+    expect(result).toEqual({
+      ok: true,
+      principal: { email: null, subject: "access-subject", audience: AUDIENCE },
+    });
   });
 });

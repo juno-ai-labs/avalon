@@ -25,7 +25,8 @@ import {
 } from "./views";
 
 interface Variables {
-  principal: string;
+  /** The signed-in email when the assertion carried one; shown, never checked. */
+  principal: string | null;
 }
 
 export const app = new Hono<{ Bindings: Env; Variables: Variables }>();
