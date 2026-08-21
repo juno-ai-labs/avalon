@@ -532,6 +532,10 @@ describe("Durable Objects in the Workers runtime", () => {
           "work_opportunity_snapshots",
           ...WORKSPACE_LOCAL_TABLES,
         ],
+        // Retired in schema version 3. Version 1 still creates them and always
+        // will — its statements are hashed into the migration receipt — so a
+        // fresh object proves the drop only by not having them at the end.
+        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist"],
       },
       {
         namespace: env.WORKSPACE_SCHEDULERS,
@@ -548,6 +552,8 @@ describe("Durable Objects in the Workers runtime", () => {
       await runInDurableObject(stub, (instance, state) => {
         expect(instance).toBeInstanceOf(entry.constructor);
         expect(tableNames(state)).toEqual(expect.arrayContaining([...entry.tables]));
+        const absent: readonly string[] = "absentTables" in entry ? entry.absentTables : [];
+        expect(tableNames(state).filter((table) => absent.includes(table))).toEqual([]);
         // A fresh object applies its object's whole published ledger, and each
         // version lands exactly once. Objects created before a version was
         // published apply only the new tail, which is why the ledger is
