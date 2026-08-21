@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 9;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 10;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1212,7 +1212,71 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
            AND origin != 'block_dashboard_block'`,
     ],
   },
+  {
+    version: 10,
+    description: "preserve a stopped top-level run in the workstream projection",
+    statements: rebuiltWorkstreamsStoppedProjection(),
+  },
 ];
+
+/**
+ * Rebuilds the workstreams compatibility view and its write triggers so the
+ * generic runtime's D1-compatible `idle` settlement retains a DO cancellation.
+ * D1's retired harness-status CHECK cannot accept `stopped`, so the shared
+ * runtime must continue writing `idle`; inside the object the already-updated
+ * latest run is authoritative evidence that this particular idle transition
+ * means a user stop.
+ */
+function rebuiltWorkstreamsStoppedProjection(): string[] {
+  const view = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE VIEW IF NOT EXISTS _runtime_workstreams AS"));
+  const insert = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_workstreams_insert"));
+  const update = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_workstreams_update"));
+  if (!view || !insert || !update) throw new Error("workstreams compat statements not found");
+
+  const stateAnchor = `              WHEN exact_state IN ('failed', 'budget_exhausted') THEN 'failed'
+              ELSE 'idle'`;
+  if (!view.includes(stateAnchor)) throw new Error("workstreams view state projection changed");
+  const rebuiltView = view.replace(stateAnchor, `              WHEN exact_state IN ('failed', 'budget_exhausted') THEN 'failed'
+              WHEN exact_state = 'cancelled' THEN 'stopped'
+              ELSE 'idle'`);
+
+  const writeAnchor = `            WHEN 'completed' THEN 'completed'
+            WHEN 'failed' THEN 'failed'
+            ELSE 'idle' END,`;
+  if (!insert.includes(writeAnchor)) throw new Error("workstreams insert state projection changed");
+  const rebuiltInsert = insert.replace(writeAnchor, `            WHEN 'completed' THEN 'completed'
+            WHEN 'failed' THEN 'failed'
+            WHEN 'stopped' THEN 'cancelled'
+            ELSE 'idle' END,`)
+    .replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+
+  const updateAnchor = `                  WHEN 'completed' THEN 'completed'
+                  WHEN 'failed' THEN 'failed'
+                  ELSE 'idle' END END,`;
+  if (!update.includes(updateAnchor)) throw new Error("workstreams update state projection changed");
+  const rebuiltUpdate = update.replace(updateAnchor, `                  WHEN 'completed' THEN 'completed'
+                  WHEN 'failed' THEN 'failed'
+                  WHEN 'stopped' THEN 'cancelled'
+                  WHEN 'idle' THEN CASE WHEN (
+                    SELECT status FROM runs
+                     WHERE parent_run_id IS NULL AND origin != 'block_dashboard_block'
+                     ORDER BY created_at DESC, run_id DESC LIMIT 1
+                  ) = 'cancelled' THEN 'cancelled' ELSE 'idle' END
+                  ELSE 'idle' END END,`)
+    .replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+
+  return [
+    "DROP TRIGGER IF EXISTS _runtime_workstreams_insert",
+    "DROP TRIGGER IF EXISTS _runtime_workstreams_update",
+    "DROP VIEW IF EXISTS _runtime_workstreams",
+    rebuiltView,
+    rebuiltInsert,
+    rebuiltUpdate,
+  ];
+}
 
 /**
  * Rebuilds `_runtime_description_refreshes_insert` so a claim does not zero

@@ -867,6 +867,13 @@ join crosses an object boundary.
 | `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
+`parts.sequence_number` is transcript order, including tool and system rows.
+`parts.attention_ordinal` is the independent people-visible main-substream
+waterline used by unread tracking. Product messages expose the latter as the
+nullable `attentionSequenceNumber`; tool/transient rows carry `null`. Desktop
+read receipts and unread anchors must never substitute transcript sequence for
+that field, including while an older Worker omits the optional wire property.
+
 Compatibility views named `_runtime_*` map established D1-shaped repository SQL
 onto these normalized tables. They are not duplicate storage or a second
 authority.
@@ -966,6 +973,50 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — Stopped runs remain stopped through every projection
+
+**What changed:** The shared harness-status contract now carries `stopped`, and
+the WorkstreamDO, WorkspaceDO directory, desktop, Slack task list, and Slack
+unfurl projections map the authoritative `cancelled` root state to it. Terminal
+checkpoint cleanup also recognizes the status. The desktop labels it “Latest
+run stopped” while retaining the detailed retry card.
+
+**Why:** Post-cutover runtime storage correctly recorded a user stop as
+`cancelled`, but the public projection fell through to `idle`; the desktop then
+normalized `idle` to `completed`. A real Electron run consequently showed “Run
+stopped” and “Latest run completed” at the same time.
+
+**Considered and rejected:** Relabeling every completed/idle work stream as
+merely “not running” would avoid the contradiction but discard useful outcome
+state. Treating a stop as failure would incorrectly imply a fault and route it
+to intervention UI.
+
+**Consequences:** Consumers must treat `stopped` as terminal and non-running.
+Any new work-stream status surface must preserve it rather than collapsing it
+into `idle`, `completed`, or `failed`.
+
+### 2026-08-20 — Transcript order is separated from unread attention
+
+**What changed:** Product message projection now carries nullable
+`attentionSequenceNumber` directly from `parts.attention_ordinal`. Desktop
+visibility, initial unread anchoring, and socket advancement ignore tool and
+transient rows and advance only that ordinal. A real-workerd test projects a
+human/tool/agent sequence as `1/null/2`.
+
+**Why:** After the Durable Object cutover, the desktop used transcript sequence
+as an attention ordinal. Tool rows consume transcript positions but no
+attention positions, so a tool-heavy turn sent an impossible read waterline and
+received HTTP 422.
+
+**Considered and rejected:** Clamping the invalid PATCH, assigning attention to
+tool rows, and deriving attention from author type on the client. Each hides or
+duplicates the authoritative object counter instead of transmitting it.
+
+**Consequences:** Mixed-version responses may omit the optional field and must
+not advance attention. New people-visible part types must decide explicitly
+whether they receive an attention ordinal, while transcript pagination remains
+ordered exclusively by `sequence_number`.
 
 ### 2026-08-20 — Regional product shells and viewer code are removed
 

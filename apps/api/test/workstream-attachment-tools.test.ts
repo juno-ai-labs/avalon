@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
+import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";
 import {
   createWorkstreamAttachmentTools,
@@ -232,8 +233,8 @@ function insertReadyResource(database: DatabaseSync, objectStore: DatabaseSync, 
        model_content_sha256, model_metadata_json, model_content_status,
        model_content_extractor_version, model_content_character_count, model_content_extracted_at)
     VALUES (?, ?, 'file', 'avalon_upload', ?, ?, ?, '{"size":123}', ?, ?, ?, ?, 'text/markdown', ?, '{}', 'ready',
-            'attachment-text-v1', ?, ?)
-  `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, text.length, "2026-08-12T01:00:00.000Z");
+            ?, ?, ?)
+  `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, ATTACHMENT_TEXT_EXTRACTOR_VERSION, text.length, "2026-08-12T01:00:00.000Z");
   attachResourceLink(database, objectStore, id, { attachedAt });
   return id;
 }
@@ -453,7 +454,10 @@ describe("work-stream attachment tools", () => {
     await expect(read.execute({ cursor: `${firstOutput.nextCursor}tampered` }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
-    await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).rejects.toMatchObject({ code: "resource_version_changed" });
+    await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).rejects.toMatchObject({
+      code: "resource_version_changed",
+      details: { resourceId },
+    });
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {

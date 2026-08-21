@@ -497,10 +497,12 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
 ): T {
-  if (message.messageType === 'tool_event' || message.realtimeOrder !== undefined) return workstream;
+  if (message.messageType === 'tool_event'
+    || message.realtimeOrder !== undefined
+    || message.attentionSequenceNumber == null) return workstream;
   const latestAttentionSequenceNumber = Math.max(
     workstream.latestAttentionSequenceNumber,
-    message.sequenceNumber,
+    message.attentionSequenceNumber,
   );
   if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber) return workstream;
   const hasUnread = workstream.manualUnreadFromSequenceNumber !== null
@@ -862,6 +864,7 @@ export function useWorkstreamSocket(
           || event.status === 'needs_input'
           || event.status === 'completed'
           || event.status === 'failed'
+          || event.status === 'stopped'
           || event.status === 'idle'
         ) {
           void reconcileCanonicalState();

@@ -1043,7 +1043,9 @@ describe("Durable Objects in the Workers runtime", () => {
     const payload = await scheduled.json() as { runs: BlockDashboardBlockRun[] };
     expect(payload.runs).toHaveLength(1);
     const queued = payload.runs[0]!;
-    await runDurableObjectAlarm(stub);
+    await runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
+    });
 
     const blockStub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
       blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
@@ -1530,17 +1532,21 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(replay.status).toBe(401);
     await replay.arrayBuffer();
 
-    await evictDurableObject(stub);
-    const pong = nextMessage(socket!);
-    socket!.send("ping");
-    expect((await pong).data).toBe("pong");
-    const snapshot = nextMessage(socket!);
-    socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-    expect(JSON.parse(String((await snapshot).data))).toMatchObject({
-      type: "workspace_sync",
-      waterline: 0,
-      reason: "initial",
-    });
+    try {
+      await evictDurableObject(stub);
+      const pong = nextMessage(socket!);
+      socket!.send("ping");
+      expect((await pong).data).toBe("pong");
+      const snapshot = nextMessage(socket!);
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      expect(JSON.parse(String((await snapshot).data))).toMatchObject({
+        type: "workspace_sync",
+        waterline: 0,
+        reason: "initial",
+      });
+    } finally {
+      socket!.close(1000, "test complete");
+    }
   });
 
   it("owns and pages the viewer-specific work-stream directory in WorkspaceDO SQL", async () => {

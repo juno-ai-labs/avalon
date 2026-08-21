@@ -4,6 +4,7 @@ import {
   LOGPUSH_FIELD_NAMES,
   OBSERVABILITY_CONFIGURATIONS,
   SAVED_QUERY_DEFINITIONS,
+  assessSavedQueries,
   assessLogpushJob,
   createCloudflareClient,
   reconcileLifecycleRules,
@@ -48,6 +49,45 @@ test("saved-query comparisons tolerate Cloudflare defaults and unordered filters
 
   stored.parameters.limit = 50;
   assert.equal(savedQueryMatchesDefinition(stored, definition), false);
+});
+
+test("saved-query assessment reports every missing, stale, and duplicated definition in one pass", () => {
+  const existing = SAVED_QUERY_DEFINITIONS.slice(0, 4).map((definition) => structuredClone(definition));
+  const stale = structuredClone(SAVED_QUERY_DEFINITIONS[4]);
+  stale.parameters.limit = 50;
+  existing.push(stale);
+  existing.push(structuredClone(SAVED_QUERY_DEFINITIONS[5]));
+  existing.push(structuredClone(SAVED_QUERY_DEFINITIONS[5]));
+
+  const assessment = assessSavedQueries(existing);
+
+  assert.deepEqual(assessment.verified.map((definition) => definition.name), [
+    "Avalon · Failures",
+    "Avalon · Invalid model output",
+    "Avalon · Slow inference",
+    "Avalon · Degraded connector workflows",
+  ]);
+  assert.deepEqual(assessment.differences.map((difference) => ({
+    kind: difference.kind,
+    name: difference.definition.name,
+  })), [
+    { kind: "stale", name: "Avalon · Rejected model calls" },
+    { kind: "duplicated", name: "Avalon · Broken response contracts" },
+    { kind: "missing", name: "Avalon · Harness run outcomes" },
+    { kind: "missing", name: "Avalon · Slow root runs" },
+    { kind: "missing", name: "Avalon · Slow Terminal bootstrap" },
+  ]);
+});
+
+test("saved-query assessment exposes all five production-style missing definitions", () => {
+  const assessment = assessSavedQueries(
+    SAVED_QUERY_DEFINITIONS.slice(0, 4).map((definition) => structuredClone(definition)),
+  );
+  assert.deepEqual(
+    assessment.differences.map((difference) => difference.definition.name),
+    SAVED_QUERY_DEFINITIONS.slice(4).map((definition) => definition.name),
+  );
+  assert.ok(assessment.differences.every((difference) => difference.kind === "missing"));
 });
 
 test("lifecycle reconciliation preserves unrelated rules", () => {

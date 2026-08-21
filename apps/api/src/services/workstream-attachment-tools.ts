@@ -1,4 +1,4 @@
-import type { HarnessTool, ModelMessageContentPart } from "@avalon/agent-harness";
+import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@avalon/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   AttachmentListResourcesArgumentsSchema,
@@ -21,7 +21,9 @@ import { z } from "zod";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
+import { logStructuredEvent } from "../observability/logger";
 import {
+  ATTACHMENT_TEXT_EXTRACTOR_VERSION,
   materializeAttachmentDerivative,
   ocrPdfWithWorkersAi,
   type AuthorizedDerivativeResource,
@@ -237,22 +239,47 @@ export function createWorkstreamAttachmentTools(
           resourceId = args.resourceId;
           start = args.startCharacter ?? 0;
         }
-        const row = await requireVisibleResource(env, input, options, resourceId);
-        assertReadableKind(row, modelToolName("read_resource"), modelToolPrefix);
-        const ready = await ensureReadyTextDerivative(env, row, context.signal);
+        let row: VisibleWorkstreamResourceRow;
+        let ready: Awaited<ReturnType<typeof ensureReadyTextDerivative>>;
+        try {
+          row = await requireVisibleResource(env, input, options, resourceId);
+          assertReadableKind(row, modelToolName("read_resource"), modelToolPrefix);
+          ready = await ensureReadyTextDerivative(env, row, context);
+        } catch (error) {
+          if (error instanceof AttachmentOperationError) {
+            throw attachmentError(error.code, error.message, { ...error.details, resourceId });
+          }
+          throw error;
+        }
         if (cursorVersion && (cursorVersion.sha256 !== ready.sha256 || cursorVersion.extractorVersion !== ready.extractorVersion)) {
-          throw attachmentError("resource_version_changed", "The resource changed; restart the read from its resource ID");
+          throw attachmentError(
+            "resource_version_changed",
+            "The resource changed; restart the read from its resource ID",
+            { resourceId },
+          );
         }
         const object = await env.PAYLOADS.get(ready.contentRef);
-        if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        if (!object) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable", { resourceId });
+        }
         if (object.size > MAX_DERIVATIVE_OBJECT_BYTES) {
-          throw attachmentError("resource_conversion_failed", "The selected derivative exceeds the readable size limit");
+          throw attachmentError(
+            "resource_conversion_failed",
+            "The selected derivative exceeds the readable size limit",
+            { resourceId },
+          );
         }
         const text = await object.text();
         if (text.length !== ready.totalCharacters) {
-          throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
+          throw attachmentError(
+            "resource_version_changed",
+            "The selected derivative length no longer matches its version",
+            { resourceId },
+          );
         }
-        if (start > text.length) throw attachmentError("invalid_cursor", "The requested character position is outside this resource");
+        if (start > text.length) {
+          throw attachmentError("invalid_cursor", "The requested character position is outside this resource", { resourceId });
+        }
         start = safeUtf16Start(text, start);
         const end = safeUtf16End(text, Math.min(text.length, start + pageSize));
         const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };
@@ -294,7 +321,7 @@ export function createWorkstreamAttachmentTools(
         const args = AttachmentSearchResourceArgumentsSchema.parse(raw);
         const row = await requireVisibleResource(env, input, options, args.resourceId);
         assertReadableKind(row, modelToolName("search_resource"), modelToolPrefix);
-        const ready = await ensureReadyTextDerivative(env, row, context.signal);
+        const ready = await ensureReadyTextDerivative(env, row, context);
         const contentObject = await env.PAYLOADS.get(ready.contentRef);
         if (!contentObject) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
         if (contentObject.size > MAX_DERIVATIVE_OBJECT_BYTES) {
@@ -478,7 +505,7 @@ export function createWorkstreamAttachmentTools(
         const args = AttachmentSummarizeResourceArgumentsSchema.parse(raw);
         const row = await requireVisibleResource(env, input, options, args.resourceId);
         assertReadableKind(row, modelToolName("summarize_resource"), modelToolPrefix);
-        const ready = await ensureReadyTextDerivative(env, row, context.signal);
+        const ready = await ensureReadyTextDerivative(env, row, context);
         const object = await env.PAYLOADS.get(ready.contentRef);
         if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
         if (object.size > MAX_DERIVATIVE_OBJECT_BYTES) {
@@ -675,12 +702,23 @@ function assertReadableKind(
 async function ensureReadyTextDerivative(
   env: Env,
   row: VisibleWorkstreamResourceRow,
-  signal: AbortSignal,
+  context: HarnessToolContext,
 ): Promise<Extract<MaterializedAttachmentDerivative, { status: "ready" }>> {
   const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), {
-    signal,
+    signal: context.signal,
     pdfExtractor: extractPdfText,
-    ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, signal),
+    ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, context.signal),
+    onPhase: (event) => logStructuredEvent(env, "info", "attachment_derivative_phase_finished", {
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      harness_run_id: context.harnessRunId,
+      tool_call_id: context.toolCallId,
+      resource_id: row.id,
+      phase: event.phase,
+      outcome: event.outcome,
+      duration_ms: event.durationMs,
+      ...(event.errorCode ? { code: event.errorCode } : {}),
+    }),
   });
   if (result.status === "ready") return result;
   if (result.status === "processing") {
@@ -716,6 +754,7 @@ function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): Author
     modelContentCharacterCount: row.model_content_character_count,
     modelContentClaimedAt: row.model_content_claimed_at,
     modelContentClaimId: row.model_content_claim_id,
+    modelContentErrorCode: row.model_content_error_code,
   };
 }
 
@@ -743,6 +782,8 @@ function rowKind(row: VisibleWorkstreamResourceRow): AttachmentKind {
 
 function contentMode(row: VisibleWorkstreamResourceRow, kind: AttachmentKind): ContentMode {
   if (kind === "image") return "view";
+  if (row.model_content_status === "unsupported"
+    && row.model_content_extractor_version === ATTACHMENT_TEXT_EXTRACTOR_VERSION) return "unsupported";
   if (kind !== "other" || (row.model_content_status === "ready" && row.model_mime_type?.startsWith("text/"))) return "read";
   return "unsupported";
 }

@@ -3,6 +3,162 @@ import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 
 describe("Bind host durability boundaries", () => {
+  it("replaces unverified attachment claims with a content-free provenance boundary", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-csv",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceId: "00000000-0000-7000-8000-000000000777" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-csv",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      error: "The resource could not be converted",
+      data: { code: "resource_format_unsupported" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    expect(guard.nudge()).toContain("resource 00000000-0000-7000-8000-000000000777");
+    expect(guard.nudge()).toBeNull();
+    const boundary = guard.boundary();
+    expect(boundary).toContain("Attachment content unverified");
+    expect(boundary).toContain("resource_format_unsupported");
+    expect(boundary).toContain("tool-read-csv");
+    expect(boundary).not.toMatch(/July|42|forecast total/iu);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceId: "00000000-0000-7000-8000-000000000777" },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      result: { output: {}, summary: "verified" },
+    } as never);
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("keeps skipped image resources unverified while clearing included images", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.view" };
+    const includedId = "00000000-0000-7000-8000-000000000771";
+    const skippedId = "00000000-0000-7000-8000-000000000772";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-view-mixed",
+      toolName: "workstream_view_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceIds: [includedId, skippedId] },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-view-mixed",
+      toolName: "workstream_view_resource",
+      pluginId: "avalon_core",
+      policy,
+      result: {
+        summary: "Viewed one of two requested images",
+        output: {
+          requested: 2,
+          returned: 1,
+          items: [{
+            resourceId: includedId,
+            title: "Included",
+            sourceMimeType: "image/png",
+            modelMimeType: "image/png",
+            version: { sha256: "a".repeat(64), extractorVersion: "image-v1" },
+            sourceBytes: 100,
+            derivativeBytes: 80,
+            width: 10,
+            height: 10,
+            status: "included",
+            reasonCode: null,
+            reason: null,
+            suggestedCall: null,
+            visualPartIndex: 0,
+          }, {
+            resourceId: skippedId,
+            title: "Skipped",
+            sourceMimeType: "image/png",
+            modelMimeType: null,
+            version: null,
+            sourceBytes: 100,
+            derivativeBytes: null,
+            width: null,
+            height: null,
+            status: "skipped",
+            reasonCode: "resource_conversion_failed",
+            reason: "The image could not be safely converted",
+            suggestedCall: null,
+            visualPartIndex: null,
+          }],
+        },
+      },
+    } as never);
+
+    expect(guard.boundary()).toContain(`Resource ${skippedId}`);
+    expect(guard.boundary()).not.toContain(`Resource ${includedId}`);
+  });
+
+  it("clears a failed cursor read after a resource-identified retry succeeds", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000773";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { cursor: "sealed-cursor" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      error: "The resource changed; restart the read from its resource ID",
+      data: { code: "resource_version_changed", details: { resourceId } },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      result: { output: { resourceId }, summary: "Read resource" },
+    } as never);
+    expect(guard.boundary()).toBeNull();
+  });
   it("returns preload candidates to Bind only after their activation is persisted", async () => {
     const order: string[] = [];
     const persisted = new Set<string>();

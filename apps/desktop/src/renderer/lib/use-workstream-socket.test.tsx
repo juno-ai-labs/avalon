@@ -561,20 +561,21 @@ describe('useWorkstreamSocket', () => {
         mentions: [],
         attachments: [],
         sequenceNumber: 8,
+        attentionSequenceNumber: 4,
         createdAt: '2026-07-31T19:21:00.000Z',
         editedAt: null,
       },
     }));
 
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
-      latestAttentionSequenceNumber: 8,
+      latestAttentionSequenceNumber: 4,
       readThroughSequenceNumber: 3,
       hasUnread: true,
       firstUnreadSequenceNumber: 4,
       lastActivityAt: '2026-07-31T19:21:00.000Z',
     });
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])?.[0]).toMatchObject({
-      latestAttentionSequenceNumber: 8,
+      latestAttentionSequenceNumber: 4,
       hasUnread: true,
       firstUnreadSequenceNumber: 4,
     });
@@ -1540,6 +1541,7 @@ describe('useWorkstreamSocket', () => {
       structuredContent: null,
       mentions: [],
       sequenceNumber: 12,
+      attentionSequenceNumber: 7,
       createdAt: '2026-07-31T19:20:02.000Z',
       editedAt: null,
     };
@@ -1547,6 +1549,7 @@ describe('useWorkstreamSocket', () => {
       id: messageId,
       workstreamId,
       sequenceNumber: 12,
+      attentionSequenceNumber: 7,
       authorType: 'agent',
       messageType: 'text',
       text: 'Arrived while reconciling.',
