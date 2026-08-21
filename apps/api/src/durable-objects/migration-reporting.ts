@@ -29,10 +29,15 @@
  * - **A wake that changes nothing sends nothing.** The object keeps its own
  *   one-row report ledger, so the common case — an object waking on the version
  *   it last reported — costs one local SQL read and no subrequest.
- * - **A migration failure always reports**, before the constructor rethrows.
- *   That is the case the tracker exists for. The queue's own retry and
- *   dead-letter queue carry it from there, which matters most exactly here: an
- *   object that fails construction may not be woken again for a long time.
+ * - **A migration failure always reports**, and the send is *awaited* before the
+ *   constructor rethrows. That is the case the tracker exists for, and the one
+ *   case where fire-and-forget does not work: the throw breaks the object's
+ *   input gate, and workerd aborts the object's pending work along with it — so
+ *   a report handed to `waitUntil` here is entered and never delivered. Holding
+ *   the throw behind the send costs one queue round trip on a wake that was
+ *   already failing. The queue's own retry and dead-letter queue carry it from
+ *   there, which matters most exactly here: an object that fails construction
+ *   may not be woken again for a long time.
  *
  * The heartbeat covers the third state: an object that has been reported and
  * has not migrated since. Without it, a tracker whose store was rebuilt would
@@ -108,19 +113,25 @@ export interface DurableObjectMigrationReportContext {
  * half-applied. Its value is returned untouched, so a call site can keep
  * building whatever the migration produced.
  */
-export function withMigrationReport<T>(
+export async function withMigrationReport<T>(
   context: DurableObjectMigrationReportContext,
   apply: () => T,
-): T {
+): Promise<T> {
   // Read before, not after: the runner returns the versions it applied, but one
   // of the five call sites hands that return value to a constructor instead, so
   // the ledger is the only source every site shares.
   const versionBefore = safeCurrentVersion(context.state.storage);
   let applied: T;
   try {
+    // Still the first thing that runs, with no `await` in front of it, so the
+    // migration stays inside the caller's synchronous prologue exactly as
+    // before this function became async.
     applied = apply();
   } catch (error) {
-    reportMigrationFailure(context, error);
+    // Awaited rather than left to `waitUntil` — see the third rule above. The
+    // send swallows its own errors, so this can only delay the throw below,
+    // never replace it.
+    await reportMigrationFailure(context, error);
     throw error;
   }
   reportMigrationSuccess(context, versionBefore);
@@ -130,17 +141,30 @@ export function withMigrationReport<T>(
 function reportMigrationFailure(
   context: DurableObjectMigrationReportContext,
   error: unknown,
-): void {
+): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
-  send(context, {
-    status: "failed",
-    schemaVersion: safeCurrentVersion(context.state.storage),
-    appliedVersions: [],
-    failure: {
-      message: message.slice(0, 1_000),
-      version: failedVersionFrom(message),
+  const schemaVersion = safeCurrentVersion(context.state.storage);
+  const workerVersionId = workerVersionOf(context.env);
+  const deliver = prepareDelivery(
+    context,
+    {
+      status: "failed",
+      schemaVersion,
+      appliedVersions: [],
+      failure: {
+        message: message.slice(0, 1_000),
+        version: failedVersionFrom(message),
+      },
     },
-  });
+    // The failure goes into the ledger too. Without it the ledger still
+    // describes the last *successful* report, so a build that is rolled back to
+    // exactly the one the object last reported looks unchanged on the next wake
+    // and says nothing — leaving the tracker showing a broken object that has
+    // already recovered, until the heartbeat expires a day later. It is also
+    // what makes the `reported_status !== "failed"` test above reachable.
+    () => writeReportState(context.state.storage, schemaVersion, "failed", workerVersionId),
+  );
+  return deliver?.() ?? Promise.resolve();
 }
 
 function reportMigrationSuccess(
@@ -178,11 +202,14 @@ function reportMigrationSuccess(
     && Date.now() - previous.reported_at < REPORT_HEARTBEAT_MS;
   if (unchanged) return;
 
-  send(
+  const deliver = prepareDelivery(
     context,
     { status, schemaVersion: currentVersion, appliedVersions, failure: null },
     () => writeReportState(context.state.storage, currentVersion, status, workerVersionId),
   );
+  // Fire and forget: a successful migration leaves a healthy object that stays
+  // alive to finish this, and nothing is waiting on the report.
+  if (deliver) context.state.waitUntil(deliver());
 }
 
 interface ReportOutcome {
@@ -192,20 +219,29 @@ interface ReportOutcome {
   failure: DurableObjectMigrationFailure | null;
 }
 
-function send(
+/**
+ * Decide whether there is a report to deliver, and if so return the delivery.
+ *
+ * Both paths ask this one question, and neither touches the platform when the
+ * answer is no: a `null` here means nothing is sent, nothing is awaited, and
+ * `waitUntil` is never called. The delivery itself never rejects — reporting
+ * must leave the object exactly as it would have been, so every failure is
+ * logged and swallowed.
+ */
+function prepareDelivery(
   context: DurableObjectMigrationReportContext,
   outcome: ReportOutcome,
   onAccepted?: () => void,
-): void {
+): (() => Promise<void>) | null {
   const queue = context.env.MIGRATION_REPORT_QUEUE;
   // Unbound is the normal state in local development and in every test that
   // builds a partial `Env`. It is not an error, and it must not become one.
-  if (!queue) return;
+  if (!queue) return null;
 
   const report = buildReport(context, outcome);
-  if (!report) return;
+  if (!report) return null;
 
-  context.state.waitUntil((async () => {
+  return async () => {
     try {
       await queue.send(report);
       // `send` resolving means the message was accepted by the queue, not that
@@ -216,7 +252,7 @@ function send(
     } catch (error) {
       logReportProblem(context, "migration_report_enqueue_failed", error);
     }
-  })());
+  };
 }
 
 function buildReport(
@@ -318,8 +354,11 @@ function readReportState(storage: DurableObjectStorage): ReportState | null {
 }
 
 /**
- * Written only after the tracker accepts the report, so a delivery that failed
- * is retried on the next wake instead of being recorded as delivered.
+ * Written only after the queue accepts the report, so a delivery that failed is
+ * retried on the next wake instead of being recorded as delivered. Every
+ * outcome is recorded, `failed` included: the dedupe check reads this row to
+ * decide whether the tracker already knows, and it can only be right if the row
+ * describes the last report actually sent.
  */
 function writeReportState(
   storage: DurableObjectStorage,

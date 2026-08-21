@@ -92,7 +92,7 @@ describe("withMigrationReport", () => {
   it("reports the object's current schema version on its first wake", async () => {
     const observer = tracker();
     await withScheduler("01", async (state) => {
-      withMigrationReport(
+      await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
       );
@@ -114,12 +114,12 @@ describe("withMigrationReport", () => {
   it("gives every send its own report id, so a redelivery is distinguishable", async () => {
     const observer = tracker();
     await withScheduler("09", async (state) => {
-      withMigrationReport(
+      await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
       );
       await settle();
-      withMigrationReport(
+      await withMigrationReport(
         context(state, {
           ...env,
           APP_VERSION: "next-build",
@@ -139,10 +139,10 @@ describe("withMigrationReport", () => {
     const observer = tracker();
     await withScheduler("02", async (state) => {
       const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
-      withMigrationReport(reportContext, () => undefined);
+      await withMigrationReport(reportContext, () => undefined);
       await settle();
-      withMigrationReport(reportContext, () => undefined);
-      withMigrationReport(reportContext, () => undefined);
+      await withMigrationReport(reportContext, () => undefined);
+      await withMigrationReport(reportContext, () => undefined);
       await settle();
     });
 
@@ -152,12 +152,12 @@ describe("withMigrationReport", () => {
   it("reports again once the running build changes", async () => {
     const observer = tracker();
     await withScheduler("03", async (state) => {
-      withMigrationReport(
+      await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
       );
       await settle();
-      withMigrationReport(
+      await withMigrationReport(
         context(state, {
           ...env,
           APP_VERSION: "next-build",
@@ -184,7 +184,7 @@ describe("withMigrationReport", () => {
     ];
 
     await withScheduler("04", async (state) => {
-      withMigrationReport(
+      await withMigrationReport(
         { ...context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }), latestVersion: 900 },
         () => applyDurableObjectSqliteMigrations({
           storage: state.storage,
@@ -205,12 +205,12 @@ describe("withMigrationReport", () => {
   it("reports a failure with the version that broke, then rethrows", async () => {
     const observer = tracker();
     await withScheduler("05", async (state) => {
-      expect(() => withMigrationReport(
+      await expect(withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => {
           throw new Error("workspace_scheduler_schema_hash_mismatch:1");
         },
-      )).toThrow("workspace_scheduler_schema_hash_mismatch:1");
+      )).rejects.toThrow("workspace_scheduler_schema_hash_mismatch:1");
       await settle();
     });
 
@@ -226,9 +226,9 @@ describe("withMigrationReport", () => {
     const observer = tracker({ reject: true });
     const recorded = await withScheduler("06", async (state) => {
       const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
-      withMigrationReport(reportContext, () => undefined);
+      await withMigrationReport(reportContext, () => undefined);
       await settle();
-      withMigrationReport(reportContext, () => undefined);
+      await withMigrationReport(reportContext, () => undefined);
       await settle();
       return reportState(state);
     });
@@ -239,7 +239,7 @@ describe("withMigrationReport", () => {
 
   it("leaves the object alone when no report queue is bound", async () => {
     const applied = await withScheduler("07", async (state) => {
-      const value = withMigrationReport(context(state, { ...env }), () => "constructed");
+      const value = await withMigrationReport(context(state, { ...env }), () => "constructed");
       await settle();
       return value;
     });
@@ -254,7 +254,7 @@ describe("withMigrationReport", () => {
       },
     });
     const applied = await withScheduler("08", async (state) => {
-      const value = withMigrationReport(
+      const value = await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: exploding }),
         () => "constructed",
       );
@@ -263,5 +263,73 @@ describe("withMigrationReport", () => {
     });
 
     expect(applied).toBe("constructed");
+  });
+
+  /**
+   * The regression the reviewers found. Four of the five call sites run the
+   * reporter inside `blockConcurrencyWhile`, and a throw out of that callback
+   * breaks the object's input gate — workerd then aborts the object's pending
+   * work, including a send left to `waitUntil`. So the failure report, the one
+   * this whole subsystem exists for, was entered and never delivered.
+   *
+   * This has to be driven through a real `blockConcurrencyWhile`: the test
+   * above calls the reporter from an ordinary request context, where nothing
+   * breaks the input gate and a `waitUntil` send completes happily.
+   */
+  it("delivers the failure report even though the throw breaks the input gate", async () => {
+    const delivered: string[] = [];
+    const slow = createCloudflareTestBinding<NonNullable<Env["MIGRATION_REPORT_QUEUE"]>>({
+      send: async (input: DurableObjectMigrationReport) => {
+        // A send that does not resolve in the same microtask, which is what any
+        // real queue send is. An immediate resolve would pass either way.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        delivered.push(input.status);
+      },
+    });
+
+    // Breaking the input gate aborts the object, so the rejection surfaces from
+    // `runInDurableObject` itself rather than from the inner call — which is
+    // precisely the teardown that used to take the report with it.
+    await expect(withScheduler("10", async (state) => {
+      await state.blockConcurrencyWhile(async () => {
+        await withMigrationReport(
+          context(state, { ...env, MIGRATION_REPORT_QUEUE: slow }),
+          () => {
+            throw new Error("workspace_scheduler_schema_hash_mismatch:1");
+          },
+        );
+      });
+    })).rejects.toThrow("workspace_scheduler_schema_hash_mismatch:1");
+    await settle();
+
+    expect(delivered).toEqual(["failed"]);
+  });
+
+  /**
+   * A failure has to reach the ledger, or the dedupe check keeps comparing
+   * against the last *successful* report. A build that is rolled back to
+   * exactly the one the object last reported then looks unchanged, and the
+   * tracker goes on showing a broken object that has already recovered.
+   */
+  it("reports the recovery when a rollback restores the build it last reported", async () => {
+    const observer = tracker();
+    await withScheduler("11", async (state) => {
+      const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
+      await withMigrationReport(reportContext, () => undefined);
+      await settle();
+
+      await expect(withMigrationReport(reportContext, () => {
+        throw new Error("workspace_scheduler_schema_hash_mismatch:1");
+      })).rejects.toThrow();
+      await settle();
+
+      // The rollback: same build, same version, nothing to apply. Byte-identical
+      // to the first wake, and inside the heartbeat.
+      await withMigrationReport(reportContext, () => undefined);
+      await settle();
+    });
+
+    expect(observer.reports.map((report) => report.status))
+      .toEqual(["current", "failed", "current"]);
   });
 });

@@ -49,23 +49,27 @@ Three outcomes reach the tracker:
   applied and the version the object now sits at.
 - **`current`** — nothing ran, and the tracker had not been told this version by
   this build, or the 24-hour heartbeat came due.
-- **`failed`** — the migration threw. The report is sent *before* the constructor
-  rethrows, because a failing object has no later wake to rely on.
+- **`failed`** — the migration threw. The report is sent, and *awaited*, before
+  the constructor rethrows, because a failing object has no later wake to rely
+  on and the throw itself would otherwise cancel the send.
 
 A wake that would tell the tracker nothing new sends nothing. The object keeps a
 one-row `_migration_report_state` table — created idempotently by the reporter,
 the same way the runner bootstraps its own ledger — holding the version, status,
-and build it last had accepted. Delivery is fire-and-forget through
-`state.waitUntil`, and the ledger row is written only after the queue accepts the
-message, so a refused send is retried on the next wake rather than being recorded
-as delivered.
+and build it last had accepted. A successful report is fire-and-forget through
+`state.waitUntil`; a failure report is awaited instead, because the throw that
+follows it breaks the object's input gate and workerd aborts the object's pending
+work along with it. Either way the ledger row is written only after the queue
+accepts the message, so a refused send is retried on the next wake rather than
+being recorded as delivered — and the row records `failed` as readily as
+`current`, so an object that recovers by rollback is not deduped into silence.
 
 The report goes onto the `avalon-migration-reports` Queue, consumed by this
 Worker. One queue serves both regions, unlike the per-region activity queues:
 both regions' reports converge on the single registry object by design, so a
 second queue would split the transport without splitting the destination. The
-region travels in the message body, where the contract validates it. Not a service-binding
-RPC, for the reasons in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md):
+region travels in the message body, where the contract validates it. Not a
+service-binding RPC, for the reasons in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md):
 every object in the fleet converges on one registry object, which is
 single-threaded and tops out near a thousand requests a second, and an
 operator-driven fan-out wakes hundreds of objects at once. A queue also means the
@@ -132,8 +136,11 @@ full report history. Every page has a JSON twin under `/api/`.
 - **Reporting can never break a Durable Object.** An unbound, unreachable, or
   throwing tracker leaves the object exactly as it would have been. Break this
   and a monitoring outage becomes a product outage, on every object at once.
-- **A migration failure is always reported, before the constructor rethrows.**
-  Skip it and the one case the subsystem exists for is the one case it misses.
+- **A migration failure is always reported, and the send completes before the
+  constructor rethrows.** Skip it and the one case the subsystem exists for is
+  the one case it misses — and handing it to `waitUntil` is skipping it, because
+  the throw aborts the object's pending work. Any future call site must keep the
+  `await` in front of the throw.
 - **A report is written only after the queue accepts the message.** Recording
   delivery optimistically turns one dropped send into an object that is silently
   unreported until its next migration.
@@ -233,8 +240,11 @@ Traps:
 - The API-side suite uses **a distinct scheduler object per test**, because the
   reporter's ledger lives inside the object; sharing one would make every
   assertion depend on execution order.
-- Delivery happens in `state.waitUntil`, so those tests `await settle()` before
-  asserting rather than racing it.
+- A successful report is delivered in `state.waitUntil`, so those tests
+  `await settle()` before asserting rather than racing it. A failure report is
+  awaited by the reporter itself, and the test that proves it drives a real
+  `blockConcurrencyWhile` that throws — an ordinary call cannot fail, because
+  nothing breaks the input gate there.
 - A `MessageBatch` cannot be constructed, so the consumer tests drive
   `createTestMessageBatch` from `test/helpers/cloudflare-test.ts`, which records
   each message's `ack()`/`retry()`. Assert on those flags — they are the
@@ -305,8 +315,8 @@ domain is taken from the **last** `@`, so a crafted local part cannot impersonat
 an allowed domain.
 
 The report ingress is not protected by Access at all — it does not need to be. It
-is a `WorkerEntrypoint` method, reachable over a service binding and by nothing
-else.
+is a Queue consumer, which has no public address: the only way to reach it is a
+producer binding, which only a deployed Worker in this account can hold.
 
 The tracker's Cloudflare API token is read-only and used solely to enumerate
 namespaces and object IDs. Failure text and object names are the two fields that
@@ -318,14 +328,20 @@ goes through `hono/html` escaping.
 - The site itself is the first stop: the overview names every component behind or
   failing, and the object page carries the failure message and the version it
   broke on.
-- Workers Logs carry `migration_report_recorded` (at `error` level for a
-  failure), `migration_inventory_sweep_completed`, and
-  `migration_inventory_sweep_skipped`. On the API side,
-  `migration_report_delivery_failed` means the tracker is unreachable, not that a
-  migration failed.
-- Deployment order matters: `avalon-migration-tracker` must exist before either
-  API Worker deploys, because a service binding to a missing script fails the
-  deploy. [`runbook.md`](runbook.md#the-durable-object-migration-tracker) has the
+- Workers Logs carry, on the tracker: `migration_reports_recorded` once per
+  consumed batch, `migration_report_rejected` for a message the contract refused,
+  and `migration_inventory_sweep_completed` /
+  `migration_inventory_sweep_skipped` for the cron sweep. On the API side:
+  `migration_report_enqueue_failed` means the queue refused the message — not
+  that a migration failed — and `migration_report_invalid` means a producer and
+  the contract have drifted. Those last two are the pair to search when reports
+  have stopped arriving; the names here are the literal strings, because an
+  operator pastes them into Workers Logs verbatim.
+- Deploy order does not matter: reports travel on a Queue, which is a resource
+  both sides bind to, so neither Worker's deploy depends on the other's script
+  existing. What both require is that the queue exists first — which
+  `pnpm cloudflare:resources:check` proves before any deploy runs.
+  [`runbook.md`](runbook.md#the-durable-object-migration-tracker) has the
   provisioning steps.
 
 ## Performance and cost
@@ -350,6 +366,41 @@ due schedules, watches, and wake-ups, or an operator pass walking the fleet to
 seed or repair it.
 
 ## Changelog
+
+### 2026-08-21 — The failure report survives the throw that causes it
+
+**What changed:** `withMigrationReport` is now `async`, and the failure report is
+awaited before the migration error is rethrown; the failure outcome is also
+written to the object's `_migration_report_state` ledger. `SubstreamAgent`'s
+store construction moved from the constructor body into its existing
+`blockConcurrencyWhile` callback so that it, too, has somewhere to await. On the
+tracker, a namespace whose object listing failed no longer has its `object_count`
+overwritten with zero and its `last_swept_at` refreshed.
+
+**Why:** Review found that the report this subsystem exists for was never
+delivered. Four of the five call sites run the reporter inside
+`blockConcurrencyWhile`; a throw out of that callback breaks the object's input
+gate, and workerd aborts the object's pending work with it — so the `waitUntil`
+send was entered and cancelled every time. Confirmed on real workerd before the
+fix and covered by a test that drives a real gate. Fire-and-forget was the wrong
+default for precisely the one case that cannot rely on a later wake.
+
+The ledger write closes a second gap found in the same review: without it the
+ledger described the last *successful* report, so a build rolled back to exactly
+the one the object last reported deduped to silence and left the tracker showing
+a broken object that had already recovered for up to 24 hours. It also makes the
+`reported_status !== "failed"` term in the dedupe check reachable, which it never
+was.
+
+**What a future change has to respect:** the `await` in front of the rethrow is
+load-bearing, and so is the fact that `apply()` still runs before any `await` —
+the migration must stay in the caller's synchronous prologue. A sixth call site
+that hands the failure report to `waitUntil` reintroduces the bug silently, and
+`SubstreamAgent`'s two non-`readonly` fields are the price of having an `await`
+available there; anything reading them must keep waiting on `initialized` first.
+The rejected alternative was leaving the send to `waitUntil` and accepting the
+loss, on the theory that the hourly sweep would surface the object anyway — it
+would not: the sweep sees an id, never a version or an error.
 
 ### 2026-08-19 — Durable Object migration state becomes observable
 
