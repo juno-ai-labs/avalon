@@ -282,6 +282,34 @@ and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
 the slow open happened.
 
+#### Telling a slow renderer apart from a slow service
+
+A renderer phase is wall clock, and wall clock cannot say whether the client
+was waiting or was simply not running. A promise continuation does not execute
+while a long task holds the main thread, so a phase reading three seconds is
+the same number whether a socket was connecting or the transcript was
+rendering — and those have opposite fixes. Two things separate them.
+
+Every flow line carries **`blockedMs` and `longTasks`**: the `longtask` entries
+overlapping that flow's window, from one process-wide `PerformanceObserver`
+rather than one per trace, since several work streams hold open traces at once.
+Entries are counted by their overlap with the window, not whole, so a flow that
+ends mid-task is not charged for work that outlives it. A slow flow with
+`blockedMs` near zero was genuinely waiting on something else; a slow flow with
+`blockedMs` near its duration was never in a position to ask. The entry type is
+absent in jsdom and on some Chromium builds — the numbers then read zero, which
+is a gap in the diagnosis and never a broken flow.
+
+`workstream_open` also splits the wait for its socket in two.
+**`dial`** closes on the line that constructs the `WebSocket` and **`handshake`**
+on its open event; nothing is awaited between the ticket resolving and `dial`,
+so a large `dial` can only mean the renderer was not running. One number across
+both read as a slow server either way. And **`sinceEffectMs`** reports how long
+the work stream was on screen before the attempt's first request left: on
+attempt zero that is dead time no trace can otherwise see, because the trace
+does not exist until `connect` runs. On a reconnect it is the age of the effect
+and the backoff explains it.
+
 ## Invariants
 
 - **No OpenTelemetry package, no hand-made trace id, no `traceparent`.** The
@@ -495,6 +523,58 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-21 — The renderer half can say whether it was waiting or busy
+
+**What changed:** Every `[perf] <flow>` line now carries `blockedMs` and
+`longTasks`, the `longtask` time overlapping that flow, collected by one
+process-wide `PerformanceObserver`. `workstream_open` gained a `dial` phase
+between `socket_ticket` and `handshake`, closing on the line that constructs
+the `WebSocket`, and a `sinceEffectMs` annotation giving the delay between the
+socket effect starting and that attempt's first request.
+
+**Why:** A production open measured 7.62 s, and 5.1 s of it fell in two windows
+with no request in flight — 1.65 s before the first request, and 3.48 s between
+the socket ticket resolving and the handshake reaching the Worker. Neither was
+attributable. The second sat inside the existing `handshake` phase, which spans
+ticket-resolution to open-event and so reports the same number whether the
+renderer never reached `new WebSocket` or the connection itself was slow. The
+first was outside every trace, because a trace opens inside `connect` and
+everything that delays `connect` happens before there is one. The server side
+was already well instrumented and showed nothing wrong — no traced flow in that
+window exceeded 925 ms — so the missing measurement was the whole diagnosis.
+
+`blockedMs` is the general form of the question. Splitting a phase says *where*
+the time went; long-task overlap says whether the thread was available at all,
+and that is the fact deciding between a networking fix and a rendering one.
+
+**Considered and rejected:** *A phase per long task, or per-phase blocking
+attribution.* The entries are coarse — 50 ms granularity, and no useful
+attribution in a packaged Electron build — so this would multiply the line's
+width for precision the entry type cannot support; whether the flow was blocked
+at all is the question worth answering first. *One observer per trace.*
+Background subscribers mean several traces are open at once, and every one of
+them would receive identical entries. *Shipping these lines to the regional
+telemetry pipeline*, so a slow open is diagnosable without a person at the
+machine. Same rejection as 2026-08-20: latency diagnosis is not a product
+signal, it would have to clear the regional, identity, and preference machinery
+in [`telemetry.md`](telemetry.md), and it would arrive bucketed. The cost stays
+recorded under **Failure modes and limits** — these lines still die with the
+renderer. *An explicit `typeof PerformanceObserver` guard*, which a mutation
+test proved dead: the `try/catch` around construction already covers both an
+absent constructor and a rejected entry type.
+
+**Consequences:** The tracer now holds process-wide mutable state, so a test
+needing the observer attached must `vi.resetModules()` and re-import — the
+attach happens once per module load, on the first `startPerfTrace`. The
+long-task buffer is bounded at 256 entries and holds only start and duration;
+adding the browser's attribution fields would put frame and script URLs into a
+diagnostic that deliberately carries no such thing. `blockedMs: 0` is ambiguous
+between "not blocked" and "this runtime reports no long tasks", and a reader
+comparing builds has to know which. And anything that introduces an `await`
+between the socket ticket resolving and `new WebSocket` destroys what `dial`
+means: the phase is evidence about the renderer only because nothing else can
+currently intervene there.
 
 ### 2026-08-20 — Review pass: the step accounting, and four things it hid
 
