@@ -60,7 +60,14 @@ import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import { backdropScheme, fontScheme } from '../common/theme-assets';
-import { parseResolvedTheme, themeWindowBackground, type ResolvedTheme } from '../common/themes';
+import {
+  defaultThemeChoice,
+  parseThemeChoice,
+  resolveTheme,
+  sameThemeChoice,
+  themeWindowBackground,
+  type ThemeChoice,
+} from '../common/themes';
 import {
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
@@ -651,16 +658,25 @@ function userDataDirectory(): string {
 }
 
 /**
- * The appearance the last renderer reported, used for `backgroundColor` on
- * every window this process opens. It is read from the preference file at
+ * The theme choice the last renderer reported, resolved for `backgroundColor`
+ * on every window this process opens. It is read from the preference file at
  * startup so the very first window of a launch is already the right colour;
- * before that read completes it is Terra, the dark appearance Avalon shipped
+ * before that read completes it is Terra following the Mac, what Avalon ships
  * with.
+ *
+ * The choice, not the appearance. `system` resolves against whatever the Mac is
+ * set to *when it is read*, so storing the resolved value meant a Mac that
+ * changed appearance while Avalon was closed opened the next launch's first
+ * window in yesterday's colour — precisely the flash this exists to prevent.
  */
-let windowTheme: ResolvedTheme = 'terra';
+let windowThemeChoice: ThemeChoice = defaultThemeChoice;
 
+/**
+ * Resolved at the moment a window is constructed rather than cached, so it also
+ * follows a Mac that changes appearance while Avalon is running.
+ */
 function windowBackgroundColor(): string {
-  return themeWindowBackground[windowTheme];
+  return themeWindowBackground[resolveTheme(windowThemeChoice, nativeTheme.shouldUseDarkColors)];
 }
 
 const telemetryFetch: typeof globalThis.fetch = (input, init) => net.fetch(
@@ -2460,23 +2476,29 @@ function registerIpc(): void {
   // window is constructed with a matching background instead of flashing the
   // previous theme's canvas before the first paint. An unrecognised value is
   // dropped rather than thrown on: nothing the caller does depends on it.
-  ipcMain.handle('theme:set-window', async (event, theme: unknown) => {
+  ipcMain.handle('theme:set-window', async (event, choice: unknown) => {
     assertTrustedIpcSender(event);
-    const parsed = parseResolvedTheme(theme);
-    if (!parsed || parsed === windowTheme) return;
-    windowTheme = parsed;
+    const parsed = parseThemeChoice(choice);
+    if (!parsed || sameThemeChoice(parsed, windowThemeChoice)) return;
+    windowThemeChoice = parsed;
     // A theme is a preference of the device, not of the window it was chosen in.
     // Every window reads the same stored choice, but each holds its own document,
     // so without this the Settings window repaints and the work stream behind it
     // does not. The sender has already applied it.
     //
     // Relaying only on a *change* is what stops this echoing: a window told to
-    // follow re-applies and reports back, and that report matches `windowTheme`
-    // and stops here.
+    // follow re-applies and reports back, and that report matches
+    // `windowThemeChoice` and stops here.
+    //
+    // The comparison is over both axes. Deduplicating on the resolved
+    // appearance instead meant that going from `system` to a pinned Dark while
+    // the Mac was already dark resolved to the same appearance, returned here,
+    // and left every other window still believing it was following the Mac —
+    // no visible difference in that moment, and the wrong one at sunrise.
     for (const window of avalonWindows()) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
-    await updateStoredApplicationSettings(userDataDirectory(), { windowTheme: parsed });
+    await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
   });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
@@ -3397,7 +3419,7 @@ if (!singleInstanceLock) {
     try {
       // Before any window is constructed, so the first one of the launch opens
       // on the theme's own canvas rather than flashing the previous default.
-      windowTheme = (await readStoredApplicationSettings(userDataDirectory())).windowTheme;
+      windowThemeChoice = (await readStoredApplicationSettings(userDataDirectory())).themeChoice;
     } catch (error) {
       logWarn('avalon', 'could not read the stored window theme', error);
     }

@@ -15,7 +15,7 @@ import type { ApplicationIconId, DesktopApplicationIconState } from '../common/a
 import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
-import type { ResolvedTheme } from '../common/themes';
+import type { ThemeChoice } from '../common/themes';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -104,9 +104,9 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.on('application-icon:changed', handler);
     return () => ipcRenderer.removeListener('application-icon:changed', handler);
   },
-  setWindowTheme: (theme: ResolvedTheme) => ipcRenderer.invoke('theme:set-window', theme) as Promise<void>,
+  setWindowTheme: (choice: ThemeChoice) => ipcRenderer.invoke('theme:set-window', choice) as Promise<void>,
   onThemeChanged: (listener) => {
-    const handler = (_event: unknown, theme: ResolvedTheme): void => listener(theme);
+    const handler = (_event: unknown, choice: ThemeChoice): void => listener(choice);
     ipcRenderer.on('theme:changed', handler);
     return () => ipcRenderer.removeListener('theme:changed', handler);
   },
