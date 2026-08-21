@@ -1,5 +1,4 @@
 import {
-  BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
   UserIdSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -1005,40 +1004,6 @@ export class WorkstreamDO extends DurableObject<Env> {
       const input = parsed.data;
       const metadata = this.assertBlockDashboardIdentity(input.workspaceId, input.workstreamId);
       if (input.operation === "get") return json({ blockDashboard: this.loadBlockDashboard() });
-      if (input.operation === "get_preference") {
-        const row = first(this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
-          `SELECT visible, updated_at FROM block_dashboard_user_preferences WHERE user_id = ?`,
-          input.userId,
-        ));
-        return json({
-          preference: BlockDashboardPreferenceSchema.parse({
-            visible: row?.visible === 1,
-            updatedAt: row ? new Date(row.updated_at).toISOString() : null,
-          }),
-        });
-      }
-      if (input.operation === "update_preference") {
-        const updatedAt = Date.parse(input.updatedAt);
-        this.state.storage.sql.exec(
-          `INSERT INTO block_dashboard_user_preferences(user_id, visible, updated_at)
-           VALUES (?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET visible = excluded.visible,
-             updated_at = excluded.updated_at`,
-          input.userId,
-          input.visible ? 1 : 0,
-          updatedAt,
-        );
-        const preference = BlockDashboardPreferenceSchema.parse({
-          visible: input.visible,
-          updatedAt: input.updatedAt,
-        });
-        await this.broadcastBlockDashboardEvent({
-          type: "block_dashboard_preference_updated",
-          occurredAt: input.updatedAt,
-          preference,
-        }, input.userId);
-        return json({ preference });
-      }
       if (input.operation === "update_configuration") {
         const previousConfiguration = this.latestBlockDashboardConfiguration();
         const previousBlockIds = previousConfiguration
