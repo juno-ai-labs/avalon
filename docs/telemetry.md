@@ -589,15 +589,53 @@ whoever is looking at Workers Logs at the time. Putting them where the product
 events already are means one place to ask both halves of the question, and the
 analytics surrogates on each span are what join them.
 
-**The cost, stated plainly:** *PostHog now receives customer message content.*
+**The cost, stated plainly:** *PostHog now receives Customer Content.*
 Cloudflare's automatic Durable Object SQL spans carry
 `cloudflare.durable_object.query.bindings` — the bound parameter values — and
-SubstreamAgent and WorkstreamDO write message text, titles, and objectives
-through exactly that API. Cloudflare documents no attribute filtering or
+`WorkstreamDO` binds work stream titles, descriptions, and previews into
+`workstream_metadata`, and a serialized effect envelope into `durable_outbox`,
+through exactly that API.
+
+Review narrowed this from the first draft, and the narrowing is worth keeping:
+message *text* rows are written to D1, not to embedded SQLite, and a D1 span
+carries `db.query.text` without its bindings. So the exposure runs through
+titles, descriptions, previews, and outbox payloads rather than through the
+`messages` table, and `SubstreamAgent` — named here originally — writes external
+ids, run state, and error codes rather than content. Narrower than it first
+read. Still Customer Content, and still the reason this entry exists. Cloudflare documents no attribute filtering or
 redaction, so this is not a gap to be closed later by configuration; it is a
 property of exporting these traces at all. PostHog is therefore a processor of
 message content, which is a subprocessor and DPA question rather than an
 observability one, and it is owed the treatment those get.
+
+**Identity was settled explicitly, not left to the destination.**
+[`performance-tracing.md`](performance-tracing.md) requires this to be decided
+before an export: map through the analytics ids at the exporter, or keep the
+attributes opaque and never promote them — but never let the destination's
+default decide. Spans now set `posthog.distinct_id` to
+`users.analytics_person_id`, which takes the first way out. Without it a
+destination that read `user.id` as its person key would key the same human
+differently from the product pipeline and split them into two people, which is
+the failure `performance-tracing.md` describes and the surrogates exist to
+prevent. The attribute is absent when the surrogate is.
+
+*The residual risk is documentation, not design:* PostHog does not document what
+its OTLP trace ingest does with `user.id` or `session.id`. Setting the key we
+want explicitly makes that moot for persons, but `session.id` on our spans is
+the **Avalon auth session**, a different object from PostHog's `$session_id`,
+and nothing has verified that PostHog ignores it. Re-check if session-stitched
+figures ever look wrong.
+
+**The 15-day sub-processor notice was considered and does not gate this.**
+`apps/site/subprocessors/index.html` promises customers 15 days' notice before a
+new sub-processor begins processing, and the DPA authorizes only the providers
+on that page — where PostHog was missing, despite already receiving product
+telemetry. That gap predates this change; what this change does is widen the
+category to Customer Content. It is not gated because Avalon has no customers
+yet, so there is no party the notice period protects and no objection window to
+run. PostHog is listed on that page as of this change, before the position
+becomes load-bearing. **Once there are customers, this ordering stops being
+free** and a comparable escalation needs the notice period served first.
 
 **Considered and rejected:** *Lowering `head_sampling_rate` to reduce exposure.*
 Sampling changes how many traces carry content, not what a sampled trace
