@@ -775,7 +775,6 @@ already have committed across the object boundary.
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
 | `workspace_workstream_directory` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, provenance, planning, attention, recency, archive, wakeup, and Terminal scheduling fields. |
-| `workspace_block_dashboard_preferences` | Whether one viewer has the HyperSight panel open on one work stream. Keyed by both because the preference is still per work stream; only its owner moved. The workspace already answers whether that viewer may read the work stream at all, so the read resolves visibility and the preference in one round trip. |
 | `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
@@ -825,7 +824,7 @@ stream for a large workspace in one object invocation.
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
 | `block_dashboard_configuration_versions` | Append-only shared block definitions and optimistic configuration version. This is the product authority for which stable block agents exist. |
 | `block_dashboard_block_runs` | Parent-visible queued/running/terminal block state keyed by block run, configuration, block, and transcript trigger. |
-| `block_dashboard_user_preferences` | **Retired.** Viewer-specific dashboard visibility now lives in `WorkspaceDO.workspace_block_dashboard_preferences`; reading it here woke this object on the work-stream open path for one boolean. The table is left in place holding its pre-cutover rows rather than dropped, so a rollback has something to read. Nothing writes it. |
+| `block_dashboard_user_preferences` | Viewer-specific dashboard visibility, kept with the WorkstreamDO socket authority that publishes it. |
 | `block_dashboard_dispatch_outbox` | One retryable, affinity-routed dispatch per block run; deletion means the named block agent durably accepted it. |
 | `block_dashboard_block_result_receipts` | Highest accepted result version and hash per block run, preventing a stale retry from rolling back terminal state. |
 | `block_dashboard_source_refresh_outbox` | Singleton coalescing configuration-to-main-substream refresh intent; its retry deadline participates in WorkstreamDO's one native alarm. |
@@ -975,52 +974,6 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
-
-### 2026-08-21 — The viewer's panel preference moves to the workspace
-
-**What changed:** Whether a viewer has the HyperSight panel open is stored in
-`WorkspaceDO.workspace_block_dashboard_preferences` (migration 3) and read and
-written through `blockDashboardPreference` / `setBlockDashboardPreference`.
-Both resolve the viewer's visibility themselves and answer `null` for a work
-stream they may not read, so `BlockDashboardService` makes one call where it
-previously made a visibility call to WorkspaceDO and then a preference call to
-WorkstreamDO. The `get_preference` and `update_preference` control operations
-are gone. The update is pushed to the one viewer it belongs to as
-`workspace_block_dashboard_preference` on the workspace socket, carrying the
-value.
-
-**Why:** `GET /workstreams/:id/block-dashboard/preference` was measured at
-2.94 s on the work-stream open path in production, and it was the slowest
-single request in a 7.62 s open. The cost was not the query — it was that
-reading one boolean woke WorkstreamDO, while every other request in that open
-was already served by objects that were awake. Nothing about the preference
-needs the work stream's own authority: it is a per-viewer UI opinion, the
-workspace already answers whether that viewer may see the work stream, and
-`viewer_preferences` was already a workspace sync topic pointing at this exact
-query. The owner was simply wrong.
-
-**Considered and rejected:** *Making the preference workspace-wide per viewer
-rather than per work stream.* That is a product change — the panel would open
-everywhere once opened anywhere — and moving where a value is stored is not a
-licence to change what it means. *Reading WorkspaceDO first and falling back to
-WorkstreamDO for viewers who have not written since.* A lazy migration that
-reintroduces exactly the wake being removed, for the people most likely to hit
-it. *Publishing on the `viewer_preferences` sync topic instead of a targeted
-event.* Topics are workspace-wide invalidations: every member would refetch
-because one person opened a panel, and the frame would say less than the write
-already knew. *Dropping `block_dashboard_user_preferences` in the same change.*
-Leaving it costs nothing and is the only thing a rollback could read.
-
-**Consequences:** Pre-cutover preferences are not migrated, so a viewer who had
-the panel open finds it closed once and re-opens it; the rows still exist in
-WorkstreamDO if that turns out to matter more than it appears to. During a
-deploy an old Worker still writes WorkstreamDO and emits the old control-socket
-`block_dashboard_preference_updated`, so the client keeps understanding that
-event on purpose — removing the handler would open a gap in exactly the window
-where skew happens, and it can go in a later change. `PersonalSocketEvent` now
-has no producer at all; it is a union of one and was left rather than deleting
-the personal-event mechanism with it. WorkspaceDO takes one more write on a
-path used every time a panel is toggled, which is cheap but is a hot object.
 
 ### 2026-08-21 — Stopped runs remain stopped through every projection
 

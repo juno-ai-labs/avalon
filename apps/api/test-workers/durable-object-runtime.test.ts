@@ -891,7 +891,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("keeps HyperSight configuration authoritative in WorkstreamDO and refuses the moved preference", async () => {
+  it("keeps HyperSight configuration and viewer preferences authoritative in WorkstreamDO", async () => {
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -961,10 +961,6 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({ error: "block_dashboard_version_conflict" });
 
-    // The viewer's panel preference is deliberately not here any more: it moved
-    // to WorkspaceDO, because reading it woke this object on the open path.
-    // The object refuses the operation rather than quietly writing a row
-    // nothing reads.
     const preference = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -977,15 +973,15 @@ describe("Durable Objects in the Workers runtime", () => {
         updatedAt: at,
       }),
     });
-    expect(preference.status).toBe(400);
-    expect(await preference.json()).toEqual({ error: "invalid_block_dashboard_request" });
+    expect(await preference.json()).toEqual({ preference: { visible: true, updatedAt: at } });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM block_dashboard_configuration_versions`,
       ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_user_preferences`,
-      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ visible: number }>(
+        `SELECT visible FROM block_dashboard_user_preferences WHERE user_id = ?`,
+        USER_ID,
+      ).one().visible).toBe(1);
     });
   });
 
@@ -1551,159 +1547,6 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket!.close(1000, "test complete");
     }
-  });
-
-  it("answers and pushes the HyperSight preference from the workspace alone", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    // The work stream has to exist in the directory for the viewer to be able
-    // to read it; the preference is refused for one they cannot.
-    await stub.applyWorkstreamDirectoryEffects({
-      workspaceId: WORKSPACE_ID,
-      envelopes: [effectEnvelope({
-        kind: "directory_common",
-        title: "Panel preference",
-        description: "Owned by the workspace",
-        preview: "Preview",
-        scope: "workspace",
-        state: "idle",
-        systemKind: null,
-        lastActivityAt: "2026-08-21T20:00:00.000Z",
-        completedAt: null,
-        archivedAt: null,
-        originType: "ad_hoc",
-        createdByUserId: USER_ID,
-        latestAttentionOrdinal: 1,
-        unreadTrackingStartOrdinal: 0,
-        createdAt: "2026-08-21T19:00:00.000Z",
-        updatedAt: "2026-08-21T20:00:00.000Z",
-      }, "00000000-0000-7000-8000-000000000501")],
-    });
-
-    // Unset reads false without anything having been written, and without the
-    // work stream's own object being consulted at all.
-    await expect(stub.blockDashboardPreference({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      workstreamId: WORKSTREAM_ID,
-    })).resolves.toMatchObject({ preference: { visible: false, updatedAt: null } });
-
-    const response = await stub.fetch("https://workspace.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000502",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    expect(response.status).toBe(101);
-    const socket = response.webSocket!;
-    socket.accept();
-    const subscribed = nextMessage(socket);
-    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-    expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
-
-    const pushed = nextMessage(socket);
-    await expect(stub.setBlockDashboardPreference({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      workstreamId: WORKSTREAM_ID,
-      visible: true,
-      updatedAt: "2026-08-21T20:05:00.000Z",
-    })).resolves.toMatchObject({ preference: { visible: true } });
-    // The value, not a topic to refetch it with.
-    expect(JSON.parse(String((await pushed).data))).toMatchObject({
-      type: "workspace_block_dashboard_preference",
-      workstreamId: WORKSTREAM_ID,
-      preference: { visible: true, updatedAt: "2026-08-21T20:05:00.000Z" },
-    });
-
-    await expect(stub.blockDashboardPreference({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      workstreamId: WORKSTREAM_ID,
-    })).resolves.toMatchObject({ preference: { visible: true } });
-
-    // A work stream this viewer cannot read is refused rather than defaulted,
-    // which is what lets the route keep answering 404 without a separate
-    // visibility call.
-    await expect(stub.blockDashboardPreference({
-      workspaceId: WORKSPACE_ID,
-      userId: "00000000-0000-7000-8000-000000000503",
-      workstreamId: "00000000-0000-7000-8000-000000000504",
-    })).resolves.toMatchObject({ preference: null });
-
-    // Another member of the same workspace, subscribed to the same object.
-    // Whether someone else has the panel open is not theirs to receive.
-    const otherId = "00000000-0000-7000-8000-000000000505";
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
-        VALUES (?, ?, 'active', 'member', '2026-08-21T20:00:00.000Z')`).bind(WORKSPACE_ID, otherId),
-      env.DB.prepare(`INSERT INTO sessions
-        (id, user_id, workspace_id, region, revoked_at, expires_at)
-        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
-        .bind(`${SESSION_ID}-other`, otherId, WORKSPACE_ID),
-    ]);
-    const otherResponse = await stub.fetch("https://workspace.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": otherId,
-        "x-avalon-session-id": `${SESSION_ID}-other`,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000506",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    expect(otherResponse.status).toBe(101);
-    const otherSocket = otherResponse.webSocket!;
-    otherSocket.accept();
-    const otherSubscribed = nextMessage(otherSocket);
-    otherSocket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-    expect(JSON.parse(String((await otherSubscribed).data))).toMatchObject({ type: "workspace_sync" });
-
-    // "Received nothing" cannot be awaited, so this asserts on what arrives
-    // next instead: a preference push followed by a state push must reach them
-    // as the state push, with nothing of the other viewer's in front of it.
-    const otherNext = nextMessage(otherSocket);
-    await stub.setBlockDashboardPreference({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      workstreamId: WORKSTREAM_ID,
-      visible: false,
-      updatedAt: "2026-08-21T20:06:00.000Z",
-    });
-    await stub.applyWorkstreamDirectoryEffects({
-      workspaceId: WORKSPACE_ID,
-      envelopes: [effectEnvelope({
-        kind: "directory_common",
-        title: "Renamed after the preference",
-        description: "Owned by the workspace",
-        preview: "Preview",
-        scope: "workspace",
-        state: "idle",
-        systemKind: null,
-        lastActivityAt: "2026-08-21T20:06:00.000Z",
-        completedAt: null,
-        archivedAt: null,
-        originType: "ad_hoc",
-        createdByUserId: USER_ID,
-        latestAttentionOrdinal: 2,
-        unreadTrackingStartOrdinal: 0,
-        createdAt: "2026-08-21T19:00:00.000Z",
-        updatedAt: "2026-08-21T20:06:00.000Z",
-      }, "00000000-0000-7000-8000-000000000507", 2)],
-    });
-    expect(JSON.parse(String((await otherNext).data))).toMatchObject({
-      type: "workspace_workstream_state",
-      workstreamId: WORKSTREAM_ID,
-    });
   });
 
   it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
