@@ -28,6 +28,16 @@
  * `--revert` puts them back from that file. Nothing else in Avalon stores a
  * work stream's previous scope; lose the file and the only way back is by hand.
  *
+ * **It does not reach archived work streams.** `GET /workstreams` is the only
+ * enumeration a token has, and the directory query behind it filters
+ * `archived_at IS NULL`, so an archived work stream keeps whatever scope it
+ * holds. That is a real gap rather than a safe omission: `PATCH
+ * /workstreams/:id` authorizes archived rows and can unarchive one, at which
+ * point a work stream this pass never saw returns workspace-readable. Closing
+ * it needs an enumeration that includes archived rows, which is a change to a
+ * product API rather than something a script can work around. Until then, a
+ * work stream unarchived after this pass has to be narrowed by hand.
+ *
  * It talks to the ordinary product API with an ordinary access token, so it
  * grants itself nothing: it can only see and change what the person whose token
  * it holds could see and change from the app. Work streams whose scope is not
@@ -47,7 +57,7 @@
  * identity and no list.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import { isEntryPoint } from "./entry-point.mjs";
 
@@ -65,6 +75,12 @@ export function parseArguments(argv) {
     else throw new Error(`Unrecognized argument: ${argument}`);
   }
   if (!options.baseUrl) throw new Error("--base-url is required.");
+  // A revert always writes. Accepting `--apply` alongside it would silently
+  // ignore the flag, and somebody who added it meaning "now do it for real"
+  // deserves to be told the flag does not belong there.
+  if (options.apply && options.revert) {
+    throw new Error("--apply cannot be combined with --revert; a revert always applies.");
+  }
   // A flip with nowhere to write what it changed is a flip nobody can undo.
   if (!options.revert && !options.record) {
     throw new Error("--record <path> is required; it is the only way back.");
@@ -72,21 +88,42 @@ export function parseArguments(argv) {
   return options;
 }
 
+/**
+ * One request, with every failure turned into a status rather than a throw.
+ *
+ * A sweep is a long line of independent changes, and a DNS hiccup on the
+ * four-hundredth is not a reason to abandon the other four hundred. A thrown
+ * error would leave the operator with a stack trace and no count of what had
+ * already succeeded; `status: 0` flows into the same per-row `failed` tally as
+ * a refusal, and the run carries on and reports at the end.
+ */
 async function api(context, path, init = {}) {
-  const response = await context.fetch(`${context.baseUrl.replace(/\/$/u, "")}${path}`, {
-    ...init,
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${context.token}`,
-      ...(init.body ? { "content-type": "application/json" } : {}),
-    },
-  });
-  const text = await response.text();
+  let response;
+  try {
+    response = await context.fetch(`${context.baseUrl.replace(/\/$/u, "")}${path}`, {
+      ...init,
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${context.token}`,
+        ...(init.body ? { "content-type": "application/json" } : {}),
+      },
+    });
+  } catch (error) {
+    return { status: 0, body: { error: error instanceof Error ? error.message : "network_error" } };
+  }
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    return { status: 0, body: { error: error instanceof Error ? error.message : "body_read_failed" } };
+  }
   let body;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {
-    body = { error: "unparseable_response" };
+    // A gateway's HTML error page is the usual cause, and the first line of it
+    // is what tells an operator which gateway.
+    body = { error: "unparseable_response", responseText: text.slice(0, 200) };
   }
   return { status: response.status, body };
 }
@@ -99,7 +136,12 @@ export async function listWorkstreams(context) {
     const query = new URLSearchParams({ limit: String(PAGE_SIZE), includeSystem: "true" });
     if (cursor) query.set("before", cursor);
     const { status, body } = await api(context, `/workstreams?${query.toString()}`);
-    if (status !== 200) throw new Error(`Listing failed with ${status}`);
+    if (status !== 200) {
+      throw new Error(
+        `Listing failed with ${status} at cursor ${cursor ?? "start"}`
+        + `${body?.error ? ` (${body.error})` : ""}`,
+      );
+    }
     items.push(...body.items);
     if (!body.nextCursor) return items;
     cursor = body.nextCursor;
@@ -193,13 +235,35 @@ async function narrow(context, entry) {
 }
 
 export async function flip(context) {
-  const all = await listWorkstreams(context);
-  const record = buildRecord(context, all);
-  context.log(`${all.length} work streams visible, ${record.entries.length} workspace-scoped.`);
-  // Written before the first change, so an interrupted run is still reversible
-  // for everything it had already decided to touch.
-  context.writeRecord(context.record, record);
-  context.log(`Recorded ${record.entries.length} entries to ${context.record}.`);
+  // **The entry list is built once and never rebuilt.** Rebuilding it on a
+  // second run is how the rollback file destroys itself: a retry after an
+  // interrupted apply re-lists, and the work streams already flipped are now
+  // `personal`, so `buildRecord` drops them and the file loses the only copy of
+  // the scope they used to hold. Re-running after a *completed* apply would
+  // empty it outright, and pointing two workspaces at one path would have the
+  // second erase the first. So an existing record is read and used as the plan,
+  // never regenerated over.
+  const existing = context.recordExists(context.record)
+    ? context.readRecord(context.record)
+    : null;
+  if (existing && existing.baseUrl !== context.baseUrl) {
+    throw new Error(
+      `${context.record} was recorded against ${existing.baseUrl}, not ${context.baseUrl}. `
+      + "Use its own base URL, or a different record path.",
+    );
+  }
+  let record = existing;
+  if (record) {
+    context.log(`Resuming from ${context.record}: ${record.entries.length} entries already recorded.`);
+  } else {
+    const all = await listWorkstreams(context);
+    record = buildRecord(context, all);
+    context.log(`${all.length} work streams visible, ${record.entries.length} workspace-scoped.`);
+    // Written before the first change, so an interrupted run is still
+    // reversible for everything it had already decided to touch.
+    context.writeRecord(context.record, record);
+    context.log(`Recorded ${record.entries.length} entries to ${context.record}.`);
+  }
   if (!context.apply) {
     context.log("Dry run: nothing was changed. Re-run with --apply.");
     return { changed: 0, unsupported: 0, failed: 0, seated: 0 };
@@ -225,6 +289,14 @@ export async function flip(context) {
 
 export async function revert(context) {
   const record = context.readRecord(context.revert);
+  // Global and EU share no work-stream ids. Pointing a Global record at EU
+  // would patch ids that do not exist there and report every one as a failure,
+  // which reads like a broken revert rather than a misaimed one.
+  if (record.baseUrl && record.baseUrl !== context.baseUrl) {
+    throw new Error(
+      `${context.revert} was recorded against ${record.baseUrl}, not ${context.baseUrl}.`,
+    );
+  }
   context.log(`Reverting ${record.entries.length} entries from ${context.revert}.`);
   const totals = { changed: 0, unsupported: 0, failed: 0, seated: 0 };
   for (const entry of record.entries) {
@@ -262,8 +334,15 @@ if (isEntryPoint(import.meta.url)) {
       fetch: globalThis.fetch,
       now: () => new Date().toISOString(),
       log: (line) => process.stdout.write(`${line}\n`),
+      recordExists: (path) => existsSync(path),
       readRecord: (path) => JSON.parse(readFileSync(path, "utf8")),
-      writeRecord: (path, record) => writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`),
+      // Written whole or not at all. This file is the only way back, and a
+      // process killed mid-write would otherwise leave a truncated one, which
+      // is worse than none: it parses far enough to look like a record.
+      writeRecord: (path, record) => {
+        writeFileSync(`${path}.tmp`, `${JSON.stringify(record, null, 2)}\n`);
+        renameSync(`${path}.tmp`, path);
+      },
     });
     if (totals.failed > 0) process.exit(1);
   } catch (error) {
