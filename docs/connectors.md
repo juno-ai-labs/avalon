@@ -158,6 +158,20 @@ conversation it came from.**
   with that conversation's resolved members. A conversation the connector cannot classify is
   treated as private: that is the fail-closed direction, and the two mistakes do not cost the
   same.
+- **A conversation past the connector's size threshold is `workspace` whatever its privacy
+  says, and seats nobody.** Below the threshold a conversation is a room, and modelling it as
+  one is what makes the work stream findable by exactly the people who were in it. Above it
+  that stops being true in both directions: nobody experiences a sixty-person channel as
+  private, and the participant list standing in for it is a large stale copy of a membership
+  the provider already maintains. The widening is deliberate and is the cost — such a work
+  stream is readable by workspace members who are not in that conversation — and is taken
+  because a work stream nobody can find is the worse failure at that size. It also skips the
+  identity resolution entirely, which is the expensive half of reading a roster.
+  **Each connector states its own threshold; there is no shared default**, because what counts
+  as too many is a fact about that provider's conversations rather than about Avalon. Slack's
+  is `SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD`, 50. A listing that *fails* reports zero
+  and leaves the scope to the conversation's privacy, so a provider outage cannot publish a
+  private channel's work stream.
 - **The room is seated from the conversation whatever the scope says.** Scope and membership
   answer different questions — Avalon's visibility rule and the provider's are not the same
   system, and the provider's is the one that knows what the person meant. Somebody who summons
@@ -165,11 +179,12 @@ conversation it came from.**
   is read and seated for a public conversation exactly as for a private one. Seating people who
   could already see it costs nothing; the alternative is a work stream that is *visible* to a
   channel while belonging to nobody in it, which then empties itself the moment anyone narrows
-  the scope. The create seeds up to `WORKSTREAM_CREATE_PARTICIPANT_LIMIT` of that roster — a
-  private work stream must not exist for even a moment with an empty room — and the remainder
-  is admitted immediately after through the same idempotent upsert that seats later speakers.
-  A failure to seat the remainder is logged, never fatal: the work stream already exists with a
-  run in flight, and anyone it drops is seated when they reply.
+  the scope. **The whole roster goes in, and Avalon caps nothing.** The create used to be
+  bounded at 25 participants, which a channel routinely exceeds and which did not degrade when
+  it did — it failed the create outright. Truncating instead would have been Avalon deciding
+  that some of the people in the conversation are not in the room, which is the provider's fact
+  to state. The only bound left is the provider's own page size
+  (`SLACK_AUDIENCE_MEMBER_LIMIT`, Slack's 200), and anyone past it is seated when they reply.
 - Anybody who can reach the conversation may continue the work stream. A member who arrives
   later is seated by their own message — **on every message, whatever the work stream's scope**,
   because the question that admission answers is "is this person in this conversation", not
@@ -738,16 +753,53 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-21 — A conversation too large to be a room opens to the workspace
+
+**What changed:** `connectorWorkstreamScope` takes the conversation's member
+count and a threshold the calling connector states, and returns `workspace`
+above it whatever the conversation's privacy says. Slack's threshold is
+`SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD`, 50. Past it,
+`slackConversationAudience` returns the count and skips resolving identities
+altogether, so such a work stream seats nobody.
+
+**Why:** Removing Avalon's participant caps made the roster the whole
+conversation, and that exposed the size question the caps had been hiding. A
+private channel of sixty is not a room anybody experiences as private, and a
+participant list standing in for it is a large copy of a membership Slack
+already maintains and will keep changing. Widening the scope is the deliberate
+cost: such a work stream is readable by workspace members who are not in that
+conversation, which the participant model would not have done. It is taken
+because at that size a work stream nobody can find is the worse failure, and
+because the alternative — hundreds of participant rows per channel-born work
+stream — is a cost paid on every create for a room nobody treats as one.
+
+**Considered and rejected:** A shared default threshold. What counts as "too
+many to be a room" is a fact about a provider's conversations, so a default
+would quietly become Slack's number applied to every other connector; the
+parameter is required instead, and the type system asks each connector for it.
+Seating the roster anyway above the threshold was also rejected — the work
+stream is already readable by everyone the seating would name, so the rows buy
+nothing and the `users.info` fan-out behind them is the expensive half of
+reading a roster.
+
+**Consequences:** A private Slack channel larger than 50 now produces a work
+stream readable by the whole Avalon workspace. That is broader than the channel,
+and it is the one place in this area where Avalon deliberately shows more than
+the provider does. Anyone in it may narrow it from the sidebar, which then
+leaves it with no participants — a channel-born work stream above the threshold
+has no room to fall back to, and whoever narrows it should add the people they
+mean. A failed listing reports a zero count and falls back to the conversation's
+privacy rather than its size.
+
 ### 2026-08-21 — The room is seated from the conversation, whatever the scope says
 
 **What changed:** `createSlackWorkstreamSession` reads the conversation roster
 for every scope, where it read one only when the work stream was coming out
 `personal`. A public channel's thread now seats its resolved members as
-participants instead of being created with an empty room. The create seeds up to
-the new `WORKSTREAM_CREATE_PARTICIPANT_LIMIT` — the wire cap that was already
-there as a bare `25`, now exported so an ingress truncates against the real
-number — and `admitConnectorAudience` seats the remainder immediately after,
-best-effort.
+participants instead of being created with an empty room. The participant caps
+came off with it: `CreateWorkstreamRequestSchema.participantUserIds` no longer
+carries `.max(25)` and the object's initialize input no longer carries
+`.max(100)`, so the whole roster lands in the create.
 
 **Why:** Scope and membership answer different questions, and the change that
 made work streams private by default made it matter which. Avalon's visibility
@@ -758,16 +810,25 @@ the opposite assumption — that Avalon's scope could stand in for the provider'
 audience — and produced a work stream *visible* to a channel while belonging to
 nobody in it, which empties itself the moment anyone narrows the scope.
 
-**Considered and rejected:** Raising the create's participant cap so the whole
-roster could be named in one request. The cap is sized for a person naming the
-people they are starting work with, and a connector roster is a different thing
-that already has its own admission path; widening the wire contract for every
-caller to avoid a truncation the ingress can handle itself was the larger
-change. Seating the whole roster only *after* the create was also rejected: a
-private work stream that exists for even a moment with an empty participant list
-is one its own channel cannot read.
+**Considered and rejected:** Truncating the roster to the old cap and admitting
+the remainder immediately after the create. It was built that way first and
+taken back out: it left Avalon deciding that some of the people in a
+conversation are not in the room, which is the provider's fact to state, and it
+bought that for a bound the create had no reason to impose — the cap was sized
+for a person naming the people they are starting work with, not for a channel.
+Note the old cap did not degrade when a conversation exceeded it; it failed the
+create with a validation error. Seating the whole roster only *after* the create
+was rejected separately: a private work stream that exists for even a moment
+with a partial participant list is one its own channel cannot fully read.
 
-**Consequences:** A public-channel create now costs one `conversations.members`
+**Consequences:** The wire now accepts an unbounded `participantUserIds`. Every
+id in it is still checked against active workspace membership before a
+participant row is written, so it cannot name a stranger; what is no longer
+bounded is how many ids one authenticated member may send, and that check is a
+single `IN (...)` over the list. If that is ever worth a ceiling, it wants one
+sized against the largest real conversation rather than the picker.
+
+A public-channel create now costs one `conversations.members`
 call and the identity resolution behind it. That is on Slack ingress, which
 already runs inside the acknowledgement's `waitUntil`, so nobody is waiting on a
 keystroke for it; it is bounded by `SLACK_AUDIENCE_MEMBER_LIMIT` and fails to an

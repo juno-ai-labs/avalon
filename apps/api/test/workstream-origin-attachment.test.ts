@@ -717,6 +717,7 @@ function opportunityRequest() {
     displayPromptHash: "display-hash",
     executionPromptHash: "execution-hash",
     idempotencyKey: "start-the-suggestion",
+    audienceScope: "workspace" as const,
   };
 }
 

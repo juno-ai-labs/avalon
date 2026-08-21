@@ -169,7 +169,9 @@ hash-checked RPCs rather than cross-object SQL joins.
   readable by *nobody* under the default because they seat no participants: a
   thread in a public Slack channel, whose room is the channel rather than a
   participant list, and an automation's work stream, which is reached by owning
-  the automation. A `system_kind` row — a digest occurrence — is the other
+  the automation. A suggestion carries its own `audience_scope` across the same
+  way: a `workspace` one was shown to every member before anyone started it, and
+  the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
   direction: `personal` with its single recipient seated, so every tool the run
   reaches for resolves against that person's access.
 - A work stream born from a connector conversation uses that same scope rather
