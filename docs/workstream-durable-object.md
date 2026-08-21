@@ -819,13 +819,13 @@ already have committed across the object boundary.
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
 | `workspace_sandbox_network_policies`, `workspace_sandbox_network_domains`, `workspace_sandbox_network_policy_mutations` | Terminal network/egress authority, current verified revision, domain set, and complete preview/confirm/result history. Substream terminal state stores only the applied revision and rechecks this object before reuse. |
 | `automation_templates`, `automation_template_versions`, `automation_subscriptions`, `automation_runs`, `automation_resources`, `automation_delivery_targets`, `automation_email_receipts`, `automation_email_rate_windows` | Complete workspace automation definition, immutable versions, draft/active lifecycle, trigger/run state, resource links, inbound-email receipts/rate windows, and frozen delivery configuration. Work-stream IDs are opaque references into child authority. |
-| `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests, automations, and connector polling. WorkspaceScheduler queries these rows through typed object SQL. |
+| `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests, automations, and connector polling. This object's own alarm reads them directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). |
 | `resources`, `resource_watches`, `automation_resources` | Workspace resource metadata and workspace-level attachment/watch relationships. `content_ref` and derivative refs point to regional R2; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents` | Causally fenced mention intents. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
+| `workstream_notification_intents` | Causally fenced mention intents. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -959,23 +959,34 @@ transcript, resources, compaction scope, and tool receipts. The local dispatch
 row is what makes the block agent—not the source or parent—the active execution
 owner and recovery coordinator.
 
+### `_internal_durable_alarms`
+
+Present in WorkspaceDO, WorkstreamDO, and SubstreamAgent alike, added by each
+one's own migration history from the statements
+`durable-objects/scheduled-alarms.ts` exports.
+
+| Table | Key and relationship |
+| --- | --- |
+| `_internal_durable_alarms` | `(kind, alarm_key)`: one row per thing this object wants woken for, with its due instant, optional repeat, and its own attempt/`retry_at` gate. The object's single Cloudflare alarm is always armed for `MIN(MAX(due_at, retry_at))` across these rows and whatever the object derives from its other tables. |
+
+WorkspaceDO reconciles `schedule`, `watch`, `maintenance`, and `terminal`
+entries from the tables above; SubstreamAgent reconciles `agent_timer` entries
+from its own `workstream_wakeups`. The entry is an index, never the record: each
+handler reloads its row, so a cancellation racing an alarm is a no-op.
+[`durable-object-alarms.md`](durable-object-alarms.md) owns the mechanism.
+
 ### `WorkspaceScheduler`
 
 | Table | Key and relationship |
 | --- | --- |
 | `_sql_schema_migrations` | Immutable scheduler schema history. |
-| `workspace_scheduler_state` | Singleton workspace identity for the scheduler object. |
-| `scheduler_retry_states` | Per target attempt/retry timestamp, preventing a failing schedule, connector watch, wakeup, or Terminal reconciliation from causing a hot alarm loop. |
+| `workspace_scheduler_state` | Singleton workspace identity, still read so a surviving alarm knows which workspace to hand over. |
+| `scheduler_retry_states` | Retained by the immutable ledger; no longer written. Per-target gates live in WorkspaceDO's `_internal_durable_alarms`. |
 
-The scheduler queries WorkspaceDO for every workspace-scoped due schedule,
-connector watch, resource/R2 cleanup, note privacy delivery, memory-index
-outbox, Slack handoff, cross-work-stream wakeup, and Terminal target. Regional
-D1 is used only to resolve identity/routing facts that are not product state. A
-`SubstreamAgent` owns each agent-created timer row itself and the parent
-directory sends only the next due timestamp required for workspace coordination.
-Maintenance workers settle independently: a failed reaper is logged and
-retained for retry while sibling cleanup tasks and due schedules continue in
-the same alarm.
+This object no longer schedules anything. Its work moved into WorkspaceDO, and
+it survives only to drain alarms armed before that change: each one calls
+`WorkspaceDO.refreshSchedule` and then deletes itself. Once the fleet has
+drained, the class and its `WORKSPACE_SCHEDULERS` binding can be retired.
 
 ## Regional impact
 
@@ -1128,6 +1139,33 @@ joins an uncertain sweep: an uncertain sweep leaves everyone connected when its
 query fails, which is the wrong answer for a retraction.
 
 Shipped in #220.
+
+### 2026-08-21 — Every scheduling object shares one alarm list, and the workspace's schedule comes home
+
+**What changed:** WorkspaceDO, WorkstreamDO, and SubstreamAgent now extend
+`ScheduledDurableObject` and each carry `_internal_durable_alarms` (schema
+versions 4, 2, and 14). WorkspaceDO gained `refreshSchedule` and the whole due-
+work loop the `WorkspaceScheduler` object used to run — schedules, resource
+watches, maintenance passes, Terminal deadlines — with its execution code in
+`services/workspace-schedule-execution.ts`. SubstreamAgent's agent timers became
+one entry per pending wake-up instead of a derived `MIN(due_at)`. The scheduler
+object is now a forwarder that hands each surviving alarm to WorkspaceDO.
+[`durable-object-alarms.md`](durable-object-alarms.md) is the new module
+document and holds the full reasoning.
+
+**Why:** The scheduler held an alarm for tables it did not own. Every tick cost
+routed SQL back into WorkspaceDO plus an RPC to its directory, and every writer
+of a due time had to remember to poke a *different* object or watch its row go
+dark — a coupling that showed up again in every feature that added a schedule.
+Meanwhile the three objects had each grown their own arming code and the copies
+had drifted: two of them only ever moved an alarm earlier, so a cancelled row
+left the object waking for nothing and a deferred target could leave the alarm
+pointing at an instant nothing was behind.
+
+What a future change has to respect: an object's alarm is derived in exactly one
+place. Adding a wake reason means adding an entry or a derived source, never a
+`setAlarm` call — a second writer produces two answers to "what is earliest",
+and the loser is silently never run.
 
 ### 2026-08-21 — Terminal addresses its own tables through a typed port
 

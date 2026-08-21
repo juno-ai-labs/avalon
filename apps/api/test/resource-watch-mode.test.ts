@@ -1,8 +1,20 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as WakeupService from "../src/services/workstream-wakeup-service";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
+
+// The reconcile is a WorkspaceDO round trip, and binding that namespace here
+// would route this fixture's whole SQL surface into a stub object. What this
+// file is about is which watch rows get written and whether the workspace is
+// asked to re-derive its alarm afterwards, so the call itself is the seam.
+vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => ({
+  ...await importOriginal<typeof WakeupService>(),
+  refreshWorkspaceSchedulerAlarm: vi.fn(async () => undefined),
+}));
+
+import { refreshWorkspaceSchedulerAlarm } from "../src/services/workstream-wakeup-service";
 import { ResourceService } from "../src/services/resource-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -81,14 +93,9 @@ const auth: AuthContext = {
   role: "owner",
 };
 
-function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof vi.fn>): Env {
-  const schedulerNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
-    idFromName: () => ({ toString: () => "scheduler-id" }),
-    get: () => ({ refresh: schedulerFetch }),
-  });
+function environment(database: WatchDatabase): Env {
   return createTestEnv({
     DB: database.binding,
-    WORKSPACE_SCHEDULERS: schedulerNamespace,
     APP_ENV: "test",
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
@@ -102,6 +109,7 @@ function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof 
   });
 }
 
+beforeEach(() => vi.mocked(refreshWorkspaceSchedulerAlarm).mockClear());
 afterEach(() => vi.useRealTimers());
 
 describe("resource watch scheduling modes", () => {
@@ -109,9 +117,8 @@ describe("resource watch scheduling modes", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
     const database = new WatchDatabase("github");
-    const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
 
-    await expect(new ResourceService(environment(database, schedulerFetch), auth).watch(resourceId, workstreamId))
+    await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
       .resolves.toEqual({ watchEnabled: true });
 
     const enable = database.statements.find((statement) => statement.sql.startsWith("INSERT INTO resource_watches"));
@@ -122,16 +129,15 @@ describe("resource watch scheduling modes", () => {
       "2026-08-01T12:00:00.000Z",
     ]);
     expect(database.batches).toBe(1);
-    expect(schedulerFetch).toHaveBeenCalledOnce();
+    expect(refreshWorkspaceSchedulerAlarm).toHaveBeenCalledOnce();
   });
 
   it("preserves an immediate poll deadline for polling connectors", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
     const database = new WatchDatabase("google");
-    const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
 
-    await new ResourceService(environment(database, schedulerFetch), auth).watch(resourceId, workstreamId);
+    await new ResourceService(environment(database), auth).watch(resourceId, workstreamId);
 
     const enable = database.statements.find((statement) => statement.sql.startsWith("INSERT INTO resource_watches"));
     expect(enable?.values.slice(5, 9)).toEqual([
@@ -144,11 +150,10 @@ describe("resource watch scheduling modes", () => {
 
   it("rejects connectors whose manifest does not support watches", async () => {
     const database = new WatchDatabase("generic_webhook");
-    const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
 
-    await expect(new ResourceService(environment(database, schedulerFetch), auth).watch(resourceId, workstreamId))
+    await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
       .rejects.toMatchObject({ status: 422, code: "watch_not_supported" });
     expect(database.batches).toBe(0);
-    expect(schedulerFetch).not.toHaveBeenCalled();
+    expect(refreshWorkspaceSchedulerAlarm).not.toHaveBeenCalled();
   });
 });

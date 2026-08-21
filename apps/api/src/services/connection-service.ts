@@ -41,7 +41,6 @@ import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -60,6 +59,7 @@ import {
 } from "../telemetry/product-usage";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { persistNormalizedActivity } from "./normalized-activity-service";
+import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -2942,13 +2942,7 @@ export class ConnectionService {
   }
 
   private async refreshScheduler(workspaceId: string): Promise<void> {
-    const scheduler = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_SCHEDULERS,
-      workspaceId,
-      `${this.env.AVALON_REGION}:${workspaceId}`,
-    );
-    await scheduler.refresh(workspaceId);
+    await refreshWorkspaceSchedulerAlarm(this.env, workspaceId);
   }
 }
 
