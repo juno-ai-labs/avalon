@@ -1244,6 +1244,13 @@ which is what keeps that acceptable. A future table whose rows appear in the
 sidebar must be added to `SIDEBAR_LIST_SOURCE_TABLES` or its writes will be
 silently invisible to open clients.
 
+Schema v4 adds `workspace_sidebar_list_state`, one waterline per list, advanced
+by `executeWorkspaceRuntimeSql` inside the same transaction as the write that
+earns it. Inside, not after: a counter that can lag its own write would let the
+next push carry a version the client has already applied, and the change would
+be dropped as a duplicate. The counters are seeded at zero by the migration so
+no reader has to decide what an absent row means.
+
 ### 2026-08-21 — The sidebar's three lists are read together in one object
 
 **What changed:** WorkspaceDO answers a new `list_sidebar` socket command with

@@ -29,6 +29,7 @@ import {
   applyWorkspaceWorkstreamFields,
   workstreamSummaryState,
 } from './workstream-state-store';
+import { applyVersionedSidebarList } from './sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
@@ -45,8 +46,8 @@ export interface WorkstreamPage {
 
 /** Everything the sidebar opens with, from the one object that owns all of it. */
 export interface SidebarBatch extends WorkstreamPage {
-  automations: AutomationSummary[];
-  notes: NoteSummary[];
+  automations: { waterline: number; items: AutomationSummary[] };
+  notes: { waterline: number; items: NoteSummary[] };
 }
 
 interface PendingCommand {
@@ -346,8 +347,14 @@ export function WorkspaceSocketProvider({
             window.clearTimeout(entry.timeout);
             entry.resolve({
               ...applyDirectoryPage(queryClient, sidebarPage.data.workstreams),
-              automations: sidebarPage.data.automations.map(mapAutomationSummary),
-              notes: sidebarPage.data.notes,
+              automations: {
+                waterline: sidebarPage.data.automations.waterline,
+                items: sidebarPage.data.automations.items.map(mapAutomationSummary),
+              },
+              notes: {
+                waterline: sidebarPage.data.notes.waterline,
+                items: sidebarPage.data.notes.items,
+              },
             });
             return;
           }
@@ -376,15 +383,23 @@ export function WorkspaceSocketProvider({
           }
           const sidebarList = WorkspaceSidebarListEventSchema.safeParse(decoded);
           if (sidebarList.success) {
-            // The whole list, so it replaces rather than merges: a row the
-            // viewer can no longer see is expressed by its absence.
+            // Through the shared receiver, not straight into the cache: the
+            // opening batch writes the same two entries, and only a comparison
+            // against one ledger can order the two producers.
             if (sidebarList.data.list === 'automations') {
-              queryClient.setQueryData<AutomationSummary[]>(
-                ['automations'],
+              applyVersionedSidebarList(
+                queryClient,
+                'automations',
+                sidebarList.data.waterline,
                 sidebarList.data.items.map(mapAutomationSummary),
               );
             } else {
-              queryClient.setQueryData<NoteSummary[]>(['notes'], sidebarList.data.items);
+              applyVersionedSidebarList(
+                queryClient,
+                'notes',
+                sidebarList.data.waterline,
+                sidebarList.data.items,
+              );
             }
             return;
           }

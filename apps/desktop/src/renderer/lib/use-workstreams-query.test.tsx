@@ -68,8 +68,8 @@ describe('useWorkstreamsQuery', () => {
     listSidebar.mockResolvedValue({
       items: [summary('workstream-1', 'Launch brief')],
       nextCursor: null,
-      automations: [],
-      notes: [],
+      automations: { waterline: 0, items: [] },
+      notes: { waterline: 0, items: [] },
     });
     getApplicationSettings.mockReset();
     getApplicationSettings.mockResolvedValue({
@@ -96,8 +96,11 @@ describe('useWorkstreamsQuery', () => {
     listSidebar.mockResolvedValue({
       items: [summary('workstream-1', 'Launch brief')],
       nextCursor: null,
-      automations: [{ id: 'automation-1', name: 'Monday brief', scope: 'workspace', status: 'active', updatedAt: '2026-08-21T09:00:00.000Z' }],
-      notes: [{ id: 'note-1', title: 'Standup', lastActivityAt: '2026-08-21T10:00:00.000Z' }],
+      automations: {
+        waterline: 4,
+        items: [{ id: 'automation-1', name: 'Monday brief', scope: 'workspace', status: 'active', updatedAt: '2026-08-21T09:00:00.000Z' }],
+      },
+      notes: { waterline: 2, items: [{ id: 'note-1', title: 'Standup', lastActivityAt: '2026-08-21T10:00:00.000Z' }] },
     });
     const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
@@ -183,8 +186,8 @@ describe('useWorkstreamsQuery', () => {
       listSidebar.mockResolvedValue({
         items: [summary('workstream-1', 'First page')],
         nextCursor: 'cursor-1',
-        automations: [],
-        notes: [],
+        automations: { waterline: 0, items: [] },
+        notes: { waterline: 0, items: [] },
       });
     }
 

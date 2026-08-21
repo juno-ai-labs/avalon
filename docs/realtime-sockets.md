@@ -35,6 +35,7 @@ is recorded.
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages, opens a cold sidebar with the one batched read, and retains the last page while a reconnect retries its request. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
@@ -200,14 +201,18 @@ HTTP request, so the mutation middleware that derives topics from a request path
 never saw it, and a sidebar row's next-run time stayed stale until something
 unrelated refetched the list.
 
-The event carries the whole list and no waterline. A work-stream row needs one
-per field because it is assembled from child objects over an unordered,
-at-least-once Queue; these two lists are read and written inside the single
-object that owns them, on one thread, and sent down a transport that preserves
-order, so the last send is always the newest state. A row the viewer can no
-longer see is expressed by its absence, so archive and delete need no tombstone.
-Each list is read per socket, because a personal automation or note belongs to
-one viewer. The renderer applies WorkspaceDO-owned
+The event carries the whole list and a waterline for that list, monotonic within
+WorkspaceDO and advanced inside the transaction of the write that earned it. Two
+counters rather than one, because the lists change independently and one counter
+would let a note write hide an automation update. The opening batch carries the
+same two numbers, so the batch and every later push land in one client receiver
+that applies only a strictly greater version — `sidebar-list-store.ts` — rather
+than two handlers each trusting arrival order. What the lists do *not* carry is a
+version per row: unlike a work-stream row, which is assembled from child objects
+over an unordered Queue and needs one per field, the list is the unit here, and
+a row the viewer can no longer see is expressed by its absence, so archive and
+delete need no tombstone. Each list is read per socket, because a personal
+automation or note belongs to one viewer. The renderer applies WorkspaceDO-owned
 fields such as pin position only when that row's observed directory waterline is
 newer. Every socket reconnect also reloads a resident directory, because current
 state rows intentionally do not retain every intermediate push for replay.
@@ -487,9 +492,15 @@ removes the inverted dependency at once.
 **Considered and rejected:** Keeping invalidation and adding a publish call at
 every service that writes these tables — many call sites, each able to forget,
 and the scheduler is in a different object; per-row waterlines and tombstones
-mirroring the work-stream row — machinery for an unordered multi-writer
-delivery this path does not have; and diffing the list to push only changed
-rows, which buys nothing at 250 summaries and adds a way to be wrong.
+mirroring the work-stream row — the list is the unit here and a removed row is
+expressed by its absence; and diffing the list to push only changed rows, which
+buys nothing at 250 summaries and adds a way to be wrong. Shipping with *no*
+version at all was also rejected, after the fact: the first cut argued that one
+authority on one thread over an ordered transport made the last send provably
+newest, which was true of the code as written and is still not enough. Two
+producers write these cache entries — the batch and the push — and
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks every pushed
+payload to carry its authority's ordering so that the guard survives a third.
 
 **Consequences:** A user action that writes the table more than once sends the
 list more than once — resuming an automation writes the subscription and then
