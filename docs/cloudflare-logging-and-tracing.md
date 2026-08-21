@@ -320,7 +320,7 @@ boundary now describe a thing that has to be done deliberately in
 `wrangler.eu.jsonc`, rather than something that could happen as a side effect of
 account configuration.
 
-Shipped in #TBD.
+Shipped in #207.
 
 ### 2026-08-20 — Document created
 
