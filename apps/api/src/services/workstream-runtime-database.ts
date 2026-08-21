@@ -33,12 +33,6 @@ const responseSchema = z.object({
 });
 
 const LOCAL_TABLES = [
-  "workstream_sandboxes",
-  "sandbox_tasks",
-  "sandbox_imported_resources",
-  "terminal_publication_grants",
-  "workstream_terminal_repositories",
-  "repository_publications",
   "workstream_participants",
   "harness_runs",
   "runs",

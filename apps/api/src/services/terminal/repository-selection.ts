@@ -1,10 +1,11 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
+import { createTerminalPortFactory } from "./object-port";
 import { asWorkspaceId } from "@avalon/contracts";
 import {
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
 } from "@avalon/connectors";
-import { newId, nowIso } from "@avalon/db";
+import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
@@ -30,17 +31,6 @@ interface ConnectionRow {
   config_json: string;
   scope: "personal" | "workspace";
   owner_user_id: string | null;
-}
-
-interface CurrentRepositoryRow {
-  connection_id: string;
-  repository_id: number;
-  repository_full_name: string;
-  base_ref: string;
-  base_sha: string;
-  head_ref: string;
-  remote_access: GitHubRepositoryAccessLevel;
-  state: "selected" | "revoked";
 }
 
 export interface TerminalCheckoutRepositoryOutput {
@@ -196,31 +186,27 @@ export function createTerminalRepositorySelector(
         Number(left.policyAccess === "full_access") - Number(right.policyAccess === "full_access")
       ));
       const selected = candidates[0]!;
-      const current = await env.DB.prepare(
-        `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref,
-                remote_access, state
-           FROM workstream_terminal_repositories
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(context.workspaceId, context.workstreamId).first<CurrentRepositoryRow>();
+      const terminal = createTerminalPortFactory(env)(context.workspaceId, context.workstreamId);
+      const current = await terminal.repository();
       const sameRepositoryIdentity = (
         current?.state === "selected"
-        && current.connection_id === selected.connection.id
-        && current.repository_id === selected.repository.id
+        && current.connectionId === selected.connection.id
+        && current.repositoryId === selected.repository.id
       );
       const unchangedSelection = (
         sameRepositoryIdentity
-        && current.repository_full_name === selected.repository.fullName
-        && current.base_ref === selected.repository.defaultBranch
-        && current.base_sha === selected.repository.baseSha
-        && current.remote_access === selected.remoteAccess
+        && current.repositoryFullName === selected.repository.fullName
+        && current.baseRef === selected.repository.defaultBranch
+        && current.baseSha === selected.repository.baseSha
+        && current.remoteAccess === selected.remoteAccess
       );
       const headRef = sameRepositoryIdentity
-        ? current!.head_ref
+        ? current!.headRef
         : await workstreamBranchRef(
           env,
           context.workspaceId,
           context.workstreamId,
-          current?.head_ref ?? null,
+          current?.headRef ?? null,
         );
       if (unchangedSelection) {
         return output("already_selected", null);
@@ -228,12 +214,7 @@ export function createTerminalRepositorySelector(
 
       const sandbox = await coordinator.claimMutation(context);
 
-      const activeTasks = await env.DB.prepare(
-        `SELECT COUNT(*) AS count FROM sandbox_tasks
-          WHERE workspace_id = ? AND workstream_id = ?
-            AND state IN ('planned', 'submitting', 'running')`,
-      ).bind(context.workspaceId, context.workstreamId).first<{ count: number }>();
-      if (Number(activeTasks?.count ?? 0) > 0) {
+      if (await terminal.unsettledTaskCount() > 0) {
         throw new TerminalToolError(
           "workspace_busy",
           "Another Terminal command is still using this workspace. Wait for it to finish, then retry repository checkout; no repository or files were changed.",
@@ -297,57 +278,19 @@ export function createTerminalRepositorySelector(
           throw error;
         }
       }
-      const timestamp = nowIso();
-      const [sandboxDeletion] = await env.DB.batch([
-        env.DB.prepare(
-          `DELETE FROM workstream_sandboxes
-            WHERE workspace_id = ? AND workstream_id = ?
-              AND generation = ?`,
-        ).bind(
-          context.workspaceId,
-          context.workstreamId,
-          sandbox.generation,
-        ),
-        env.DB.prepare(
-          `INSERT INTO workstream_terminal_repositories
-           (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
-            base_ref, base_sha, head_ref, remote_access, state, selected_by_user_id, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?
-            WHERE NOT EXISTS (
-              SELECT 1 FROM workstream_sandboxes sandbox
-               WHERE sandbox.workspace_id = ? AND sandbox.workstream_id = ?
-            )
-           ON CONFLICT(workspace_id, workstream_id) DO UPDATE SET
-             connection_id = excluded.connection_id,
-             repository_id = excluded.repository_id,
-             repository_full_name = excluded.repository_full_name,
-             base_ref = excluded.base_ref,
-             base_sha = excluded.base_sha,
-             head_ref = excluded.head_ref,
-             remote_access = excluded.remote_access,
-             state = 'selected',
-             bootstrapped_sandbox_generation = NULL,
-             read_token_expires_at = NULL,
-             selected_by_user_id = excluded.selected_by_user_id,
-             updated_at = excluded.updated_at`,
-        ).bind(
-          context.workspaceId,
-          context.workstreamId,
-          selected.connection.id,
-          selected.repository.id,
-          selected.repository.fullName,
-          selected.repository.defaultBranch,
-          selected.repository.baseSha,
-          headRef,
-          selected.remoteAccess,
-          context.executionPrincipal.userId,
-          timestamp,
-          timestamp,
-          context.workspaceId,
-          context.workstreamId,
-        ),
-      ]);
-      if (Number(sandboxDeletion?.meta.changes ?? 0) !== 1) {
+      const replaced = await terminal.replaceRepository({
+        generation: sandbox.generation,
+        connectionId: selected.connection.id,
+        repositoryId: selected.repository.id,
+        repositoryFullName: selected.repository.fullName,
+        baseRef: selected.repository.defaultBranch,
+        baseSha: selected.repository.baseSha,
+        headRef,
+        remoteAccess: selected.remoteAccess,
+        selectedByUserId: context.executionPrincipal.userId,
+        now: Date.now(),
+      });
+      if (!replaced) {
         throw new TerminalToolError(
           "sandbox_busy",
           "The Terminal workspace changed while its repository was being replaced. Retry checkout so Avalon can reconcile the current sandbox generation.",

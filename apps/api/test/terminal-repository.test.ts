@@ -18,6 +18,7 @@ import {
   testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
+  testSubstreamAgentsBinding,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -77,16 +78,16 @@ function fixture(message = "Please publish these changes and open a pull request
   );
   workstreamObjectRun(
     objectStore,
-    `INSERT INTO workstream_terminal_repositories
-       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name, base_ref,
+    `INSERT INTO terminal_repository
+       (id, connection_id, repository_id, repository_full_name, base_ref,
         base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
-     VALUES (?, ?, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, '2026-08-13', '2026-08-13')`,
-    W,
-    S,
+     VALUES (1, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, ?, ?)`,
     CONNECTION,
     BASE,
     HEAD_REF,
     U,
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
   );
   workstreamObjectRun(
     objectStore,
@@ -124,6 +125,9 @@ function fixture(message = "Please publish these changes and open a pull request
   const env = createTestEnv({
     DB: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S }),
     AVALON_REGION: "global",
+    // Terminal repository and grant state is object-local, so these paths hold
+    // the agent binding rather than only a database handle.
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
   });
   const gateway: TerminalGitHubPublicationGateway = {
     mintWriteToken: vi.fn(async () => ({ accessToken: "write-token" })),
@@ -206,10 +210,8 @@ describe("Terminal repository publication", () => {
       .toBeLessThan(bootstrapCommand.indexOf("clone --no-checkout"));
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-      W,
-      S,
-    )).toEqual({ bootstrapped_sandbox_generation: 1, read_token_expires_at: "2026-08-13T13:00:00.000Z" });
+      "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM terminal_repository WHERE id = 1",
+    )).toEqual({ bootstrapped_sandbox_generation: 1, read_token_expires_at: Date.parse("2026-08-13T13:00:00.000Z") });
   });
 
   it("fails closed with a revoked-access error when the selected connection is disabled", async () => {
@@ -237,11 +239,10 @@ describe("Terminal repository publication", () => {
     const { objectStore, env, provider, context } = fixture();
     workstreamObjectRun(
       objectStore,
-      `UPDATE workstream_terminal_repositories
-          SET bootstrapped_sandbox_generation = 1, read_token_expires_at = '2099-01-01T00:00:00.000Z'
-        WHERE workspace_id = ? AND workstream_id = ?`,
-      W,
-      S,
+      `UPDATE terminal_repository
+          SET bootstrapped_sandbox_generation = 1, read_token_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2099-01-01T00:00:00.000Z"),
     );
     const gateway = {
       mintRepositoryToken: vi.fn(async () => ({ accessToken: "token", expiresAt: "2099-01-01T00:00:00.000Z" })),
@@ -306,10 +307,9 @@ describe("Terminal repository publication", () => {
     }, new Date("2026-08-13T12:00:00.000Z"))).resolves.toMatchObject({ admitted: true });
     expect(workstreamObjectGet(
       explicit.objectStore,
-      "SELECT expires_at, consumed_at FROM terminal_publication_grants WHERE workspace_id = ? AND harness_run_id = ?",
-      W,
+      "SELECT expires_at, consumed_at FROM terminal_publication_grants WHERE run_id = ?",
       R,
-    )).toEqual({ expires_at: "2026-08-13T14:00:00.000Z", consumed_at: null });
+    )).toEqual({ expires_at: Date.parse("2026-08-13T14:00:00.000Z"), consumed_at: null });
 
     const generic = fixture("Please make the requested code edits");
     await expect(admitTerminalPublicationGrant(generic.env, {
@@ -348,14 +348,12 @@ describe("Terminal repository publication", () => {
     );
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, published_sha, pull_request_number FROM repository_publications WHERE workspace_id = ?",
-      W,
+      "SELECT state, published_sha, pull_request_number FROM repository_publications",
     )).toEqual({ state: "completed", published_sha: HEAD, pull_request_number: 9 });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT consumed_by_invocation_id FROM terminal_publication_grants WHERE workspace_id = ?",
-      W,
-    )).toEqual({ consumed_by_invocation_id: I });
+      "SELECT consumed_by_effect_intent_id FROM terminal_publication_grants",
+    )).toEqual({ consumed_by_effect_intent_id: I });
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
@@ -364,8 +362,7 @@ describe("Terminal repository publication", () => {
     expect(provider.publishGitBundle).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS count FROM repository_publications WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W,
+      "SELECT COUNT(*) AS count FROM repository_publications WHERE effect_intent_id = ?",
       I,
     )).toEqual({ count: 1 });
   });
@@ -436,9 +433,7 @@ describe("Terminal repository publication", () => {
     expect(gateway.revokeWriteToken).toHaveBeenCalledTimes(2);
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS count FROM repository_publications WHERE workspace_id = ? AND grant_id = (SELECT id FROM terminal_publication_grants WHERE workspace_id = ?)",
-      W,
-      W,
+      "SELECT COUNT(*) AS count FROM repository_publications WHERE grant_id = (SELECT grant_id FROM terminal_publication_grants)",
     )).toEqual({ count: 2 });
   });
 

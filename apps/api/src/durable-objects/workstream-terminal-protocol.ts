@@ -1,0 +1,177 @@
+import { z } from "zod";
+
+import type { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
+
+/**
+ * The wire contract for one work stream's Terminal authority.
+ *
+ * Terminal state is object-local, but every caller — the coordinator, the
+ * lifecycle sweeper, the tool runtime, the repository selector — runs in the
+ * Worker. This endpoint is how they reach it. It replaces a routed
+ * `D1Database` handle that carried D1-shaped SQL to a compatibility view; the
+ * operations here name what the caller wants rather than the vocabulary a
+ * retired database used.
+ *
+ * The operation set is derived from `WorkstreamTerminalStorage` rather than
+ * restated, so a method added there without a name here is a type error at the
+ * `TERMINAL_OPERATIONS` declaration instead of a silent gap.
+ */
+export type TerminalOperation = keyof WorkstreamTerminalStorage;
+
+type StorageMethods = {
+  [K in keyof WorkstreamTerminalStorage]: WorkstreamTerminalStorage[K] extends (
+    ...args: infer A
+  ) => infer R
+    ? { args: A; result: R }
+    : never;
+};
+
+/** The typed surface a Worker-side caller sees, one round trip per call. */
+export type TerminalObjectPort = {
+  [K in keyof StorageMethods]: (
+    ...args: StorageMethods[K]["args"]
+  ) => Promise<StorageMethods[K]["result"]>;
+};
+
+/**
+ * Demands that a list of operation names covers the whole key set.
+ *
+ * `satisfies readonly TerminalOperation[]` alone is one-way: it proves every
+ * listed name is a real method, and says nothing about a method with no entry.
+ * That gap was not theoretical — `TerminalObjectPort` is mapped over
+ * `keyof WorkstreamTerminalStorage`, so an unlisted method still appears on the
+ * port's type, while `createTerminalObjectPort` builds its object from this
+ * list and casts. A caller would have compiled and then found `undefined` at
+ * run time.
+ *
+ * When a name is missing, the required type becomes a longer tuple and the
+ * assignment fails naming the absentee, which is the error a reader can act on.
+ */
+type Exhaustive<T extends readonly TerminalOperation[]> =
+  [Exclude<TerminalOperation, T[number]>] extends [never]
+    ? T
+    : readonly [...T, Exclude<TerminalOperation, T[number]>];
+
+const DISPATCHED_OPERATIONS = [
+  "sandbox",
+  "reserveFirstGeneration",
+  "claimOperation",
+  "attachProviderSandbox",
+  "failGeneration",
+  "setRunning",
+  "refreshDeadlines",
+  "setAppliedNetworkRevision",
+  "replaceGeneration",
+  "resetSandbox",
+  "claimLifecycleTransition",
+  "failLifecycleClaim",
+  "settleLifecycleTransition",
+  "finalDiffResourceId",
+  "setFinalDiffResourceId",
+  "settlePolicyTransition",
+  "policyTarget",
+  "taskByEffect",
+  "hasLiveTask",
+  "unsettledTaskCount",
+  "insertTask",
+  "settleTask",
+  "cancelUnsettledTasks",
+  "importedResources",
+  "recordImportedResource",
+  "completeImportedResource",
+  "repository",
+  "selectedRepository",
+  "replaceRepository",
+  "recordRepositoryBootstrap",
+  "admitPublicationGrant",
+  "latestPublicationGrant",
+  "consumePublicationGrant",
+  "completedPublication",
+  "publicationExists",
+  "beginPublication",
+  "completePublication",
+  "markPublicationAmbiguous",
+] as const satisfies readonly TerminalOperation[];
+
+/** Every operation the endpoint will dispatch, proven complete both ways. */
+export const TERMINAL_OPERATIONS: Exhaustive<typeof DISPATCHED_OPERATIONS> =
+  DISPATCHED_OPERATIONS;
+
+const TERMINAL_OPERATION_SET = new Set<string>(TERMINAL_OPERATIONS);
+
+export function isTerminalOperation(value: string): value is TerminalOperation {
+  return TERMINAL_OPERATION_SET.has(value);
+}
+
+/**
+ * The request envelope.
+ *
+ * Identity is validated strictly here and re-checked against the object's own
+ * identity before anything executes, which is the check that matters: a
+ * misrouted stub must fail rather than write another work stream's Terminal
+ * state. `args` is not re-validated field by field. The caller is this
+ * Worker holding a stub for its own object — the same trust boundary that
+ * already lets `/internal/runtime-sql` accept arbitrary SQL — and the
+ * per-argument shapes are enforced at the call site by `TerminalObjectPort`,
+ * where a mismatch is a compile error rather than a runtime rejection.
+ */
+/**
+ * Operations that cannot change what the workspace directory publishes.
+ *
+ * `workspace_workstream_directory.next_terminal_action_at` is the only input
+ * `WorkspaceScheduler` has for Terminal work, and the `directory_common`
+ * regional effect is its only writer. That effect is enqueued from
+ * `commitRuntimeMutation`, so an operation that moves a deadline in
+ * `terminal_workspace` and does not enqueue one leaves the sweep with nothing
+ * to run on — and nothing else ever clears a stale value.
+ *
+ * Reads are listed because they mutate nothing at all. The task, import, and
+ * publication writes are listed because they touch tables the directory
+ * projection does not read. Everything else — including any operation added
+ * later — is treated as directory-affecting: over-publishing costs an outbox
+ * row, under-publishing strands the scheduler, so the default falls the safe
+ * way rather than relying on the next author to notice this list.
+ */
+const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
+  // Reads.
+  "sandbox",
+  "finalDiffResourceId",
+  "policyTarget",
+  "taskByEffect",
+  "hasLiveTask",
+  "unsettledTaskCount",
+  "importedResources",
+  "repository",
+  "selectedRepository",
+  "latestPublicationGrant",
+  "completedPublication",
+  "publicationExists",
+  // Writes that leave `terminal_workspace` alone.
+  "insertTask",
+  "settleTask",
+  "cancelUnsettledTasks",
+  "recordImportedResource",
+  "completeImportedResource",
+  "recordRepositoryBootstrap",
+  "admitPublicationGrant",
+  "consumePublicationGrant",
+  "beginPublication",
+  "completePublication",
+  "markPublicationAmbiguous",
+]);
+
+/** Whether this operation has to republish the work stream's directory row. */
+export function terminalOperationAffectsDirectory(operation: TerminalOperation): boolean {
+  return !NON_DIRECTORY_OPERATIONS.has(operation);
+}
+
+export const TerminalOperationRequestSchema = z.object({
+  workspaceId: z.string().uuid(),
+  workstreamId: z.string().uuid(),
+  operation: z.string().min(1).max(64).refine(isTerminalOperation, {
+    message: "unknown_terminal_operation",
+  }),
+  args: z.array(z.unknown()).max(4),
+}).strict();
+
+export type TerminalOperationRequest = z.infer<typeof TerminalOperationRequestSchema>;

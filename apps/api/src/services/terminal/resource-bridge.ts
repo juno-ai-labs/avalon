@@ -8,6 +8,7 @@ import { sha256Hex } from "../../lib/crypto";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
 import { attachWorkstreamRuntimeResource } from "../workstream-object-client";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
+import type { TerminalPortFactory } from "./object-port";
 import type { TerminalResourceBridge } from "./runtime";
 import { TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
 
@@ -69,7 +70,10 @@ async function invocationFor(database: D1Database, context: HarnessToolContext):
   return invocation;
 }
 
-export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
+export function createTerminalResourceBridge(
+  env: Env,
+  terminalPort: TerminalPortFactory,
+): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
   // no query may join across those object-local databases.
@@ -150,20 +154,18 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
               { reason: "Start a fresh Terminal workspace so Avalon can re-establish automatic import provenance." },
             );
           }
-          const timestamp = nowIso();
-          await env.DB.prepare(
-            `INSERT INTO sandbox_imported_resources
-             (workspace_id, workstream_id, sandbox_generation, resource_id, destination_path,
-              source_sha256, size_bytes, state, imported_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)
-             ON CONFLICT(workspace_id, workstream_id, sandbox_generation, resource_id, destination_path)
-             DO UPDATE SET source_sha256 = excluded.source_sha256, size_bytes = excluded.size_bytes,
-                           state = 'completed', imported_at = excluded.imported_at,
-                           updated_at = excluded.updated_at`,
-          ).bind(
-            context.workspaceId, context.workstreamId, sandboxGeneration, row.id, destination,
-            digest, bytes.byteLength, timestamp, timestamp,
-          ).run();
+          const timestamp = Date.now();
+          await terminalPort(context.workspaceId, context.workstreamId)
+            .recordImportedResource({
+              sandboxGeneration,
+              resourceId: row.id,
+              destinationPath: destination,
+              sourceSha256: digest,
+              sizeBytes: bytes.byteLength,
+              state: "completed",
+              importedAt: timestamp,
+              now: timestamp,
+            });
           return {
             resourceId: row.id,
             filePath: destination,
@@ -188,19 +190,18 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
           { reason: "Choose a destinationPath that is absent or names a regular file beneath the Terminal workspace." },
         );
       }
-      const plannedAt = nowIso();
-      await env.DB.prepare(
-        `INSERT INTO sandbox_imported_resources
-         (workspace_id, workstream_id, sandbox_generation, resource_id, destination_path,
-          source_sha256, size_bytes, state, imported_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', NULL, ?)
-         ON CONFLICT(workspace_id, workstream_id, sandbox_generation, resource_id, destination_path)
-         DO UPDATE SET source_sha256 = excluded.source_sha256, size_bytes = excluded.size_bytes,
-                       state = 'planned', imported_at = NULL, updated_at = excluded.updated_at`,
-      ).bind(
-        context.workspaceId, context.workstreamId, sandboxGeneration, row.id, destination,
-        digest, bytes.byteLength, plannedAt,
-      ).run();
+      const plannedAt = Date.now();
+      await terminalPort(context.workspaceId, context.workstreamId)
+        .recordImportedResource({
+          sandboxGeneration,
+          resourceId: row.id,
+          destinationPath: destination,
+          sourceSha256: digest,
+          sizeBytes: bytes.byteLength,
+          state: "planned",
+          importedAt: null,
+          now: plannedAt,
+        });
       const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
       const mkdir = await provider.runCommand(providerSandboxId, {
         taskName: `avalon-import-dir-${row.id}`,
@@ -226,16 +227,16 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
           { reason: "Start a fresh Terminal workspace before retrying the import." },
         );
       }
-      const importedAt = nowIso();
-      await env.DB.prepare(
-        `UPDATE sandbox_imported_resources
-            SET state = 'completed', imported_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ? AND sandbox_generation = ?
-            AND resource_id = ? AND destination_path = ? AND source_sha256 = ?`,
-      ).bind(
-        importedAt, importedAt, context.workspaceId, context.workstreamId, sandboxGeneration,
-        row.id, destination, digest,
-      ).run();
+      const importedAt = Date.now();
+      await terminalPort(context.workspaceId, context.workstreamId)
+        .completeImportedResource({
+          sandboxGeneration,
+          resourceId: row.id,
+          destinationPath: destination,
+          sourceSha256: digest,
+          importedAt,
+          now: importedAt,
+        });
       return {
         resourceId: row.id,
         filePath: destination,

@@ -13,6 +13,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
+  testTerminalPortFactory,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -65,13 +66,17 @@ function fixture() {
       params: [I, W, S, R],
     },
     {
-      sql: `INSERT INTO workstream_sandboxes
-              (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-               authority_fingerprint, applied_network_revision, version, last_activity_at,
+      sql: `INSERT INTO terminal_workspace
+              (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+               authority_fingerprint, applied_network_revision, version, last_command_at,
                created_at, updated_at)
-            VALUES (?, ?, 'running', 'resource-sandbox', 'sandbox', 1,
-                    'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13')`,
-      params: [W, S],
+            VALUES (1, 'daytona', 'running', 'resource-sandbox', 'sandbox', 1,
+                    'authority', 1, 1, ?, ?, ?)`,
+      params: [
+        Date.parse("2026-08-13T00:00:00.000Z"),
+        Date.parse("2026-08-13T00:00:00.000Z"),
+        Date.parse("2026-08-13T00:00:00.000Z"),
+      ],
     },
   ]);
   const objects = new Map<string, Uint8Array>();
@@ -131,7 +136,7 @@ function fixture() {
     }),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
-  return { database, objectStore, objects, put, env, provider, bridge: createTerminalResourceBridge(env) };
+  return { database, objectStore, objects, put, env, provider, bridge: createTerminalResourceBridge(env, testTerminalPortFactory(objectStore)) };
 }
 
 describe("Terminal resource bridge", () => {
@@ -166,8 +171,7 @@ describe("Terminal resource bridge", () => {
     expect(workstreamObjectGet(
       objectStore,
       `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported
-         FROM sandbox_imported_resources WHERE workspace_id = ? AND workstream_id = ?`,
-      W, S,
+         FROM terminal_imported_resources`,
     )).toEqual({
       destination_path: `.avalon/resources/${RESOURCE}/resource`,
       source_sha256: digest,

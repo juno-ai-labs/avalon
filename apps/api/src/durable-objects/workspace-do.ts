@@ -546,6 +546,29 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_capability_count INTEGER`,
     `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_reconnect INTEGER NOT NULL DEFAULT 0`,
   ],
+}, {
+  version: 3,
+  description: "drop the two workspace tables no code reads or writes",
+  statements: [
+    // As in the SubstreamAgent's migration 11, version 1 still creates these
+    // and must: its statements are hashed into every deployed object's
+    // `_sql_schema_migrations` receipt. `WORKSPACE_FENCED_TABLES` still names
+    // `external_delivery_attempts` for the same reason — it feeds v1's
+    // identity-fence triggers, so pruning the list would edit v1 in place.
+    // Dropping the table takes those triggers and its index with it.
+    //
+    // `external_delivery_attempts` declared a unified outbound pipeline —
+    // idempotency key, lease, attempt count, five states — for automation,
+    // digest, mention, and note-privacy sends. Nothing ever wrote it, and the
+    // delivery that does happen runs through `workstream_notification_intents`
+    // and the per-channel services. Two pipelines in the schema, one of them
+    // empty, is a standing invitation to extend the wrong one.
+    `DROP TABLE IF EXISTS external_delivery_attempts`,
+    // `slack_agent_channel_allowlist` was superseded before it was used:
+    // `slack_agent_policies.public_channel_mode` and `private_channel_mode`
+    // decide channel admission, and no query ever consulted the allowlist.
+    `DROP TABLE IF EXISTS slack_agent_channel_allowlist`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {

@@ -3,7 +3,8 @@ import {
   discoverGitHubConnectionRepositories,
   type ConnectorConnectionContext,
 } from "@avalon/connectors";
-import { newId, nowIso } from "@avalon/db";
+import { newId } from "@avalon/db";
+import { createTerminalPortFactory } from "./object-port";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
@@ -40,25 +41,6 @@ export interface TerminalRepositoryCatalogGateway {
   ): Promise<TerminalResolvedRepository>;
 }
 
-interface SandboxStateRow {
-  state: string;
-  provider_sandbox_id: string | null;
-  last_activity_at: string;
-  expire_due_at: string | null;
-  final_diff_resource_id: string | null;
-  failure_code: string | null;
-}
-
-interface RepositoryRow {
-  connection_id: string;
-  repository_id: number;
-  repository_full_name: string;
-  base_ref: string;
-  base_sha: string;
-  head_ref: string;
-  state: "selected" | "revoked";
-}
-
 function publicState(state: string): "absent" | "starting" | "running" | "stopped" | "archived" | "restoring" | "expired" | "failed" {
   switch (state) {
     case "starting": return "starting";
@@ -84,46 +66,40 @@ export class TerminalWorkstreamService {
 
   async get(workstreamId: string) {
     await this.requireVisible(workstreamId);
-    const database = (await workstreamExecutionEnvironment(
-      this.env,
-      this.auth.workspaceId,
-      workstreamId,
-    )).DB;
+    const terminal = createTerminalPortFactory(this.env)(this.auth.workspaceId, workstreamId);
     const [sandbox, repository] = await Promise.all([
-      database.prepare(
-        `SELECT state, provider_sandbox_id, last_activity_at, expire_due_at,
-                final_diff_resource_id, failure_code
-           FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(this.auth.workspaceId, workstreamId).first<SandboxStateRow>(),
-      database.prepare(
-        `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref, state
-           FROM workstream_terminal_repositories
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(this.auth.workspaceId, workstreamId).first<RepositoryRow>(),
+      terminal.sandbox(),
+      terminal.repository(),
     ]);
     const configuration = parseTerminalRegionConfiguration(this.env);
-    const state = sandbox ? publicState(sandbox.state) : "absent";
-    const expiresAt = sandbox?.expire_due_at ?? null;
-    const remainingMs = expiresAt ? Date.parse(expiresAt) - Date.now() : Number.POSITIVE_INFINITY;
+    const state = sandbox ? publicState(sandbox.lifecycleState) : "absent";
+    // The object stores epoch milliseconds; this is a member-facing payload,
+    // so it reports ISO-8601.
+    const expiresAt = sandbox?.expireDueAt ? new Date(sandbox.expireDueAt).toISOString() : null;
+    const remainingMs = sandbox?.expireDueAt
+      ? sandbox.expireDueAt - Date.now()
+      : Number.POSITIVE_INFINITY;
     return {
       availability: configuration.capability === "unsupported"
         ? "unsupported" as const
         : configuration.emergencyDisabled ? "emergency_disabled" as const : "supported" as const,
       state,
-      lastActivityAt: sandbox?.last_activity_at ?? null,
+      lastActivityAt: sandbox?.lastCommandAt
+        ? new Date(sandbox.lastCommandAt).toISOString()
+        : null,
       expiresAt,
       retentionWarning: remainingMs <= 24 * 60 * 60_000
         ? "expires_within_24_hours" as const
         : remainingMs <= 7 * 24 * 60 * 60_000 ? "expires_within_7_days" as const : null,
       localFilesRetained: Boolean(sandbox && !["expired", "failed"].includes(state)),
-      finalDiffResourceId: sandbox?.final_diff_resource_id ?? null,
-      failureCode: sandbox?.failure_code ?? null,
+      finalDiffResourceId: sandbox?.finalDiffResourceId ?? null,
+      failureCode: sandbox?.failureCode ?? null,
       repository: repository?.state === "selected" ? {
-        id: repository.repository_id,
-        fullName: repository.repository_full_name,
-        baseRef: repository.base_ref,
-        baseSha: repository.base_sha,
-        headRef: repository.head_ref,
+        id: repository.repositoryId,
+        fullName: repository.repositoryFullName,
+        baseRef: repository.baseRef,
+        baseSha: repository.baseSha,
+        headRef: repository.headRef,
       } : null,
     };
   }
@@ -131,15 +107,11 @@ export class TerminalWorkstreamService {
   async startFresh(workstreamId: string) {
     const telemetryStartedAt = Date.now();
     await this.requireParticipant(workstreamId);
-    const database = (await workstreamExecutionEnvironment(
-      this.env,
+    const sandbox = await createTerminalPortFactory(this.env)(
       this.auth.workspaceId,
       workstreamId,
-    )).DB;
-    const state = await database.prepare(
-      "SELECT state FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).bind(this.auth.workspaceId, workstreamId).first<{ state: string }>();
-    if (state && !["expired", "failed"].includes(state.state)) {
+    ).sandbox();
+    if (sandbox && !["expired", "failed"].includes(sandbox.lifecycleState)) {
       throw new ApiError(409, "terminal_workspace_still_retained", "This Terminal workspace is still retained. Continue using it instead of starting a fresh workspace.");
     }
     await this.destroyCurrentSandbox(workstreamId);
@@ -164,53 +136,30 @@ export class TerminalWorkstreamService {
   }
 
   private async destroyCurrentSandbox(workstreamId: string): Promise<void> {
-    const database = (await workstreamExecutionEnvironment(
-      this.env,
-      this.auth.workspaceId,
-      workstreamId,
-    )).DB;
-    const row = await database.prepare(
-      "SELECT provider_sandbox_id, state, generation FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).bind(this.auth.workspaceId, workstreamId).first<{ provider_sandbox_id: string | null; state: string; generation: number }>();
-    if (row?.provider_sandbox_id) {
+    const terminal = createTerminalPortFactory(this.env)(this.auth.workspaceId, workstreamId);
+    const row = await terminal.sandbox();
+    if (row?.sandboxId) {
       if (!this.provider) throw new ApiError(503, "terminal_provider_unavailable", "The existing Terminal workspace could not be cleared in this region. Retry when Terminal is available.");
       try {
-        await this.provider.clearGitHubReadAccess(row.provider_sandbox_id);
+        await this.provider.clearGitHubReadAccess(row.sandboxId);
       } catch (error) {
         logWarn(this.env, "terminal_github_credential_cleanup_failed", {
           workspace_id: this.auth.workspaceId,
           workstream_id: workstreamId,
-          sandbox_id: row.provider_sandbox_id,
+          sandbox_id: row.sandboxId,
           reason: error instanceof Error ? error.message : String(error),
         });
       }
-      await this.provider.deleteSandbox(row.provider_sandbox_id);
+      await this.provider.deleteSandbox(row.sandboxId);
     }
-    const [deleted] = await database.batch([
-      row
-        ? database.prepare(
-          "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ? AND generation = ?",
-        ).bind(this.auth.workspaceId, workstreamId, row.generation)
-        : database.prepare(
-          "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-        ).bind(this.auth.workspaceId, workstreamId),
-      database.prepare(
-        `UPDATE workstream_terminal_repositories
-            SET bootstrapped_sandbox_generation = NULL, read_token_expires_at = NULL, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ?
-            AND NOT EXISTS (
-              SELECT 1 FROM workstream_sandboxes sandbox
-               WHERE sandbox.workspace_id = ? AND sandbox.workstream_id = ?
-            )`,
-      ).bind(
-        nowIso(),
-        this.auth.workspaceId,
-        workstreamId,
-        this.auth.workspaceId,
-        workstreamId,
-      ),
-    ]);
-    if (row && Number(deleted?.meta.changes ?? 0) !== 1) {
+    // One operation, not the two-statement batch this used to be: the delete
+    // and the bootstrap clear have to land together, and the object runs them
+    // in a single transaction.
+    const { deleted } = await terminal.resetSandbox({
+      generation: row?.generation ?? null,
+      now: Date.now(),
+    });
+    if (row && !deleted) {
       throw new ApiError(
         409,
         "terminal_workspace_changed",

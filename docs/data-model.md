@@ -322,7 +322,7 @@ no projection fallback when that object is unavailable.
   early-open and alarm-driven scheduled-run creation.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
   `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
-- `compaction_jobs` and `compaction_checkpoints` store the raw LLM continuation
+- `compaction_checkpoints` stores the raw LLM continuation
   summary per execution principal and immutable run/sequence event, with its
   sequence boundary, resource-inventory revision, and deterministic template
   version. Current authorized totals are regenerated on apply and replay and
@@ -668,6 +668,25 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-21 — Four reader-less object tables dropped
+
+**What changed:** The SubstreamAgent table inventory loses `compaction_jobs`,
+`terminal_commands`, `_data_migrations`, and `_migration_command_receipts` in
+WorkstreamDO schema migration 11.
+
+**Why:** All four outlived the work they were built for — a claimable
+compaction job, a per-command Terminal receipt, and the retired authority
+cutover campaign's bookkeeping — and none had a reader or a writer. This
+document is the map people trust for what state exists, so a table listed here
+that nothing uses misroutes design work.
+
+**Considered and rejected:** Marking them deprecated in prose and leaving the
+tables. Prose does not stop a query; the drop does.
+
+**Consequences:** `compaction_checkpoints` and `terminal_tasks` are the sole
+authorities in their areas. `content_refs` remains listed and remains unwritten
+— `parts` holds a foreign key to it, so it is retired separately or not at all.
 
 ### 2026-08-20 — D1 product state is retired completely
 

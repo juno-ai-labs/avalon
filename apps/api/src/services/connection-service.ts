@@ -59,7 +59,6 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
   withWorkspaceRuntimeDatabase,
@@ -424,39 +423,12 @@ export class ConnectionService {
     if (Number(update.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
     }
-    // The policy is authoritative first. Invalidating any legacy terminal
-    // repository credential is a recoverable cross-authority effect.
-    try {
-      const authority = await readWorkstreamAuthorityControl(this.env);
-      if (authority.phase !== "durable_object_open") {
-        await workspaceRegionalDatabase(this.env).prepare(
-          `UPDATE workstream_terminal_repositories
-              SET read_token_expires_at = NULL, updated_at = ?
-            WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'
-          `,
-        ).bind(
-          updatedAt,
-          connection.workspace_id,
-          connection.id,
-        ).run();
-      }
-    } catch (error) {
-      // Cross-authority changes cannot share a transaction. Restore the
-      // previous connector policy only if our revision still owns the row; a
-      // concurrent newer policy wins and is never overwritten.
-      await this.env.DB.prepare(
-        `UPDATE connector_connections SET config_json = ?, updated_at = ?
-          WHERE id = ? AND workspace_id = ?
-            AND CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER) = ?`,
-      ).bind(
-        connection.config_json,
-        nowIso(),
-        connection.id,
-        connection.workspace_id,
-        nextRevision,
-      ).run();
-      throw error;
-    }
+    // No compensating write follows. The policy row above is the whole change:
+    // a Terminal repository selection is object-local provenance, not a copy
+    // of connector authority, and every bootstrap rechecks this WorkspaceDO
+    // row — so a narrowed policy takes effect on next use without a fan-out
+    // write to every SubstreamAgent. The rollback that used to live here
+    // existed only to undo this row when that fan-out failed.
     await this.recordConnectionAudit(
       connection.workspace_id,
       this.requireAuth().userId,
@@ -1600,14 +1572,6 @@ export class ConnectionService {
         `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
          credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
       ).bind(disabledAt, id).run();
-      const authority = await readWorkstreamAuthorityControl(this.env);
-      if (authority.phase !== "durable_object_open") {
-        await workspaceRegionalDatabase(this.env).prepare(
-          `UPDATE workstream_terminal_repositories
-              SET state = 'revoked', read_token_expires_at = NULL, updated_at = ?
-            WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
-        ).bind(disabledAt, connection.workspace_id, id).run();
-      }
       // Object-local Terminal repository selections are immutable provenance,
       // not a copy of connector authority. Every bootstrap rechecks this
       // WorkspaceDO row, so a disabled connection is unusable without a fanout

@@ -21,6 +21,7 @@ import {
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher as createRepositoryPublisher,
 } from "./repository";
+import { createTerminalPortFactory } from "./object-port";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
 import { createTerminalRepositorySelector } from "./repository-selection";
@@ -49,11 +50,13 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   });
 
+  const terminalPort = createTerminalPortFactory(env);
   const provider = createDaytonaTerminalProvider(configuration, undefined, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
   });
   const coordinator = new TerminalSandboxCoordinator(
     env.DB,
+    terminalPort,
     provider,
     undefined,
     (workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId),
@@ -77,10 +80,11 @@ export async function createAvalonTerminalPlugin(
   );
   const readGateway = createGitHubRestReadGateway(env);
   const runtime = createDaytonaTerminalRuntime(
+    terminalPort,
     env.DB,
     coordinator,
     provider,
-    createTerminalResourceBridge(env),
+    createTerminalResourceBridge(env, terminalPort),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env)),
     createTerminalRepositorySelector(
       env,

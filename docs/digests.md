@@ -381,10 +381,10 @@ settled. A destination the provider permanently rejects is moved to
 `needs_input` and surfaced on the digest rather than failing silently forever.
 Digest configuration, schedule rows, frozen targets, occurrence cursors, and
 per-target `last_delivered_delivery_id` fences all live in WorkspaceDO. The
-regional sender resolves current D1 member/user identity before sending; a
-future transport needing a multi-destination lease can use the object-local
-`external_delivery_attempts` ledger, but D1 is never a delivery-state projection
-or fallback.
+regional sender resolves current D1 member/user identity before sending. A
+future transport needing a multi-destination lease has to model one — the
+`external_delivery_attempts` ledger reserved for it was retired unused — and D1
+is never a delivery-state projection or fallback.
 
 #### The email
 
