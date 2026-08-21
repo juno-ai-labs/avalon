@@ -10,6 +10,7 @@ import {
   WORKSTREAM_OBJECT_SCHEMA_VERSION,
 } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { rewriteWorkstreamRuntimeSql } from "../src/durable-objects/workstream-runtime-sql";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -24,8 +25,6 @@ const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
 const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
 
 const EXPECTED_TABLES = [
-  "_data_migrations",
-  "_migration_command_receipts",
   "_runtime_statement_changes",
   "_sql_schema_migrations",
   "active_agent_compaction",
@@ -37,7 +36,6 @@ const EXPECTED_TABLES = [
   "block_dashboard_configuration_versions",
   "block_dashboard_user_preferences",
   "compaction_checkpoints",
-  "compaction_jobs",
   "content_refs",
   "description_refresh_state",
   "due_work",
@@ -65,7 +63,6 @@ const EXPECTED_TABLES = [
   "substream_agent_identity",
   "substreams",
   "suggested_actions",
-  "terminal_commands",
   "terminal_imported_resources",
   "terminal_publication_grants",
   "terminal_repository",
@@ -157,6 +154,55 @@ describe("the Workstream Durable Object relational schema", () => {
           expect(new TextEncoder().encode(statement).byteLength).toBeLessThanOrEqual(100_000);
         }
       }
+    } finally {
+      database.close();
+    }
+  });
+
+  it("retires the reader-less cutover tables on an object that already holds rows in them", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      // Stop one migration short of the drop, so the tables exist exactly as
+      // they do on a deployed object rather than being created and removed in
+      // the same bootstrap transaction a fresh object runs.
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 12),
+        component: "workstream",
+        workerVersionId: "worker-before",
+        now: 1_000,
+      });
+      const retired = ["_data_migrations", "_migration_command_receipts", "compaction_jobs", "terminal_commands"];
+      const present = () => database.prepare(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (?, ?, ?, ?) ORDER BY name`,
+      ).all(...retired).map((row) => String(row.name));
+      expect(present()).toEqual(retired);
+
+      // A drop of an empty table proves nothing about a populated one: SQLite
+      // refuses to drop a table another row still references, and these two
+      // carry the campaign and command rows a real object would hold.
+      database.prepare(
+        `INSERT INTO _data_migrations
+           (campaign_id, target_version, phase, status, attempts, updated_at)
+         VALUES ('campaign', 1, 'copy', 'running', 0, 1000)`,
+      ).run();
+      database.prepare(
+        `INSERT INTO _migration_command_receipts
+           (command_id, campaign_id, command_kind, request_hash, result_hash, result_code, completed_at)
+         VALUES ('command', 'campaign', 'copy', 'req', 'res', 'ok', 1000)`,
+      ).run();
+
+      applyWorkstreamObjectSchema(storage, "worker-after", 2_000);
+
+      expect(present()).toEqual([]);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(database.prepare(
+        "SELECT schema_version FROM object_versions WHERE id = 1",
+      ).get()).toEqual({ schema_version: WORKSTREAM_OBJECT_SCHEMA_VERSION });
+      // The surviving compaction authority is untouched by the sibling drop.
+      expect(database.prepare("SELECT COUNT(*) AS count FROM compaction_checkpoints").get())
+        .toEqual({ count: 0 });
     } finally {
       database.close();
     }

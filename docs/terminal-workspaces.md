@@ -286,7 +286,7 @@ workspace policy into WorkspaceDO:
   for the revisioned preview/confirm/read-back protocol and full history;
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state;
-- `terminal_tasks` and `terminal_commands` for durable command submission and one final result;
+- `terminal_tasks` for durable command submission and one final result;
 - `terminal_imported_resources` for generation-scoped deterministic imports;
 - `terminal_repository` for the exact GitHub repository, refs, and
   selected remote-access ceiling;
@@ -384,6 +384,24 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-21 — `terminal_commands` retired from the object schema
+
+**What changed:** WorkstreamDO schema migration 11 drops `terminal_commands`.
+`terminal_tasks` remains the sole durable record of a Terminal command.
+
+**Why:** The table was created during the D1 retirement for per-command
+receipts, but nothing ever wrote it — every field it declared (command hash,
+timeout, status, exit code, settle time) is already carried by the durable task
+row that the run-command path actually settles. Two plausible command
+authorities in one schema is an invitation to write the wrong one.
+
+**Considered and rejected:** Keeping it for a future split between "command"
+and "task". Nothing has needed that split, and a table kept for a hypothesis
+cannot be trusted to have the right columns when the hypothesis arrives.
+
+**Consequences:** A per-command receipt distinct from the task is now an
+explicit design change, not an empty table waiting to be filled.
 
 ### 2026-08-18 — Workspace Terminal policy moves into WorkspaceDO
 
