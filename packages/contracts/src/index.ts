@@ -1604,22 +1604,6 @@ export const WorkspaceWorkstreamStateEventSchema = z.object({
 });
 
 /**
- * One viewer's HyperSight panel preference, pushed on the workspace socket.
- *
- * Addressed to a single subscriber rather than broadcast: a panel being open is
- * an opinion held by one person about one work stream, and putting it on every
- * member's connection would be both noise and a small leak of what someone else
- * is looking at. It carries the value rather than a topic to go and refetch,
- * because the write that produced it already had it.
- */
-export const WorkspaceBlockDashboardPreferenceEventSchema = z.object({
-  type: z.literal("workspace_block_dashboard_preference"),
-  occurredAt: TimestampSchema,
-  workstreamId: IdSchema,
-  preference: BlockDashboardPreferenceSchema,
-}).strict();
-
-/**
  * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
  * Transcript, tools, presence, and streaming output intentionally remain on
  * the selected SubstreamAgent feed.
@@ -1692,8 +1676,6 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
-export type WorkspaceBlockDashboardPreferenceEvent =
-  z.infer<typeof WorkspaceBlockDashboardPreferenceEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
