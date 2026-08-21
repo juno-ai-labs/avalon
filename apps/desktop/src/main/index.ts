@@ -2465,6 +2465,17 @@ function registerIpc(): void {
     const parsed = parseResolvedTheme(theme);
     if (!parsed || parsed === windowTheme) return;
     windowTheme = parsed;
+    // A theme is a preference of the device, not of the window it was chosen in.
+    // Every window reads the same stored choice, but each holds its own document,
+    // so without this the Settings window repaints and the work stream behind it
+    // does not. The sender has already applied it.
+    //
+    // Relaying only on a *change* is what stops this echoing: a window told to
+    // follow re-applies and reports back, and that report matches `windowTheme`
+    // and stops here.
+    for (const window of avalonWindows()) {
+      if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
+    }
     await updateStoredApplicationSettings(userDataDirectory(), { windowTheme: parsed });
   });
   ipcMain.handle('session:get', async (event) => {

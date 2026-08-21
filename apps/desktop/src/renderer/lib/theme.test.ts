@@ -8,6 +8,7 @@ import {
   readThemeChoice,
   resolvedThemeFor,
   watchSystemAppearance,
+  watchThemeBroadcast,
   withFamily,
   withMode,
 } from './theme';
@@ -205,6 +206,72 @@ describe('theme', () => {
       media.change(true);
 
       expect(document.documentElement.dataset['theme']).toBe('terra-light');
+    });
+  });
+
+  /**
+   * A theme is a preference of the device, not of the window it was chosen in.
+   * Choosing it in the Settings window and having the work stream behind it stay
+   * as it was is the behaviour this removes.
+   */
+  describe('following a choice made in another window', () => {
+    function installBridge(): { fire: () => void; listeners: number } {
+      const state = { fire: () => undefined as void, listeners: 0 };
+      vi.stubGlobal('avalon', {
+        setWindowTheme: () => Promise.resolve(),
+        onThemeChanged: (listener: () => void) => {
+          state.listeners += 1;
+          state.fire = listener;
+          return () => { state.listeners -= 1; };
+        },
+      });
+      return state;
+    }
+
+    it('re-reads the stored choice rather than trusting the message', () => {
+      installMatchMedia(false);
+      const bridge = installBridge();
+      const stop = watchThemeBroadcast();
+
+      // What the other window wrote. This one has not applied it yet.
+      window.localStorage.setItem(
+        DEVICE_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'dark' } }),
+      );
+      bridge.fire();
+
+      expect(document.documentElement.dataset['theme']).toBe('air-dark');
+      expect(document.documentElement.dataset['themeFamily']).toBe('air');
+      expect(document.documentElement.dataset['themeMode']).toBe('dark');
+      stop();
+    });
+
+    // Re-reading rather than stamping the payload is what keeps a window that is
+    // following the Mac still following it.
+    it('re-resolves the system mode against this window’s own Mac', () => {
+      installMatchMedia(true);
+      const bridge = installBridge();
+      const stop = watchThemeBroadcast();
+
+      window.localStorage.setItem(
+        DEVICE_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'system' } }),
+      );
+      bridge.fire();
+
+      expect(document.documentElement.dataset['theme']).toBe('air-dark');
+      expect(document.documentElement.dataset['themeMode']).toBe('system');
+      stop();
+    });
+
+    it('detaches, and does nothing at all without the desktop bridge', () => {
+      installMatchMedia(false);
+      const bridge = installBridge();
+      watchThemeBroadcast()();
+      expect(bridge.listeners).toBe(0);
+
+      vi.stubGlobal('avalon', undefined);
+      expect(() => watchThemeBroadcast()()).not.toThrow();
     });
   });
 

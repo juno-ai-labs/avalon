@@ -398,6 +398,19 @@ an account one: an appearance belongs to the screen it is being looked at, and a
 person who works on a bright laptop and a dark desktop should not have to keep
 changing it back.
 
+**Every open window follows.** A theme is a preference of the device, not of the
+window it was chosen in: choosing one in the Settings window and having the work
+stream behind it stay as it was is not a preview, it is a bug. The renderer
+reports the appearance it is drawing over `theme:set-window`, and the main
+process relays `theme:changed` to every *other* window, which re-reads the
+stored choice and re-applies. Relaying only on a change is what stops it
+echoing — a window told to follow reports back, and that report matches what
+main already holds and stops there.
+
+The payload names the appearance, but a listener deliberately ignores it and
+re-reads the store instead. The store holds both axes, so re-resolving locally
+keeps a window that is following `system` still following it.
+
 It is stored as `{ family, mode }`. A record written by an earlier build holds a
 flat name instead — `airy`, `dark` — and `parseThemeChoice` migrates it, because
 a stored preference outlives the shape it was written in and a rename is not a
@@ -464,6 +477,8 @@ next report.
 - **Every family brings both appearances, and no appearance belongs to two.**
   A family missing one half is a family the mode row cannot switch — the row
   would be there with a position that does nothing.
+- **A theme change reaches every window.** One preference, one appearance
+  everywhere; a window that kept its own would make the Settings preview a lie.
 - **The family never follows the Mac.** Only the lighting does. Switching
   somebody out of the design they chose, at sunset, is the bug the flat list
   made easy.
@@ -562,7 +577,34 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — The System swatch shows both halves, and the preview shows who speaks where
+### 2026-08-20 — Choosing a theme repaints every window, not just the one you chose it in
+
+**What changed:** the main process relays a theme change to every other open
+window, and each re-reads the stored choice and re-applies it.
+
+**Why:** Settings can open as a window of its own. Each window is a separate
+renderer with its own document, and `applyTheme` stamps `data-theme` on the
+document it is called in — so choosing Air in the Settings window repainted the
+Settings window and left the work stream behind it on Terra. The stored
+preference was already correct and shared; what was missing was any reason for
+the other windows to look at it again.
+
+**Why the payload is ignored.** The relay carries the appearance now in force,
+and a listener deliberately does not stamp it: it re-reads the store. The store
+holds both axes, so a window that is following `system` re-resolves against its
+own `matchMedia` and keeps following, where stamping the appearance would
+silently pin it.
+
+**Why relaying only on a change matters.** Every window that follows re-applies
+and reports back over the same channel. That report matches the appearance main
+already holds, so it stops there rather than fanning out again — the guard that
+was already in the handler for a different reason is what keeps this from
+echoing between windows.
+
+Verified with two real windows: Terra in both, Air chosen in Settings, both at
+`air-dark` a moment later.
+
+8-20 — The System swatch shows both halves, and the preview shows who speaks where
 
 **What changed:** three things in the Settings preview, and one name.
 
