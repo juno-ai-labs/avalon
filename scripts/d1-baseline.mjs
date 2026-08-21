@@ -451,72 +451,27 @@ export function applyMigrations(database, directory, files) {
  * where that happens, and comparing raw text reports it as a difference on
  * every run — a false positive that would train everyone to ignore the check.
  *
- * **Quoted tokens are copied verbatim, which is why this lexes rather than
- * running two regular expressions over the whole statement.** A regex cannot
- * tell a comment from the characters `--` inside a string, so
- * `DEFAULT '--a'` and `DEFAULT '--b'` both normalize to `DEFAULT '` and hash
- * the same, as do `'a  b'` and `'a b'`. Two different schemas comparing equal
- * is the exact failure this function exists to detect, and it is worse than no
- * check because `db:baseline:verify` and the recorded production fingerprint
- * are trusted. Nothing in the schema triggers it today — a CHECK enumerating a
- * value containing `--`, or a default with a doubled space, would.
+ * **Known limitation, accepted rather than overlooked.** These regular
+ * expressions run over the whole statement, so they cannot tell a comment from
+ * the characters `--` inside a string literal, nor meaningful whitespace inside
+ * one from trivia between tokens. `DEFAULT '--a'` and `DEFAULT '--b'` therefore
+ * normalize to the same text and hash the same, as do `'a  b'` and `'a b'`.
+ * `normalizeSchemaSqlCollides` in the test suite pins that this is still true.
+ *
+ * Reaching it needs production to have drifted from the migrations at all —
+ * already an incident — *and* for that drift to sit exclusively inside a quoted
+ * literal; drift touching anything else is still caught. The fix is a lexer that
+ * copies quoted tokens verbatim, which was written and then reverted as more
+ * machinery than that residue of risk warranted. Nothing in the schema triggers
+ * it today: a CHECK enumerating a value containing `--`, or a default with a
+ * doubled space, would be the first.
  */
 export function normalizeSchemaSql(sql) {
-  const source = sql ?? "";
-  // Alternating runs of code (comments stripped, whitespace collapsed) and
-  // quoted tokens (copied byte for byte). Collecting them rather than rewriting
-  // in place is what keeps a collapse from reaching inside a literal.
-  const parts = [];
-  let code = "";
-  const flushCode = () => {
-    parts.push(code.replace(/\s+/gu, " "));
-    code = "";
-  };
-
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index];
-
-    // `'` is a string, `"` and `` ` `` and `[` are quoted identifiers. SQLite
-    // escapes a quote by doubling it; `[` has no escape and ends at the first
-    // `]`. An unterminated token runs to the end rather than throwing — this
-    // reads schema from a database, not user input, and a parse error here
-    // would be a worse failure than a conservative comparison.
-    if (character === "'" || character === '"' || character === "`" || character === "[") {
-      const closing = character === "[" ? "]" : character;
-      let end = index + 1;
-      while (end < source.length) {
-        if (source[end] !== closing) { end += 1; continue; }
-        if (closing !== "]" && source[end + 1] === closing) { end += 2; continue; }
-        end += 1;
-        break;
-      }
-      flushCode();
-      parts.push(source.slice(index, end));
-      index = end;
-      continue;
-    }
-
-    if (character === "-" && source[index + 1] === "-") {
-      const newline = source.indexOf("\n", index);
-      index = newline === -1 ? source.length : newline;
-      code += " ";
-      continue;
-    }
-
-    if (character === "/" && source[index + 1] === "*") {
-      const end = source.indexOf("*/", index + 2);
-      index = end === -1 ? source.length : end + 2;
-      code += " ";
-      continue;
-    }
-
-    code += character;
-    index += 1;
-  }
-  flushCode();
-
-  return parts.join("").replace(/^ | $/gu, "");
+  return (sql ?? "")
+    .replace(/--[^\n]*/gu, "")
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 /**

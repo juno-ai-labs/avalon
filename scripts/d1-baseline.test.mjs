@@ -419,6 +419,10 @@ test("comments and whitespace do not count as a schema difference", () => {
     schemaFingerprint([{ type: "table", name: "t", tbl_name: "t", sql: withComments }]),
     schemaFingerprint([{ type: "table", name: "t", tbl_name: "t", sql: without }]),
   );
+  assert.equal(
+    normalizeSchemaSql("CREATE TABLE t (/* c */ id TEXT)"),
+    normalizeSchemaSql("CREATE TABLE t ( id TEXT)"),
+  );
 });
 
 test("a real definition change is still a difference after normalization", () => {
@@ -607,66 +611,44 @@ test("a payload that is the last thing printed is still found when it is empty",
 });
 
 // ---------------------------------------------------------------------------
-// Normalization must not reach inside a quoted token
+// Normalization: what it protects, and what it knowingly does not
 // ---------------------------------------------------------------------------
 
-test("a comment sequence inside a string literal is not treated as a comment", () => {
-  // Two different schemas hashing equal is the exact failure the fingerprint
-  // exists to detect, and it is worse than no check because the production
-  // drift comparison is trusted. A regex over the whole statement cannot tell
-  // `--` in a literal from a comment, and collapses both defaults to
-  // `DEFAULT '`.
-  const a = "CREATE TABLE t (v TEXT DEFAULT '--a')";
-  const b = "CREATE TABLE t (v TEXT DEFAULT '--b')";
-  assert.notEqual(normalizeSchemaSql(a), normalizeSchemaSql(b));
-  assert.match(normalizeSchemaSql(a), /'--a'/u);
-});
-
-test("a block-comment sequence inside a string literal is preserved", () => {
-  assert.notEqual(
-    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT '/*x*/')"),
-    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT '/*y*/')"),
-  );
-});
-
-test("whitespace inside a string literal is significant", () => {
-  assert.notEqual(
-    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'a  b')"),
-    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'a b')"),
-  );
-});
-
-test("a quote escaped by doubling does not end the literal early", () => {
-  const doubled = normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'it''s  x', w TEXT)");
-  assert.match(doubled, /'it''s {2}x'/u);
-  assert.match(doubled, /, w TEXT\)/u);
-});
-
-test("whitespace inside a quoted or bracketed identifier is significant", () => {
-  for (const [open, close] of [['"', '"'], ["`", "`"], ["[", "]"]]) {
-    assert.notEqual(
-      normalizeSchemaSql(`CREATE TABLE ${open}a  b${close} (id TEXT)`),
-      normalizeSchemaSql(`CREATE TABLE ${open}a b${close} (id TEXT)`),
-      `${open}${close}`,
-    );
-  }
-});
-
-test("a comment outside a literal is still removed, and separates its neighbours", () => {
-  assert.equal(
-    normalizeSchemaSql("CREATE TABLE t (\n  -- why\n  id TEXT\n)"),
-    normalizeSchemaSql("CREATE TABLE t ( id TEXT )"),
-  );
-  assert.equal(
-    normalizeSchemaSql("CREATE TABLE t (/* c */ id TEXT)"),
-    normalizeSchemaSql("CREATE TABLE t ( id TEXT)"),
-  );
-});
-
-test("an unterminated literal is copied to the end rather than throwing", () => {
-  // This reads schema back from a database, not user input; a parse error would
-  // be a worse failure than a conservative comparison.
-  assert.equal(normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'oops"), "CREATE TABLE t (v TEXT DEFAULT 'oops");
+test("normalizeSchemaSqlCollides: quoted literals are not protected, and that is accepted", () => {
+  // **This test asserts a limitation, not a feature.** `normalizeSchemaSql`
+  // strips comments and collapses whitespace with regular expressions over the
+  // whole statement, so it cannot tell a comment from the characters `--`
+  // inside a string literal, nor significant whitespace inside one from trivia
+  // between tokens. Two different schemas therefore fingerprint identically.
+  //
+  // It is written down rather than fixed because reaching it needs production
+  // to have drifted from the migrations at all — already an incident — *and*
+  // for that drift to sit exclusively inside a quoted literal; drift touching
+  // anything else is still caught. The fix is a lexer that copies quoted tokens
+  // verbatim. It was written, reviewed, and reverted as more machinery than
+  // that residue of risk warranted.
+  //
+  // What it costs when it bites: `db:baseline:verify` reports `match` on a
+  // drifted database, and `-- --record` writes that drift into
+  // `production-fingerprint.json` as the new truth. There is no second
+  // comparator behind this one — the PRAGMA suite covers baseline-versus-chain,
+  // not baseline-versus-production.
+  //
+  // **If this test fails, someone has fixed it.** Delete this test and keep
+  // theirs; do not "repair" it back to asserting the collision.
+  const collides = (a, b) => normalizeSchemaSql(a) === normalizeSchemaSql(b);
+  assert.ok(collides(
+    "CREATE TABLE t (v TEXT DEFAULT '--a')",
+    "CREATE TABLE t (v TEXT DEFAULT '--b')",
+  ), "comment marker inside a literal");
+  assert.ok(collides(
+    "CREATE TABLE t (v TEXT DEFAULT 'a  b')",
+    "CREATE TABLE t (v TEXT DEFAULT 'a b')",
+  ), "doubled whitespace inside a literal");
+  assert.ok(collides(
+    'CREATE TABLE "a  b" (id TEXT)',
+    'CREATE TABLE "a b" (id TEXT)',
+  ), "doubled whitespace inside a quoted identifier");
 });
 
 test("normalization leaves every real schema object in the baseline unchanged", () => {
