@@ -47,11 +47,12 @@ the servers cannot drop them on the flip day.
 
 ## 4. Domains
 
-`rallywith.ai` is already registered and serves
-`migrations.internal.rallywith.ai` ([`durable-object-migration-tracking.md`](../../durable-object-migration-tracking.md));
-`withrally.ai` was bought for the public rebrand (Alex, 2026-08-21) and does
-not yet appear in the tree. The `with-avalon.com` estate, by occurrence
-count:
+`rallywith.ai` — the one Rally domain the company owns (confirmed by Alex
+and Adam, 2026-08-21) — is already registered and serves
+`migrations.internal.rallywith.ai`
+([`durable-object-migration-tracking.md`](../../durable-object-migration-tracking.md));
+its public use does not yet appear in the tree. The `with-avalon.com`
+estate, by occurrence count:
 
 | Host | Role |
 | --- | --- |

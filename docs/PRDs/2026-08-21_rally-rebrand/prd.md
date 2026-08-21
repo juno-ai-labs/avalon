@@ -15,7 +15,7 @@
 The product currently named Avalon becomes **Rally**. A user sees Rally in the
 menu bar, the Dock, the public site, exported cards, digest emails, and in how
 the agent refers to itself; new work-stream links and automation email
-addresses are minted under the `withrally.ai` domain; contributors work in a
+addresses are minted under the `rallywith.ai` domain; contributors work in a
 repository named `rally` with `@rally/*` packages and `RALLY_*` environment
 variables. New brand artwork is being produced separately and lands through
 the existing icon pipeline.
@@ -32,9 +32,8 @@ Rally in one coordinated release, then rename the contributor surface — while
 ## Motivation
 
 The company has decided to rebrand: the Rally name is chosen, the
-`withrally.ai` domain is bought for the public product, `rallywith.ai`
-already serves internal tooling (`migrations.internal.rallywith.ai`), and a
-logo is in production. What makes
+`rallywith.ai` domain is owned and already serves internal tooling
+(`migrations.internal.rallywith.ai`), and a logo is in production. What makes
 this worth doing *now* rather than at leisure is that the cost of the rename
 grows with every day of operation. Each new work stream mints a permanent
 `with-avalon.com` link and email address; each digest, invitation, and Slack
@@ -55,11 +54,11 @@ to the pile this PRD has to move.
    menu bar, About panel, public site, exported message cards, digest and
    invitation emails, and the agent's own self-references in every prompt.
 2. Every artifact minted from the flip onward carries the new domain: new
-   work-stream links at `withrally.ai`, new automation addresses under the
+   work-stream links at `rallywith.ai`, new automation addresses under the
    Rally email domain, and the desktop update feed and downloads under Rally
    hosts.
 3. Every artifact minted before the flip keeps working, indefinitely:
-   `with-avalon.com` links redirect to their `withrally.ai` equivalents, old
+   `with-avalon.com` links redirect to their `rallywith.ai` equivalents, old
    automation addresses keep delivering to the same work streams, `avalon://`
    deep links keep opening the app, and an installed Avalon build auto-updates
    into Rally with its login, drafts, and settings intact.
@@ -138,10 +137,10 @@ never appears in a user-held link ([`security.md`](../../security.md));
 message cards and their footers say Rally.
 
 **Links.** New work streams get
-`https://withrally.ai/app/workstreams/<uuid>` as the canonical link
+`https://rallywith.ai/app/workstreams/<uuid>` as the canonical link
 ([`workstream-links.md`](../../workstream-links.md) updated in the same
 change). Any `with-avalon.com` URL — app links, site pages, download links —
-answers with a permanent redirect to the same path on `withrally.ai`, in both
+answers with a permanent redirect to the same path on `rallywith.ai`, in both
 regions, from the flip onward.
 
 **Email.** New work streams and automations are announced with addresses
@@ -172,7 +171,7 @@ behavior). Old wire spellings persist inside already-stored transcripts as
 prose, carrying no authority.
 
 **Public site.** Copy, metadata, OpenGraph, and download links say Rally and
-point at `withrally.ai`. The old apex serves redirects, not content.
+point at `rallywith.ai`. The old apex serves redirects, not content.
 
 **Wire protocol.** The renderer sends `x-rally-*` headers, offers the
 `rally.ticket.v1` sentinel in the socket handshake, and serves itself from
@@ -221,17 +220,17 @@ None yet.
 
 ## Key design decisions
 
-1. **The public domain is `withrally.ai`; `rallywith.ai` stays internal.**
-   `withrally.ai` was bought for the rebrand and mirrors the existing
-   `with-avalon.com` naming, so the subdomain map carries over one-for-one
-   (`api.`, `eu.api.`, `automation.`, `downloads.`, `notion.`, `github.`,
-   `slack.`, `linear.`, `www.`). `rallywith.ai`, which already serves
-   `migrations.internal.rallywith.ai`, keeps that role: it is Rally-branded,
-   operator-only, and moving it buys nothing. Alternative rejected:
-   consolidating everything onto one of the two domains — the public estate
-   should not share an apex with internal operator surfaces it would
-   otherwise have to carve exceptions around, and the tracker is already
-   live where it is.
+1. **The public domain is `rallywith.ai` — the one Rally domain the company
+   owns.** It is registered, already carries the migration tracker at
+   `migrations.internal.rallywith.ai`, and the subdomain map carries over
+   from `with-avalon.com` one-for-one (`api.`, `eu.api.`, `automation.`,
+   `downloads.`, `notion.`, `github.`, `slack.`, `linear.`, `www.`).
+   Operator surfaces stay under the `internal.` subtree, which keeps them
+   separated from the public estate without a second registration; the
+   tracker does not move. Alternative rejected: buying a second domain to
+   split public from internal — a subdomain boundary does the same job, and
+   an earlier draft of this PRD specced exactly that split against a
+   `withrally.ai` domain the company turned out not to own.
 2. **Old-name acceptance is indefinite for user-held artifacts, bounded for
    wire identifiers.** Links, email addresses, and deep-link schemes were
    handed to users with no expiry, so their old forms work forever (non-goal
@@ -286,12 +285,12 @@ None yet.
 
 ## Regional impact
 
-Both regions move together. Each regional Worker gains its `withrally.ai`
+Both regions move together. Each regional Worker gains its `rallywith.ai`
 custom domains alongside the existing ones during phase 1; identity, ticket
 issuance, and socket admission behave identically on either host. The Notion
 ingress ([`notion-ingress.md`](../../notion-ingress.md)) is the delicate one:
 one public callback/webhook host serves both regions with region-prefixed
-OAuth state, so `notion.withrally.ai` must be registered with Notion and
+OAuth state, so `notion.rallywith.ai` must be registered with Notion and
 routed through the same Global route directory before the old host stops
 being advertised. Nothing about where data comes to rest changes; no new
 cross-region flow is introduced.
@@ -334,14 +333,14 @@ Each registration changes outside the repository; sequence per phase 1/2, and
 nothing old is removed until the phase-1 generation counters and provider
 webhook logs show it idle.
 
-- **Cloudflare** — `withrally.ai` zone: custom domains for both API Workers,
+- **Cloudflare** — `rallywith.ai` zone: custom domains for both API Workers,
   the site, `downloads.`, and provider ingress hosts; redirect rules on the
   `with-avalon.com` zone; the site Worker renamed, DO-owning Workers kept by
   name (decision 4).
 - **Resend** — verify the Rally automation domain for sending; keep the old
   domain verified and receiving indefinitely (decision 2).
 - **Slack, GitHub, Linear** (`config/provider-apps/*.json`) — display names,
-  branding, and redirect/callback URLs move to `{slack,github,linear}.withrally.ai`;
+  branding, and redirect/callback URLs move to `{slack,github,linear}.rallywith.ai`;
   add-before-remove so in-flight OAuth completes. The GitHub App rides the
   repository rename; existing installations follow automatically.
 - **Notion** — callback and webhook host re-registration per Regional impact;
@@ -406,7 +405,7 @@ predecessor, and sequenced so every state the fleet can observe is valid.
 - An installed Avalon build auto-updates to the Rally build and comes back
   signed in, with drafts, pins, and theme intact, app named Rally in Dock and
   menu bar; an `avalon://` auth link completes against the updated app.
-- A new work stream mints a `withrally.ai` link and Rally-domain address; the
+- A new work stream mints a `rallywith.ai` link and Rally-domain address; the
   agent's messages, digest emails, and exported cards say Rally; screenshots
   of every renamed screen captured per
   [`dev-environment.md`](../../dev-environment.md#driving-and-screenshotting-it).
@@ -423,8 +422,9 @@ predecessor, and sequenced so every state the fleet can observe is valid.
 ## Open questions
 
 1. **Is the "Rally" name trademark-cleared?** The domain is settled
-   (`withrally.ai`, bought); the name itself still wants a clearance check
-   before phase 2 makes it public. Blocks phase 2, not phase 0–1 groundwork.
+   (`rallywith.ai`, owned and in use); the name itself still wants a
+   clearance check before phase 2 makes it public. Blocks phase 2, not
+   phase 0–1 groundwork.
 2. **New repository name — `rally`?** Assumed here. Blocks phase 3 only.
 3. **Do the Slack directory listing or Notion public-integration re-reviews
    gate the callback/branding changes, and on what timeline?** May force
