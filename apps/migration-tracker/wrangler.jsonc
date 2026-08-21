@@ -8,18 +8,25 @@
   "vars": {
     "APP_ENV": "production",
     "APP_VERSION": "0.1.0",
-    // Cloudflare Access configuration. All three are required together; the
-    // Worker refuses every request while any of them is unset rather than
-    // serving the fleet's schema state unauthenticated. `ACCESS_APPLICATION_AUD`
-    // is the Access application's AUD tag, which is an identifier rather than a
-    // credential — the signature is what authorizes, and it is verified against
-    // the team's JWKS on every request.
-    // Set when Zero Trust Access is enabled on the account and a team name is
-    // chosen; it is an account setting, not derived from the web domain. Empty
-    // until then, which makes the Worker refuse every request rather than look
-    // configured while pointing at a team that does not exist.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_APPLICATION_AUD": "",
+    // Cloudflare Access. Both are required together; the Worker refuses every
+    // request while either is unset, rather than serving the fleet's schema
+    // state unauthenticated. Neither is a credential: the team domain is where
+    // the signing keys are published, and the AUD tag is an identifier for one
+    // Access application. The signature over the assertion is what proves
+    // Access spoke, and it is verified against the team's JWKS on every request.
+    //
+    // Who may read the site is not here. That is the Access application's
+    // policy, which is the only place it is written — changing it needs no
+    // deploy.
+    //
+    // The team domain is an account setting, not derived from the web domain,
+    // and does not follow a rebrand of the site.
+    "ACCESS_TEAM_DOMAIN": "juno-labs.cloudflareaccess.com",
+    // The Access application's AUD tag, from its Overview tab. Empty until the
+    // application exists, which keeps the Worker refusing rather than looking
+    // configured while accepting assertions minted for any other application in
+    // the same Zero Trust organization.
+    "ACCESS_APPLICATION_AUD": "3be03aa107462e6a4f7dce1320cd32d15acabfb7e9ad3d64926965a81fab07e4",
     "CLOUDFLARE_ACCOUNT_ID": ""
   },
   "routes": [

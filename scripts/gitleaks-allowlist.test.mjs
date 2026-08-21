@@ -56,7 +56,7 @@ test("every allowlisted pattern is one this file has reasoned about", () => {
   // adding one here is deliberately not optional.
   assert.equal(
     allowlistRegexes(config).length,
-    1,
+    2,
     "a new .gitleaks.toml allowlist pattern needs a test in this file proving what it still rejects",
   );
 });
@@ -87,4 +87,31 @@ test("the placeholder PEM exception admits only a short alphabetic body", () => 
   // enough to fit the ceiling passes, because at 39 characters and no digits it
   // carries no key material — it is a header fragment, not a key.
   assert.match(String.raw`-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----`, allowlist);
+});
+
+test("the Access audience exception admits exactly one reviewed identifier", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => /^\^[0-9a-f]{64}\$$/u.test(pattern));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+
+  // What it is for: the migration tracker's Cloudflare Access Application
+  // Audience tag, which the default `generic-api-key` rule flags because the
+  // variable name contains `access` and the value is 64 high-entropy
+  // characters. An AUD tag is an identifier — the `aud` claim of every
+  // assertion Access mints for that application — and holding it grants
+  // nothing; minting an assertion the Worker accepts needs the team's signing
+  // key.
+  const reviewed = "3be03aa107462e6a4f7dce1320cd32d15acabfb7e9ad3d64926965a81fab07e4";
+  assert.match(reviewed, allowlist);
+
+  // The bound the comment beside it claims: pinned to that one literal, not to
+  // its shape. This is what stops the exception from becoming "any hex-encoded
+  // key anywhere in the repository".
+  assert.doesNotMatch("8dd38792dd9ed8b1320addd09502d0ff14799ed0af143900e493b493a5240bac", allowlist);
+  assert.doesNotMatch(`${reviewed.slice(0, 63)}0`, allowlist);
+  // Anchored at both ends, so it cannot be reached by embedding the reviewed
+  // value inside a longer secret.
+  assert.doesNotMatch(`${reviewed}a`, allowlist);
+  assert.doesNotMatch(`a${reviewed}`, allowlist);
+  assert.doesNotMatch(reviewed.slice(0, 63), allowlist);
 });
