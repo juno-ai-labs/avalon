@@ -511,17 +511,30 @@ The Worker still fails closed. Until both `ACCESS_TEAM_DOMAIN` and
 deployment is unreachable rather than open.
 
 **3. A read-only Cloudflare API token.** The hourly sweep enumerates Durable
-Object namespaces and object IDs. Set `CLOUDFLARE_ACCOUNT_ID` in
-`wrangler.jsonc` and the token as a secret:
+Object namespaces and object IDs. `CLOUDFLARE_ACCOUNT_ID` is set in
+`wrangler.jsonc` — an identifier, not a credential — and the token is a secret:
 
 ```text
 pnpm --filter @avalon/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
 ```
 
-Grant it **Account · Workers Scripts · Read** and nothing else. Without it the
-site still works and reports still arrive; the sweep logs
-`migration_inventory_sweep_skipped` and no object is ever discovered before it
-first wakes.
+Grant it **Account · Workers Scripts · Read** and nothing else. Note that the
+resulting token can still *list* zones and queues: those endpoints answer any
+account-scoped token, which is Cloudflare's behaviour rather than a wider grant.
+It cannot write anything.
+
+Run that command signed in as yourself. It resolves the account through
+`User · Memberships · Read`, which the deployment token deliberately does not
+carry, so authenticating it with `CLOUDFLARE_API_TOKEN` from `.env.local` fails
+with "Unable to get membership roles" — which reads like a problem with the
+secret rather than with the credential being used to set it.
+
+**Both halves are required.** With either missing the sweep logs
+`migration_inventory_sweep_skipped` and returns, so the tracker only ever learns
+about an object that has woken and reported — and the site cannot distinguish a
+class with no objects from one whose objects are all dormant. That is the exact
+blind spot the sweep exists to close, so a tracker without it is showing far less
+than it appears to.
 
 Before deploying a change, run:
 
