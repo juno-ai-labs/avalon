@@ -1767,6 +1767,106 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  async function openWorkspaceSocket(
+    stub: DurableObjectStub<WorkspaceDO>,
+    ticketId: string,
+    sessionId: string = SESSION_ID,
+    userId: string = USER_ID,
+  ): Promise<WebSocket> {
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-placement-affinity": "wnam",
+        "x-avalon-user-id": userId,
+        "x-avalon-session-id": sessionId,
+        "x-avalon-socket-ticket-id": ticketId,
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    if (response.status !== 101) {
+      throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+    }
+    const socket = response.webSocket!;
+    socket.accept();
+    const subscribed = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+    await subscribed;
+    return socket;
+  }
+
+  it("closes a listening workspace socket whose session was revoked", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000501");
+    try {
+      const closed = nextClose(socket);
+      // The socket says nothing from here on, which is what this object asks a
+      // window to do: every later authorization decision has to come from the
+      // sweep rather than from an inbound frame.
+      await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+        .bind("2026-08-21T00:00:00.000Z", SESSION_ID).run();
+      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
+      const event = await closed;
+      expect(event.code).toBe(1008);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("keeps publishing to a workspace socket whose session is still valid", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000502");
+    try {
+      const delivered = nextMessage(socket);
+      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
+      expect(JSON.parse(String((await delivered).data))).toMatchObject({
+        type: "workspace_sync",
+        reason: "change",
+        topics: ["automations"],
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("sweeps a suspended member out immediately when a retracting topic is published", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000503");
+    try {
+      // Spend the interval first, so what follows cannot be the timed sweep.
+      const first = nextMessage(socket);
+      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
+      await first;
+
+      await env.DB.prepare(
+        `UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?`,
+      ).bind(WORKSPACE_ID, USER_ID).run();
+
+      // Inside the interval and with no retracting topic, the object does not
+      // re-ask: this payload still arrives. That is the cost the bound accepts.
+      const second = nextMessage(socket);
+      await stub.publishSync(["notes"], WORKSPACE_ID, "wnam");
+      expect(JSON.parse(String((await second).data))).toMatchObject({ topics: ["notes"] });
+
+      // `member_directory` is a retraction, so it sweeps whatever the interval
+      // says, and the payload that announced it is not delivered here.
+      const closed = nextClose(socket);
+      await stub.publishSync(["member_directory"], WORKSPACE_ID, "wnam");
+      expect((await closed).code).toBe(1008);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
     await seedOpenAuthority();
     const outsiderId = "00000000-0000-7000-8000-000000000401";

@@ -2,6 +2,7 @@ import {
   IdSchema,
   UserIdSchema,
   WORKSPACE_SYNC_TOPICS,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
@@ -305,6 +306,30 @@ const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const CONNECTOR_EVENT_BODY_RETENTION_MS = 396 * 24 * 60 * 60_000;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const PRODUCT_ALARM_BATCH = 6;
+/**
+ * How stale this object lets its picture of who may listen get.
+ *
+ * A workspace socket is authorized when it connects and then again only when
+ * its client sends something. A window that sits and listens — which is what
+ * this object asks every window to do — says nothing for hours, so without a
+ * bound its authorization is as old as the connection. The sweep is one
+ * indexed query over only the sessions currently connected and is gated on a
+ * payload actually going out, so a quiet workspace costs nothing and a busy one
+ * pays it twice a minute.
+ */
+const AUTHORIZATION_REVALIDATE_MS = 30_000;
+/**
+ * Sessions per sweep query. D1 permits 100 bound parameters per statement and
+ * the fixed predicate takes four, so batches stay well inside it rather than
+ * failing the whole sweep on a workspace with many windows open.
+ */
+const AUTHORIZATION_SWEEP_BATCH = 48;
+/**
+ * Topics whose publication can mean somebody just lost access to this
+ * workspace. Publishing one sweeps immediately rather than waiting out the
+ * interval: for a retraction the sweep is enforcement, not an optimization.
+ */
+const ACCESS_RETRACTING_TOPICS: ReadonlySet<WorkspaceSyncTopic> = new Set(["member_directory"]);
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -589,6 +614,32 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   }
 }
 
+/**
+ * Stop sending to a socket, then close it.
+ *
+ * The attachment is marked unsubscribed first because that is the filter both
+ * publish loops apply. Closing alone would leave the guarantee to the runtime —
+ * `send` on a closed socket throws, and both loops catch that throw — so a
+ * disconnected listener would be spared the next payload by accident rather
+ * than on purpose. On an access path that is the wrong place for the rule to
+ * live.
+ */
+function disconnect(socket: WebSocket, code: number, reason: string): void {
+  const attachment = readAttachment(socket);
+  if (attachment) {
+    try {
+      socket.serializeAttachment({ ...attachment, subscribed: false } satisfies WorkspaceSocketAttachment);
+    } catch {
+      // An unreadable attachment already fails both publish filters.
+    }
+  }
+  try {
+    socket.close(code, reason);
+  } catch {
+    // Already closing or closed; the runtime owns the rest of the teardown.
+  }
+}
+
 function epoch(value: string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Date.parse(value);
@@ -802,6 +853,12 @@ const MIGRATION_COMPONENT = "workspace_do";
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
+  /**
+   * When the connected set was last revalidated, in memory on purpose: a
+   * hibernation eviction resets it to zero, and the only consequence is that
+   * the next publication sweeps. The failure direction is toward asking again.
+   */
+  private lastRevalidatedAt = 0;
 
   constructor(
     state: DurableObjectState,
@@ -1065,6 +1122,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       reason: "change",
     });
     const payload = JSON.stringify(event);
+    // Before the send, not after: the people this event may have excluded must
+    // not receive it. They are disconnected instead, and their client stops
+    // rather than refetching a workspace it may no longer read.
+    await this.revalidateBeforePublish(ordered.some((topic) => ACCESS_RETRACTING_TOPICS.has(topic)));
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -2770,6 +2831,10 @@ export class WorkspaceDO extends DurableObject<Env> {
   /** Push the current row; missed intermediate rows are intentionally irrelevant. */
   private async publishWorkstreamState(workstreamId: string, targetUserId?: string): Promise<void> {
     const occurredAt = new Date().toISOString();
+    // Work-stream rows carry titles, previews and unread counts, so this path
+    // needs the same bound as the sync one. It has no topic to judge, so it is
+    // always the interval-gated form.
+    await this.revalidateBeforePublish(false);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -2982,6 +3047,144 @@ export class WorkspaceDO extends DurableObject<Env> {
       );
       return inserted.toArray().length === 1;
     });
+  }
+
+  /**
+   * Revalidate before publishing, at most once per interval unless certain.
+   *
+   * `certain` is for a payload that names a topic which can retract access.
+   * There the sweep is the enforcement of that retraction, so it runs whatever
+   * the interval says. Everything else is the backstop for the retractions
+   * nothing publishes at all — a session revoked at sign-out, a session that
+   * simply expired, a membership going inactive — which is why the bound
+   * exists rather than trusting an event to arrive.
+   */
+  private async revalidateBeforePublish(certain: boolean): Promise<void> {
+    if (!certain && Date.now() - this.lastRevalidatedAt < AUTHORIZATION_REVALIDATE_MS) return;
+    await this.evictListenersWhoMayNoLongerListen(certain);
+  }
+
+  /**
+   * Disconnect every socket whose session or membership no longer permits it.
+   *
+   * This object pushes workspace and work-stream metadata to sockets that have
+   * said nothing since they connected, so without this a person whose session
+   * was revoked or whose membership ended keeps receiving both until they close
+   * the window. The rule applied is exactly the one the connection itself was
+   * checked against in {@link sessionAuth}, asked of the whole connected set in
+   * batched queries rather than one per socket.
+   *
+   * `certain` says whether this sweep is resolving a retraction that just
+   * happened, and it decides only what to do when the query itself fails, which
+   * is the one case where the object does not know who may stay.
+   */
+  private async evictListenersWhoMayNoLongerListen(certain: boolean): Promise<boolean> {
+    const sockets = this.state.getWebSockets();
+    const bySession = new Map<string, { userId: string; sockets: WebSocket[] }>();
+    for (const socket of sockets) {
+      const attachment = readAttachment(socket);
+      if (!attachment) continue;
+      const existing = bySession.get(attachment.sessionId);
+      if (existing) existing.sockets.push(socket);
+      else bySession.set(attachment.sessionId, { userId: attachment.userId, sockets: [socket] });
+    }
+    if (bySession.size === 0) return false;
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return false;
+
+    let permitted: Set<string>;
+    try {
+      permitted = await this.permittedSessionIds(workspaceId, bySession);
+    } catch {
+      if (certain) {
+        // A retraction has definitely happened and this object cannot find out
+        // who it applies to. Leaving every socket open would keep serving the
+        // workspace to whoever it was just closed to, so they all go — but as
+        // `1011`, a transient server condition, not as the access-revoked code.
+        // That distinction is the point: a reconnect is authorized against D1
+        // at connect time, so everyone who may still listen is back within a
+        // second, while closing them all as "access revoked" would strand every
+        // legitimate window on an error screen over one failed query.
+        for (const socket of sockets) disconnect(socket, 1011, "Reconnect to continue");
+        // The sweep is not recorded as having run either way, so the next
+        // publication re-asks rather than waiting out the interval.
+        return true;
+      }
+      return false;
+    }
+    this.lastRevalidatedAt = Date.now();
+
+    let evicted = false;
+    for (const [sessionId, session] of bySession) {
+      if (permitted.has(sessionId)) continue;
+      for (const socket of session.sockets) {
+        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
+        evicted = true;
+      }
+      logWarn(this.env, "workspace_socket_access_revoked", {
+        workspace_id: workspaceId,
+        user_id: session.userId,
+        sockets: session.sockets.length,
+        certain,
+      });
+    }
+    return evicted;
+  }
+
+  /** The subset of the connected sessions that may still hold a socket here. */
+  private async permittedSessionIds(
+    workspaceId: string,
+    bySession: ReadonlyMap<string, { userId: string; sockets: WebSocket[] }>,
+  ): Promise<Set<string>> {
+    const permitted = new Set<string>();
+    // The development bypass in `sessionAuth` admits a socket with no session
+    // row at all, so a sweep that only queried `sessions` would close every
+    // local window on its first publication.
+    const devAuth = this.env.APP_ENV === "development" && this.env.AVALON_DEV_AUTH === "true";
+    const sessionIds: string[] = [];
+    const devUserIds = new Map<string, string>();
+    for (const [sessionId, session] of bySession) {
+      if (devAuth && sessionId === "development") devUserIds.set(session.userId, sessionId);
+      else sessionIds.push(sessionId);
+    }
+
+    const now = new Date().toISOString();
+    for (let index = 0; index < sessionIds.length; index += AUTHORIZATION_SWEEP_BATCH) {
+      const batch = sessionIds.slice(index, index + AUTHORIZATION_SWEEP_BATCH);
+      const placeholders = batch.map(() => "?").join(",");
+      const result = await this.env.DB.prepare(
+        `SELECT session.id AS session_id
+           FROM sessions session
+           JOIN workspace_members member
+             ON member.workspace_id = session.workspace_id
+            AND member.user_id = session.user_id
+            AND member.status = 'active'
+           JOIN workspaces workspace ON workspace.id = session.workspace_id
+          WHERE session.workspace_id = ? AND session.region = ? AND workspace.region = ?
+            AND session.revoked_at IS NULL AND session.expires_at > ?
+            AND session.id IN (${placeholders})`,
+      ).bind(workspaceId, this.env.AVALON_REGION, this.env.AVALON_REGION, now, ...batch)
+        .all<{ session_id: string }>();
+      for (const row of result.results ?? []) permitted.add(row.session_id);
+    }
+
+    const devIds = [...devUserIds.keys()];
+    for (let index = 0; index < devIds.length; index += AUTHORIZATION_SWEEP_BATCH) {
+      const batch = devIds.slice(index, index + AUTHORIZATION_SWEEP_BATCH);
+      const placeholders = batch.map(() => "?").join(",");
+      const result = await this.env.DB.prepare(
+        `SELECT member.user_id
+           FROM workspace_members member
+           JOIN workspaces workspace ON workspace.id = member.workspace_id
+          WHERE member.workspace_id = ? AND member.status = 'active'
+            AND workspace.region = ? AND member.user_id IN (${placeholders})`,
+      ).bind(workspaceId, this.env.AVALON_REGION, ...batch).all<{ user_id: string }>();
+      for (const row of result.results ?? []) {
+        const sessionId = devUserIds.get(row.user_id);
+        if (sessionId) permitted.add(sessionId);
+      }
+    }
+    return permitted;
   }
 
   private async sessionAuth(identity: Pick<SocketIdentity, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
