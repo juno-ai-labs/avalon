@@ -162,6 +162,34 @@ describe("the operator site", () => {
     expect(body).toContain(`title="${OBJECT_NAME}"`);
   });
 
+  it("warns prominently while the inventory sweep is failing", async () => {
+    await withRegistry((registry) => {
+      registry.recordSweep({
+        startedAt: 1_700_000_000_000,
+        finishedAt: 1_700_000_001_000,
+        status: "complete",
+        namespaces: [],
+        truncatedNamespaces: [],
+        errorMessage: null,
+      });
+      registry.recordSweep({
+        startedAt: 1_700_000_900_000,
+        finishedAt: 1_700_000_999_000,
+        status: "failed",
+        namespaces: [],
+        truncatedNamespaces: [],
+        errorMessage: "cloudflare_api_error_10000",
+      });
+    });
+
+    const body = await (await get("/")).text();
+
+    // A failed sweep writes a fresh receipt, so the banner has to key off the
+    // last sweep that actually enumerated rather than the newest one.
+    expect(body).toContain("The last inventory sweep failed");
+    expect(body).toContain("cloudflare_api_error_10000");
+  });
+
   it("answers 404 for an object it has never heard of", async () => {
     expect((await get(`/objects/${"f".repeat(64)}`)).status).toBe(404);
     expect((await get(`/api/objects/${"f".repeat(64)}`)).status).toBe(404);

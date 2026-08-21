@@ -294,6 +294,59 @@ describe("recordSweep", () => {
     expect(detail?.object.absentSince).toBeNull();
   });
 
+  it("classifies a class that never reports as not_reporting, not unreported", async () => {
+    const page = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [
+          {
+            // The tracker's own object, and the API's container class. Neither
+            // runs the reporter, so silence from them means nothing.
+            namespaceId: "ns-tracker",
+            scriptName: "avalon-migration-tracker",
+            className: "MigrationRegistry",
+            usesSqlite: true,
+            objects: [{ objectId: objectId("e"), hasStoredData: true }],
+          },
+          {
+            namespaceId: "ns-container",
+            scriptName: "avalon-api-global",
+            className: "CrashSymbolicatorContainer",
+            usesSqlite: false,
+            objects: [{ objectId: objectId("f"), hasStoredData: true }],
+          },
+          {
+            namespaceId: "ns-agents",
+            scriptName: "avalon-api-global",
+            className: "SubstreamAgent",
+            usesSqlite: true,
+            objects: [{ objectId: objectId("c"), hasStoredData: true }],
+          },
+        ],
+      }));
+      return registry.listObjects(ObjectQuerySchema.parse({}));
+    });
+
+    const byId = new Map(page.objects.map((object) => [object.objectId, object.status]));
+    expect(byId.get(objectId("e"))).toBe("not_reporting");
+    expect(byId.get(objectId("f"))).toBe("not_reporting");
+    // Only the class that actually reports counts as one nobody has heard from.
+    expect(byId.get(objectId("c"))).toBe("unreported");
+  });
+
+  it("keeps a failure visible even on a class that is otherwise not reporting", async () => {
+    const detail = await withRegistry((registry) => {
+      record(registry, report({
+        className: "SubstreamAgent",
+        status: "failed",
+        appliedVersions: [],
+        failure: { message: "workstream_schema_hash_mismatch:4", version: 4 },
+      }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("failed");
+  });
+
   it("records the sweep receipt, including which namespaces were truncated", async () => {
     const overview = await withRegistry((registry) => {
       registry.recordSweep(sweep({
@@ -315,6 +368,67 @@ describe("recordSweep", () => {
     expect(overview.latestSweep?.truncatedNamespaces).toEqual(["ns-1"]);
     expect(overview.latestSweep?.errorMessage).toBe("ns-2: cloudflare_api_status_429");
     expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-eu");
+  });
+});
+
+describe("staleness", () => {
+  it("measures the last enumeration, not the last receipt, so a failing sweep still warns", async () => {
+    const overview = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        finishedAt: 1_700_000_001_000,
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("c"), hasStoredData: true }],
+        }],
+      }));
+      // Cloudflare's API then goes down: every hour writes a fresh receipt that
+      // enumerated nothing at all.
+      registry.recordSweep(sweep({
+        status: "failed",
+        finishedAt: 1_700_000_999_000,
+        namespaces: [],
+        errorMessage: "cloudflare_api_error_10000",
+      }));
+      return registry.overview();
+    });
+
+    expect(overview.latestSweep?.status).toBe("failed");
+    expect(overview.latestSweep?.finishedAt).toBe(1_700_000_999_000);
+    // The banner reads this one, so the fresh failed receipt cannot hide it.
+    expect(overview.latestEnumeration?.status).toBe("complete");
+    expect(overview.latestEnumeration?.finishedAt).toBe(1_700_000_001_000);
+  });
+
+  it("reports no enumeration at all when every sweep has failed", async () => {
+    const overview = await withRegistry((registry) => {
+      registry.recordSweep(sweep({ status: "failed", namespaces: [], errorMessage: "boom" }));
+      return registry.overview();
+    });
+
+    expect(overview.latestSweep?.status).toBe("failed");
+    expect(overview.latestEnumeration).toBeNull();
+  });
+
+  it("counts a partial sweep as an enumeration, because it did enumerate", async () => {
+    const overview = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        status: "partial",
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("c"), hasStoredData: true }],
+        }],
+        truncatedNamespaces: ["ns-1"],
+      }));
+      return registry.overview();
+    });
+
+    expect(overview.latestEnumeration?.status).toBe("partial");
   });
 });
 

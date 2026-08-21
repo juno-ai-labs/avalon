@@ -102,10 +102,20 @@ filter, the count, and the page can never disagree:
 ```text
 absent_since set                          -> absent
 last report was a failure                 -> failed
+class does not run the reporter           -> not_reporting
 no report at all                          -> unreported
 version < the component's observed head   -> behind
 otherwise                                 -> current
 ```
+
+`not_reporting` exists because the sweep enumerates the whole account, which is
+more than the classes this Worker observes: the tracker's own `MigrationRegistry`
+and the API's `CrashSymbolicatorContainer` are Durable Objects that will never
+call `withMigrationReport`. Without that bucket they would sit in `unreported`
+forever and make the count worthless for its actual job — spotting an API object
+that should have reported and has not. `REPORTING_CLASSES` in
+`apps/migration-tracker/src/registry.ts` is the list, and it has to stay in step
+with the call sites of `withMigrationReport`.
 
 The **head** is the highest version a component has been seen running in a
 region. Nothing in the account publishes it, so the tracker learns it from the
@@ -127,6 +137,10 @@ full report history. Every page has a JSON twin under `/api/`.
 - **A report is written only after the queue accepts the message.** Recording
   delivery optimistically turns one dropped send into an object that is silently
   unreported until its next migration.
+- **Every status the CTE can produce is in `ObjectStatusSchema`.** The guard in
+  `toTrackedObject` reads the enum's own options for exactly this reason: a
+  status the guard does not recognise is mapped to `unreported`, so a mismatch
+  would surface as a quietly wrong count rather than an error.
 - **The consumer is safe against redelivery and reordering**, because Queues
   guarantee neither. Every report carries a `reportId` with a unique index
   behind it, and the object row is only updated when the arriving report's
@@ -194,8 +208,13 @@ listing **20 pages × 1,000**; consumer batch **100 messages / 10 seconds** with
 sweep receipts **200**, per-object history shown **100**; failure message bounded
 to **1,000 characters**; object list page size **1–200**, default **50**.
 
-The overview shows a banner when the last sweep finished more than three hours
-ago, because a stale sweep makes the `unreported` count meaningless.
+The overview shows a banner when the last sweep that actually **enumerated**
+anything finished more than three hours ago, because a stale sweep makes the
+`unreported` count meaningless. Staleness deliberately ignores failed sweeps: a
+failed sweep enumerates nothing but still writes a receipt with a fresh
+timestamp, so keying off the newest receipt would suppress the banner for the
+whole of a Cloudflare outage. A currently failing sweep gets its own, louder
+banner carrying the error.
 
 ## Testing
 
