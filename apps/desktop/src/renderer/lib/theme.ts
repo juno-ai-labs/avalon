@@ -70,10 +70,14 @@ export function resolvedThemeFor(choice: ThemeChoice): ResolvedTheme {
  * Tells the main process what is being drawn, so the *next* window it opens is
  * constructed with a matching `backgroundColor`. Nothing here waits on it, and
  * a build without the desktop bridge has no window chrome to colour.
+ *
+ * The choice travels, not the appearance. Main re-resolves it against the Mac
+ * at the moment it builds a window, which is the only way `system` survives the
+ * app being closed while the Mac changes appearance.
  */
-function reportToMain(resolved: ResolvedTheme): void {
+function reportToMain(choice: ThemeChoice): void {
   if (!desktopServicesAvailable()) return;
-  void desktopBridge().setWindowTheme(resolved).catch(() => undefined);
+  void desktopBridge().setWindowTheme(choice).catch(() => undefined);
 }
 
 /** Stamps the resolved appearance onto the document and announces it. */
@@ -84,7 +88,7 @@ export function applyTheme(choice: ThemeChoice): ThemeState {
   root.dataset['themeFamily'] = choice.family;
   root.dataset['themeMode'] = choice.mode;
   const state: ThemeState = { choice, resolved };
-  reportToMain(resolved);
+  reportToMain(choice);
   for (const listener of listeners) listener(state);
   return state;
 }

@@ -142,6 +142,17 @@ export function resolveTheme(choice: ThemeChoice, systemPrefersDark: boolean): R
   return familyAppearances[choice.family][appearance];
 }
 
+/**
+ * Whether two choices are the same on *both* axes.
+ *
+ * Two different choices can resolve to the same appearance — Terra on `system`
+ * under a dark Mac, and Terra pinned to Dark, are both `terra` — so comparing
+ * what they resolve to cannot answer whether the preference changed.
+ */
+export function sameThemeChoice(a: ThemeChoice, b: ThemeChoice): boolean {
+  return a.family === b.family && a.mode === b.mode;
+}
+
 /** The family an appearance belongs to. */
 export function familyOf(theme: ResolvedTheme): ThemeFamily {
   const found = themeFamilies.find((family) => (
