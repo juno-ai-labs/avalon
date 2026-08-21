@@ -1,6 +1,6 @@
 /**
  * `avalon-migration-tracker` — the Worker behind
- * `migrations.rallywith.ai`.
+ * `migrations.internal.rallywith.ai`.
  *
  * It has three entry points and they are deliberately different in kind:
  *
