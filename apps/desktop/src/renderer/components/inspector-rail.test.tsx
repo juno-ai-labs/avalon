@@ -271,26 +271,4 @@ describe('InspectorRail details', () => {
     expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
   });
 
-  it('shows Terminal retention and selected repository state without a participant chooser', () => {
-    render(
-      <Tooltip.Provider>
-        <InspectorRail
-          terminalWorkspace={{
-            availability: 'supported', state: 'stopped',
-            lastActivityAt: '2026-08-13T12:00:00.000Z', expiresAt: '2026-09-12T12:00:00.000Z',
-            retentionWarning: null, localFilesRetained: true, finalDiffResourceId: null,
-            failureCode: null,
-            repository: { id: 42, fullName: 'owner/repo', baseRef: 'main', baseSha: 'a'.repeat(40), headRef: 'avalon/workstream' },
-          }}
-          workstream={workstream}
-        />
-      </Tooltip.Provider>,
-    );
-
-    expect(screen.getByText('Terminal workspace')).toBeVisible();
-    expect(screen.getByText('Stopped')).toBeVisible();
-    expect(screen.getByText(/Local files remain in Daytona/u)).toBeVisible();
-    expect(screen.getByText('owner/repo')).toBeVisible();
-    expect(screen.queryByRole('combobox', { name: /Terminal repository/u })).not.toBeInTheDocument();
-  });
 });

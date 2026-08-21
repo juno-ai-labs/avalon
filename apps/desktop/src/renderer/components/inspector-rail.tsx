@@ -10,7 +10,6 @@ import {
   FileText,
   Link2,
   Plus,
-  SquareTerminal,
   Trash2,
   UserPlus,
   X,
@@ -21,7 +20,6 @@ import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   AutomationRunSummary,
-  TerminalWorkstreamState,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -39,8 +37,6 @@ interface InspectorRailProps {
   onDetachResource?: (resource: WorkstreamResource) => void;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
   onOpenRun?: (run: AutomationRunSummary) => void;
-  terminalWorkspace?: TerminalWorkstreamState;
-  onStartFreshTerminal?: () => void;
   /** True while the inspector is fading out under HyperSight taking the slot. */
   leaving?: boolean;
   dropTarget?: {
@@ -86,15 +82,11 @@ function ContextContent({
   onAddParticipant,
   onAddResource,
   onToggleWatch,
-  terminalWorkspace,
-  onStartFreshTerminal,
 }: Pick<InspectorRailProps,
   | 'workstream'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
-  | 'terminalWorkspace'
-  | 'onStartFreshTerminal'
 >): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
   const debugEnabled = useDebugEnabled();
@@ -194,63 +186,6 @@ function ContextContent({
           </ul>
         )}
       </Section>
-
-      {terminalWorkspace && (
-        <Section title="Terminal workspace">
-          <div className="terminal-rail-summary">
-            <div className="terminal-rail-state">
-              <span className="rail-card-icon"><SquareTerminal aria-hidden="true" size={15} /></span>
-              <span>
-                <strong>{terminalWorkspace.state[0]!.toUpperCase() + terminalWorkspace.state.slice(1)}</strong>
-                <small>
-                  {terminalWorkspace.availability === 'unsupported'
-                    ? 'Daytona residency has not passed this region’s gate.'
-                    : terminalWorkspace.availability === 'emergency_disabled'
-                      ? 'Temporarily unavailable while the regional safety switch is active.'
-                      : terminalWorkspace.localFilesRetained
-                        ? 'Local files remain in Daytona until the expiry below.'
-                        : 'No retained local Terminal files.'}
-                </small>
-              </span>
-            </div>
-            {terminalWorkspace.repository ? (
-              <>
-                <dl className="detail-list terminal-rail-details">
-                  <div><dt>Repository</dt><dd>{terminalWorkspace.repository.fullName}</dd></div>
-                  <div><dt>Base</dt><dd>{terminalWorkspace.repository.baseRef}</dd></div>
-                  <div><dt>Branch</dt><dd>{terminalWorkspace.repository.headRef}</dd></div>
-                </dl>
-              </>
-            ) : null}
-            {(terminalWorkspace.lastActivityAt || terminalWorkspace.expiresAt) && (
-              <dl className="detail-list terminal-rail-details">
-                {terminalWorkspace.lastActivityAt && <div><dt>Last Terminal activity</dt><dd>{formatDateTime(terminalWorkspace.lastActivityAt)}</dd></div>}
-                {terminalWorkspace.expiresAt && <div><dt>Local files expire</dt><dd>{formatDateTime(terminalWorkspace.expiresAt)}</dd></div>}
-              </dl>
-            )}
-            {terminalWorkspace.retentionWarning && (
-              <p className="terminal-retention-warning" role="status">
-                <CircleAlert aria-hidden="true" size={13} />
-                {terminalWorkspace.retentionWarning === 'expires_within_24_hours'
-                  ? 'Unpublished local files expire within 24 hours.'
-                  : 'Unpublished local files expire within seven days.'}
-              </p>
-            )}
-            {terminalWorkspace.failureCode && (
-              <p className="terminal-retention-warning" role="alert">
-                <CircleAlert aria-hidden="true" size={13} />
-                Terminal stopped safely ({terminalWorkspace.failureCode}). Start fresh, or ask a workspace owner to verify network settings if the failure mentions policy.
-              </p>
-            )}
-            {terminalWorkspace.finalDiffResourceId && (
-              <Button onClick={() => inspect({ type: 'resource', id: terminalWorkspace.finalDiffResourceId! })}>Open final diff</Button>
-            )}
-            {(terminalWorkspace.state === 'expired' || terminalWorkspace.state === 'failed') && onStartFreshTerminal && (
-              <Button onClick={onStartFreshTerminal}>Start fresh</Button>
-            )}
-          </div>
-        </Section>
-      )}
 
       <Section title="Details">
         <dl className="detail-list">

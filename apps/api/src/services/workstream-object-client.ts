@@ -45,6 +45,12 @@ const MessagePageSchema = z.object({
   nextCursor: z.string().nullable(),
   newerCursor: z.string().nullable(),
 });
+const BootPayloadSchema = z.object({
+  workstream: WorkstreamDetailSchema,
+  messageFeed: MessagePageSchema,
+  resumeFeed: MessagePageSchema.nullable(),
+});
+type MessagePage = z.infer<typeof MessagePageSchema>;
 const CreatedMessageSchema = z.object({
   message: MessageSchema,
   agentInvoked: z.boolean(),
@@ -209,6 +215,15 @@ export class WorkstreamObjectClient {
 
   async get(): Promise<WorkstreamDetail> {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
+  }
+
+  /** Detail plus both transcript windows, in one call to the room. */
+  async boot(): Promise<{
+    workstream: WorkstreamDetail;
+    messageFeed: MessagePage;
+    resumeFeed: MessagePage | null;
+  }> {
+    return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
   }
 
   async initialize(input: InitializeWorkstreamObjectInput): Promise<{

@@ -22,7 +22,6 @@ import {
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
   ToolInvocationSchema as WireToolInvocationSchema,
-  WorkstreamContextSchema as WireWorkstreamContextSchema,
   type ViewerSchema as WireViewerSchema,
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
@@ -30,8 +29,7 @@ import {
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
-  TerminalWorkstreamStateSchema as WireTerminalWorkstreamStateSchema,
-  WorkstreamDetailSchema as WireWorkstreamDetailSchema,
+  WorkstreamBootSchema as WireWorkstreamBootSchema,
   DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
   WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
@@ -96,13 +94,13 @@ import type {
   WorkspaceTemplate,
   WorkstreamConnection,
   WorkstreamDeferredContext,
+  WorkstreamBoot,
   WorkstreamDetail,
   WorkstreamResource,
   WorkstreamSummary,
   WorkOpportunity,
   TerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview,
-  TerminalWorkstreamState,
 } from './types';
 
 export class ApiError extends Error {
@@ -1309,24 +1307,38 @@ export class AvalonApi {
     };
   }
 
-  async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamDetail> {
-    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
-    return mapWorkstreamDetail(raw);
+  /**
+   * The whole of an open, in one request.
+   *
+   * Returns the detail plus both transcript windows and the viewer's panel
+   * preference, which used to be three further requests. The caller decides
+   * which window to render; `resumeFeed` is where this reader stopped and is
+   * null when that is already the newest page.
+   */
+  async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamBoot> {
+    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamBootSchema, signal });
+    return {
+      ...mapWorkstreamDetail(raw),
+      // Undefined, not empty, when the Worker predates this field — the caller
+      // falls back to fetching a page rather than showing an empty transcript.
+      messageFeed: raw.messageFeed
+        ? {
+          items: visibleTranscriptMessages(raw.messageFeed.items.map(mapMessage)),
+          nextCursor: raw.messageFeed.nextCursor,
+          newerCursor: raw.messageFeed.newerCursor,
+        }
+        : undefined,
+      resumeFeed: raw.resumeFeed
+        ? {
+          items: visibleTranscriptMessages(raw.resumeFeed.items.map(mapMessage)),
+          nextCursor: raw.resumeFeed.nextCursor,
+          newerCursor: raw.resumeFeed.newerCursor,
+        }
+        : null,
+      blockDashboardPreference: raw.blockDashboardPreference,
+    };
   }
 
-  async getTerminalWorkstreamState(id: string, signal?: AbortSignal): Promise<TerminalWorkstreamState> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal`, {
-      schema: WireTerminalWorkstreamStateSchema,
-      signal,
-    });
-  }
-
-  async startFreshTerminalWorkspace(id: string): Promise<TerminalWorkstreamState> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/start-fresh`, {
-      method: 'POST',
-      schema: WireTerminalWorkstreamStateSchema,
-    });
-  }
 
   async getBlockDashboard(id: string, signal?: AbortSignal): Promise<BlockDashboard> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
@@ -1366,14 +1378,11 @@ export class AvalonApi {
     automationSubscriptionId?: string,
     signal?: AbortSignal,
   ): Promise<WorkstreamDeferredContext> {
-    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}/context`, {
-      schema: WireWorkstreamContextSchema,
-      signal,
-    });
-    const context: WorkstreamDeferredContext = {
-      backgroundTasks: raw.backgroundTasks.map(mapBackgroundTask),
-      automationRuns: [],
-    };
+    // `/context` is gone: its only field was `backgroundTasks`, which the detail
+    // has always been shaped to carry and now does. What is left is the
+    // automation, which is a different resource and only exists for some work
+    // streams.
+    const context: WorkstreamDeferredContext = { backgroundTasks: [], automationRuns: [] };
     if (!automationSubscriptionId) return context;
     try {
       const automation = await this.getAutomation(automationSubscriptionId, signal);
