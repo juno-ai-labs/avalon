@@ -61,6 +61,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
@@ -270,6 +271,17 @@ function blockRunFromRow(row: RuntimeBlockRow): BlockDashboardBlockRun {
 }
 
 /** A stable, SQL-backed owner for one HyperSight block's complete Bind loops. */
+/**
+ * The migration runner's component key for this class.
+ *
+ * One constant because two call sites need the identical value: the runner
+ * keys the object's schema ledger by it, and the migration report keys the
+ * tracker's component rollup by it. Two literals that drift put an object
+ * under a component its own ledger does not use, which shows up as a silent
+ * miscount rather than an error.
+ */
+const MIGRATION_COMPONENT = "block_dashboard_block_agent";
+
 export class BlockDashboardAgent extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -292,12 +304,18 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       (drain) => this.state.waitUntil(drain),
     );
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      await withMigrationReport({
+        state,
+        env,
+        component: MIGRATION_COMPONENT,
+        className: "BlockDashboardAgent",
+        latestVersion: latestMigrationVersion(BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
-        component: "block_dashboard_block_agent",
+        component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
       // Whatever leases survive belong to the isolate this one replaced, so
       // the runs they cover are recoverable now rather than at expiry.
       releaseAgentRunDispatchLeases(

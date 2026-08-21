@@ -29,6 +29,7 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -467,6 +468,17 @@ export { workstreamDOName } from "./names";
  * enqueue external activity/notification effects. That prevents one work
  * stream with many substreams from exposing conflicting sidebar versions.
  */
+/**
+ * The migration runner's component key for this class.
+ *
+ * One constant because two call sites need the identical value: the runner
+ * keys the object's schema ledger by it, and the migration report keys the
+ * tracker's component rollup by it. Two literals that drift put an object
+ * under a component its own ledger does not use, which shows up as a silent
+ * miscount rather than an error.
+ */
+const MIGRATION_COMPONENT = "workstream_do";
+
 export class WorkstreamDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
@@ -479,12 +491,18 @@ export class WorkstreamDO extends DurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
-      applyDurableObjectSqliteMigrations({
+      await withMigrationReport({
+        state,
+        env,
+        component: MIGRATION_COMPONENT,
+        className: "WorkstreamDO",
+        latestVersion: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
-        component: "workstream_do",
+        component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      });
+      }));
       const next = this.nextAlarmAt();
       if (next !== null) await state.storage.setAlarm(next);
     });

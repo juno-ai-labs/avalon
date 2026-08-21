@@ -1,0 +1,72 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "avalon-migration-tracker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "APP_VERSION": "0.1.0",
+    // Cloudflare Access. Both are required together; the Worker refuses every
+    // request while either is unset, rather than serving the fleet's schema
+    // state unauthenticated. Neither is a credential: the team domain is where
+    // the signing keys are published, and the AUD tag is an identifier for one
+    // Access application. The signature over the assertion is what proves
+    // Access spoke, and it is verified against the team's JWKS on every request.
+    //
+    // Who may read the site is not here. That is the Access application's
+    // policy, which is the only place it is written — changing it needs no
+    // deploy.
+    //
+    // The team domain is an account setting, not derived from the web domain,
+    // and does not follow a rebrand of the site.
+    "ACCESS_TEAM_DOMAIN": "juno-labs.cloudflareaccess.com",
+    // The Access application's AUD tag, from its Overview tab. Empty until the
+    // application exists, which keeps the Worker refusing rather than looking
+    // configured while accepting assertions minted for any other application in
+    // the same Zero Trust organization.
+    "ACCESS_APPLICATION_AUD": "3be03aa107462e6a4f7dce1320cd32d15acabfb7e9ad3d64926965a81fab07e4",
+    "CLOUDFLARE_ACCOUNT_ID": ""
+  },
+  "routes": [
+    { "pattern": "migrations.internal.rallywith.ai", "custom_domain": true }
+  ],
+  // Hourly. Objects are discovered by the sweep and described by their own
+  // reports, so a faster sweep would find the same set more often without
+  // learning anything new about it.
+  "triggers": { "crons": ["0 * * * *"] },
+  // One queue for both regions, created before either Worker is deployed; see
+  // docs/runbook.md. It is not split per region because its destination is not
+  // split per region — every report lands in the one registry object either
+  // way, so a second queue would buy resources rather than isolation.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "avalon-migration-reports",
+        // The maximum, and unlike the activity queue's batch this one earns it:
+        // the consumer folds a whole batch into a single registry transaction,
+        // so a batch of 100 costs one write instead of 100. Ten seconds is the
+        // wait that lets a deploy's herd actually fill it — nobody is waiting on
+        // a migration report, and the site is not a latency surface.
+        "max_batch_size": 100,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-migration-reports-dead-letter"
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "MIGRATION_REGISTRY", "class_name": "MigrationRegistry" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MigrationRegistry"] }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

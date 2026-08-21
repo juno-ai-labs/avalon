@@ -372,6 +372,184 @@ the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
 events, unexpected `dry-run` production reports, a non-five retained set, or any
 copy/delete count that does not match the plan.
 
+### The Durable Object migration tracker
+
+`avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
+at `migrations.internal.rallywith.ai` and receives a migration report from
+every Durable Object in both API Workers.
+[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
+owns the design; this is the provisioning and deployment procedure.
+
+Reports travel on a Queue rather than a service binding, so **there is no
+deploy-order dependency between the tracker and either API Worker** — a queue is
+a resource both sides bind to. What both sides do require is that the queues
+exist first. The producer binding is optional at runtime, so an API Worker
+deployed before the tracker existed keeps working and simply reports nothing.
+
+The queue's *configuration* — name, batch size, batch timeout, retries, and its
+dead-letter queue — lives in the Wrangler files and is applied on every deploy,
+so it is not something to set by hand anywhere. What Wrangler does not do is
+create the queue a producer binding names; that fails the deploy. So the
+existence of every declared queue is a preflight, exactly as it is for R2:
+
+```text
+pnpm cloudflare:resources:check
+```
+
+That reads all three Wrangler files, proves each queue they declare exists, and
+names the `wrangler queues create` command for any that does not. It runs in the
+API deployment before anything is deployed. `avalon-migration-reports` is
+already provisioned; a dead-letter queue needs no action, because Cloudflare
+creates one named in a consumer's `dead_letter_queue` on first deploy.
+
+There is one report queue for both regions, not one per region as with the
+activity queues: every report converges on the single registry object regardless
+of where it came from, so splitting the transport would isolate nothing. The
+region travels in the message body.
+
+Deploy in any order:
+
+```text
+pnpm deploy:migration-tracker
+pnpm deploy:global
+pnpm deploy:eu
+```
+
+Ordinarily none of that is run by hand. `.github/workflows/deploy-migration-tracker.yml`
+deploys the tracker on a merge to `main` that touches `apps/migration-tracker/`
+or the shared report contract, and `deploy-api.yml` deploys the two API Workers
+on a merge that touches theirs. They are separate workflows with separate path
+filters for the same reason the transport is a queue: neither side's release
+should wait on the other's. The commands above are the manual path, for a first
+deployment or a rollback.
+
+The tracker workflow runs against the same **`api-production`** environment as
+the API deploy, and uses the same `CLOUDFLARE_API_TOKEN` secret and
+`CLOUDFLARE_ACCOUNT_ID` variable. It needs no permission the API deploy does not
+already have: Workers Scripts to upload, and Queues to attach a consumer, which
+the API deploy uses for its own activity queues. A separate environment would be
+a second copy of the same credential to rotate and would isolate nothing, since
+a token that can deploy `avalon-api-global` can already deploy anything in the
+account. Note this is the *deployment* token, and a different one from the
+read-only runtime token in step 3 below, which the Worker uses for the sweep.
+
+After deploying, the workflow proves the deployment rather than trusting the
+upload:
+
+```text
+node scripts/check-migration-tracker-health.mjs
+```
+
+That asserts the Worker actually became a consumer of `avalon-migration-reports`
+with the batch settings `wrangler.jsonc` declares, and that the site refuses a
+request carrying no Access assertion. The first is the failure worth catching: a
+tracker that deploys without attaching looks healthy everywhere while reports
+pile up unread until they age out of the queue. The second turns the fail-closed
+design into a checked invariant — from a runner with no Access cookie, a `2xx`
+would mean the fleet's schema state is being served to anyone who asks.
+
+The tracker needs no D1 database and no R2 bucket: its entire store is the
+`MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
+further one-time steps are required outside the repository.
+
+**1. The hostname.** `migrations.internal.rallywith.ai` is declared as a custom domain in
+`wrangler.jsonc`, and the deploy provisions the route on the `rallywith.ai` zone.
+
+It is two labels deep, which the zone's Universal SSL **does not cover**. A
+Universal pack covers `rallywith.ai` and `*.rallywith.ai`, and a wildcard matches
+exactly one label — so `migrations.internal.rallywith.ai` is not in it, and
+without a further certificate the hostname serves a certificate error rather
+than the site.
+
+The certificate is therefore an **Advanced Certificate Manager** pack on the
+`rallywith.ai` zone, a paid per-zone add-on, covering `*.internal.rallywith.ai`.
+The wildcard rather than the exact hostname so the next internal tool needs no
+new certificate order; a pack takes up to 50 hostnames. Issue it from
+**Google Trust Services** — DigiCert is being deprecated as a CA, and the zone's
+Universal pack is already Google-issued, so one CA covers the zone. TXT
+validation completes on its own because Cloudflare is authoritative for the
+zone, and the pack takes roughly fifteen minutes to go active.
+
+**Order the certificate before the first deploy.** Wrangler will create the
+route and the DNS record regardless, and the hostname will fail TLS until the
+pack is active — which reads as an outage rather than as a missing certificate.
+`scripts/check-migration-tracker-health.mjs` catches exactly this: an
+unreachable hostname fails the deployment verification.
+
+The `internal.` label buys naming, not security — the site is protected by
+Cloudflare Access, not by being hard to guess. It is the one Avalon hostname
+that is not single-level, and it is the reason this zone carries ACM at all.
+
+**2. Cloudflare Access.** Zero Trust is enabled on the account with the team
+name **`juno-labs`**, so the team domain is `juno-labs.cloudflareaccess.com` and
+that is what `ACCESS_TEAM_DOMAIN` carries. It is an account setting, not derived
+from the web domain, and it does not follow a rebrand of the site — the site
+moved from `with-avalon.com` to `rallywith.ai` and the team domain would not
+have moved with it.
+
+Renaming the team later is not free: the name is the JWKS URL the Worker fetches
+keys from, the `iss` claim on every assertion, and the URL people log in at, so a
+rename invalidates outstanding sessions and needs the identity providers updated
+as well as a redeploy.
+
+Then add **Google** as a login method and create a self-hosted application for
+the hostname, with an Allow policy whose include rule is `Emails ending in
+@juno-labs.com` — the domain people sign in with, which is **not** the domain
+the site is served from. Copy the application's **Application Audience (AUD)
+tag** into `ACCESS_APPLICATION_AUD`.
+
+**That policy is the only place who-may-read is written.** The Worker verifies
+the assertion — signature against the team's JWKS, issuer, audience — but it
+does not re-check the address, so widening or narrowing access is a policy
+change in Zero Trust and nothing else: no variable to update, no deploy. The
+Worker held a second domain allowlist once and it was deleted for the usual
+reason a duplicated rule gets deleted — the two copies disagreed, and the
+disagreement was invisible until somebody could not log in.
+
+The Worker still fails closed. Until both `ACCESS_TEAM_DOMAIN` and
+`ACCESS_APPLICATION_AUD` are set it refuses every request, so an unconfigured
+deployment is unreachable rather than open.
+
+**3. A read-only Cloudflare API token.** The hourly sweep enumerates Durable
+Object namespaces and object IDs. Set `CLOUDFLARE_ACCOUNT_ID` in
+`wrangler.jsonc` and the token as a secret:
+
+```text
+pnpm --filter @avalon/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
+```
+
+Grant it **Account · Workers Scripts · Read** and nothing else. Without it the
+site still works and reports still arrive; the sweep logs
+`migration_inventory_sweep_skipped` and no object is ever discovered before it
+first wakes.
+
+Before deploying a change, run:
+
+```text
+pnpm --filter @avalon/migration-tracker test
+pnpm --filter @avalon/migration-tracker typecheck
+pnpm --filter @avalon/migration-tracker build
+```
+
+Locally, `pnpm dev:migrations` serves the site on port 8790 from
+`wrangler.dev.jsonc`, the one configuration that sets `APP_ENV=development` and
+`MIGRATION_TRACKER_DEV_AUTH=true`. Cloudflare Access does not stand in front of
+a local Wrangler, and the bypass is honoured in no other environment.
+
+After deployment, watch `migration_inventory_sweep_completed` for a `partial`
+status — it names the namespaces whose listing was truncated or failed — and
+`migration_reports_recorded` at `error` level, whose `failed_objects` field names
+each Durable Object whose migration threw and which the site lists under **Open
+failures**.
+
+Check `avalon-migration-reports-dead-letter` when reports stop arriving. A
+message reaches it only after five failed attempts to write it to the registry, so a non-empty
+dead-letter queue means the registry object itself was failing, not that a
+migration did. `migration_report_rejected` is the other direction: a message the
+consumer refused because it did not match the contract, which means a producer
+was changed without the shared contract in `packages/contracts` being changed
+with it.
+
 For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
 configuration, deploy, and inspect one scheduled plan before authorizing live
 mode. Do not run ad hoc deletion commands while the scheduled Worker is enabled.
