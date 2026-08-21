@@ -31,6 +31,8 @@
     "db:migrate:remote:list": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:list",
     "db:migrate:remote:list:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:list:eu",
     "db:seed": "pnpm env:sync && pnpm --filter @avalon/api db:seed && pnpm --filter @avalon/api db:seed:eu",
+    "db:baseline:create": "node scripts/create-d1-baseline.mjs",
+    "db:baseline:verify": "dotenv -e .env.local -- node scripts/check-d1-baseline-against-remote.mjs",
     "health:regions": "node scripts/check-regional-health.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "e2e:local": "node scripts/e2e-local.mjs",

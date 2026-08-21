@@ -63,6 +63,15 @@ Both commands cover Global and EU. Run them before starting a Worker: the
 migration and seed tooling writes to the same `.wrangler/state/<region>` SQLite
 files that a running `wrangler dev` holds open.
 
+An **empty** database is created from the checked-in baseline in
+`packages/db/baselines/` — a snapshot of the schema as of migration 0090 — and
+Wrangler then applies only the migrations after it. That is about four seconds
+per region instead of about forty-three for the full chain. A database that
+already has tables skips the baseline and is migrated the ordinary way, so
+re-running this on a warm container does what it always did. Hosted databases
+never use a baseline. [`d1-baseline-migrations.md`](d1-baseline-migrations.md)
+owns the mechanism; read it before regenerating one or moving its boundary.
+
 After the Workers are running (§3), open the authority:
 
 ```bash
@@ -233,6 +242,8 @@ an older worktree so the smoke test sees both fixtures.
 | Install dependencies | `pnpm install --frozen-lockfile` |
 | Sync development Worker vars | `pnpm env:sync` |
 | Migrate both regions | `pnpm db:migrate` |
+| Regenerate the D1 baseline | `pnpm db:baseline:create <through-migration.sql>` |
+| Check the baseline against the hosted databases | `pnpm db:baseline:verify` |
 | Seed both regions | `pnpm db:seed` |
 | Start both Workers (sandbox) | `pnpm dev:api:local` |
 | Start both Workers (workstation) | `pnpm dev:api` |
