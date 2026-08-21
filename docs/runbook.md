@@ -415,6 +415,35 @@ pnpm deploy:global
 pnpm deploy:eu
 ```
 
+Ordinarily none of that is run by hand. `.github/workflows/deploy-migration-tracker.yml`
+deploys the tracker on a merge to `main` that touches `apps/migration-tracker/`
+or the shared report contract, and `deploy-api.yml` deploys the two API Workers
+on a merge that touches theirs. They are separate workflows with separate path
+filters for the same reason the transport is a queue: neither side's release
+should wait on the other's. The commands above are the manual path, for a first
+deployment or a rollback.
+
+The tracker workflow runs against a **`migration-tracker-production`**
+environment, which needs `CLOUDFLARE_API_TOKEN` as a secret (Account · Workers
+Scripts · Edit, and Account · Queues · Edit) and `CLOUDFLARE_ACCOUNT_ID` as a
+variable. This is a *deployment* token and a different one from the read-only
+token in step 3 below, which the Worker uses at runtime for the sweep.
+
+After deploying, the workflow proves the deployment rather than trusting the
+upload:
+
+```text
+node scripts/check-migration-tracker-health.mjs
+```
+
+That asserts the Worker actually became a consumer of `avalon-migration-reports`
+with the batch settings `wrangler.jsonc` declares, and that the site refuses a
+request carrying no Access assertion. The first is the failure worth catching: a
+tracker that deploys without attaching looks healthy everywhere while reports
+pile up unread until they age out of the queue. The second turns the fail-closed
+design into a checked invariant — from a runner with no Access cookie, a `2xx`
+would mean the fleet's schema state is being served to anyone who asks.
+
 The tracker needs no D1 database and no R2 bucket: its entire store is the
 `MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
 further one-time steps are required outside the repository.

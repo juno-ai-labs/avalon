@@ -367,6 +367,40 @@ seed or repair it.
 
 ## Changelog
 
+### 2026-08-21 — The tracker deploys itself, and proves it is wired up
+
+**What changed:** `.github/workflows/deploy-migration-tracker.yml` deploys this
+Worker on a merge to `main` touching `apps/migration-tracker/` or the shared
+report contract, and `scripts/check-migration-tracker-health.mjs` verifies the
+result against the live account afterwards.
+
+**Why:** the tracker was the one Avalon surface with no deployment workflow, so
+the subsystem was not live until somebody remembered to run
+`pnpm deploy:migration-tracker` from a laptop. That is a bad property for a
+Worker whose whole job is to be watching when a deploy goes wrong. It is a
+separate workflow from `deploy-api.yml`, with its own path filter, rather than a
+step inside it: putting them in one pipeline would restore in the release
+process exactly the coupling the Queue was chosen to remove from the code, and
+would make an urgent API release wait on a monitoring Worker.
+
+The health check exists because a Wrangler deploy reports success once the
+script uploads, which says nothing about the two things that matter. A tracker
+that deploys without becoming a consumer of `avalon-migration-reports` looks
+healthy from every angle while reports pile up unread until they age out — so
+the check reads the consumer back from Cloudflare and compares its settings to
+what `wrangler.jsonc` declares, batch size included, since a consumer silently
+attached at Cloudflare's default of 10 would work and cost ten times the
+registry writes this design is budgeted for. It also asserts the site refuses an
+unauthenticated request, which turns the fail-closed property into something
+checked on every deploy rather than reasoned about once.
+
+**What a future change has to respect:** the expectations are derived from
+`wrangler.jsonc`, never restated in the script — a second copy of the batch size
+would drift and the check would start confirming itself. And the site assertion
+is written as "a `2xx` is the failure", not as a list of acceptable statuses, so
+that configuring Access (which changes the refusal from the Worker's `403` to
+Access's `302`) does not require editing it.
+
 ### 2026-08-21 — The failure report survives the throw that causes it
 
 **What changed:** `withMigrationReport` is now `async`, and the failure report is
