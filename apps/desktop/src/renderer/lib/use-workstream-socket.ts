@@ -584,6 +584,14 @@ export function useWorkstreamSocket(
       reject: (error: Error) => void;
     }>();
     const streamCursors = resumeState.streamCursors;
+    /**
+     * When this effect began dialling, so an open trace can report how long the
+     * work stream was on screen before its first request left. The trace itself
+     * cannot cover that: it opens inside `connect`, and everything that delays
+     * `connect` — React committing the route, the screen's own queries, a
+     * blocked main thread — happens before there is a trace to record it on.
+     */
+    const effectStartedAt = typeof performance === 'undefined' ? Date.now() : performance.now();
     const isOffline = (): boolean => navigator.onLine === false;
     /** The open in flight, so a superseded attempt still prints its line. */
     let openTrace: PerfTrace | null = null;
@@ -1118,6 +1126,12 @@ export function useWorkstreamSocket(
       trace.annotate({
         attempt: attempts.current,
         afterSequence: resumeState.lastSequence,
+        // On attempt zero this is dead time nobody has measured: the work
+        // stream is on screen and no request has been made yet. On a reconnect
+        // it is the age of the effect, and the backoff explains it.
+        sinceEffectMs: Math.round(
+          ((typeof performance === 'undefined' ? Date.now() : performance.now()) - effectStartedAt) * 10,
+        ) / 10,
       });
       try {
         // Called directly rather than through `trace.step`: the socket-ticket
@@ -1137,6 +1151,14 @@ export function useWorkstreamSocket(
           return;
         }
         const nextSocket = new WebSocket(socketTicket.url, socketTicket.protocols);
+        // Splits the wait between holding a ticket and being connected into the
+        // two halves that have opposite fixes. Nothing is awaited between the
+        // ticket resolving and this line, so `dial` can only be large if the
+        // renderer was not running — a blocked main thread does not let the
+        // continuation execute. Everything after it is the handshake itself.
+        // Without the split, one `handshake` number covers both and reads as a
+        // slow server either way.
+        trace.mark('dial');
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
