@@ -1829,6 +1829,24 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     workstream: WorkstreamDetailSchema,
     /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
     messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
+    /**
+     * The window around where this viewer stopped reading, when that is
+     * somewhere other than the newest page.
+     *
+     * Opening a work stream ends one of two ways: the reader picks up where
+     * they left off, or they go to the latest message. The snapshot used to
+     * carry only the second, so a reader with unread messages — the case the
+     * screen actually opens on, since it scrolls to `firstUnreadSequenceNumber`
+     * — had to fetch their own window separately while holding a page they were
+     * not going to look at. Both are sent because both are cheap and the room
+     * cannot know which the reader wants.
+     *
+     * Null when the viewer has nothing unread, or when their position already
+     * falls inside `messageFeed`; a second copy of the same messages is not
+     * worth the frame. The sequence it is centred on is
+     * `workstream.firstUnreadSequenceNumber`, which this frame already carries.
+     */
+    resumeFeed: MessageFeedPageSchema.nullable().default(null),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
