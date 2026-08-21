@@ -75,8 +75,10 @@ admission is split in two.
    membership plus its local visibility projection. A workspace upgrade reaches
    the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
    serializes the verified session identity; every subscribe or later command
-   rechecks the current D1 session and membership. Neither object receives the
-   signed bearer ticket.
+   rechecks the current D1 session and membership, and both of its publish paths
+   sweep the connected set — immediately for a retracting topic, otherwise once
+   per 30 seconds — closing the sockets that no longer pass. Neither object
+   receives the signed bearer ticket.
    A HyperSight upgrade reaches the exact block agent after the edge verifies
    D1 membership and WorkstreamDO authorizes the block/viewer pair. The block
    consumes its own ticket receipt and persists only the bounded authorization
