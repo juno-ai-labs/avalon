@@ -641,32 +641,21 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
-  it('loads durable rail context from the deferred work-stream endpoint', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      void input;
-      return json({
-        backgroundTasks: [{
-          id: taskId,
-          harnessRunId: messageId,
-          title: 'Respond to message',
-          taskType: 'agent',
-          status: 'completed',
-          startedAt: timestamp,
-          completedAt: '2026-07-31T20:00:12.000Z',
-          tokenCount: 1_250,
-          toolUses: 3,
-          transcriptMessageId: messageId,
-        }],
-      });
-    });
+  it('asks for nothing when a work stream has no automation behind it', async () => {
+    // `/context` is gone. Its only field was `backgroundTasks`, which rides on
+    // the work-stream detail, so the deferred rail now makes no request at all
+    // unless there is an automation to describe — and that is a different
+    // resource with its own endpoint.
+    const workstreamId = '00000000-0000-7000-8000-000000000012';
+    const fetchMock = vi.fn(async () => json({}));
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getWorkstreamContext(workstreamId)).resolves.toMatchObject({
-      backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000 }],
+    await expect(api.getWorkstreamContext(workstreamId)).resolves.toEqual({
+      backgroundTasks: [],
       automationRuns: [],
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}/context`);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces nested service errors with their code and details', async () => {
@@ -913,27 +902,24 @@ describe('Avalon API wire adapter', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
 
-  it('loads and updates the personal HyperSight visibility preference', async () => {
+  it('updates the personal HyperSight visibility preference', async () => {
+    // Reading it has no endpoint any more: the work-stream detail and the
+    // control socket's boot frame both carry it. Writing still does.
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ visible: false, updatedAt: null }))
       .mockResolvedValueOnce(json({ visible: true, updatedAt: timestamp }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getBlockDashboardPreference(workstreamId)).resolves.toEqual({
-      visible: false,
-      updatedAt: null,
-    });
     await expect(api.updateBlockDashboardPreference(workstreamId, true)).resolves.toEqual({
       visible: true,
       updatedAt: timestamp,
     });
 
     const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/preference`;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(preferenceUrl);
-    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT' });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ visible: true });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ visible: true });
   });
 
   it('uses the template, watch, and detach service contracts without inventing response fields', async () => {

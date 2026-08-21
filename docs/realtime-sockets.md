@@ -244,6 +244,18 @@ error. Page replies do **not** allocate a shared room sequence and are neither
 broadcast nor replayed: they answer one reader's query and must not move every
 other reader's resume cursor.
 
+Refreshing canonical state is the deliberate opposite. `request_snapshot` takes
+no cursor and is answered with the ordinary sequenced `snapshot` frame rather
+than a correlated one, so the reply is ordered against the feed and the reader's
+existing cursor guard decides whether it still applies. A viewer asking for
+canonical state is saying its own may be wrong, which is exactly why a cursor it
+supplied cannot be trusted to bound the answer. The request is refused unless
+the socket is already subscribed: an unsubscribed socket has no feed to refresh,
+and answering one would serve canonical state on a connection that never passed
+the subscribe path's authority and maintenance checks. Reconciliation over REST
+survives only for recovery after `resync_required`, where no socket is open to
+ask on; [`architecture.md`](architecture.md) owns the rest of that behavior.
+
 The initial socket snapshot still carries the newest page and both cursors.
 When a user scrolls within 160 px of the top, Electron requests the preceding
 page, merges by stable message identity, and restores `scrollTop` by the exact
@@ -379,6 +391,33 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
+
+**What changed:** `ClientSocketEventSchema` gained `request_snapshot`, a
+cursorless frame that a subscribed SubstreamAgent socket may send to have the
+room re-serve the sequenced `snapshot` it would send an initial subscriber. The
+agent refuses it on an unsubscribed socket and otherwise runs the existing
+subscribe path at sequence zero.
+
+**Why:** The desktop was reconciling canonical state over REST, which meant the
+one thing this module exists to admit a reader to — the room that holds the
+state — was not the thing being asked. The full reasoning, including the loop
+that prompted it, is in [`architecture.md`](architecture.md); recorded here
+because the client frame set is part of this module's contract.
+
+**Considered and rejected:** *A correlated direct reply* alongside
+`message_page`. Those are viewer-specific answers to viewer-specific questions
+and deliberately carry no room sequence; canonical state is neither, and an
+unordered answer would have to be compared against the feed by hand. *Reusing
+`subscribe` with `afterSequence: 0`*, which reaches the same code with no
+contract change but reads as a join on an already-joined socket and resets the
+resume cursor as a side effect.
+
+**Consequences:** This is the second client frame that is not a mutation, and
+the first that is answered with a broadcast-shaped event. Anything that makes
+`snapshot` unsequenced, or gives `request_snapshot` a cursor, removes the
+property that makes the reply safe to send without correlation.
 
 ### 2026-08-20 — The feed ticket's id is returned, and joins the traces of a socket open
 

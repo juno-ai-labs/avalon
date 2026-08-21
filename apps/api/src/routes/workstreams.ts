@@ -18,11 +18,9 @@ import {
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
-  WorkstreamContextSchema,
-  WorkstreamDetailSchema,
+  WorkstreamBootSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
-  TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -37,9 +35,6 @@ import { WorkstreamObjectCreationService } from "../services/workstream-object-c
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
-import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
-import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
-import { TerminalWorkstreamService } from "../services/terminal/workstream-state";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -125,17 +120,6 @@ const SocketTicketSchema = z.object({
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
 
-function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamService {
-  const configuration = parseTerminalRegionConfiguration(c.env);
-  const provider = configuration.capability === "supported"
-    ? createDaytonaTerminalProvider(configuration)
-    : null;
-  return new TerminalWorkstreamService(
-    c.env,
-    getAuth(c),
-    provider,
-  );
-}
 
 /**
  * Marks the span failed with the API error's own code before the throw
@@ -247,17 +231,8 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(WorkstreamContextSchema.parse(await client.context()));
-});
 workstreamRoutes.get("/:id/block-dashboard", zValidator("param", idParam), async (c) =>
   c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).get(c.req.valid("param").id))),
-);
-workstreamRoutes.get("/:id/block-dashboard/preference", zValidator("param", idParam), async (c) =>
-  c.json(BlockDashboardPreferenceSchema.parse(
-    await new BlockDashboardService(c.env, getAuth(c)).getPreference(c.req.valid("param").id),
-  )),
 );
 workstreamRoutes.put(
   "/:id/block-dashboard/preference",
@@ -276,16 +251,6 @@ workstreamRoutes.put("/:id/block-dashboard", zValidator("param", idParam), zVali
     c.req.valid("json"),
   ))),
 );
-workstreamRoutes.get("/:id/terminal", zValidator("param", idParam), async (c) =>
-  c.json(TerminalWorkstreamStateSchema.parse(
-    await terminalWorkstreamService(c).get(c.req.valid("param").id),
-  )),
-);
-workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam), async (c) =>
-  c.json(TerminalWorkstreamStateSchema.parse(
-    await terminalWorkstreamService(c).startFresh(c.req.valid("param").id),
-  )),
-);
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const id = c.req.valid("param").id;
   return requestFlowSpan(c, "workstream.detail.read", {
@@ -293,13 +258,38 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
     identity: { workstreamId: id },
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
-    const detail = await span.step("workstream.detail.load", () => client.get());
+    // Everything an open needs, in one response. The room answers the detail and
+    // both transcript windows in a single call; the panel preference is
+    // WorkstreamDO's row, so it is fetched beside that rather than the room
+    // reaching sideways for it. Issued together, so folding four former
+    // requests in here costs one parallel binding call and no round trip.
+    const [boot, blockDashboardPreference] = await span.step(
+      "workstream.detail.load",
+      () => Promise.all([
+        client.boot(),
+        // Never allowed to fail the open. This is a second object answering an
+        // optional field that the control socket's boot frame also carries, so
+        // a preference WorkstreamDO cannot produce is a panel that stays shut
+        // for a moment — not a work stream that will not open. Before the two
+        // calls shared a request that was true by construction; folding them
+        // together is what made it something to state.
+        new BlockDashboardService(c.env, getAuth(c)).preferenceForDetail(id)
+          .catch(() => undefined),
+      ]),
+    );
     span.setAttributes({
-      "avalon.workstream.participant_count": detail.participants.length,
-      "avalon.workstream.resource_count": detail.resources.length,
-      "avalon.workstream.harness_status": detail.harnessStatus,
+      "avalon.workstream.participant_count": boot.workstream.participants.length,
+      "avalon.workstream.resource_count": boot.workstream.resources.length,
+      "avalon.workstream.harness_status": boot.workstream.harnessStatus,
+      "avalon.boot.message_count": boot.messageFeed.items.length,
+      "avalon.boot.resumed": boot.resumeFeed !== null,
     });
-    return c.json(WorkstreamDetailSchema.parse(detail));
+    return c.json(WorkstreamBootSchema.parse({
+      ...boot.workstream,
+      messageFeed: boot.messageFeed,
+      resumeFeed: boot.resumeFeed,
+      blockDashboardPreference,
+    }));
   });
 });
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {

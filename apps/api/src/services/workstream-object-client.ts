@@ -4,7 +4,6 @@ import {
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
-  WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
   type Elicitation,
@@ -14,7 +13,6 @@ import {
   asWorkstreamId,
   type Resource,
   type Workstream,
-  type WorkstreamContext,
   type WorkstreamDetail,
 } from "@avalon/contracts";
 import type {
@@ -45,6 +43,12 @@ const MessagePageSchema = z.object({
   nextCursor: z.string().nullable(),
   newerCursor: z.string().nullable(),
 });
+const BootPayloadSchema = z.object({
+  workstream: WorkstreamDetailSchema,
+  messageFeed: MessagePageSchema,
+  resumeFeed: MessagePageSchema.nullable(),
+});
+type MessagePage = z.infer<typeof MessagePageSchema>;
 const CreatedMessageSchema = z.object({
   message: MessageSchema,
   agentInvoked: z.boolean(),
@@ -211,6 +215,15 @@ export class WorkstreamObjectClient {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
   }
 
+  /** Detail plus both transcript windows, in one call to the room. */
+  async boot(): Promise<{
+    workstream: WorkstreamDetail;
+    messageFeed: MessagePage;
+    resumeFeed: MessagePage | null;
+  }> {
+    return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
+  }
+
   async initialize(input: InitializeWorkstreamObjectInput): Promise<{
     workstream: Workstream;
     messageId: string;
@@ -219,9 +232,6 @@ export class WorkstreamObjectClient {
     return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
   }
 
-  async context(): Promise<WorkstreamContext> {
-    return WorkstreamContextSchema.parse(await this.request({ operation: "context" }));
-  }
 
   async update(input: z.infer<typeof UpdateWorkstreamRequestSchema>): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "update", input }));

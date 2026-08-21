@@ -3,14 +3,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
   applyStreamingSocketEvent,
   insertMessage,
   mergeCanonicalTranscript,
-  mergeCanonicalTranscriptAfterConcurrentEvent,
   nextTranscriptSequence,
   reconcileCanonicalTranscript,
   replaceWithCanonicalTranscript,
@@ -79,17 +78,6 @@ async function flushPromises(): Promise<void> {
   });
 }
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
-}
-
 function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocketApi {
   const unexpected = async (): Promise<never> => {
     throw new Error('Unexpected socket API call.');
@@ -137,6 +125,101 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
     automationRuns: [],
     ...overrides,
   };
+}
+
+/** `getWorkstream` answers the whole of an open now, not just the detail. */
+function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
+  return {
+    ...workstreamDetail(overrides),
+    messageFeed: { items: [], nextCursor: null, newerCursor: null },
+    resumeFeed: null,
+    blockDashboardPreference: { visible: false, updatedAt: null },
+  };
+}
+
+/**
+ * A work-stream detail in the shape the room puts on the wire, which is not the
+ * shape the renderer holds. The hook validates every frame against the shared
+ * contract before applying it, so a snapshot built from the renderer's own
+ * `WorkstreamDetail` is rejected as malformed and silently ignored — a test
+ * written that way passes its assertions against the state it set up itself.
+ */
+function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: '00000000-0000-7000-8000-000000000091',
+    workspaceId: '00000000-0000-7000-8000-000000000001',
+    title: 'Wire work stream',
+    objective: 'Wire objective',
+    originType: 'ad_hoc',
+    originLabel: null,
+    createdByUserId: null,
+    automationSubscriptionId: null,
+    automationRunId: null,
+    plannedFor: null,
+    harnessStatus: 'completed',
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: '2026-07-31T19:00:00.000Z',
+    createdAt: '2026-07-31T19:00:00.000Z',
+    updatedAt: '2026-07-31T19:00:00.000Z',
+    archivedAt: null,
+    participants: [],
+    viewers: [],
+    resources: [],
+    connections: [],
+    openElicitations: [],
+    suggestions: [],
+    latestHarnessRunId: null,
+    ...overrides,
+  };
+}
+
+function wireTextMessage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: '00000000-0000-7000-8000-000000000103',
+    clientMessageId: null,
+    workspaceId: '00000000-0000-7000-8000-000000000001',
+    workstreamId: '00000000-0000-7000-8000-000000000091',
+    author: { type: 'agent' },
+    messageType: 'text',
+    textContent: 'Canonical text.',
+    structuredContent: null,
+    mentions: [],
+    sequenceNumber: 1,
+    createdAt: '2026-07-31T19:20:00.000Z',
+    editedAt: null,
+    ...overrides,
+  };
+}
+
+function snapshotFrame(input: {
+  sequence: number;
+  workstream?: Record<string, unknown>;
+  messages?: Record<string, unknown>[];
+  resumeFeed?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  return {
+    type: 'snapshot',
+    sequence: input.sequence,
+    occurredAt: '2026-07-31T19:20:00.000Z',
+    workstream: wireWorkstreamDetail(input.workstream),
+    messageFeed: { items: input.messages ?? [], nextCursor: null, newerCursor: null },
+    resumeFeed: input.resumeFeed ?? null,
+    activeStreams: [],
+    activeCompaction: null,
+  };
+}
+
+/** The frames a socket was asked to send, in order, excluding raw keepalives. */
+function sentFrames(socket: FakeWebSocket): { type: string }[] {
+  return socket.send.mock.calls
+    .map(([frame]) => frame)
+    .filter((frame): frame is string => typeof frame === 'string' && frame.startsWith('{'))
+    .map((frame) => JSON.parse(frame) as { type: string });
 }
 
 afterEach(() => {
@@ -631,7 +714,6 @@ describe('useWorkstreamSocket', () => {
 
     expect(insertMessage([answered], open)).toEqual([answered]);
     expect(insertMessage([open], answered)).toEqual([answered]);
-    expect(mergeCanonicalTranscriptAfterConcurrentEvent([open], [answered])).toEqual([answered]);
   });
 
   it('retains an unmatched optimistic human message during a canonical refresh', () => {
@@ -1218,12 +1300,51 @@ describe('useWorkstreamSocket', () => {
       realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
       toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'started' },
     };
-    const canonicalTool: Message = {
-      ...staleTool,
+    const wireToolMessage = wireTextMessage({
       id: invocationId,
+      workstreamId,
+      messageType: 'tool',
+      textContent: '',
       sequenceNumber: 5,
-      realtimeOrder: undefined,
-      toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'completed' },
+      structuredContent: {
+        invocation: {
+          id: invocationId,
+          harnessRunId: '00000000-0000-7000-8000-000000000093',
+          toolCallId: 'call-one',
+          toolName: 'firecrawl.fetch',
+          activityName: null,
+          connectionId: null,
+          plugin: null,
+          status: 'completed',
+          inputSummary: 'https://example.test',
+          outputSummary: null,
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        },
+      },
+    });
+    // Written out rather than derived through `mapMessage`: the mapping is part
+    // of what this test covers, so expecting its own output would assert
+    // nothing.
+    const canonicalTool: Message = {
+      id: invocationId,
+      workstreamId,
+      sequenceNumber: 5,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      text: '',
+      mentions: [],
+      attachments: [],
+      createdAt: '2026-07-31T19:20:00.000Z',
+      attentionSequenceNumber: null,
+      toolEvent: {
+        id: invocationId,
+        name: 'firecrawl.fetch',
+        summary: 'https://example.test',
+        status: 'completed',
+        input: 'https://example.test',
+      },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
     queryClient.setQueryData(['block-dashboard', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
@@ -1234,8 +1355,6 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
-      getMessages: vi.fn(async () => [canonicalTool]),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1248,10 +1367,19 @@ describe('useWorkstreamSocket', () => {
     act(() => second.open());
     await flushPromises();
 
-    expect(api.getMessages).toHaveBeenCalledOnce();
+    // The cursor is the reconciliation: the reconnect subscribes, and the room
+    // answers a cursor it cannot replay from with the canonical snapshot. No
+    // REST call is made for it — `socketApiWith` throws on any it did not stub.
+    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0 }]);
+    act(() => second.message(snapshotFrame({
+      sequence: 6,
+      workstream: { id: workstreamId, harnessStatus: 'completed' },
+      messages: [wireToolMessage],
+    })));
+    await flushPromises();
+
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
     expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['block-dashboard-preference', workstreamId])?.isInvalidated).toBe(true);
   });
 
   it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {
@@ -1403,7 +1531,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
@@ -1422,19 +1550,18 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000099';
-    const canonicalWorkstream = {
-      id: workstreamId,
-      harnessStatus: 'running',
-      scope: 'workspace',
-      latestHarnessRunId: 'run-new',
-      latestHarnessRun: {
-        id: 'run-new',
-        origin: 'message',
-        status: 'running',
-        startedAt: '2026-08-06T05:00:00.000Z',
-        createdAt: '2026-08-06T05:00:00.000Z',
-      },
-    } as WorkstreamDetail;
+    const runId = '00000000-0000-7000-8000-0000000000a1';
+    const latestHarnessRun = {
+      id: runId,
+      origin: 'message',
+      status: 'running' as const,
+      model: null,
+      error: null,
+      requestId: null,
+      startedAt: '2026-08-06T05:00:00.000Z',
+      completedAt: null,
+      createdAt: '2026-08-06T05:00:00.000Z',
+    };
     const cachedSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'completed' });
     setCachedWorkstreams(queryClient, [cachedSummary]);
     queryClient.setQueryData(['workstream', workstreamId], {
@@ -1449,8 +1576,6 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => canonicalWorkstream),
-      getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1465,10 +1590,37 @@ describe('useWorkstreamSocket', () => {
     }));
     await flushPromises();
 
-    expect(api.getWorkstream).toHaveBeenCalledWith(workstreamId);
-    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual(
-      canonicalWorkstream.latestHarnessRun,
-    );
+    // The status frame says the run changed; it does not carry the run. The
+    // client asks the room for canonical state over the socket it already
+    // holds rather than spending two REST reads on it.
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+    ]);
+    queryClient.setQueryData(['workstream-context', workstreamId, null], { resources: [] });
+    act(() => socket.message(snapshotFrame({
+      sequence: 2,
+      workstream: {
+        id: workstreamId,
+        harnessStatus: 'running',
+        latestHarnessRunId: runId,
+        latestHarnessRun,
+      },
+    })));
+    await flushPromises();
+
+    // A snapshot carries no context, so repairing drift has to mark it stale.
+    expect(queryClient.getQueryState(['workstream-context', workstreamId, null])?.isInvalidated).toBe(true);
+
+    // The renderer's shape, not the wire's: the mapper drops the null-valued
+    // optional fields, and expecting the frame back would assert nothing about it.
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual({
+      id: runId,
+      origin: 'message',
+      status: 'running',
+      startedAt: '2026-08-06T05:00:00.000Z',
+      createdAt: '2026-08-06T05:00:00.000Z',
+    });
     // Cross-workstream serving belongs to the WorkspaceDO socket. A substream
     // recovery invalidates that query but never merges a parallel REST list.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([{
@@ -1497,7 +1649,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
@@ -1522,14 +1674,12 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
   });
 
-  it('does not lose socket messages that arrive while terminal reconciliation is in flight', async () => {
+  it('does not lose socket messages that arrive while a snapshot request is in flight', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workspaceId = '00000000-0000-7000-8000-000000000101';
     const workstreamId = '00000000-0000-7000-8000-000000000102';
     const messageId = '00000000-0000-7000-8000-000000000103';
-    const firstMessages = deferred<Message[]>();
-    const secondMessages = deferred<Message[]>();
     const socketMessage = {
       id: messageId,
       clientMessageId: null,
@@ -1557,17 +1707,12 @@ describe('useWorkstreamSocket', () => {
       mentions: [],
       createdAt: '2026-07-31T19:20:02.000Z',
     };
-    const getMessages = vi.fn()
-      .mockImplementationOnce(() => firstMessages.promise)
-      .mockImplementationOnce(() => secondMessages.promise);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
-      getMessages,
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1576,33 +1721,46 @@ describe('useWorkstreamSocket', () => {
     act(() => socket.open());
     act(() => socket.message({
       type: 'harness_status_changed',
-      sequence: 1,
+      sequence: 10,
       occurredAt: '2026-07-31T19:20:00.000Z',
       status: 'completed',
     }));
-    expect(getMessages).toHaveBeenCalledOnce();
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+    ]);
 
+    // Published after the request was sent, so it reaches the client ahead of
+    // an answer assembled before it existed.
     act(() => socket.message({
       type: 'message_created',
-      sequence: 2,
+      sequence: 12,
       occurredAt: '2026-07-31T19:20:02.000Z',
       message: socketMessage,
     }));
-    await act(async () => {
-      firstMessages.resolve([]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(getMessages).toHaveBeenCalledTimes(2);
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
 
-    await act(async () => {
-      secondMessages.resolve([canonicalMessage]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    // The room's answer is older than what the client has already applied. The
+    // ordering guard drops it, which is the whole reason this path needs no
+    // retry: the newer state is already installed, so there is nothing to go
+    // back for.
+    act(() => socket.message(snapshotFrame({ sequence: 11, workstream: { id: workstreamId } })));
+    await flushPromises();
+
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
+    // And the dropped answer released the slot rather than wedging it: a later
+    // status change can still ask again.
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 13,
+      occurredAt: '2026-07-31T19:20:03.000Z',
+      status: 'idle',
+    }));
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+      { type: 'request_snapshot' },
+    ]);
   });
 
   it('treats needs-input as terminal and reconciles synthetic realtime rows', async () => {
@@ -1620,12 +1778,48 @@ describe('useWorkstreamSocket', () => {
       realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
       toolEvent: { id: invocationId, name: 'avalon.ask', status: 'started' },
     };
-    const canonicalTool: Message = {
-      ...staleTool,
+    const wireToolMessage = wireTextMessage({
       id: invocationId,
+      workstreamId,
+      messageType: 'tool',
+      textContent: '',
       sequenceNumber: 5,
-      realtimeOrder: undefined,
-      toolEvent: { id: invocationId, name: 'avalon.ask', status: 'completed' },
+      structuredContent: {
+        invocation: {
+          id: invocationId,
+          harnessRunId: '00000000-0000-7000-8000-000000000113',
+          toolCallId: 'call-ask',
+          toolName: 'avalon.ask',
+          activityName: null,
+          connectionId: null,
+          plugin: null,
+          status: 'completed',
+          inputSummary: 'Which repository?',
+          outputSummary: null,
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        },
+      },
+    });
+    const canonicalTool: Message = {
+      id: invocationId,
+      workstreamId,
+      sequenceNumber: 5,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      text: '',
+      mentions: [],
+      attachments: [],
+      createdAt: '2026-07-31T19:20:00.000Z',
+      attentionSequenceNumber: null,
+      toolEvent: {
+        id: invocationId,
+        name: 'avalon.ask',
+        summary: 'Which repository?',
+        status: 'completed',
+        input: 'Which repository?',
+      },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
     const api = socketApiWith({
@@ -1634,8 +1828,6 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
-      getMessages: vi.fn(async () => [canonicalTool]),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1650,8 +1842,238 @@ describe('useWorkstreamSocket', () => {
     }));
     await flushPromises();
 
-    expect(api.getMessages).toHaveBeenCalledOnce();
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+    ]);
+    act(() => socket.message(snapshotFrame({
+      sequence: 2,
+      workstream: { id: workstreamId, harnessStatus: 'needs_input' },
+      messages: [wireToolMessage],
+    })));
+    await flushPromises();
+
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
+  });
+
+  it('does not pull the reader backwards when a later snapshot carries a resume window', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000151';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    // Arriving: the reader is behind, so the resume window is what they see.
+    act(() => socket.message(snapshotFrame({
+      sequence: 5,
+      workstream: { id: workstreamId },
+      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000152', sequenceNumber: 90 })],
+      resumeFeed: {
+        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
+        nextCursor: '12',
+        newerCursor: '13',
+      },
+    })));
+    await flushPromises();
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
+      .toEqual([12]);
+
+    // Reconciling: the same frame shape, but the reader has been watching this
+    // run. Read acknowledgement stops while the window is unfocused, so their
+    // first-unread is still far behind and the room keeps sending a resume
+    // window — applying it here would throw away what they just watched arrive.
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 6,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'completed',
+    }));
+    act(() => socket.message(snapshotFrame({
+      sequence: 7,
+      workstream: { id: workstreamId },
+      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000154', sequenceNumber: 91 })],
+      resumeFeed: {
+        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
+        nextCursor: '12',
+        newerCursor: '13',
+      },
+    })));
+    await flushPromises();
+
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
+      .toEqual([91]);
+    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeNull();
+  });
+
+  it('does not re-ask for a snapshot as a run streams under it', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000121';
+    const messageId = '00000000-0000-7000-8000-000000000122';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'running',
+    }));
+
+    // A run emits one of these per coalesced token batch. They advance the room
+    // sequence and carry no canonical state, which is exactly the combination
+    // that used to be read as "canonical state moved while I was asking" and
+    // restart the reconciliation — once per batch, for the length of the run.
+    for (let streamSeq = 1; streamSeq <= 25; streamSeq += 1) {
+      act(() => socket.message({
+        type: 'stream_delta',
+        sequence: 1 + streamSeq,
+        occurredAt: '2026-07-31T19:20:01.000Z',
+        messageId,
+        turnId: 'turn-one',
+        epoch: 0,
+        streamSeq,
+        reset: false,
+        delta: 'token ',
+      }));
+    }
+    // A second reason to reconcile, arriving before the first was answered.
+    // One outstanding request covers both: the answer is assembled after both
+    // frames, so a second request could only ask for the same state.
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 27,
+      occurredAt: '2026-07-31T19:20:04.000Z',
+      status: 'needs_input',
+    }));
+    await flushPromises();
+
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+    ]);
+
+    // The answer releases the slot, and the run going terminal is a new reason
+    // to ask — so coalescing suppresses repetition without suppressing the
+    // reconciliation that matters.
+    act(() => socket.message(snapshotFrame({
+      sequence: 28,
+      workstream: { id: workstreamId, harnessStatus: 'running' },
+    })));
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 29,
+      occurredAt: '2026-07-31T19:20:05.000Z',
+      status: 'completed',
+    }));
+    await flushPromises();
+
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+      { type: 'request_snapshot' },
+    ]);
+  });
+
+  it('can reconcile again after the room refuses a snapshot request', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000131';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 5,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'running',
+    }));
+
+    // The room can fail to assemble canonical state. Its error frame carries the
+    // room's current sequence, so the ordinary ordering guard discards it — but
+    // it is still the answer to the request, and a slot left open here would
+    // suppress every later reconciliation for the life of the socket.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 5,
+      occurredAt: '2026-07-31T19:20:01.000Z',
+      code: 'snapshot_unavailable',
+      message: 'Canonical work-stream state is unavailable.',
+    }));
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 6,
+      occurredAt: '2026-07-31T19:20:02.000Z',
+      status: 'completed',
+    }));
+    await flushPromises();
+
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+      { type: 'request_snapshot' },
+    ]);
+  });
+
+  it('separates the wait for a socket into scheduling and handshake', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000141';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId } })));
+    await flushPromises();
+
+    const line = debug.mock.calls
+      .filter((call) => String(call[0]).startsWith('[perf]'))
+      .map((call) => call[1] as { phases: Record<string, number>; sinceEffectMs: number })
+      .at(-1)!;
+    // `dial` closes on the line that constructs the WebSocket and `handshake`
+    // on its open event. Collapsing them back into one number is what made a
+    // blocked renderer indistinguishable from a slow connection.
+    expect(Object.keys(line.phases)).toEqual(['socket_ticket', 'dial', 'handshake', 'first_frame']);
+    // Dead time before the first request, which the trace cannot cover: it does
+    // not exist until `connect` runs.
+    expect(line.sinceEffectMs).toEqual(expect.any(Number));
   });
 
   it('resets the replay sequence when the selected workstream changes', async () => {
@@ -1697,7 +2119,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async (workstreamId: string) => workstreamDetail({
+      getWorkstream: vi.fn(async (workstreamId: string) => workstreamBoot({
         id: workstreamId,
         harnessStatus: 'running',
       })),
@@ -1945,7 +2367,7 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const canonicalWorkstream = workstreamDetail({
+    const canonicalWorkstream = workstreamBoot({
       id: 'workstream-one',
       title: 'Canonical',
       harnessStatus: 'running',
