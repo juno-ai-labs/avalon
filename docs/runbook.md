@@ -1453,6 +1453,50 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 - Production never loads `packages/db/seed.sql`.
 - Restore D1 and its corresponding R2 objects as a region-consistent set before resuming Queue consumers or scheduler alarms.
 
+### Making existing work streams private
+
+The release that made new work streams private by default is forward-only: it
+decides what a create *writes*, so every work stream that already existed kept
+the visibility it was created with.
+`scripts/backfill-workstream-scope.mjs` is the retroactive pass over them.
+
+**Understand what it costs before running it.** `personal` is enforced against
+the participant list, and the rows this touches were never rooms — a work stream
+created workspace-scoped often has no participant at all, because nothing needed
+to seat one. `PATCH /workstreams/:id` seats *the caller* when it narrows a work
+stream, which is what stops the operation locking its own author out. So every
+participant-less work stream the pass flips ends up readable by whoever ran it
+and nobody else, until somebody adds the people back. Run it as a workspace
+owner, tell the workspace first, and expect people to have lost sight of
+something.
+
+It uses the ordinary product API with an ordinary access token, so it grants
+itself nothing — it sees and changes exactly what that member could from the
+app. Work streams whose scope is not what decides who reads them (an
+automation's, a digest occurrence's) refuse with `scope_change_unsupported` and
+are counted as left alone.
+
+```bash
+export AVALON_ACCESS_TOKEN=...            # a workspace owner's token
+node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \
+  --record ./flip-global.json             # dry run: lists and records, changes nothing
+node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \
+  --record ./flip-global.json --apply
+```
+
+**Keep the record file.** Nothing in Avalon stores a work stream's previous
+scope, so that file is the only way back:
+
+```bash
+node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.com \
+  --revert ./flip-global.json
+```
+
+One run per workspace and one per region: a token belongs to one member of one
+workspace, and Global and EU share no identity and no list. Run the dry run
+first and read the count — it is the number of work streams that are about to
+stop being visible to everyone who can see them today.
+
 ### Finishing the artifact retirement
 
 Retiring artifacts is staged across two releases, for the reason [the migration window](#the-window-between-a-migration-and-the-worker-that-needs-it) gives: the Worker that is live while a migration applies still reads `artifacts` on every `GET /workstreams/:id/context`, so the table cannot go in the same release as the code that stopped reading it. `0069_retire_artifact_messages.sql` therefore only retires the `'artifact'` message type. **A later release still owes a `DROP TABLE artifacts` migration**, and it is safe to write once no deployed Worker reads the table — after the release carrying that code removal is live in both regions.
