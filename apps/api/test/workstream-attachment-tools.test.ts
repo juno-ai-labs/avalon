@@ -454,7 +454,10 @@ describe("work-stream attachment tools", () => {
     await expect(read.execute({ cursor: `${firstOutput.nextCursor}tampered` }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
-    await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).rejects.toMatchObject({ code: "resource_version_changed" });
+    await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).rejects.toMatchObject({
+      code: "resource_version_changed",
+      details: { resourceId },
+    });
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {

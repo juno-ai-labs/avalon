@@ -413,7 +413,6 @@ async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise
       metadata: { extractionMethod: "utf8", omissions: [] },
     };
   }
-  if (kind !== "text" && kind !== "markdown") return null;
   return null;
 }
 

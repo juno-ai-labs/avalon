@@ -515,4 +515,38 @@ describe("the Workstream Durable Object relational schema", () => {
       database.close();
     }
   });
+
+  it("projects a stopped realtime event to the cancelled durable run state", async () => {
+    const database = new DatabaseSync(":memory:");
+    const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "global");
+    try {
+      await store.waitUntilReady();
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "global");
+      const at = "2026-08-21T03:00:00.000Z";
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "stream_started",
+        sequence: 0,
+        occurredAt: at,
+        messageId: MESSAGE_ID,
+        harnessRunId: RUN_ID,
+        turnId: "turn-stopped",
+        epoch: 0,
+        streamSeq: 0,
+        reset: false,
+      }));
+      database.prepare("DELETE FROM active_output_turns").run();
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "harness_status_changed",
+        sequence: 0,
+        occurredAt: at,
+        status: "stopped",
+      }));
+
+      expect(database.prepare(
+        "SELECT status, terminal_reason FROM runs WHERE run_id = ?",
+      ).get(RUN_ID)).toEqual({ status: "cancelled", terminal_reason: "cancelled" });
+    } finally {
+      database.close();
+    }
+  });
 });

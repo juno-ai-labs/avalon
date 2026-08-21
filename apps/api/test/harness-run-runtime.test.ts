@@ -783,6 +783,33 @@ describe("durable harness attempt runtime", () => {
       plan: { pluginId: "terminal", canonicalToolName: "terminal.execute", mode: "write" },
       mode: "write",
     });
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-read",
+      toolName: "linear.issue.get",
+      inputHash: "input-stale-read",
+      input: { id: "AVA-1" },
+      plan: { pluginId: "linear", canonicalToolName: "linear.issue.get", mode: "read" },
+      mode: "read",
+    });
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-pending-write",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-pending-write",
+      toolName: "linear.issue.update",
+      inputHash: "input-stale-pending-write",
+      input: { id: "AVA-1", title: "Pending" },
+      plan: { pluginId: "linear", canonicalToolName: "linear.issue.update", mode: "write" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE tool_invocations SET status = 'pending' WHERE id = ?",
+    ).run("invocation-stale-pending-write");
     expect(sqlite.object.prepare(
       "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
     ).get("invocation-stale-parent")).toEqual({
@@ -803,12 +830,18 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare(
       "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
     ).get("invocation-stale-parent")).toMatchObject({
-      status: "failed",
+      status: "ambiguous",
       error_json: JSON.stringify({
-        code: "parent_run_terminated",
-        message: "The parent run lost its durable lease",
+        code: "ambiguous_external_write",
+        message: "The parent run lost its durable lease while an external write was in flight",
       }),
     });
+    expect(sqlite.object.prepare(
+      "SELECT id, status FROM tool_invocations WHERE id IN (?, ?) ORDER BY id",
+    ).all("invocation-stale-pending-write", "invocation-stale-read")).toEqual([
+      { id: "invocation-stale-pending-write", status: "failed" },
+      { id: "invocation-stale-read", status: "failed" },
+    ]);
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-stale'",
     ).get()).toMatchObject({

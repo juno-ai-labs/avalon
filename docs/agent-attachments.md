@@ -85,8 +85,12 @@ prompt requires the active agent—work-stream agent or automation architect—t
 inspect a referenced attachment before answering and to use `charactersBefore`
 and `charactersAfter` rather than treating one page as the whole resource.
 The host also enforces that promise: if a read, search, view, or summary call
-fails and no later successful content access resolves the same resource, the
-model receives one corrective turn and cannot publish attachment facts. A run
+fails or a completed multi-image view skips a requested resource, and no later
+successful content access resolves the same resource, the model receives one
+corrective turn and cannot publish attachment facts. Cursor reads attach their
+resolved resource identity to structured failures so a successful restart by
+resource ID clears the same guard entry instead of leaving a tool-call-only
+false positive. A run
 that still ends replaces its prose with a deterministic, content-free
 `Attachment content unverified` boundary carrying only resource/tool/error
 provenance. `attachment_grounding_guard_triggered` records the same bounded
@@ -456,7 +460,9 @@ cheap discovery and continuation paths.
 **What changed:** CSV/TSV extraction now reaches the UTF-8 converter under
 extractor v2, terminal v2 derivative results are reused, each conversion phase
 emits content-free correlated timing, and the host replaces an answer when its
-attachment content access remained unresolved.
+attachment content access remained unresolved. Mixed image-view results remain
+unverified per skipped resource, while cursor failures carry their resolved
+resource identity so a later successful restart can clear them.
 
 **Why:** End-to-end QA found a CSV labeled as a spreadsheet taking an early
 unsupported branch. The failed tool result then remained advisory, allowing a
@@ -469,7 +475,8 @@ correctness boundary, and the last would move workspace content into account
 logs.
 
 **Consequences:** New content-bearing attachment tools must participate in the
-grounding guard. Changing converter coverage requires a new extractor version,
+grounding guard, and a completed call counts only the content its output proves
+was delivered. Changing converter coverage requires a new extractor version,
 and new materialization stages must retain content-free run/tool/resource
 correlation.
 
