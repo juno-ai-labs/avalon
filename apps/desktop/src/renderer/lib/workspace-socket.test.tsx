@@ -121,10 +121,9 @@ describe('WorkspaceSocketProvider', () => {
       ['github-repository-access'],
       ['terminal-workspace-settings'],
       ['digest-schedule'],
-      ['automations'],
       ['automation'],
       ['automation-draft'],
-      ['notes'],
+      ['automation-email-reconciliation'],
       ['note'],
       ['resources'],
       ['workstream-context'],
@@ -134,6 +133,11 @@ describe('WorkspaceSocketProvider', () => {
       ['block-dashboard-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
+    // The two sidebar lists are pushed whole, so a topic must never invalidate
+    // them: nothing would refetch, and naming them here would suggest otherwise.
+    for (const pushed of [['automations'], ['notes']]) {
+      expect(invalidatedRoots).not.toContain(JSON.stringify(pushed));
+    }
     const invalidationCount = invalidations.mock.calls.length;
     act(() => socket.message({
       type: 'workspace_sync',
@@ -460,6 +464,95 @@ describe('WorkspaceSocketProvider', () => {
     // The batch also lands in the shared ledger, so a row it carried is not
     // re-fetched by the work-stream caches behind it.
     expect(queryClient.getQueryData(['workstreams'])).toBeDefined();
+  });
+
+  it('replaces a pushed sidebar list wholesale, so a removed row disappears', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    const automation = (id: string, name: string) => ({
+      id,
+      name,
+      description: 'Every Monday',
+      emailAddress: null,
+      scope: 'workspace' as const,
+      status: 'active' as const,
+      nextRunAt: null,
+      lastRunAt: null,
+      updatedAt: '2026-08-17T19:00:00.000Z',
+      updateAvailable: false,
+    });
+
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      list: 'automations',
+      items: [
+        automation('00000000-0000-7000-8000-000000000005', 'Monday brief'),
+        automation('00000000-0000-7000-8000-000000000006', 'Former-client monitor'),
+      ],
+    }));
+    expect(queryClient.getQueryData(['automations'])).toEqual([
+      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005' }),
+      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006' }),
+    ]);
+
+    // One deleted elsewhere. The list is the whole truth, so the row leaves by
+    // being absent — there is no tombstone and nothing merges the old copy back.
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:01:00.000Z',
+      list: 'automations',
+      items: [automation('00000000-0000-7000-8000-000000000005', 'Monday brief')],
+    }));
+    expect(queryClient.getQueryData(['automations'])).toEqual([
+      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005' }),
+    ]);
+
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:02:00.000Z',
+      list: 'notes',
+      items: [{
+        id: '00000000-0000-7000-8000-000000000007',
+        workspaceId: '00000000-0000-7000-8000-000000000001',
+        resourceId: '00000000-0000-7000-8000-000000000008',
+        ownerUserId: '00000000-0000-7000-8000-000000000003',
+        scope: 'workspace',
+        title: 'Standup',
+        recordingStatus: 'idle',
+        recordedMs: 0,
+        startedAt: null,
+        endedAt: null,
+        generatedAt: null,
+        lastActivityAt: '2026-08-17T21:00:00.000Z',
+        createdAt: '2026-08-17T19:00:00.000Z',
+        updatedAt: '2026-08-17T21:00:00.000Z',
+        archivedAt: null,
+      }],
+    }));
+    expect(queryClient.getQueryData(['notes']))
+      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000007', title: 'Standup' })]);
+    // The lists are separate pushes; one must not clear the other.
+    expect(queryClient.getQueryData(['automations'])).toHaveLength(1);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {

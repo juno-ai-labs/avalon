@@ -4,6 +4,7 @@ import {
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
+  WorkspaceSidebarListEventSchema,
   WorkspaceSidebarPageEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
@@ -231,6 +232,24 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_link_challenges",
   "slack_unfurled_links",
 ]);
+
+/**
+ * Which sidebar list a write invalidates, by the table it writes.
+ *
+ * Every mutation of these tables — a desktop REST write, a Workflow, and the
+ * scheduler advancing `next_run_at` after a run — reaches this object through
+ * `executeRuntimeSql`, so one check here covers writers that have no request
+ * to hang an invalidation off. The template tables are in the list because the
+ * sidebar row's name, description and update badge are read from them.
+ */
+const SIDEBAR_LIST_SOURCE_TABLES = new Map<string, SidebarList>([
+  ["automation_subscriptions", "automations"],
+  ["automation_templates", "automations"],
+  ["automation_template_versions", "automations"],
+  ["notes", "notes"],
+]);
+
+type SidebarList = "automations" | "notes";
 
 function workspaceMutationTarget(sql: string): string | null {
   return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
@@ -1000,6 +1019,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }));
       }
+      // After the transaction, so a socket is never sent a list built from
+      // rows that are about to roll back.
+      const lists = new Set<SidebarList>();
+      for (const statement of request.statements) {
+        const target = workspaceMutationTarget(statement.sql);
+        const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
+        if (list) lists.add(list);
+      }
+      for (const list of lists) this.publishSidebarList(list);
       return responseToRpcResult(json({ results }));
     } catch (error) {
       return responseToRpcResult(json({
@@ -3243,6 +3271,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       } catch {
         // Hibernation owns close cleanup; reconnect loads the current page and
         // does not need the state rows missed while this socket was unhealthy.
+      }
+    }
+  }
+
+  /**
+   * Re-send one sidebar list to every subscribed socket, per viewer.
+   *
+   * Read once per socket rather than once per workspace because both lists are
+   * scoped — a personal automation or note belongs to its owner, and sending
+   * one reader's list to another would leak it. This mirrors
+   * `publishWorkstreamState`, which re-reads its row per viewer for the same
+   * reason.
+   *
+   * Synchronous throughout: the reads are local SQLite and the sends are
+   * ordered by the transport, so a later write cannot overtake an earlier one
+   * on the same socket. That ordering is what lets the event carry no
+   * waterline; see the schema in `packages/contracts`.
+   */
+  private publishSidebarList(list: SidebarList): void {
+    const occurredAt = new Date().toISOString();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      const items = list === "automations"
+        ? this.listSidebarAutomations(attachment.workspaceId, attachment.userId)
+        : this.listSidebarNotes(attachment.workspaceId, attachment.userId);
+      try {
+        socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
+          type: "workspace_sidebar_list",
+          occurredAt,
+          list,
+          items,
+        })));
+      } catch {
+        // Hibernation owns close cleanup, and a reconnect asks for the whole
+        // sidebar again, so a socket that missed this list is not left stale.
       }
     }
   }

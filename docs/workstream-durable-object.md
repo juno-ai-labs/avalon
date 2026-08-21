@@ -1218,6 +1218,32 @@ receipt terminalized by recovery converges the transcript in the same SQLite
 transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
 tests pin both the v13-to-v14 repair and ordinary receipt semantics.
 
+### 2026-08-21 — A write to an automation or note pushes its list
+
+**What changed:** `executeRuntimeSql` now notes which sidebar list a statement
+writes — by the same write-target match the alarm refresh already uses — and
+re-sends that list whole to every subscribed socket, read per viewer the way
+`publishWorkstreamState` reads its row.
+
+**Why:** These tables had no push at all; the desktop learned about a change
+from a topic the Worker derived from the mutating REST request. Writers with no
+request were therefore invisible, and `WorkspaceScheduler` advancing
+`next_run_at` after a run is one — it reaches this object through the workspace
+runtime database like every other writer, which is what makes one check here
+cover all of them.
+
+**Considered and rejected:** Emitting from each service that writes these
+tables, which spreads the obligation across many call sites and misses the
+scheduler in another object entirely; and pushing only the changed rows, which
+would need this layer to understand the statement rather than just its target.
+
+**Consequences:** This object now sends product data on a write path that
+previously only returned rows, so a slow or large list read is felt by the
+writer. Both lists are bounded at 250 and the reads are local and synchronous,
+which is what keeps that acceptable. A future table whose rows appear in the
+sidebar must be added to `SIDEBAR_LIST_SOURCE_TABLES` or its writes will be
+silently invisible to open clients.
+
 ### 2026-08-21 — The sidebar's three lists are read together in one object
 
 **What changed:** WorkspaceDO answers a new `list_sidebar` socket command with
@@ -2292,6 +2318,7 @@ already a retry loop with a natural backoff; duplicating it inside the tick
 adds concurrency for no coverage), and treating every error as retryable (a
 data conflict must stop the campaign — retrying it forever would hide the
 defect the quarantine exists to surface).
+
 ### 2026-08-19 — The authority cutover campaign machinery is retired
 
 **What changed:** With both regions permanently at `durable_object_open`, the
@@ -2321,6 +2348,7 @@ same change (40+ call sites fail closed without the row — removal has to
 follow, not accompany, the code that reads it), and keeping the import RPCs as
 "harmless" dead surface (an import RPC on a live object is a data-corruption
 primitive if ever reachable).
+
 ### 2026-08-19 — Every Durable Object reports its migration outcome
 
 **What changed:** All five constructors now run their migration call inside
