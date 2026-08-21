@@ -224,6 +224,34 @@ async function fetchAndDrain(
   return response;
 }
 
+/**
+ * Seat the reader these fixtures connect as.
+ *
+ * A bootstrapped-but-uninitialized work stream is born `personal`, so nobody is
+ * a reader of it until somebody is in it — which is what a real create writes in
+ * the same transaction as the root row. A fixture that stops at
+ * `bootstrapRuntime` and then opens a socket has to do the same, or the room
+ * refuses it with 403 for a reason that has nothing to do with what the test is
+ * about.
+ */
+async function seatBootstrapParticipant(
+  stub: DurableObjectStub,
+  userId: string,
+): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT OR REPLACE INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, updated_at)
+       VALUES (?, 'creator', ?, 'active', 0, ?, NULL, ?)`,
+      userId,
+      userId,
+      Date.now(),
+      Date.now(),
+    );
+  });
+}
+
 describe("Durable Objects in the Workers runtime", () => {
   it("preserves HTTP-style success and conflict envelopes across native RPC", async () => {
     await seedOpenAuthority();
@@ -421,6 +449,7 @@ describe("Durable Objects in the Workers runtime", () => {
       participantUserIds: [],
       attachmentIds: [],
       originResourceIds: [],
+      scope: "personal" as const,
       modelOverride: "test-model",
       originType: "ad_hoc" as const,
       automationSubscriptionId: null,
@@ -450,6 +479,189 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT COUNT(*) AS count FROM projection_keys`,
       ).one().count).toBe(2);
     });
+  });
+
+  it("creates a work stream nobody named an audience for as private", async () => {
+    await seedOpenAuthority();
+    // A second active member of the same workspace, so "who else can read it"
+    // is a real question rather than one nobody is standing there to ask.
+    const otherUserId = asUserId("00000000-0000-7000-8000-0000000004b7");
+    const otherSessionId = "00000000-0000-7000-8000-0000000004b9";
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+         VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`,
+      ).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(
+        `INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+         VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,
+      ).bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    // The detail read joins the regional profile, pin, and connection tables.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const auth = {
+      sessionId: SESSION_ID,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+    // No `scope`, which is the whole point: `POST /workstreams` carries none,
+    // so this is the shape every create a person makes in Avalon arrives in.
+    const input = {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+      title: "Born private",
+      objective: "A work stream nobody said anything about the audience of",
+      descriptionSource: "authored" as const,
+      titleStatus: "settled" as const,
+      emailAddress: null,
+      creatorUserId: USER_ID,
+      openingMessage: "Start",
+      openingStructuredContent: null,
+      clientMessageId: "born-private-client-message",
+      participantUserIds: [],
+      attachmentIds: [],
+      originResourceIds: [],
+      modelOverride: "test-model",
+      originType: "ad_hoc" as const,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      systemKind: null,
+      createdFromOpportunityId: null,
+      opportunityVersion: null,
+      opportunityDisplayPromptHash: null,
+      opportunityExecutionPromptHash: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      reason: "user_message",
+    };
+
+    await runInDurableObject(child, async (instance, state) => {
+      const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const created = await product.initialize(auth, input);
+      expect(created.workstream.scope).toBe("personal");
+      // The authoritative row, not only what the response said about it.
+      expect(state.storage.sql.exec<{ scope: string }>(
+        `SELECT scope FROM workstream WHERE id = 1`,
+      ).one().scope).toBe("personal");
+    });
+
+    // Private is enforced against the participant room, so the creator — seated
+    // by the same transaction that wrote the row — still reads it, and the
+    // other member of the workspace does not.
+    const mine = await child.handleProductRequest({ operation: "get", auth });
+    expect(mine.status).toBe(200);
+    expect(JSON.parse(mine.bodyJson)).toMatchObject({ id: WORKSTREAM_ID, scope: "personal" });
+    const theirs = await child.handleProductRequest({
+      operation: "get",
+      auth: { ...auth, sessionId: otherSessionId, userId: otherUserId },
+    });
+    expect(theirs.status).toBe(404);
+    expect(JSON.parse(theirs.bodyJson)).toMatchObject({ error: "workstream_not_found" });
+  });
+
+  it("creates a work stream whose caller named the workspace as readable by it", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-0000000004b8");
+    const otherSessionId = "00000000-0000-7000-8000-0000000004ba";
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+         VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`,
+      ).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(
+        `INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+         VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,
+      ).bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    // The detail read joins the regional profile, pin, and connection tables.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const auth = {
+      sessionId: SESSION_ID,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+    // What the Slack ingress computes for a thread in a public channel: the
+    // room is the channel, so no participant is seated and `workspace` is the
+    // only thing that makes the work stream readable by any of them.
+    await runInDurableObject(child, async (instance, state) => {
+      const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const created = await product.initialize(auth, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+        title: "Summoned in a public channel",
+        objective: "A work stream whose audience the ingress knew",
+        descriptionSource: "derived" as const,
+        titleStatus: "settled" as const,
+        emailAddress: null,
+        creatorUserId: USER_ID,
+        openingMessage: "Start",
+        openingStructuredContent: null,
+        clientMessageId: "public-audience-client-message",
+        participantUserIds: [],
+        attachmentIds: [],
+        originResourceIds: [],
+        scope: "workspace" as const,
+        modelOverride: "test-model",
+        originType: "ad_hoc" as const,
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        systemKind: null,
+        createdFromOpportunityId: null,
+        opportunityVersion: null,
+        opportunityDisplayPromptHash: null,
+        opportunityExecutionPromptHash: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+      expect(created.workstream.scope).toBe("workspace");
+      expect(state.storage.sql.exec<{ scope: string }>(
+        `SELECT scope FROM workstream WHERE id = 1`,
+      ).one().scope).toBe("workspace");
+    });
+
+    const theirs = await child.handleProductRequest({
+      operation: "get",
+      auth: { ...auth, sessionId: otherSessionId, userId: otherUserId },
+    });
+    expect(theirs.status).toBe(200);
+    expect(JSON.parse(theirs.bodyJson)).toMatchObject({ id: WORKSTREAM_ID, scope: "workspace" });
   });
 
   it("constructs every object through its SQL migration ledger", async () => {
@@ -2693,6 +2905,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
@@ -2781,6 +2994,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
@@ -2882,6 +3096,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
@@ -2963,6 +3178,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
@@ -3167,6 +3383,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const harnessRunId = "00000000-0000-7000-8000-000000000125";
     const attemptId = "00000000-0000-7000-8000-000000000126";
     await runInDurableObject(stub, async (instance, state) => {
@@ -3328,6 +3545,7 @@ describe("Durable Objects in the Workers runtime", () => {
       }),
     });
     expect(bootstrap.status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",

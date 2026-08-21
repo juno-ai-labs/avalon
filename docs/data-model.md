@@ -140,16 +140,40 @@ hash-checked RPCs rather than cross-object SQL joins.
   nothing has examined. See
   [`workstream-descriptions.md`](workstream-descriptions.md).
 - `workstream.scope` answers who may read a work stream, in the same
-  `personal`/`workspace` vocabulary `notes.scope` uses. `personal` is enforced as
-  "an active participant, and nobody else" by both the list query and the
-  single-row read, so privacy is a declared property of the row rather than a rule
-  each caller has to remember. Existing rows are `workspace`; the one narrower
-  rule already in the code — a personal automation's work stream being visible to
-  its owner — stays separate, because those rows carry no participants and reading
-  them as `personal` would hide them from the person they belong to. WorkstreamDO
+  `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
+  property of the row rather than a rule each caller has to remember. WorkstreamDO
   enforces the authoritative participant/scope rule and publishes its viewer
-  projection to WorkspaceDO, whose directory applies the same rule for lists
-  and socket admission without consulting D1.
+  projection to WorkspaceDO, whose directory applies it for lists and socket
+  admission without consulting D1.
+- **`personal` means "an active participant — or the creator" on the single-row
+  read, and "an active participant" everywhere else, and the two are not the
+  same rule.** `participantVisible` in the work-stream object, which `authorize`
+  runs, also admits `created_by_user_id`; `WorkstreamDO.canRead` and the
+  `listable` flag it projects test participation alone. `removeParticipant` lets
+  anyone remove *themselves* with no exemption for the creator, so the gap is
+  reachable rather than theoretical: a creator who leaves a private work stream
+  can still `GET` it, while its socket refuses them and it is absent from their
+  list. Do not restate either half as the whole rule — this document said
+  "an active participant, and nobody else" and was wrong about the read it
+  named. Closing the gap means picking which rule is the real one; that is a
+  product decision nobody has made, and neither half should be copied into a new
+  caller until somebody does.
+- **A work stream is born `personal`, and every path that means otherwise says
+  so.** `POST /workstreams` carries no scope — a request on the wire cannot claim
+  an audience — so the creator plus whoever they named in `participantUserIds` are
+  the room, and nobody else sees it until one of them opens it. The bootstrap row
+  the object is created with is `personal` too, which matters because the runtime
+  compatibility insert writes `COALESCE(NEW.scope, scope)`: a path that names no
+  scope inherits that row's, so the default has to be the narrow one for the
+  omission to be safe. Two families state `workspace` outright, and both would be
+  readable by *nobody* under the default because they seat no participants: a
+  thread in a public Slack channel, whose room is the channel rather than a
+  participant list, and an automation's work stream, which is reached by owning
+  the automation. A suggestion carries its own `audience_scope` across the same
+  way: a `workspace` one was shown to every member before anyone started it, and
+  the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
+  direction: `personal` with its single recipient seated, so every tool the run
+  reaches for resolves against that person's access.
 - A work stream born from a connector conversation uses that same scope rather
   than introducing a second visibility model: a public conversation starts as
   `workspace`, while a private or unclassified one starts as `personal` with the
@@ -669,6 +693,67 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-21 — A work stream is born private
+
+**What changed:** A new work stream's scope defaults to `personal` rather than
+`workspace`. `WorkstreamObjectProductService.initialize` takes the scope as
+input instead of hardcoding `'workspace'` into its authoritative `UPDATE`, the
+bootstrap row `insertIdentity` writes is `personal`, and `WorkstreamService`
+now carries the connector ingresses' `scope` through to the object instead of
+losing it at `CreateWorkstreamRequestSchema.parse`. The three automation
+inserts — `AutomationService.createRun`, the activity consumer, and the
+workspace scheduler — state `scope = 'workspace'` in their own SQL, and the
+`Workstream` contract's read default flips to `personal` for the same
+fail-closed reason. The resolved scope also joins the `workstream_create_receipts`
+request hash, so two creates under one `clientMessageId` that resolved different
+audiences are two requests rather than one.
+
+**Why:** Work started in Avalon was published to the whole workspace on
+creation, and the person who started it had to notice and close it. The default
+now matches what a work stream is when nobody has said otherwise: the creator,
+the people they named, and nobody else. The same change repairs a real leak the
+Durable Object cutover introduced — `CreateWorkstreamRequestSchema` is not
+`.strict()`, so the `scope` the Slack ingress computed for a private channel or
+a DM was silently stripped by `parse` and every such work stream was created
+`workspace`-readable.
+
+**Considered and rejected:** Accepting `scope` on `POST /workstreams` so the
+client could ask. A request on the wire cannot assert an audience — an audience
+is something an ingress *knows* — and the composer has nothing to ask with;
+the right-click menu already moves a work stream either way afterwards.
+Defaulting the automation rows to `personal` along with everything else was
+rejected outright: those rows seat no participants and are reached by owning
+the automation, so the narrow default would have hidden them from the only
+person who can read them. Leaving the bootstrap row `workspace` and relying on
+each caller to pass `personal` was rejected because the runtime compatibility
+insert writes `COALESCE(NEW.scope, scope)` — with a `workspace` bootstrap, the
+one thing a future caller forgets is the thing that publishes it. Keeping the
+scope *out* of the create receipt's request hash was rejected once the rest of
+this change landed, and the first reasoning was wrong: the cost of adding it is
+one deploy's worth of `workstream_create_idempotency_conflict` on receipts the
+previous Worker reserved, and the cost of omitting it is permanent and silent.
+A Slack event id is a stable create key across the redeliveries Slack makes on
+an ack timeout, while `resolveSlackChannelType` runs per delivery and answers
+`unknown` — failing closed to `personal` — whenever `conversations.info` times
+out or the token has lost the scope for it. Unhashed, a redelivery that resolved
+`private` matched the receipt of an attempt that had already committed a
+`workspace` row, replayed it, and handed the caller the audience it had just
+decided against.
+
+**Consequences:** Every surface that renders `scope` now renders the private
+state on a freshly created work stream: the sidebar's privacy marker and the
+work-stream header's **Private** badge. A work stream is discoverable by the
+rest of the workspace only after somebody in it chooses **Make public to
+workspace**, so a workspace that relied on new work being visible to everyone
+will see less of it. Existing rows are untouched — this changes what a create
+writes, not what any row already says. Any new create path must decide its
+scope deliberately: omitting it is now a decision for private, and the two
+places that mean `workspace` say so in SQL a reader can see. A create retried
+under a create key that has already been used with a different audience is
+refused with `workstream_create_idempotency_conflict` rather than replayed;
+`workstream-import-hash.ts` now records what may be added to the hashed value
+and what the addition costs.
+
 ### 2026-08-21 — Four reader-less object tables dropped
 
 **What changed:** The SubstreamAgent table inventory loses `compaction_jobs`,
@@ -687,6 +772,7 @@ tables. Prose does not stop a query; the drop does.
 **Consequences:** `compaction_checkpoints` and `terminal_tasks` are the sole
 authorities in their areas. `content_refs` remains listed and remains unwritten
 — `parts` holds a foreign key to it, so it is retired separately or not at all.
+
 
 ### 2026-08-20 — D1 product state is retired completely
 

@@ -1052,11 +1052,15 @@ async function startActivityAutomation(
     try {
       await executionEnv.DB.batch([
       executionEnv.DB.prepare(
+        // `scope` is stated rather than defaulted, for the reason
+        // `AutomationService.createRun` states it: an automation's work stream
+        // carries no participants, so the participant-only default would leave
+        // it readable by nobody at all.
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
-           next_sequence_number, last_activity_at, created_at, updated_at, archived_at, model_override
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL, ?8)`
+           next_sequence_number, last_activity_at, created_at, updated_at, archived_at, model_override, scope
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL, ?8, 'workspace')`
       ).bind(
         workstreamId,
         activity.workspace_id,

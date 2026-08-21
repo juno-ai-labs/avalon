@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
-import { admitConnectorAudience } from "../src/services/connector-workstream-audience";
+import {
+  admitConnectorAudience,
+  connectorWorkstreamScope,
+} from "../src/services/connector-workstream-audience";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import {
   createCloudflareTestBinding,
@@ -42,6 +45,44 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
+describe("the scope a connector conversation maps to", () => {
+  const threshold = 50;
+
+  it("reads a conversation at or below the threshold as the room it is", () => {
+    expect(connectorWorkstreamScope({
+      audience: "private", memberCount: threshold, workspaceScopeThreshold: threshold,
+    })).toBe("personal");
+    expect(connectorWorkstreamScope({
+      audience: "public", memberCount: 4, workspaceScopeThreshold: threshold,
+    })).toBe("workspace");
+    // A conversation the connector could not classify is treated as private.
+    expect(connectorWorkstreamScope({
+      audience: "unknown", memberCount: 4, workspaceScopeThreshold: threshold,
+    })).toBe("personal");
+  });
+
+  it("opens a conversation past the threshold to the workspace whatever its privacy says", () => {
+    // The deliberate widening: this is readable by workspace members who are
+    // not in the channel, which the participant model would not have done. At
+    // this size a participant list is a large stale copy of a membership Slack
+    // already keeps, and a work stream nobody can find is the worse failure.
+    expect(connectorWorkstreamScope({
+      audience: "private", memberCount: threshold + 1, workspaceScopeThreshold: threshold,
+    })).toBe("workspace");
+    expect(connectorWorkstreamScope({
+      audience: "unknown", memberCount: threshold + 1, workspaceScopeThreshold: threshold,
+    })).toBe("workspace");
+  });
+
+  it("leaves a failed listing to the conversation's own privacy", () => {
+    // A zero count is what a failed `conversations.members` reports, and it must
+    // not read as a small conversation *or* a large one.
+    expect(connectorWorkstreamScope({
+      audience: "private", memberCount: 0, workspaceScopeThreshold: threshold,
+    })).toBe("personal");
+  });
+});
+
 describe("who may continue a Slack work stream", () => {
   // The pre-cutover D1 execution arms are gone: on the one unsupported stack
   // that never opened the Durable-Object authority, Slack ingress must fail
@@ -61,6 +102,45 @@ describe("who may continue a Slack work stream", () => {
       .toEqual({ status: "failed" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get())
       .toEqual({ count: 0 });
+  });
+
+  it("reads the conversation roster for a public channel, not only a private one", async () => {
+    // Who can see this work in Slack is the connector's fact; Avalon's scope is
+    // a separate question and must not be read as an answer to it. A public
+    // channel's thread is workspace-readable *and* its members belong in the
+    // room — so the roster is read either way, where it used to be skipped
+    // whenever the channel was public and the work stream came out with an
+    // empty participant list.
+    const database = await seededDatabase();
+    insertEventJob(database, "event:public-roster", appMention("EvPublicRoster"));
+    const slack = stubSlack({ privateChannel: false, members: ["U456", "UKAT"] });
+
+    // The authority is deliberately still closed here: this asserts what the
+    // ingress resolves on the way to the create, which happens before the
+    // refusal, without standing up the whole create pipeline to do it.
+    await expect(service(database).processQueuedIngress("event:public-roster"))
+      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+
+    expect(slack.methods).toContain("conversations.members");
+    expect(slack.calls.find((call) => call.method === "conversations.members")?.body)
+      .toMatchObject({ channel: "C123" });
+  });
+
+  it("stops resolving identities for a conversation too large to be a room", async () => {
+    // Past the Slack threshold the work stream is workspace-scoped and seats
+    // nobody, so the `users.info` fan-out behind the roster is skipped outright
+    // — it is the expensive half, and there is no room left to seat.
+    const database = await seededDatabase();
+    insertEventJob(database, "event:big-room", appMention("EvBigRoom"));
+    const members = Array.from({ length: 51 }, (_, index) => `UBULK${index}`);
+    const slack = stubSlack({ privateChannel: true, members });
+
+    await expect(service(database).processQueuedIngress("event:big-room"))
+      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+
+    // The listing still happens — the count is what decides the scope.
+    expect(slack.methods).toContain("conversations.members");
+    expect(slack.methods).not.toContain("users.info");
   });
 
   it("admits the audience through the work stream's object once the region is open", async () => {

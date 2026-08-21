@@ -209,6 +209,14 @@ than whichever rejection landed first.
 - **The pre-flight checks run ahead of the reservation.** A create that is going
   to be refused must not leave an address reserved for a work stream that never
   exists.
+- **A create that names no audience writes a private work stream.** `POST
+  /workstreams` carries no scope — a request on the wire cannot claim one — so
+  the room is the creator plus whoever they named, and the scope reaches the
+  object as an argument rather than a hardcoded `'workspace'`. A create path
+  added later inherits that: omitting the scope is a decision for private, and
+  only a caller that *knows* the audience is wider — an ingress reading a public
+  channel — says `workspace`. See
+  [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
 - **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift
@@ -311,6 +319,29 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-21 — A create that names no audience writes a private work stream
+
+**What changed:** `POST /workstreams` still carries no scope, and the work
+stream it produces is now `personal` — the creator plus whoever they named in
+`participantUserIds` — instead of `workspace`.
+`WorkstreamObjectCreationService` passes the scope explicitly into
+`initialize`, which used to hardcode `'workspace'`, and `WorkstreamService.create`
+stops losing the scope its connector callers computed.
+
+**Why:** Work started here was published to the whole workspace at the moment
+of creation, and closing it again was something the person had to think to do.
+The rest of this module is built around a create that answers in one round
+trip; the audience it answers with should be the one that costs nothing to
+widen and cannot be taken back once wrong. See
+[`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private) for
+the full reasoning, the paths that still say `workspace`, and what was rejected.
+
+**Consequences:** The screen this module owns is unchanged — the optimistic
+surface renders the server's row, so the **Private** badge and the sidebar's
+privacy marker simply appear on the work stream the swap lands on. A create
+path added later decides its scope deliberately: omitting it is a decision for
+private.
 
 ### 2026-08-20 — Every awaited step of the create is a named span
 
