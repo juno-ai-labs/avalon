@@ -2616,6 +2616,54 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.close(1000, "done");
   });
 
+  it("warms substream zero when the work stream wakes", async () => {
+    await seedOpenAuthority();
+    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    // Give the parent an identity to read: a first wake has no child, and the
+    // guard is what stops it looking for one.
+    const at = "2026-08-21T20:00:00.000Z";
+    expect((await fetchAndDrain(
+      workstreamStub,
+      "https://workstream.test/internal/substream-effects",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: "0",
+          envelopes: [effectEnvelope({
+            kind: "directory_common",
+            title: "Rides together",
+            description: "Parent and main child",
+            preview: "Preview",
+            scope: "workspace",
+            state: "idle",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: null,
+            archivedAt: null,
+            latestAttentionOrdinal: 1,
+          }, "00000000-0000-7000-8000-000000000701")],
+        }),
+      },
+    )).status).toBe(200);
+
+    // Evict the parent and touch it again, so its constructor runs with an
+    // identity in storage. Nothing in this test addresses the child.
+    const substreamStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await evictDurableObject(workstreamStub);
+    await workstreamStub.flushWorkspaceDirectoryEffects();
+
+    // Whether the child is *running* is the observable, and eviction is what
+    // asks: the harness refuses to evict an object that was never started.
+    // Asserting on its schema instead would prove nothing, because reaching in
+    // to look would construct it and run the migrations itself.
+    await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
+  });
+
   it("sends the newest page and the reader's own position in one snapshot", async () => {
     await seedOpenAuthority();
     await env.DB.batch([
