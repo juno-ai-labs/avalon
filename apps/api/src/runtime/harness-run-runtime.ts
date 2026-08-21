@@ -2639,8 +2639,19 @@ export async function reapStaleHarnessRuns(
       ).bind(now, row.id),
       db.prepare(
         `UPDATE tool_invocations
-            SET status = 'failed', completed_at = ?1,
-                error_json = '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}'
+            SET status = CASE
+                  WHEN status = 'started'
+                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                    THEN 'ambiguous'
+                  ELSE 'failed'
+                END,
+                completed_at = ?1,
+                error_json = CASE
+                  WHEN status = 'started'
+                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                    THEN '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}'
+                  ELSE '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}'
+                END
           WHERE harness_run_id = ?2 AND status IN ('pending', 'started')
             AND EXISTS (
               SELECT 1 FROM harness_runs parent

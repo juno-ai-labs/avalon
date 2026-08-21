@@ -1771,6 +1771,7 @@ export async function compileAutomation(input: {
         ...(attempt.failureKind === undefined ? {} : { failureKind: attempt.failureKind }),
       });
     },
+    acceptEmptyCompletion: true,
     onTurnWouldEnd: () => {
       if (!draftState.submitted && !submissionReminderSent) {
         submissionReminderSent = true;
@@ -2612,6 +2613,7 @@ export interface RunHarnessInput {
    * the end of the run. Returning a non-empty string appends a model-only user
    * message to the live transcript and continues the same bounded loop.
    */
+  acceptEmptyCompletion?: boolean;
   onTurnWouldEnd?: (turn: {
     assistantContent: string;
     cumulativeToolCalls: number;

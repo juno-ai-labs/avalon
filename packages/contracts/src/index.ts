@@ -2696,6 +2696,7 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "retryAfterMs",
   "actualMimeType",
   "attachmentKind",
+  "resourceId",
   "suggestedCall",
 ] as const;
 
@@ -2723,6 +2724,10 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
       return typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH
         ? { valid: true, value }
         : { valid: false };
+    case "resourceId": {
+      const parsed = z.string().uuid().safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
     case "available":
       return Array.isArray(value)
         && value.length <= MAXIMUM_FAILURE_AVAILABLE_VALUES

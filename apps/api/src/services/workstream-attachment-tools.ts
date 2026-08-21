@@ -239,22 +239,47 @@ export function createWorkstreamAttachmentTools(
           resourceId = args.resourceId;
           start = args.startCharacter ?? 0;
         }
-        const row = await requireVisibleResource(env, input, options, resourceId);
-        assertReadableKind(row, modelToolName("read_resource"), modelToolPrefix);
-        const ready = await ensureReadyTextDerivative(env, row, context);
+        let row: VisibleWorkstreamResourceRow;
+        let ready: Awaited<ReturnType<typeof ensureReadyTextDerivative>>;
+        try {
+          row = await requireVisibleResource(env, input, options, resourceId);
+          assertReadableKind(row, modelToolName("read_resource"), modelToolPrefix);
+          ready = await ensureReadyTextDerivative(env, row, context);
+        } catch (error) {
+          if (error instanceof AttachmentOperationError) {
+            throw attachmentError(error.code, error.message, { ...error.details, resourceId });
+          }
+          throw error;
+        }
         if (cursorVersion && (cursorVersion.sha256 !== ready.sha256 || cursorVersion.extractorVersion !== ready.extractorVersion)) {
-          throw attachmentError("resource_version_changed", "The resource changed; restart the read from its resource ID");
+          throw attachmentError(
+            "resource_version_changed",
+            "The resource changed; restart the read from its resource ID",
+            { resourceId },
+          );
         }
         const object = await env.PAYLOADS.get(ready.contentRef);
-        if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        if (!object) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable", { resourceId });
+        }
         if (object.size > MAX_DERIVATIVE_OBJECT_BYTES) {
-          throw attachmentError("resource_conversion_failed", "The selected derivative exceeds the readable size limit");
+          throw attachmentError(
+            "resource_conversion_failed",
+            "The selected derivative exceeds the readable size limit",
+            { resourceId },
+          );
         }
         const text = await object.text();
         if (text.length !== ready.totalCharacters) {
-          throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
+          throw attachmentError(
+            "resource_version_changed",
+            "The selected derivative length no longer matches its version",
+            { resourceId },
+          );
         }
-        if (start > text.length) throw attachmentError("invalid_cursor", "The requested character position is outside this resource");
+        if (start > text.length) {
+          throw attachmentError("invalid_cursor", "The requested character position is outside this resource", { resourceId });
+        }
         start = safeUtf16Start(text, start);
         const end = safeUtf16End(text, Math.min(text.length, start + pageSize));
         const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };

@@ -344,11 +344,12 @@ function applyActiveCompactionEvent(
   }
 }
 
-function runTerminalState(event: ServerSocketEvent): "completed" | "failed" | "needs_input" | null {
+function runTerminalState(event: ServerSocketEvent): "cancelled" | "completed" | "failed" | "needs_input" | null {
   if (event.type !== "harness_status_changed") return null;
   if (event.status === "failed") return "failed";
   if (event.status === "needs_input") return "needs_input";
-  if (event.status === "completed" || event.status === "stopped" || event.status === "idle") return "completed";
+  if (event.status === "stopped") return "cancelled";
+  if (event.status === "completed" || event.status === "idle") return "completed";
   return null;
 }
 
