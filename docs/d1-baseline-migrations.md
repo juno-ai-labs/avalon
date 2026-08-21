@@ -133,7 +133,14 @@ for one.
   real local database.
 - **A hosted database returns DDL with its comments stripped.** Comparing raw
   text reports `telemetry_eu_events` as different on every run; all comparison
-  normalizes comments and whitespace away first.
+  normalizes comments and whitespace away first. That normalization **lexes**
+  rather than running regular expressions over the statement, because a regex
+  cannot tell a comment from the characters `--` inside a string literal: it
+  would collapse `DEFAULT '--a'` and `DEFAULT '--b'` to the same text and hash
+  them equal. Quoted tokens — string literals and `"`, `` ` ``, `[` identifiers
+  — are compared byte for byte. Nothing in the schema relies on that today; a
+  CHECK enumerating a value containing `--`, or a default with a doubled space,
+  would.
 - **`pnpm db:baseline:verify` needs Cloudflare credentials** and is not a CI
   gate. The recorded fingerprint is what keeps its result enforced.
 - **Regenerating is not free of judgement.** The generator will happily produce a
@@ -242,7 +249,10 @@ of 95.
   it with `SQLITE_AUTH`. The leftover is instead excluded from every emptiness
   check by name.
 
-**Consequences:** `packages/db/baselines/` is generated output — regenerate it,
+**Consequences:** Schema comparison must keep lexing rather than pattern-matching
+SQL: two different schemas hashing equal is the one failure the fingerprint
+exists to detect, and it is worse than no check because `db:baseline:verify` is
+trusted. `packages/db/baselines/` is generated output — regenerate it,
 never edit it, and never regenerate it to make a failing test pass. Anything that
 decides whether a database is "empty" must use `internalTableExclusionSql()`
 rather than writing its own predicate, or the wrapper and the guard will
