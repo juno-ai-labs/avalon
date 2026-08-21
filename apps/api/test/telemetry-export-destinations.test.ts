@@ -8,8 +8,23 @@ interface SignalConfig {
   persist?: boolean;
 }
 
+/**
+ * `destinations` and `persist` are signal-scoped in Wrangler's schema — there is
+ * no `observability.destinations`. They are declared at the top level here
+ * anyway, as `unknown`, so the "EU names no destination" assertion can check a
+ * misplaced key rather than being unable to express it.
+ */
+interface ObservabilityConfig {
+  enabled?: boolean;
+  head_sampling_rate?: number;
+  logs?: SignalConfig;
+  traces?: SignalConfig;
+  destinations?: unknown;
+  persist?: unknown;
+}
+
 interface WorkerConfig {
-  observability?: SignalConfig & { logs?: SignalConfig; traces?: SignalConfig };
+  observability?: ObservabilityConfig;
 }
 
 function config(fileName: string): WorkerConfig {
@@ -33,6 +48,11 @@ describe('regional telemetry export', () => {
 
     expect(observability?.logs?.destinations).toEqual(['posthog-logs']);
     expect(observability?.traces?.destinations).toEqual(['posthog-traces']);
+    // Naming a destination while the signal is off would export nothing, and
+    // would do it silently — the config would still read as though it did.
+    expect(observability?.enabled).toBe(true);
+    expect(observability?.logs?.enabled).toBe(true);
+    expect(observability?.traces?.enabled).toBe(true);
   });
 
   it('keeps the Cloudflare copy rather than redirecting to the destination', () => {
