@@ -102,10 +102,20 @@ async function seedOpenAuthority(): Promise<void> {
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
 }
 
+/**
+ * Tables this repository's migrations created.
+ *
+ * `sqlite_%` is SQLite's own bookkeeping and `_cf_%` is the runtime's — the
+ * hibernation API writes `_cf_METADATA` the first time an object accepts a
+ * WebSocket, and nothing here creates, migrates, or can make it STRICT. Both
+ * are excluded so an assertion about our schema is not decided by whether an
+ * earlier test in the file happened to open a socket on the same object.
+ */
 function tableNames(state: DurableObjectState): string[] {
   return state.storage.sql.exec<{ name: string }>(
     `SELECT name FROM sqlite_schema
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'
+      ORDER BY name`,
   ).toArray().map((row) => row.name);
 }
 
@@ -817,7 +827,13 @@ describe("Durable Objects in the Workers runtime", () => {
         const nonStrict = state.storage.sql.exec<{ name: string; type: string; strict: number }>(
           `PRAGMA table_list`,
         ).toArray().filter((table) => (
-          table.type === "table" && !table.name.startsWith("sqlite_") && table.strict !== 1
+          table.type === "table"
+          && !table.name.startsWith("sqlite_")
+          // The runtime's own `_cf_METADATA` is not STRICT and never will be.
+          // It appears once an object has accepted a hibernating WebSocket, so
+          // leaving it in makes this assertion depend on test order.
+          && !table.name.startsWith("_cf_")
+          && table.strict !== 1
         ));
         expect(nonStrict).toEqual([]);
         if (instance instanceof SubstreamAgent) {

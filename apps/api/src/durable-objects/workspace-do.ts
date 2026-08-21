@@ -870,7 +870,7 @@ export class WorkspaceDO extends DurableObject<Env> {
    * and every one of them would otherwise pass the interval check before the
    * first sweep finished and recorded itself.
    */
-  private sweepInFlight: Promise<boolean> | null = null;
+  private sweepInFlight: Promise<void> | null = null;
   private sweepInFlightCertain = false;
   /** Tail of the publication queue; see {@link serializePublication}. */
   private publishQueue: Promise<void> = Promise.resolve();
@@ -3140,7 +3140,7 @@ export class WorkspaceDO extends DurableObject<Env> {
    * happened, and it decides only what to do when the query itself fails, which
    * is the one case where the object does not know who may stay.
    */
-  private async evictListenersWhoMayNoLongerListen(certain: boolean): Promise<boolean> {
+  private async evictListenersWhoMayNoLongerListen(certain: boolean): Promise<void> {
     const sockets = this.state.getWebSockets();
     // Keyed by session *and* user, because a session id is not by itself an
     // identity: the development bypass gives every user the literal session id
@@ -3163,9 +3163,13 @@ export class WorkspaceDO extends DurableObject<Env> {
         });
       }
     }
-    if (byIdentity.size === 0) return false;
+    if (byIdentity.size === 0) return;
     const workspaceId = this.workspaceId();
-    if (!workspaceId) return false;
+    // Unreachable from either publish path: `publishSync` runs `ensureIdentity`
+    // first, and `publishWorkstreamState` only has rows to publish once the
+    // object has an identity. It is a guard rather than a case, which is why it
+    // returns quietly instead of logging a skipped sweep.
+    if (!workspaceId) return;
 
     let permitted: Set<string>;
     try {
@@ -3189,11 +3193,10 @@ export class WorkspaceDO extends DurableObject<Env> {
         // second, while closing them all as "access revoked" would strand every
         // legitimate window on an error screen over one failed query.
         for (const socket of sockets) disconnect(socket, 1011, "Reconnect to continue");
-        // The sweep is not recorded as having run either way, so the next
-        // publication re-asks rather than waiting out the interval.
-        return true;
       }
-      return false;
+      // The sweep is not recorded as having run either way, so the next
+      // publication re-asks rather than waiting out the interval.
+      return;
     }
     this.lastRevalidatedAt = Date.now();
 
@@ -3207,6 +3210,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
       evictedUsers.add(identity.userId);
     }
+
     // One line for the sweep rather than one per identity: a bulk deactivation
     // would otherwise log once for every member it touched.
     if (evictedSockets > 0) {
@@ -3217,7 +3221,6 @@ export class WorkspaceDO extends DurableObject<Env> {
         certain,
       });
     }
-    return evictedSockets > 0;
   }
 
   private async sessionAuth(identity: Pick<SocketIdentity, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
