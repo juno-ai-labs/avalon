@@ -250,7 +250,10 @@ does not become effective until the compare-and-set regional/canonical update is
 acknowledged. Session changes force a fresh fail-closed read. That read has a
 15-second deadline: it remains bounded, but includes cold DNS, TLS, regional
 Worker activation, and the canonical D1 lookup instead of treating a normal
-cold request as an outage after one second.
+cold request as an outage after one second. Authenticated launch waits at most
+two seconds for that same request before continuing to the first window; the
+caught request keeps running, and collection remains off until it validates the
+canonical preference.
 
 Main validates and writes complete envelopes to an owner-only file spool. Each row
 has a separate deadline file, so corrupt JSON still has an enforceable ceiling.
@@ -677,13 +680,20 @@ entire launch.
 
 **Considered and rejected:** Trusting the locally cached opt-in on timeout would
 weaken the account-scoped privacy boundary. Removing the timeout would let a
-hung connection block startup indefinitely. Fifteen seconds matches the
-already-shipped PATCH path and keeps the request bounded.
+hung connection remain live indefinitely. Fifteen seconds matches the
+already-shipped PATCH path and keeps the request bounded. Awaiting that entire
+budget before creating the first window was also rejected: launch gives the
+verification two seconds, then lets the same caught promise finish in the
+background while collection remains fail-closed.
 
-**Consequences:** A genuinely unavailable preference service can delay startup
-for up to 15 seconds, after which the privacy-safe disabled state remains. New
-startup preference reads must budget for cold network activation without
-falling back to cached enablement.
+**Consequences:** A slow or unavailable preference service can delay the first
+window by at most two seconds. The network request still gets its full 15-second
+cold-start budget after the window opens, and its eventual validated result is
+broadcast normally. If it does not finish before telemetry initialization,
+native crash collection stays off until the next launch; product analytics can
+become effective when verification completes. New startup preference reads must
+budget for cold network activation without falling back to cached enablement or
+putting their entire request deadline in front of the first window.
 
 ### 2026-08-20 — The analytics surrogates gain a second reader
 
