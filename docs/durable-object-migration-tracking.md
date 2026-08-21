@@ -27,7 +27,7 @@ or touching what the tracker stores, serves, or lets in.
 | `apps/migration-tracker/src/registry.ts` | `MigrationRegistry`, the single SQLite Durable Object that holds everything the tracker knows, and every query the site runs. |
 | `apps/migration-tracker/src/schema.ts` | The registry's append-only schema and its own migration runner. |
 | `apps/migration-tracker/src/inventory.ts` | The Cloudflare API sweep: namespaces, then paged object IDs per namespace. |
-| `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification and the email-domain policy. |
+| `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification: signature, issuer, audience. Authorization itself is the Access policy's. |
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger. |
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding in each region. |
@@ -306,13 +306,19 @@ Google OAuth. Reusing it would mint operator sessions out of the product's user
 identity system and leave any account that can sign in to Avalon one
 authorization bug away from the fleet's schema state.
 
-The Worker does not trust the proxy alone. It verifies the
+The Worker does not trust the proxy's header alone. It verifies the
 `Cf-Access-Jwt-Assertion` header (or the `CF_Authorization` cookie) against the
 team's JWKS on every request, checking the signature, the issuer, and the
-application audience, and then the email domain. That keeps the protection
-standing if a Worker route ever outlives its Access application. The email
-domain is taken from the **last** `@`, so a crafted local part cannot impersonate
-an allowed domain.
+application audience. That keeps the protection standing if a Worker route ever
+outlives its Access application — anyone can set a header, so the signature is
+what establishes that Access actually spoke.
+
+Those three are facts about the assertion's *provenance*, not a policy. **Who
+may read the site is the Access application's rule, and the Worker holds no
+second copy of it.** An assertion minted for this application is admitted
+whatever address it carries; narrowing that is a policy change in Zero Trust,
+with no variable to update and no deploy. The signed-in email is read only to
+show in the page header.
 
 The report ingress is not protected by Access at all — it does not need to be. It
 is a Queue consumer, which has no public address: the only way to reach it is a
@@ -383,13 +389,29 @@ this account will keep putting operator tools behind, and buying the certificate
 once is cheaper than renaming later, when the Access application is bound to the
 old hostname and its AUD tag changes with it.
 
+The Worker's own email-domain allowlist went away in the same change, and
+`ACCESS_ALLOWED_EMAIL_DOMAINS` with it. It was a second copy of the Access
+application's include rule, held in a different system with nothing keeping the
+two in step — and the value it shipped with was the *site's* hostname rather
+than the domain operators sign in with, so every authorized person would have
+passed Access and then been refused by the Worker. Nothing would have caught
+that except somebody failing to log in. Who may read the site is one rule and it
+lives in the Access policy, where changing it needs no deploy.
+
+Provenance is still verified here: signature, issuer, audience. That is not the
+same kind of thing as a policy — it is how the Worker knows Access ran at all,
+and it is what keeps the boundary standing if a route ever outlives its Access
+application.
+
 **What a future change has to respect:** the certificate is the prerequisite,
 not a consequence — Wrangler creates the route and the DNS record whether or not
 a certificate covers them, and the hostname then fails TLS in a way that reads as
 an outage. The ACM pack is a wildcard rather than the exact hostname so the next
 tool under `internal.` needs no new order. Nothing in the Worker knows the
 hostname except `wrangler.jsonc`; the deployment health check reads it from
-there, so a future move needs no second edit.
+there, so a future move needs no second edit. And the sign-in domain must keep
+matching the Access policy's include rule; they are two separate systems that
+have to be changed together.
 
 ### 2026-08-21 — The tracker deploys itself, and proves it is wired up
 

@@ -7,7 +7,6 @@
     "APP_VERSION": "workerd-test",
     "ACCESS_TEAM_DOMAIN": "rally.cloudflareaccess.com",
     "ACCESS_APPLICATION_AUD": "test-audience",
-    "ACCESS_ALLOWED_EMAIL_DOMAINS": "rallywith.ai"
   },
   "durable_objects": {
     "bindings": [

@@ -489,12 +489,21 @@ from the web domain and does not follow a rebrand of the site. Put it in
 
 Then add **Google** as a login method and create a self-hosted application for
 the hostname, with an Allow policy whose include rule is `Emails ending in
-@rallywith.ai`. Copy the application's **Application Audience (AUD) tag** into
-`ACCESS_APPLICATION_AUD`. The Worker verifies the assertion itself on every
-request, so the site refuses all traffic until both values are set — an
-unconfigured deployment is unreachable rather than open. Widening access is a policy change in Zero Trust plus a change
-to `ACCESS_ALLOWED_EMAIL_DOMAINS`; both are required, and the Worker is the one
-that fails closed.
+@juno-labs.com` — the domain people sign in with, which is **not** the domain
+the site is served from. Copy the application's **Application Audience (AUD)
+tag** into `ACCESS_APPLICATION_AUD`.
+
+**That policy is the only place who-may-read is written.** The Worker verifies
+the assertion — signature against the team's JWKS, issuer, audience — but it
+does not re-check the address, so widening or narrowing access is a policy
+change in Zero Trust and nothing else: no variable to update, no deploy. The
+Worker held a second domain allowlist once and it was deleted for the usual
+reason a duplicated rule gets deleted — the two copies disagreed, and the
+disagreement was invisible until somebody could not log in.
+
+The Worker still fails closed. Until both `ACCESS_TEAM_DOMAIN` and
+`ACCESS_APPLICATION_AUD` are set it refuses every request, so an unconfigured
+deployment is unreachable rather than open.
 
 **3. A read-only Cloudflare API token.** The hourly sweep enumerates Durable
 Object namespaces and object IDs. Set `CLOUDFLARE_ACCOUNT_ID` in
