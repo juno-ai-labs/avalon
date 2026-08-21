@@ -17,7 +17,8 @@ import {
   recordActivityEventOrThrow,
 } from "../src/services/activity-event-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
@@ -43,10 +44,12 @@ function envFor(database: DatabaseSync): Env {
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-    },
+    // WorkspaceDO owns the workspace alarm now: a digest save reconciles its
+    // own object rather than poking a separate scheduler. The stub keeps the
+    // seeded rows in this database while answering that reconcile.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
 }
 
@@ -238,14 +241,14 @@ describe("digest schedule", () => {
     const scheduleCountAtRefresh = vi.fn();
     const env = createTestEnv({
       ...envFor(database),
-      WORKSPACE_SCHEDULERS: {
-        idFromName: () => createTestDurableObjectId("scheduler"),
-        get: () => ({
-          refresh: async () => {
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          refreshSchedule: async () => {
             scheduleCountAtRefresh(database.prepare("SELECT COUNT(*) AS count FROM schedules").get());
+            return { alarmAt: null };
           },
-        }),
-      },
+        },
+      }),
     });
 
     await new DigestService(env, auth).replace({
@@ -255,8 +258,8 @@ describe("digest schedule", () => {
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
-    // The Durable Object reads D1, so refreshing early would arm the alarm from
-    // the rows the save has just replaced.
+    // The object reconciles from the rows it can see, so refreshing early would
+    // arm the alarm from the rows the save has just replaced.
     expect(scheduleCountAtRefresh).toHaveBeenCalledWith({ count: 1 });
   });
 });

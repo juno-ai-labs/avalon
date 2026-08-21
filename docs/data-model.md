@@ -329,7 +329,7 @@ no projection fallback when that object is unavailable.
   copies it onto the work stream it creates rather than joining back, so a run reads
   its model from its own row and a run that already happened keeps describing the
   model it was pinned to. Three separate places build that row —
-  `AutomationService.createRun`, the workspace scheduler's `startAutomation`, and
+  `AutomationService.createRun`, the workspace schedule runner's `startAutomation`, and
   the activity consumer's `startActivityAutomation` — so a column added to one and
   not the others is honoured by manual runs while scheduled and activity-triggered
   runs silently ignore it.
@@ -357,12 +357,14 @@ no projection fallback when that object is unavailable.
   stores only run/attempt/index/trigger/start time, is cleared by the matching
   finish or terminal run state, and is not checkpoint history or model-visible
   content.
-- WorkspaceDO `schedules` is canonical. One WorkspaceScheduler alarm asks the
-  object for due rows and
-  advances them transactionally/idempotently. Exactly one of
+- WorkspaceDO `schedules` is canonical, and the same object's single alarm reads
+  the due rows and advances them transactionally/idempotently — each due time
+  mirrored into its `_internal_durable_alarms` index, per
+  [`durable-object-alarms.md`](durable-object-alarms.md). Exactly one of
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
   is set on a row.
-- Object-local `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled for itself.
+- Object-local `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled
+  for itself, each mirrored into that SubstreamAgent's own alarm index.
   It is separate from `schedules` because a wake-up is one-shot, belongs to a work
   stream rather than a subscription or connection, and carries the prompt text that
   becomes the resulting run's trigger. The common WorkspaceDO directory row exposes

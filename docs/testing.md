@@ -281,8 +281,10 @@ touch this area or a change worth making that has not been made.
   `createScheduledController()` only builds the controller for a cron handler and
   waits for nothing, so a scheduled test still needs its own
   `createExecutionContext()` and a closing `waitOnExecutionContext(ctx)`. Both
-  are relevant to `WorkspaceScheduler` and the `ACTIVITY_QUEUE` paths, neither of
-  which is currently driven through these helpers.
+  are relevant to the `ACTIVITY_QUEUE` paths, which are not currently driven
+  through these helpers. Durable Object alarms are: `runDurableObjectAlarm(stub)`
+  invokes the handler and reports whether one was armed, which is how
+  `test-workers/scheduled-alarms.test.ts` drives the shared alarm list.
 - **Per-file storage isolation has preconditions.** Cloudflare documents that
   isolation only holds if every storage operation is awaited, response bodies
   from `fetch()` and `R2.get()` are fully consumed, and non-primitive RPC
