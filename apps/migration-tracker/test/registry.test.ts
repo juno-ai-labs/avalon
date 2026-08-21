@@ -5,6 +5,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
+import { applyRegistrySchema, REGISTRY_MIGRATIONS } from "../src/schema";
 import type { MigrationRegistry } from "../src/registry";
 import { ObjectQuerySchema, type InventorySweep } from "../src/protocol";
 
@@ -409,6 +410,224 @@ describe("recordSweep", () => {
     // namespace, rather than claiming it was just seen to be empty.
     expect(afterFailure?.objectCount).toBe(2);
     expect(afterFailure?.lastSweptAt).toBe(enumerated?.lastSweptAt);
+  });
+});
+
+/**
+ * Losing a whole namespace, rather than losing an object inside one.
+ *
+ * These two are not the same code path and were not the same bug. Absence
+ * inside a namespace is decided by iterating the namespaces a sweep returned;
+ * a namespace that has left the account is never in that iteration, so before
+ * `retireMissingNamespaces` its objects were unreachable — they kept whatever
+ * status they held on the day the class was deleted, forever, and a class that
+ * happened to be `behind` when it went stayed red with nothing an operator
+ * could do about it.
+ */
+/**
+ * The upgrade path, which is the riskiest thing in this change.
+ *
+ * The live registry has v1 applied, so `retired_at` reaches it as an
+ * `ALTER TABLE` run inside the constructor's `blockConcurrencyWhile`. If that
+ * statement were rejected, the registry would throw on construction and the
+ * tracker would be down — for every read, not just the new column. Every other
+ * test here starts from a database where both migrations have already been
+ * applied together, so none of them exercises the step production will take.
+ */
+describe("the registry schema", () => {
+  it("adds the retirement column to an existing v1 database", async () => {
+    const applied = await withRegistry((_registry, state) => {
+      const storage = state.storage;
+      // Rewind to v1: drop what the constructor built and replay the first
+      // migration only, which is exactly the shape of the deployed registry.
+      for (const table of [
+        "durable_objects",
+        "migration_events",
+        "component_versions",
+        "inventory_sweeps",
+        "durable_object_namespaces",
+      ]) {
+        storage.sql.exec(`DROP TABLE IF EXISTS ${table}`);
+      }
+      storage.sql.exec(`DELETE FROM _sql_schema_migrations`);
+      applyRegistrySchema(storage, REGISTRY_MIGRATIONS.slice(0, 1));
+
+      expect(() => storage.sql.exec(`SELECT retired_at FROM durable_object_namespaces`))
+        .toThrow();
+
+      return applyRegistrySchema(storage);
+    });
+
+    expect(applied).toEqual([2]);
+
+    // And the upgraded database is usable, not merely altered.
+    const namespaces = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [],
+        }],
+      }));
+      return registry.overview().namespaces;
+    });
+    expect(namespaces[0]?.retiredAt).toBeNull();
+  });
+});
+
+describe("retiring a namespace that has left the account", () => {
+  const LIVE = {
+    namespaceId: "ns-1",
+    scriptName: "avalon-api-global",
+    className: "SubstreamAgent",
+    usesSqlite: true,
+  };
+  const DOOMED = {
+    namespaceId: "ns-2",
+    scriptName: "avalon-api-global",
+    className: "RetiredAgent",
+    usesSqlite: true,
+  };
+
+  /** Both namespaces populated, which is the state every case below starts from. */
+  function seed(registry: MigrationRegistry): void {
+    registry.recordSweep(sweep({
+      namespaces: [
+        { ...LIVE, objects: [{ objectId: objectId("a"), hasStoredData: true }] },
+        { ...DOOMED, objects: [{ objectId: objectId("b"), hasStoredData: true }] },
+      ],
+    }));
+  }
+
+  /** A later sweep that found only the surviving namespace. */
+  function withoutTheDoomedOne(overrides: Partial<InventorySweep> = {}): InventorySweep {
+    return sweep({
+      namespaces: [{ ...LIVE, objects: [{ objectId: objectId("a"), hasStoredData: true }] }],
+      ...overrides,
+    });
+  }
+
+  it("marks the objects of a vanished namespace absent", async () => {
+    const { gone, survivor } = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne());
+      return {
+        gone: registry.objectDetail(objectId("b")),
+        survivor: registry.objectDetail(objectId("a")),
+      };
+    });
+
+    expect(gone?.object.status).toBe("absent");
+    expect(gone?.object.absentSince).not.toBeNull();
+    // The namespace that is still there must be untouched by the same pass.
+    expect(survivor?.object.status).toBe("unreported");
+    expect(survivor?.object.absentSince).toBeNull();
+  });
+
+  it("records when the namespace itself stopped being there", async () => {
+    const namespaces = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne());
+      return registry.overview().namespaces;
+    });
+
+    expect(namespaces.find((entry) => entry.namespaceId === "ns-1")?.retiredAt).toBeNull();
+    expect(namespaces.find((entry) => entry.namespaceId === "ns-2")?.retiredAt)
+      .toEqual(expect.any(Number));
+    // Retired namespaces sort last, so the live fleet stays at the top of the
+    // table however many classes have been removed over the account's life.
+    expect(namespaces.at(-1)?.namespaceId).toBe("ns-2");
+  });
+
+  /**
+   * The guard that matters most. A `partial` sweep is one where a namespace
+   * listing failed or was truncated — it is not evidence about the namespaces
+   * it did not return, and treating it as evidence would retire live classes
+   * during a Cloudflare API wobble.
+   */
+  it("retires nothing on a sweep that did not complete", async () => {
+    const { detail, namespaces } = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne({ status: "partial", errorMessage: "ns-2: boom" }));
+      return { detail: registry.objectDetail(objectId("b")), namespaces: registry.overview().namespaces };
+    });
+
+    expect(detail?.object.status).toBe("not_reporting");
+    expect(detail?.object.absentSince).toBeNull();
+    expect(namespaces.find((entry) => entry.namespaceId === "ns-2")?.retiredAt).toBeNull();
+  });
+
+  /**
+   * The other guard, and the one whose blast radius is the whole fleet: a
+   * successful call that returns an empty list would otherwise read as "the
+   * account has no Durable Objects" and retire every class at once.
+   */
+  it("retires nothing when a completed sweep found no namespaces at all", async () => {
+    const { detail, namespaces } = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(sweep({ namespaces: [] }));
+      return { detail: registry.objectDetail(objectId("b")), namespaces: registry.overview().namespaces };
+    });
+
+    expect(detail?.object.absentSince).toBeNull();
+    expect(namespaces.every((entry) => entry.retiredAt === null)).toBe(true);
+  });
+
+  it("brings a namespace and its objects back if the class is deployed again", async () => {
+    const { detail, namespaces } = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne());
+      seed(registry);
+      return { detail: registry.objectDetail(objectId("b")), namespaces: registry.overview().namespaces };
+    });
+
+    expect(detail?.object.status).toBe("not_reporting");
+    expect(detail?.object.absentSince).toBeNull();
+    expect(namespaces.find((entry) => entry.namespaceId === "ns-2")?.retiredAt).toBeNull();
+  });
+
+  it("marks the component retired once its class has no namespace left", async () => {
+    const components = await withRegistry((registry) => {
+      record(registry, report({ objectId: objectId("b"), className: "RetiredAgent", component: "retired" }));
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne());
+      return registry.overview().components;
+    });
+
+    const retired = components.find((entry) => entry.component === "retired");
+    expect(retired?.retired).toBe(true);
+    // Its objects are counted as absent rather than disappearing from the row:
+    // "0 live, 1 absent" is the answer to "where did this component go".
+    expect(retired?.total).toBe(0);
+    expect(retired?.absent).toBe(1);
+    expect(retired?.current).toBe(0);
+  });
+
+  /**
+   * The discriminator for the test above. A class whose instances are all gone
+   * looks identical in the object counts to a class that has been deleted, and
+   * only the namespace evidence tells them apart — so a component with zero
+   * live objects and a namespace still in the account is *not* retired.
+   */
+  it("does not call a component retired merely because its objects are gone", async () => {
+    const components = await withRegistry((registry) => {
+      record(registry, report({ objectId: objectId("b"), className: "RetiredAgent", component: "retired" }));
+      seed(registry);
+      registry.recordSweep(sweep({
+        namespaces: [
+          { ...LIVE, objects: [{ objectId: objectId("a"), hasStoredData: true }] },
+          { ...DOOMED, objects: [] },
+        ],
+      }));
+      return registry.overview().components;
+    });
+
+    const stillDeployed = components.find((entry) => entry.component === "retired");
+    expect(stillDeployed?.retired).toBe(false);
+    expect(stillDeployed?.total).toBe(0);
+    expect(stillDeployed?.absent).toBe(1);
   });
 });
 

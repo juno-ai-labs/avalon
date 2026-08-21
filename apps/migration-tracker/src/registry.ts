@@ -295,6 +295,10 @@ export class MigrationRegistry extends DurableObject<Env> {
    * to completion. A truncated or failed listing says nothing about the objects
    * it did not reach, and marking those absent would erase exactly the objects a
    * large namespace is most likely to hide.
+   *
+   * That pass can only reach namespaces the sweep returned, so a namespace that
+   * has left the account entirely is handled separately, by
+   * `retireMissingNamespaces` below.
    */
   recordSweep(sweep: InventorySweep): void {
     const now = Date.now();
@@ -345,7 +349,11 @@ export class MigrationRegistry extends DurableObject<Env> {
              object_count = CASE WHEN ?8 THEN excluded.object_count
                                  ELSE durable_object_namespaces.object_count END,
              last_swept_at = CASE WHEN ?8 THEN excluded.last_swept_at
-                                  ELSE durable_object_namespaces.last_swept_at END`,
+                                  ELSE durable_object_namespaces.last_swept_at END,
+             -- Listed again, so it is not retired, whatever a previous sweep
+             -- concluded. A class can come back: a rollback restores the
+             -- binding a deploy removed.
+             retired_at = NULL`,
           namespace.namespaceId,
           namespace.scriptName,
           namespace.className,
@@ -396,6 +404,8 @@ export class MigrationRegistry extends DurableObject<Env> {
           sweepId,
         );
       }
+
+      retireMissingNamespaces(sql, sweep, now);
 
       sql.exec(
         `DELETE FROM inventory_sweeps WHERE id <= (SELECT MAX(id) - ? FROM inventory_sweeps)`,
@@ -512,8 +522,19 @@ export class MigrationRegistry extends DurableObject<Env> {
       behind: number;
       failed: number;
       unreported: number;
+      absent: number;
       total: number;
+      retired: number;
     }>(
+      // `total` counts only live objects, so the absent ones are reported
+      // beside it rather than folded into it — a component reading "0 of 40"
+      // says something a component reading "0" does not.
+      //
+      // `retired` is decided by the namespaces, not by the object counts. Every
+      // object being absent means only that no instance is alive right now,
+      // which is ordinary for an on-demand class; the class no longer having a
+      // namespace in the account means it is gone. A class never yet swept has
+      // no namespace row at all, and defaults to live rather than retired.
       `${RESOLVED_OBJECTS}
        SELECT c.component, c.region, c.class_name, c.latest_version,
               c.worker_version_id, c.observed_at,
@@ -521,12 +542,17 @@ export class MigrationRegistry extends DurableObject<Env> {
               COALESCE(SUM(r.status = 'behind'), 0) AS behind,
               COALESCE(SUM(r.status = 'failed'), 0) AS failed,
               COALESCE(SUM(r.status = 'unreported'), 0) AS unreported,
-              COALESCE(COUNT(r.object_id), 0) AS total
+              COALESCE(SUM(r.status = 'absent'), 0) AS absent,
+              COALESCE(SUM(r.status != 'absent'), 0) AS total,
+              COALESCE(MAX(n.live), 1) = 0 AS retired
          FROM component_versions c
          LEFT JOIN resolved r
-           ON r.component = c.component AND r.region = c.region AND r.status != 'absent'
+           ON r.component = c.component AND r.region = c.region
+         LEFT JOIN (SELECT class_name, SUM(retired_at IS NULL) AS live
+                      FROM durable_object_namespaces GROUP BY class_name) n
+           ON n.class_name = c.class_name
         GROUP BY c.component, c.region
-        ORDER BY failed DESC, behind DESC, c.component, c.region`,
+        ORDER BY retired, failed DESC, behind DESC, c.component, c.region`,
     ).toArray();
 
     const namespaces = sql.exec<{
@@ -536,9 +562,15 @@ export class MigrationRegistry extends DurableObject<Env> {
       uses_sqlite: number;
       object_count: number;
       last_swept_at: number;
+      retired_at: number | null;
     }>(
-      `SELECT namespace_id, script_name, class_name, uses_sqlite, object_count, last_swept_at
-         FROM durable_object_namespaces ORDER BY script_name, class_name`,
+      // Retired namespaces sort to the bottom rather than out of the list: what
+      // used to be deployed here is exactly what somebody wants to see when a
+      // class disappeared and its objects went absent on the same sweep.
+      `SELECT namespace_id, script_name, class_name, uses_sqlite, object_count,
+              last_swept_at, retired_at
+         FROM durable_object_namespaces
+        ORDER BY retired_at IS NOT NULL, script_name, class_name`,
     ).toArray();
 
     const sweep = this.readSweep();
@@ -577,7 +609,9 @@ export class MigrationRegistry extends DurableObject<Env> {
         behind: row.behind,
         failed: row.failed,
         unreported: row.unreported,
+        absent: row.absent,
         total: row.total,
+        retired: row.retired === 1,
       })),
       namespaces: namespaces.map((row): NamespaceSummary => ({
         namespaceId: row.namespace_id,
@@ -586,6 +620,7 @@ export class MigrationRegistry extends DurableObject<Env> {
         usesSqlite: row.uses_sqlite === 1,
         objectCount: row.object_count,
         lastSweptAt: row.last_swept_at,
+        retiredAt: row.retired_at,
       })),
       latestSweep: sweep,
       latestEnumeration: enumeration,
@@ -640,6 +675,58 @@ export class MigrationRegistry extends DurableObject<Env> {
     ).toArray().map((row) => row.script_name);
     return { components, scripts };
   }
+}
+
+/**
+ * Retire every namespace the account no longer has, and mark its objects absent.
+ *
+ * The per-namespace absence pass in `recordSweep` iterates the namespaces the
+ * sweep *returned*, so it structurally cannot see a namespace that is no longer
+ * there. Deleting a Durable Object class from the Worker — or deleting the
+ * script — makes its namespace vanish from the listing, and until this existed
+ * every object in it kept the status it held on the day the class was removed.
+ * A retired class that happened to be `behind` when it went stayed red forever,
+ * and nothing an operator could do would clear it.
+ *
+ * Two guards decide whether this is allowed to run at all, and both matter more
+ * than the update itself, because the failure mode here is retiring the fleet:
+ *
+ * - **The sweep must be `complete`.** `partial` means at least one namespace
+ *   listing failed or was truncated, and `failed` means the namespace listing
+ *   itself did not return — which arrives as `namespaces: []` and would
+ *   otherwise read as "the account has no Durable Objects".
+ * - **It must have found at least one namespace.** A `complete` sweep of an
+ *   empty list is the same claim by a different route, and no plausible state
+ *   of this account produces it. An account genuinely emptied of Durable
+ *   Objects will not be reported by a tracker that is itself a Durable Object.
+ *
+ * Objects are matched by `namespace_id` rather than by "not swept this time",
+ * because an object that has reported but has never been swept has no namespace
+ * yet, and it is not absent — it is unenumerated.
+ */
+function retireMissingNamespaces(sql: SqlStorage, sweep: InventorySweep, now: number): void {
+  if (sweep.status !== "complete" || sweep.namespaces.length === 0) return;
+
+  const swept = sweep.namespaces.map((namespace) => namespace.namespaceId);
+  const placeholders = swept.map(() => "?").join(", ");
+
+  sql.exec(
+    `UPDATE durable_objects
+        SET absent_since = ?
+      WHERE absent_since IS NULL
+        AND namespace_id IS NOT NULL
+        AND namespace_id NOT IN (${placeholders})`,
+    now,
+    ...swept,
+  );
+  sql.exec(
+    `UPDATE durable_object_namespaces
+        SET retired_at = ?
+      WHERE retired_at IS NULL
+        AND namespace_id NOT IN (${placeholders})`,
+    now,
+    ...swept,
+  );
 }
 
 /**
