@@ -16,7 +16,14 @@ import {
   type TerminalPublishedBranchAndPrOutput,
   type TerminalPublishedResourceOutput,
 } from "../src/services/terminal/tools";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  testWorkstreamRuntimeD1,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const W = "00000000-0000-4000-8000-000000000011";
 const S = "00000000-0000-4000-8000-000000000012";
@@ -24,11 +31,11 @@ const R = "00000000-0000-4000-8000-000000000013";
 const U = asUserId("00000000-0000-4000-8000-000000000014");
 const I = "00000000-0000-4000-8000-000000000015";
 
-const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
 function fixture() {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -40,19 +47,31 @@ function fixture() {
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${S}', '${W}', 'Runtime', 'Runtime', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${R}', '${W}', '${S}', 'test', '{"type":"user","userId":"${U}"}', 'running', '2026-08-13');
-    INSERT INTO tool_invocations
-      (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-       input_hash, input_json, status)
-    VALUES ('${I}', '${W}', '${S}', '${R}', 'call-runtime', 'terminal_run_command',
-            'hash', '{}', 'started');
     INSERT INTO resources
       (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
     VALUES ('00000000-0000-4000-8000-000000000099', '${W}', 'uploaded_file',
             'avalon_upload', 'resource', '{}', '2026-08-13', '2026-08-13');
   `);
+  // The run, its tool invocation, and every sandbox row live in the work
+  // stream's own object since migration 0090 dropped the D1 copies.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
+    R, W, S, JSON.stringify({ type: "user", userId: U }),
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO tool_invocations
+       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+        input_hash, input_json, status)
+     VALUES (?, ?, ?, ?, 'call-runtime', 'terminal_run_command', 'hash', '{}', 'started')`,
+    I, W, S, R,
+  );
   const files = new Map<string, Uint8Array>();
   files.set("/workspace/src/file.txt", new TextEncoder().encode("hello\n"));
   const provider: TerminalSandboxProvider = {
@@ -103,9 +122,9 @@ function fixture() {
       pullRequest: { number: 1, url: "https://github.com/o/r/pull/1", title: "Ship", state: "open" },
     })),
   };
-  const db = sqliteD1(database);
+  const db = testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S });
   const coordinator = new TerminalSandboxCoordinator(db, provider, { now: () => new Date("2026-08-13T12:00:00.000Z") });
-  return { database, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(db, coordinator, provider, resources, publisher) };
+  return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(db, coordinator, provider, resources, publisher) };
 }
 
 const context: HarnessToolContext = {
@@ -119,8 +138,8 @@ const context: HarnessToolContext = {
 
 describe("Daytona Terminal runtime", () => {
   it("does not allocate until an operation and resolves paths inside the root", async () => {
-    const { database, provider, runtime } = fixture();
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
+    const { objectStore, provider, runtime } = fixture();
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
 
     await runtime.readFile(context, "src/file.txt");
     expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -158,7 +177,7 @@ describe("Daytona Terminal runtime", () => {
   });
 
   it("records one durable command task and terminalizes nonzero exit normally", async () => {
-    const { database, provider, runtime } = fixture();
+    const { objectStore, provider, runtime } = fixture();
     await expect(runtime.runCommand(context, { command: "false", timeoutMs: 3_000 })).resolves.toMatchObject({
       state: "failed",
       terminationReason: "exited",
@@ -172,13 +191,15 @@ describe("Daytona Terminal runtime", () => {
       cwd: "/workspace",
       timeoutMs: 3_000,
     }));
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, exit_code, termination_reason FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).get(W, I)).toEqual({ state: "failed", exit_code: 1, termination_reason: "exited" });
+      W, I,
+    )).toEqual({ state: "failed", exit_code: 1, termination_reason: "exited" });
   });
 
   it("keeps an unknown provider outcome recoverable and reattaches on the exact retry", async () => {
-    const { database, provider, runtime } = fixture();
+    const { objectStore, provider, runtime } = fixture();
     vi.mocked(provider.runCommand)
       .mockRejectedValueOnce(new Error("observation connection reset"))
       .mockResolvedValueOnce({ exitCode: 0, stdout: "recovered\n", stderr: "" });
@@ -188,16 +209,18 @@ describe("Daytona Terminal runtime", () => {
         code: "command_outcome_unknown",
         details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
       });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, completed_at FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).get(W, I)).toEqual({ state: "running", completed_at: null });
+      W, I,
+    )).toEqual({ state: "running", completed_at: null });
 
     await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 3_000 }))
       .resolves.toMatchObject({ state: "completed", stdout: "recovered\n" });
   });
 
   it("redacts provider secrets before command output reaches durable storage", async () => {
-    const { database, provider, runtime } = fixture();
+    const { objectStore, provider, runtime } = fixture();
     vi.mocked(provider.runCommand).mockResolvedValueOnce({
       exitCode: 0,
       stdout: "github_pat_1234567890abcdefghijkl dtn_secret_1234567890\n",
@@ -205,13 +228,15 @@ describe("Daytona Terminal runtime", () => {
     });
     await expect(runtime.runCommand(context, { command: "env", timeoutMs: 3_000 }))
       .resolves.toMatchObject({ stdout: "[REDACTED] [REDACTED]\n" });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT stdout_head FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).get(W, I)).toEqual({ stdout_head: "[REDACTED] [REDACTED]\n" });
+      W, I,
+    )).toEqual({ stdout_head: "[REDACTED] [REDACTED]\n" });
   });
 
   it("resumes a nonterminal durable command task without replacing its original timing", async () => {
-    const { database, provider, runtime } = fixture();
+    const { objectStore, provider, runtime } = fixture();
     await runtime.readFile(context, "src/file.txt");
     vi.mocked(provider.runCommand).mockClear();
     vi.mocked(provider.runCommand).mockResolvedValueOnce({ exitCode: 0, stdout: "recovered\n", stderr: "" });
@@ -220,7 +245,8 @@ describe("Daytona Terminal runtime", () => {
       cwd: "/workspace",
       timeoutMs: 120_000,
     }));
-    database.prepare(
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO sandbox_tasks
        (id, workspace_id, workstream_id, harness_run_id, tool_invocation_id,
         sandbox_generation, provider_task_name, state, command_sha256,
@@ -228,7 +254,8 @@ describe("Daytona Terminal runtime", () => {
        VALUES ('task-existing', ?, ?, ?, ?, 1, ?, 'running', ?,
                '2026-08-13T12:02:00.000Z', '2026-08-13T12:00:00.000Z',
                '2026-08-13T12:00:00.000Z', '2026-08-13T12:00:00.000Z')`,
-    ).run(W, S, R, I, `avalon-task-${I}`, commandHash);
+      W, S, R, I, `avalon-task-${I}`, commandHash,
+    );
 
     await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 120_000 })).resolves.toMatchObject({
       state: "completed",
@@ -236,9 +263,11 @@ describe("Daytona Terminal runtime", () => {
       startedAt: "2026-08-13T12:00:00.000Z",
     });
     expect(provider.runCommand).toHaveBeenCalledOnce();
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, started_at FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).get(W, I)).toEqual({ state: "completed", started_at: "2026-08-13T12:00:00.000Z" });
+      W, I,
+    )).toEqual({ state: "completed", started_at: "2026-08-13T12:00:00.000Z" });
   });
 
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {
@@ -254,7 +283,7 @@ describe("Daytona Terminal runtime", () => {
   });
 
   it("publishes complete command output before returning bounded inline head and tail", async () => {
-    const { database, resources, runtime } = fixture();
+    const { database, objectStore, resources, runtime } = fixture();
     database.prepare(
       `INSERT INTO resources
        (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
@@ -277,9 +306,11 @@ describe("Daytona Terminal runtime", () => {
       expect.objectContaining({ filePath: `.avalon/logs/${I}.log` }),
       expect.any(Uint8Array),
     );
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT output_resource_id FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).get(W, I)).toEqual({ output_resource_id: "command-log" });
+      W, I,
+    )).toEqual({ output_resource_id: "command-log" });
   });
 
   it("rejects missing and empty generated files with model-repairable publication errors", async () => {

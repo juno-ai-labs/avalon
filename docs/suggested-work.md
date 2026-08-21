@@ -270,9 +270,9 @@ The retired `workspace_opportunity_versions` counter and
 `suggested_work_sets.workspace_version` are not present in the WorkspaceDO
 schema; the D1 counter table itself is dropped by
 `0085_retire_dead_tables.sql`, having lost its last reader long before the
-cutover. Legacy D1 source columns are migration input only; activation removes
-the imported rows and retains only redacted opportunity IDs needed by D1's
-unshipped workstream identity-anchor foreign key.
+cutover. Legacy D1 opportunity sources and their work-stream provenance columns
+exist only through 0089; migration 0090 removes both, leaving the regional
+work-stream identity anchor with no product provenance.
 
 ## Testing
 

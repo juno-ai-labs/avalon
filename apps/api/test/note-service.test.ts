@@ -11,6 +11,14 @@ import { NoteService } from "../src/services/note-service";
 import { reapDeletedNoteObjects } from "../src/services/note-resource-cleanup";
 import { ResourceService } from "../src/services/resource-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectAll,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const userId = asUserId("00000000-0000-4000-8000-000000000201");
@@ -89,12 +97,23 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(): { auth: AuthContext; bucket: MemoryBucket; database: DatabaseSync; env: Env } {
+function fixture(options: { openAuthority?: boolean } = {}): {
+  auth: AuthContext;
+  bucket: MemoryBucket;
+  database: DatabaseSync;
+  objectStores: Map<string, DatabaseSync>;
+  env: Env;
+} {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
+  // Resource visibility and note privacy notification branch on the open
+  // Durable-Object authority, so the fixture opens it the way a production
+  // stack runs. A test of the pre-cutover D1 arms opts out.
+  if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at)
@@ -106,13 +125,49 @@ function fixture(): { auth: AuthContext; bucket: MemoryBucket; database: Databas
     VALUES ('${workspaceId}', 'Notes', 'notes', 'global', '${userId}', '2026-01-01', '2026-01-01');
   `);
   const bucket = new MemoryBucket();
+  const objectStores = new Map<string, DatabaseSync>();
   return {
     database,
     bucket,
+    objectStores,
     env: createTestEnv({
       DB: sqliteD1(database),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
       AVALON_REGION: "global",
+      ...(options.openAuthority === false ? {} : {
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      // The privacy notifier asks the WorkspaceDO directory which work
+      // streams hold the resource; the stub answers from the per-workstream
+      // object links plus the regional directory row, the same two sources
+      // the production directory is projected from.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          resourceAccess: async (input: { workspaceId: string; resourceId: string; userId: string }) => ({
+            items: [...objectStores.entries()].flatMap(([linkedWorkstreamId, store]) => {
+              const linked = store.prepare(
+                "SELECT 1 FROM workstream_resource_links WHERE resource_id = ?",
+              ).get(input.resourceId);
+              if (!linked) return [];
+              const workstream = database.prepare(
+                `SELECT created_by_user_id, automation_subscription_id
+                   FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
+              ).get(linkedWorkstreamId, input.workspaceId) as {
+                created_by_user_id: string | null;
+                automation_subscription_id: string | null;
+              } | undefined;
+              if (!workstream) return [];
+              return [{
+                workstreamId: linkedWorkstreamId,
+                scope: "workspace",
+                createdByUserId: workstream.created_by_user_id,
+                automationSubscriptionId: workstream.automation_subscription_id,
+                isParticipant: false,
+              }];
+            }),
+          }),
+        },
+      }),
+      }),
     }),
     auth: {
       sessionId: "note-session",
@@ -227,7 +282,7 @@ describe("NoteService", () => {
   });
 
   it("injects an authored message only into workstreams that lose access when a note becomes private", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, database, objectStores, env } = fixture();
     const service = new NoteService(env, auth);
     const note = await service.create({ id: noteId, title: "Shared research", scope: "workspace" });
     const templateId = "00000000-0000-4000-8000-000000000220";
@@ -276,27 +331,45 @@ describe("NoteService", () => {
         ('${ownerAutomationId}', '${workspaceId}', 'Owner automation', 'automation', '${userId}',
          '${ownerSubscriptionId}', '${at}', '${at}', '${at}');
     `);
-    const attach = database.prepare(
-      `INSERT INTO workstream_resources
-       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-       VALUES (?, ?, ?, 0, 'context', ?)`,
-    );
-    for (const workstreamId of [
+    // Each work stream's attachment link lives in its own object since
+    // migration 0090; the fixture opens the five objects and links the note
+    // resource there, the way the product attach path stores it.
+    const allWorkstreamIds = [
       ownerAdHocId,
       otherAdHocId,
       workspaceAutomationId,
       otherAutomationId,
       ownerAutomationId,
-    ]) {
-      attach.run(workstreamId, note.resourceId, userId, at);
+    ];
+    for (const attachedWorkstreamId of allWorkstreamIds) {
+      const store = testWorkstreamObjectStore();
+      openDatabases.push(store);
+      seedWorkstreamObjectRoot(store, { workstreamId: attachedWorkstreamId, workspaceId });
+      store.prepare(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+         VALUES (?, ?, 0, 'context', ?, ?, ?)`,
+      ).run(
+        note.resourceId,
+        userId,
+        JSON.stringify({ id: note.resourceId, title: "Shared research", provider: "avalon_note", type: "note" }),
+        Date.parse(at),
+        Date.parse(at),
+      );
+      objectStores.set(attachedWorkstreamId, store);
     }
+    const objectMessages = () => allWorkstreamIds
+      .slice()
+      .sort()
+      .flatMap((messageWorkstreamId) => workstreamObjectAll(
+        objectStores.get(messageWorkstreamId)!,
+        `SELECT workstream_id, author_type, author_user_id, message_type, text_content, sequence_number
+         FROM messages`,
+      ) as Array<Record<string, unknown>>);
 
     await service.update(noteId, { scope: "personal" });
 
-    const messages = database.prepare(
-      `SELECT workstream_id, author_type, author_user_id, message_type, text_content, sequence_number
-       FROM messages ORDER BY workstream_id`,
-    ).all() as Array<Record<string, unknown>>;
+    const messages = objectMessages();
     expect(messages).toEqual([
       {
         workstream_id: otherAdHocId,
@@ -323,28 +396,36 @@ describe("NoteService", () => {
         sequence_number: 1,
       },
     ]);
-    expect(database.prepare(
-      `SELECT id, next_sequence_number, latest_attention_sequence_number
-       FROM workstreams ORDER BY id`,
-    ).all()).toEqual([
+    expect(allWorkstreamIds.slice().sort().map((sequencedWorkstreamId) => ({
+      id: sequencedWorkstreamId,
+      ...workstreamObjectGet(
+        objectStores.get(sequencedWorkstreamId)!,
+        `SELECT next_sequence_number, latest_attention_sequence_number
+         FROM workstreams WHERE id = ?`,
+        sequencedWorkstreamId,
+      ) as Record<string, unknown>,
+    }))).toEqual([
       { id: ownerAdHocId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
       { id: otherAdHocId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
       { id: workspaceAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
       { id: otherAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
       { id: ownerAutomationId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
     ]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM harness_runs").get()).toEqual({ count: 0 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_participants").get()).toEqual({ count: 0 });
+    for (const untouchedWorkstreamId of allWorkstreamIds) {
+      const store = objectStores.get(untouchedWorkstreamId)!;
+      expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM harness_runs")).toEqual({ count: 0 });
+      expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM workstream_participants")).toEqual({ count: 0 });
+    }
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
     ).get()).toEqual({ count: 1 });
 
     await processPendingNotePrivacyNotifications(env, { noteId });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 3 });
+    expect(objectMessages()).toHaveLength(3);
 
     await service.update(noteId, { scope: "workspace" });
     await service.update(noteId, { scope: "personal" });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 6 });
+    expect(objectMessages()).toHaveLength(6);
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
     ).get()).toEqual({ count: 2 });
@@ -608,7 +689,11 @@ describe("NoteService", () => {
   });
 
   it("deletes the owned resource row when a note is deleted", async () => {
-    const { auth, bucket, database, env } = fixture();
+    // The D1 deletion-outbox trigger this test exercises is confined by 0089
+    // to the phases where D1 is still the authority; post-cutover the
+    // WorkspaceDO owns note object lifecycle. The pre-open stack is the one
+    // place this arm still runs, so the test stays in that regime.
+    const { auth, bucket, database, env } = fixture({ openAuthority: false });
     const noteService = new NoteService(env, auth);
     const created = await noteService.create({ id: noteId, title: "Disposable", scope: "personal" });
 

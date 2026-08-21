@@ -16,7 +16,7 @@ import {
   listActivityEventsForUser,
   recordActivityEventOrThrow,
 } from "../src/services/activity-event-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
@@ -51,7 +51,7 @@ function envFor(database: DatabaseSync): Env {
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)

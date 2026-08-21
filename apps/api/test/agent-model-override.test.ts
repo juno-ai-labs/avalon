@@ -6,9 +6,14 @@ import type { AuthContext, Env } from "../src/env";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -108,9 +113,11 @@ function schedulerFor(fixture: Fixture): WorkspaceScheduler {
 }
 
 function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
-  return objectStore.prepare(
+  return workstreamObjectGet(
+    objectStore,
     "SELECT id, model_override FROM workstreams WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1",
-  ).get(subscriptionId) as { id: string; model_override: string | null };
+    subscriptionId,
+  ) as { id: string; model_override: string | null };
 }
 
 describe("automation model override", () => {
@@ -119,11 +126,11 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
 
-    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
       .toEqual({ model_override: "openai/gpt-5.6-terra" });
     // The run's expected model is recorded at schedule time, so the pin has to
     // reach `harness_runs` in the same batch that writes the work stream.
-    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
@@ -132,9 +139,9 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
 
-    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
       .toEqual({ model_override: null });
-    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
   });
 
@@ -156,9 +163,9 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
 
-    expect(fixture.objectStore.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
       .toEqual({ model_override: null });
-    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
     expect(warnings).toContainEqual(expect.objectContaining({
       event: "workstream_model_override_unknown",
@@ -189,7 +196,7 @@ describe("automation model override", () => {
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
     // The scheduler creates the harness run after the work stream exists, so
     // it resolves the model from the row rather than being handed the value.
-    expect(fixture.objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
@@ -252,7 +259,7 @@ describe("automation model override", () => {
 
     const workstream = runWorkstream(objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
-    expect(objectStore.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+    expect(workstreamObjectGet(objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 });
@@ -264,7 +271,7 @@ interface Fixture {
 }
 
 function seededDatabase(): Fixture {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   // Every automation run path now launches through the Durable-Object
   // authority; open it before any product rows exist, as a fresh stack does.

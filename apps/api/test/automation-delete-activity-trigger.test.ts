@@ -6,7 +6,7 @@ import type { AuthContext, Env } from "../src/env";
 import type * as AgentModelFlags from "../src/services/agent-model-flags";
 import { __testing } from "../src/queues/activity-consumer";
 import { AutomationService } from "../src/services/automation-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
@@ -130,7 +130,7 @@ describe("activity triggers after an automation is deleted", () => {
 });
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   // Connector-activity runs launch through the Durable-Object authority now;
   // open it before any product rows exist, the way a fresh stack does.

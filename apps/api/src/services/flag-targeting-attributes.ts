@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 /**
  * The subject a flag is being evaluated for: whatever identifiers the caller
@@ -270,32 +271,58 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
 
 async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstreamId: string) {
   return cached(workstreamCache, "workstream", workstreamId, async () => {
+    if (!subject.workspaceId) return { value: null, failed: false };
+    let executionEnv: Env;
+    try {
+      executionEnv = await workstreamExecutionEnvironment(env, subject.workspaceId, workstreamId);
+    } catch (error) {
+      logStructuredEvent(env, "warn", "flag_targeting_attributes_unavailable", {
+        entity: "workstream",
+        workspace_id: subject.workspaceId,
+        workstream_id: subject.workstreamId,
+        user_id: subject.userId,
+        error_name: error instanceof Error ? error.name : "UnknownError",
+      });
+      return { value: null, failed: true };
+    }
     const outcome = await loadRow<{
       origin_type: string;
       scope: string;
       system_kind: string | null;
       created_by_user_id: string | null;
       created_from_opportunity_id: string | null;
-      creator_email: string | null;
     }>(
-      env,
+      executionEnv,
       subject,
       "workstream",
       `SELECT s.origin_type, s.scope, s.system_kind, s.created_by_user_id,
-              s.created_from_opportunity_id, creator.email AS creator_email
+              s.created_from_opportunity_id
          FROM workstreams s
-         LEFT JOIN users creator ON creator.id = s.created_by_user_id
-        WHERE s.id = ?1`,
-      [workstreamId],
+        WHERE s.id = ?1 AND s.workspace_id = ?2`,
+      [workstreamId, subject.workspaceId],
     );
-    return mapped(outcome, (row) => ({
-      origin: row.origin_type,
-      scope: row.scope,
-      createdByUserId: text(row.created_by_user_id),
-      creatorEmailDomain: emailDomain(row.creator_email),
-      fromOpportunity: Boolean(row.created_from_opportunity_id),
-      system: Boolean(row.system_kind),
-    } satisfies WorkstreamFacts));
+    if (!outcome.value) return { value: null, failed: outcome.failed };
+    const creator = outcome.value.created_by_user_id
+      ? await loadRow<{ email: string }>(
+        env,
+        subject,
+        "user",
+        "SELECT email FROM users WHERE id = ?1",
+        [outcome.value.created_by_user_id],
+      )
+      : { value: null, failed: false };
+    if (creator.failed) return { value: null, failed: true };
+    return {
+      value: {
+        origin: outcome.value.origin_type,
+        scope: outcome.value.scope,
+        createdByUserId: text(outcome.value.created_by_user_id),
+        creatorEmailDomain: emailDomain(creator.value?.email),
+        fromOpportunity: Boolean(outcome.value.created_from_opportunity_id),
+        system: Boolean(outcome.value.system_kind),
+      } satisfies WorkstreamFacts,
+      failed: outcome.failed,
+    };
   });
 }
 
@@ -309,11 +336,12 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
  * title, and nothing else a person wrote ever becomes an attribute;
  * `docs/feature-flags.md` owns that boundary and the slug's carve-out.
  *
- * Never throws and never blocks on more than one round trip: the three reads
- * are independent, each is cached in the isolate, and each failure degrades to
- * "no attributes from that entity". The outer guard is what lets callers await
- * this outside their own error handling — the contract is structural, not a
- * property of the current body.
+ * Never throws: independent entity reads are cached in the isolate, and each
+ * failure degrades to "no attributes from that entity". Work-stream facts are
+ * the deliberate multi-hop exception: product fields come from WorkstreamDO,
+ * then creator email domain is enriched from regional identity D1. The outer
+ * guard is what lets callers await this outside their own error handling — the
+ * contract is structural, not a property of the current body.
  */
 export async function loadFlagTargetingAttributes(
   env: Env,

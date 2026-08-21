@@ -552,7 +552,7 @@ precede any LLM classification.
   activity/discovery, directory, and external-delivery state. After a work-stream generation opens, each
   `SubstreamAgent` owns its substream product state, the model-free
   `WorkstreamDO` owns aggregate metadata/outbox, and legacy D1 product and pin
-  writers fail. R2 holds large payloads; the authority that names each
+  tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
@@ -570,10 +570,10 @@ precede any LLM classification.
     argument at the hop (`lib/rpc-contracts.ts`). Same account is not the same
     guarantee, and `region`/`workspaceId` decide which side of the Global/EU
     boundary a record lands on.
-  - **D1 rows** are parsed at the read rather than coerced field by field,
+  - **Stored SQL rows** are parsed at the read rather than coerced field by field,
     mirroring the columns' own CHECK constraints, so a bad row fails where it is
     read and names its column. `mappers/connection.ts` and the row schemas in
-    `workstream-service.ts` and `note-service.ts` are the pattern; the readers in
+    `note-service.ts` are the pattern; the readers in
     `integrations.ts`, `automation-service.ts`, `workspace-service.ts`,
     `connection-service.ts`, `work-opportunity-service.ts`,
     `slack-agent-service.ts` and `resource-service.ts` still hand-coerce and are
@@ -733,6 +733,25 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-20 — The thin D1 plane is enforced by schema
+
+**What changed:** Migration 0090 removes all regional product tables and
+product triggers. Work-stream listing, pinning, and socket authorization now
+read WorkspaceDO's directory, leaving D1 with identity, membership, routing,
+migration/control, and operational audit/telemetry only.
+
+**Why:** Retaining empty import tables allowed a misrouted product read to look
+valid and left a creator read-state write colliding with the post-cutover fence
+after the object transaction had committed. The authority boundary needs to
+fail at the schema, not depend on every caller remembering a historical fence.
+
+**Considered and rejected:** Relaxing one fence and keeping tombstone tables.
+That fixes one symptom while preserving a second, misleading product schema.
+
+**Consequences:** Current D1 inventory is asserted as an exact allowlist. Tests
+of frozen importer/repository SQL stop at 0089; live ownership semantics run
+against real WorkspaceDO and WorkstreamDO SQLite.
 
 ### 2026-08-18 — D1 becomes a thin identity and routing plane
 

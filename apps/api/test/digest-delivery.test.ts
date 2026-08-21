@@ -4,12 +4,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
 import { settleDigestRun } from "../src/services/digest-run-settlement";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createTestD1Database,
   createTestD1PreparedStatement,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -38,6 +46,8 @@ const DIGEST = [
 ].join("\n");
 
 const databases: DatabaseSync[] = [];
+/** The digest work stream's own object database, rebuilt per fixture. */
+let objectStore: DatabaseSync;
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
@@ -50,6 +60,9 @@ afterEach(() => {
 function envFor(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      objectStores: new Map([[WORKSTREAM, objectStore]]),
+    }),
     AVALON_REGION: "global",
     APP_ENV: "production",
     RESEND_API_KEY: "test-key",
@@ -59,8 +72,26 @@ function envFor(database: DatabaseSync): Env {
 }
 
 function seededDatabase(status = "running"): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // Settlement writes its delivery note through the runtime SQL port, so the
+  // fixture opens the authority and gives the digest work stream a real object
+  // holding its transcript state.
+  openWorkstreamAuthorityForTest(database);
+  objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
+       (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+        next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+     VALUES (?, ?, 'Digest · Owner · Tuesday 11 August · 9:00 AM', '', 'ad_hoc', ?, 'running',
+             2, '2026-08-11', '2026-08-11', '2026-08-11', 'digest', 'personal')`,
+    WORKSTREAM,
+    WORKSPACE,
+    OWNER,
+  );
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
     VALUES ('${OWNER}', 'g-owner', 'owner@example.com', 'Owner', 'Europe/London', '2026-01-01', '2026-01-01');
@@ -207,15 +238,21 @@ describe("settling a digest run", () => {
     // Resolved through the delivery's own `workstream_id`, so it lands whether
     // or not the launch recorded a `harness_run_id` to join back through. A
     // transcript whose summary carries no note is a digest nobody received,
-    // which is what somebody chasing a missing email is looking for.
-    expect(database.prepare(
+    // which is what somebody chasing a missing email is looking for. The note
+    // and the sequence counter both live in the work stream's object.
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT workstream_id, text_content FROM messages WHERE client_message_id = ?",
-    ).get(`digest-delivered:${DELIVERY}`)).toEqual({
+      `digest-delivered:${DELIVERY}`,
+    )).toEqual({
       workstream_id: WORKSTREAM,
       text_content: "Delivered to 1 destination.",
     });
-    expect(database.prepare("SELECT next_sequence_number FROM workstreams WHERE id = ?").get(WORKSTREAM))
-      .toEqual({ next_sequence_number: 3 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT next_sequence_number FROM workstreams WHERE id = ?",
+      WORKSTREAM,
+    )).toEqual({ next_sequence_number: 3 });
   });
 
   it("still notes a delivered digest when telemetry context lookup fails", async () => {
@@ -241,33 +278,45 @@ describe("settling a digest run", () => {
 
     await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
 
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT text_content FROM messages WHERE client_message_id = ?",
-    ).get(`digest-delivered:${DELIVERY}`)).toEqual({ text_content: "Delivered to 1 destination." });
+      `digest-delivered:${DELIVERY}`,
+    )).toEqual({ text_content: "Delivered to 1 destination." });
   });
 
-  it("notes a delivery the previous Worker claimed without the new column", async () => {
+  it("still settles a delivery claimed without the workstream column, and skips only the note", async () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // Migrations land before either Worker deploys, so the Worker running
-    // during that window claims deliveries into the new schema without writing
-    // `workstream_id`. Resolving through the column alone would drop the note
-    // and invert its meaning: the digest went out, and the transcript would say
-    // it did not.
+    // A delivery claimed before `workstream_id` was written used to resolve its
+    // work stream by joining back through `harness_runs`. That fallback lived
+    // on the legacy D1 branch; since the cutover the run row is object-local
+    // and cannot be joined from regional settlement, so the durable path
+    // deliberately writes no note for such a delivery — the settlement itself
+    // must still land rather than fail the whole run over a missing note.
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'scheduled_digest', ?, 'completed', '2026-08-11')`,
+      RUN,
+      WORKSPACE,
+      WORKSTREAM,
+      JSON.stringify({ type: "user", userId: OWNER }),
+    );
     database.exec(`
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', 'scheduled_digest',
-              '{"type":"user","userId":"${OWNER}"}', 'completed', '2026-08-11');
       UPDATE digest_deliveries
          SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
     `);
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(database.prepare(
-      "SELECT workstream_id FROM messages WHERE client_message_id = ?",
-    ).get(`digest-delivered:${DELIVERY}`)).toEqual({ workstream_id: WORKSTREAM });
+    expect(deliveryStatus(database).status).toBe("delivered");
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM messages WHERE client_message_id = ?",
+      `digest-delivered:${DELIVERY}`,
+    )).toEqual({ count: 0 });
   });
 
   it("sends nothing when the run finished without writing a digest", async () => {

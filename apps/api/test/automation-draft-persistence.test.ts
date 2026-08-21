@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
 import type * as IntegrationsModule from "../src/services/integrations";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const compileAutomationDraft = vi.hoisted(() => vi.fn());
 const reserveAutomation = vi.hoisted(() => vi.fn(async () => ({
@@ -58,7 +58,7 @@ afterEach(() => {
 beforeEach(() => vi.clearAllMocks());
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)

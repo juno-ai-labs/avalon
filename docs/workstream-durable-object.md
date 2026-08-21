@@ -636,8 +636,10 @@ has been deleted. What deliberately survives it: the `workstream_authority_contr
 row (read on every request, fails closed when missing), the
 `workstream_authority_routes` table (now the live work-stream-to-object
 directory that creation writes and regional effect delivery fences on), and the
-legacy D1 product-table writer fences, which are the permanent tripwire against
-a resurrected D1 writer.
+minimal `workstreams(id, workspace_id, do_identity_anchor)` row targeted by
+routing and audit foreign keys. Migration 0090 removes the imported product
+tables, their writer fences, and the completed import-population triggers; a
+misrouted product statement now fails because the table or column is absent.
 
 ## Invariants
 
@@ -654,7 +656,7 @@ a resurrected D1 writer.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** HyperSight attachments carry only a bounded 60-second authorization cache and receive explicit parent sweeps; no long-lived ticket or attachment is continuing authority for a new write.
-- **Legacy D1 product rows are never a fallback.** Fallback would silently split authority after an object failure.
+- **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
 
@@ -965,6 +967,34 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-20 — Regional product shells and viewer code are removed
+
+**What changed:** Migration 0090 removes every D1 product table and reduces the
+regional `workstreams` row to its three-column identity anchor. The D1 list,
+pin, viewer mapper, and unused shared-package getter paths are deleted;
+WorkspaceDO now answers listing,
+pinning, and socket visibility, with real workerd coverage for per-user order
+and personal system-work-stream filtering.
+
+**Why:** A creator read-state insert still reached D1 after the object-side
+create committed and was aborted by the 0079 authority fence. Empty source
+tables also made other misrouted reads look valid. Once import and scrub are
+complete, absence is the only unambiguous product-schema fence.
+
+**Considered and rejected:** Relaxing the read-state trigger alone or retaining
+the tables as tombstones. Both preserve a second schema and leave future
+misroutes capable of returning stale or empty product data.
+
+**Consequences:** Product compatibility SQL remains live only behind the
+Durable Object runtime ports. Focused Node fixtures pin that frozen through-0089
+dialect explicitly; current topology and ownership assertions run against the
+final D1 schema and real Durable Object SQLite. The deploy workflow treats 0090
+as Worker-first only when it is the sole pending migration, and 0090 itself
+refuses a populated region whose authority is not open. The replacement Worker's
+regional anchor insert supports both table shapes so either a failed deploy or a
+failed migration leaves a serving configuration without moving a later
+migration behind its Worker.
+
 ### 2026-08-20 — The room opens custom spans for the work a person waits on
 
 **What changed:** `SubstreamAgent` opens named spans for the product operations
@@ -1006,6 +1036,62 @@ depends on the alias in `apps/api/test/helpers/cloudflare-workers.ts`.
 
 Shipped in #203.
 
+### 2026-08-20 — Object schema v6–v9: the parity gaps the ported test suite surfaced
+
+**What changed:** Rebasing the API test harness onto the real object schema
+(instead of a D1-shaped emulation) surfaced five ways the object's runtime
+port diverged from the D1 semantics the harness code was written against; all
+five are fixed here.
+
+- **v6 — description-refresh keep ratchet.** A claim omits
+  `consecutive_keeps`, but the object's insert trigger coalesced that absence
+  to zero and overwrote the standing count in its conflict arm. The rebuilt
+  trigger preserves the count for claims while still accepting the settle
+  path's explicit value, restoring the D1 contract and making the 24/48-hour
+  rest tiers reachable.
+- **v7 — `runs_parent_tool_call_uq`.** D1's `harness_runs_parent_tool_call_idx`
+  never made it into the object, and the inline-child admission depends on it:
+  its INSERT ends in `ON CONFLICT DO NOTHING`, and the zero-change result is
+  what routes a replayed admission to the branch that reuses the existing
+  child and its settled result. Without it a retried admission inserted a
+  duplicate child. The migration cannot delete existing duplicates
+  (`tool_effects`, `elicitation_requests`, and parts provenance reference
+  `runs` without cascade), so non-newest duplicates get their
+  `parent_tool_call_id` suffixed with `:superseded:<run_id>` — still shaped
+  like an inline child, so the parent-loss reaper retires them — and the
+  index then binds one live child per parent tool call, terminal rows
+  included, because result replay needs to find the completed child.
+- **v8 — replan columns in `_runtime_tool_invocations_update`.** The v1
+  trigger carried only status/output/error, so
+  `replanCompletedReadReceipt`'s rebind (tool_name, connection_id, input
+  hash/json, execution plan pair, idempotency key) was silently dropped while
+  the statement still counted as a change and reported `created`. The trigger
+  now maps every column the runtime's UPDATE statements write; unmentioned
+  view columns pass their old values through `NEW`, so the added arms are
+  identity writes for other callers.
+- **v9 — block-dashboard exemption on `runs_mutating_substream_uq`.** The
+  claim SQL deliberately admits a block-dashboard run beside a running
+  interactive run, but both sit on substream `'0'`, so the index turned the
+  second claim into a thrown UNIQUE violation instead of the zero-change
+  result the claim's busy branch absorbs. The index now encodes the same
+  origin exemption the claim SQL does; D1 had no equivalent index, so block
+  runs' concurrency was always governed by the claim predicates alone.
+- **Alias-free inline-child updates (code, not schema).** The three
+  `UPDATE harness_runs AS child …` statements (inline-child heartbeat,
+  terminalize, reap) fail against the object because SQLite cannot resolve an
+  alias on an INSTEAD-OF-trigger view target (`no such column: child.id`) —
+  verified against stock SQLite. They now qualify by the table/view name,
+  which parses identically on both. This had broken every inline-child
+  behind background retries.
+
+**Why:** the port's contract is that runtime SQL behaves as it did on D1.
+Each of these was a silent divergence — a duplicate row, a dropped write, a
+thrown constraint, a failed statement — that only an object-schema-backed
+test suite could see. A future migration touching `runs` constraints must
+preserve both index predicates: full coverage (including terminal rows) for
+the parent-tool-call index, and the block-dashboard exemption for the
+mutating-run index.
+
 ### 2026-08-20 — The pre-cutover execution arms are removed from the product path
 
 **What changed:** Every phase split in `WorkstreamService` and
@@ -1018,10 +1104,10 @@ is not `durable_object_open` is refused with a 503
 `launchWorkstreamHarness` and `startWorkstreamWorkflow` carry the same guard
 and dispatch only to the SubstreamAgent. `WorkstreamLoopWorkflow` is deleted —
 file, `index.ts` export, `WORKSTREAM_LOOP_WORKFLOW` binding in both Wrangler
-configs and the Env contract, and its `/health` probe. The regional
-control-plane reads stay: `list`, pins, socket-ticket visibility gates, and
-email-route reconciliation still read the D1 `workstreams` index, which
-remains the routing/identity anchor. The service's `create` also stopped
+configs and the Env contract, and its `/health` probe. Work-stream listing,
+pins, and socket-ticket visibility now read WorkspaceDO's directory. Regional
+D1 retains only the minimal identity anchor plus the separate email and object
+routes. The service's `create` also stopped
 letting a failed origin-resource attach fail the create, restoring the
 contract the legacy arm kept.
 
@@ -1041,11 +1127,9 @@ that preserves the reading burden the removal exists to end. Draining code was
 not kept either: no legacy Workflow instance can exist since the cutover, so
 there is nothing left to drain.
 
-**Deliberate leftovers:** The D1 product tables and their reject fences stay
-until `seed.sql` is reworked (a separate stage — no migrations were touched
-here); `packages/db` query helpers that lost their last production caller
-(e.g. parts of `database.workstreams.*`) stay for a later sweep because that
-package is shared surface. `bootstrapWorkstreamRuntimeEnvironment` and
+**Deliberate leftovers:** `packages/db` query helpers remain as the SQL dialect
+served by WorkstreamDO compatibility views; they are not regional D1 callers.
+`bootstrapWorkstreamRuntimeEnvironment` and
 `workstreamExecutionEnvironment` keep their non-open fallbacks for the DO-
 internal legacy-open read paths this change deliberately did not touch.
 
@@ -1054,8 +1138,9 @@ the object boundary (see `test/helpers/durable-authority.ts`, which walks the
 phase machine and serves the runtime SQL port from sqlite) or replaced by
 `workstream-durable-authority.test.ts`, which pins the refusal across the
 member-visible surface. The launch failure path — member-safe copy persisted,
-diagnostics logged — is pinned there too. Anything still writing the fenced D1
-product tables outside the DO port is now a bug by definition, not a phase.
+diagnostics logged — is pinned there too. Anything sending product SQL to D1
+outside the DO port now fails on an absent table or column and is a routing bug
+by definition, not a phase.
 
 
 

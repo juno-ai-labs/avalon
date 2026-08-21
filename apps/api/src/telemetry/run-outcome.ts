@@ -1,5 +1,6 @@
 import { asUserId, type UserId, type WorkspaceId } from '@avalon/contracts';
 import type { Env, IdentityAuthContext } from '../env';
+import { withWorkspaceRuntimeDatabase } from '../services/workspace-runtime-database';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';
 import {
   emitProductUsageTelemetry,
@@ -27,6 +28,7 @@ interface RunRow {
   model: string | null;
   usage_json: string | null;
   automation_id: string | null;
+  automation_run_id: string | null;
   automation_trigger_type: string | null;
   first_inference_started_at: string | null;
   first_ttft_ms: number | null;
@@ -118,8 +120,7 @@ export async function emitCorrelatedRunOutcome(
   const run = await env.DB.prepare(
     `SELECT hr.status, hr.started_at, hr.completed_at, hr.created_at, hr.origin,
             hr.execution_principal_json, hr.model, hr.usage_json,
-            ar.automation_subscription_id AS automation_id,
-            ar.trigger_type AS automation_trigger_type,
+            w.automation_run_id,
             (SELECT ia.started_at FROM inference_attempts ia
               WHERE ia.harness_run_id = hr.id AND ia.ttft_ms IS NOT NULL
               ORDER BY ia.started_at, ia.id LIMIT 1) AS first_inference_started_at,
@@ -138,14 +139,24 @@ export async function emitCorrelatedRunOutcome(
        FROM harness_runs hr
        JOIN workstreams w
          ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
-       LEFT JOIN automation_runs ar
-         ON ar.id = w.automation_run_id
-        AND ar.workspace_id = hr.workspace_id
-        AND hr.origin IN ('automation', 'automation_run')
       WHERE hr.id = ? AND hr.workspace_id = ? AND hr.workstream_id = ?
         AND hr.parent_tool_call_id IS NULL`,
   ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<RunRow>();
   if (!run || !run.completed_at || !['completed', 'needs_input', 'failed', 'stopped'].includes(run.status)) return;
+  // The automation lookup is workspace authority (the WorkspaceDO — the D1
+  // copy was scrubbed at cutover); the run rows above are work-stream
+  // authority, and no database holds both sides of the old JOIN. Both callers
+  // swallow telemetry errors, so the joined form did not fail — it silently
+  // killed run_terminal telemetry in production.
+  const automation = run.automation_run_id && ["automation", "automation_run"].includes(run.origin)
+    ? await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
+      `SELECT automation_subscription_id, trigger_type FROM automation_runs
+        WHERE id = ? AND workspace_id = ?`,
+    ).bind(run.automation_run_id, input.workspaceId)
+      .first<{ automation_subscription_id: string | null; trigger_type: string | null }>()
+    : null;
+  run.automation_id = automation?.automation_subscription_id ?? null;
+  run.automation_trigger_type = automation?.trigger_type ?? null;
   const started = Date.parse(run.started_at ?? run.created_at);
   const completed = Date.parse(run.completed_at);
   const operationId = input.telemetryOperationId ?? input.harnessRunId;

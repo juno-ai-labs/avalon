@@ -8,21 +8,28 @@ import {
 } from "../src/services/terminal/coordinator";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  testWorkstreamRuntimeD1,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
 const RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
 
-const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 
 afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
 function fixture() {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -34,11 +41,19 @@ function fixture() {
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Terminal', 'Terminal', 'ad_hoc', '${USER_ID}',
             'idle', '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
-            '{"type":"user","userId":"${USER_ID}"}', 'running', '2026-08-13');
   `);
+  // Runs and sandbox rows live in the work stream's own object since
+  // migration 0090 dropped the D1 copies.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+    VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
+    RUN_ID, WORKSPACE_ID, WORKSTREAM_ID, JSON.stringify({ type: "user", userId: USER_ID }),
+  );
   let now = new Date("2026-08-13T12:00:00.000Z");
   const clock: TerminalClock = { now: () => new Date(now) };
   const provider: TerminalSandboxProvider = {
@@ -68,7 +83,11 @@ function fixture() {
   };
   return {
     database,
-    db: sqliteD1(database),
+    objectStore,
+    db: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    }),
     provider,
     clock,
     advance(minutes: number) { now = new Date(now.getTime() + minutes * 60_000); },
@@ -88,7 +107,7 @@ function context(userId = USER_ID): HarnessToolContext {
 
 describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
-    const { database, db, provider, clock } = fixture();
+    const { objectStore, db, provider, clock } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
     const coordinator = new TerminalSandboxCoordinator(
       db,
@@ -99,7 +118,7 @@ describe("Terminal sandbox coordinator", () => {
       acquisitionObserved,
     );
 
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
     const first = await coordinator.acquire(context());
     const second = await coordinator.acquire({ ...context(), toolCallId: "call-2" });
 
@@ -109,7 +128,7 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.startSandbox).not.toHaveBeenCalled();
     expect(acquisitionObserved).toHaveBeenCalledOnce();
     expect(acquisitionObserved).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ action: "start" }));
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 1 });
   });
 
   it("recovers an ambiguous create by the stable provider name", async () => {
@@ -135,7 +154,7 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("fails closed when a new sandbox does not report the requested trusted policy", async () => {
-    const { database, db, provider, clock } = fixture();
+    const { objectStore, db, provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockImplementationOnce(async (input) => ({
       id: "sandbox-policy-mismatch",
       name: input.stableName,
@@ -148,9 +167,11 @@ describe("Terminal sandbox coordinator", () => {
       code: "network_policy_unverified",
     });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-policy-mismatch");
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, failure_code FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(WORKSPACE_ID, WORKSTREAM_ID)).toEqual({
+      WORKSPACE_ID, WORKSTREAM_ID,
+    )).toEqual({
       state: "failed",
       failure_code: "provider_policy_mismatch",
     });
@@ -174,19 +195,24 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {
-    const { database, db, provider, clock, advance } = fixture();
+    const { objectStore, db, provider, clock, advance } = fixture();
     const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
     await coordinator.acquire(context());
-    database.prepare("UPDATE workstream_sandboxes SET state = 'stopped' WHERE workspace_id = ? AND workstream_id = ?")
-      .run(WORKSPACE_ID, WORKSTREAM_ID);
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE workstream_sandboxes SET state = 'stopped' WHERE workspace_id = ? AND workstream_id = ?",
+      WORKSPACE_ID, WORKSTREAM_ID,
+    );
     advance(10);
 
     const acquired = await coordinator.acquire(context());
     expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
     expect(acquired).toMatchObject({ state: "running" });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT warm_stop_due_at, archive_due_at, expire_due_at FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(WORKSPACE_ID, WORKSTREAM_ID)).toEqual({
+      WORKSPACE_ID, WORKSTREAM_ID,
+    )).toEqual({
       warm_stop_due_at: "2026-08-13T12:15:00.000Z",
       archive_due_at: "2026-08-13T13:10:00.000Z",
       expire_due_at: "2026-09-12T12:10:00.000Z",
@@ -194,13 +220,18 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("serializes mutating runs with the durable operation lease", async () => {
-    const { database, db, provider, clock } = fixture();
+    const { objectStore, db, provider, clock } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
-    database.prepare(
+    // Scheduled, not running: the object admits at most one mutating run per
+    // substream (`runs_mutating_substream_uq`), so the contender waits in the
+    // admitted state while the fixture run holds the lease.
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
-    ).run(otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`);
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
     const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
     await coordinator.acquire(context());
 
@@ -214,7 +245,7 @@ describe("Terminal sandbox coordinator", () => {
       });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
 
-    database.prepare("UPDATE harness_runs SET status = 'completed' WHERE id = ?").run(RUN_ID);
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'completed' WHERE id = ?", RUN_ID);
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });

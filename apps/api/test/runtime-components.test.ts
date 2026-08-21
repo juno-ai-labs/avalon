@@ -446,10 +446,10 @@ describe("runtime component invariants", () => {
       first: async () => {
         if (sql.includes("FROM workstream_authority_control")) {
           return {
-            phase: "legacy_open",
-            generation: 0,
+            phase: "durable_object_open",
+            generation: 1,
             required_serving_contract_version: 1,
-            serving_contract_version: 0,
+            serving_contract_version: 1,
           };
         }
         throw new Error(`Unexpected first query: ${sql}`);
@@ -490,6 +490,15 @@ describe("runtime component invariants", () => {
       }),
       { DB: { prepare } } as never,
     );
+    (scheduler as unknown as {
+      workspaceDirectory: () => Promise<{
+        dueWorkstreamDirectory: () => Promise<string[]>;
+        workstreamScheduleTargets: () => Promise<{ items: [] }>;
+      }>;
+    }).workspaceDirectory = async () => ({
+      dueWorkstreamDirectory: async () => [],
+      workstreamScheduleTargets: async () => ({ items: [] }),
+    });
     storage.sql.exec(
       `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
        VALUES (1, ?, 0, 0)`,
