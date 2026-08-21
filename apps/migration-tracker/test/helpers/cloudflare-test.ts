@@ -8,6 +8,30 @@
  * assertion lives here, where it cannot spread through the test files.
  */
 
+import type { Env } from "../../src/env";
+
+/**
+ * An `Env` with the sweep's two credentials set, cleared, or absent.
+ *
+ * Here rather than inline in a test because the alternative is an `as Env`
+ * cast, and a cast would keep compiling if a required binding were ever added
+ * to `Env` — which is the drift the lint rule exists to catch. Omitting a key
+ * rather than assigning `undefined` is deliberate: under
+ * `exactOptionalPropertyTypes` those are different types, and "absent" is the
+ * shape an unconfigured Worker actually has.
+ */
+export function envWithSweepCredentials(
+  base: Env,
+  credentials: { accountId?: string; apiToken?: string },
+): Env {
+  const next = { ...base };
+  if (credentials.accountId === undefined) delete next.CLOUDFLARE_ACCOUNT_ID;
+  else next.CLOUDFLARE_ACCOUNT_ID = credentials.accountId;
+  if (credentials.apiToken === undefined) delete next.CLOUDFLARE_API_TOKEN;
+  else next.CLOUDFLARE_API_TOKEN = credentials.apiToken;
+  return next;
+}
+
 export interface TestMessage<Body> {
   id: string;
   body: Body;

@@ -27,7 +27,12 @@
     // configured while accepting assertions minted for any other application in
     // the same Zero Trust organization.
     "ACCESS_APPLICATION_AUD": "3be03aa107462e6a4f7dce1320cd32d15acabfb7e9ad3d64926965a81fab07e4",
-    "CLOUDFLARE_ACCOUNT_ID": ""
+    // The account the hourly sweep enumerates. An identifier, not a
+    // credential — it appears in every dashboard URL and unmasked in the deploy
+    // logs. The read-only token that pairs with it is a Worker secret, set out
+    // of band; see docs/runbook.md. Both are required, and the sweep logs
+    // `migration_inventory_sweep_skipped` and discovers nothing without them.
+    "CLOUDFLARE_ACCOUNT_ID": "53b7fc25c8df9aa77cf183853cb2ce43"
   },
   "routes": [
     { "pattern": "migrations.internal.rallywith.ai", "custom_domain": true }
