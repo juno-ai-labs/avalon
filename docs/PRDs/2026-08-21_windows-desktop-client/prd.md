@@ -46,7 +46,9 @@ one. The case is structural:
   blocks the team, not the person.
 - The cost of leaving it alone compounds through the release tooling. Every
   release script hardens the single-platform assumption further —
-  `verify-macos-app.mjs` fails unless `lipo` reports exactly `arm64`,
+  `verify-macos-app.mjs` fails unless `lipo` reports exactly `arm64` (and
+  shells out to macOS-only tooling — `codesign`, `spctl`, `plutil` —
+  throughout, so its Windows sibling is new code, not a port),
   `release-lib.mjs` exports one `DEFAULT_RELEASE_PREFIX`, and
   `apps/site/release.config.json` is a single-platform object. Each new
   invariant added to that suite is one more thing to unwind later; doing the
@@ -128,8 +130,11 @@ one. The case is structural:
 The `with-avalon.com` download surface offers two platforms: macOS
 (Apple silicon) and Windows (x64). The Windows artifact is an NSIS installer
 (`Avalon-<version>-win-x64.exe`) built from the existing `win` target
-(`oneClick: false`, user-choosable install directory). The installer and the
-application binaries inside it are Authenticode-signed.
+(`oneClick: false`, user-choosable install directory). It installs per-user
+with the standard NSIS uninstaller, matching the configuration already checked
+in; a per-machine install option is deferred until an IT-managed deployment
+asks for it. The installer and the application binaries inside it are
+Authenticode-signed.
 
 **SmartScreen is expected early, disclosed, and investigated late.** Since
 Microsoft's March 2024 change, no certificate class buys instant trust:
@@ -160,10 +165,12 @@ exercised end to end; goal 1 is its acceptance test.
 
 - All three windows (main, Settings, meeting-notes — the last never opens on
   Windows) use the standard Windows title bar (`titleBarStyle: 'default'`).
-  This is a deliberate change for the main window, which currently passes
-  `'hidden'` on non-darwin — on Windows that produces a window with **no
-  minimize/maximize/close buttons at all**. Custom chrome with
-  `titleBarOverlay` caption buttons is deferred polish (key design decision 4).
+  Only the main window changes: it currently passes `'hidden'` on non-darwin —
+  on Windows that produces a window with **no minimize/maximize/close buttons
+  at all** — while the Settings and meeting-notes windows already pass
+  `'default'` off macOS, so the fix is one line in the main window's
+  constructor. Custom chrome with `titleBarOverlay` caption buttons is
+  deferred polish (key design decision 4).
 - Windows and taskbar use the existing `resources/icon.png` path already wired
   for non-darwin windows. The macOS selectable app icon set does not appear in
   Settings on Windows (it is Dock-specific and already capability-gated).
@@ -204,19 +211,36 @@ exercised end to end; goal 1 is its acceptance test.
 The Windows client updates from
 `downloads.with-avalon.com/stable/win32/x64` (electron-updater's NSIS path,
 `latest.yml` + installer + blockmap), mirroring the macOS
-`stable/darwin/arm64` feed. The single `AVALON_UPDATE_URL` constant and
+`stable/darwin/arm64` feed. The single `AVALON_UPDATE_URL` constant (in
+`apps/desktop/scripts/mac-signature-policy.mjs`) and `release-lib.mjs`'s
 `DEFAULT_RELEASE_PREFIX` become per-target values. Differential download stays
 enabled as on macOS.
 
 ### Publication
 
-`apps/site/release.config.json` moves from a single-platform object to a list
-of per-target entries (target key, prefix, artifact names, hashes, published
-flag), one per `{platform, arch}`. Each target publishes independently: macOS
-can advance to a version whose Windows build is still in verification, and the
-download page offers whatever each target's newest published version is. The
-R2 bucket (`avalon-desktop-releases`) gains the `stable/win32/x64/` prefix;
-nothing about the macOS object layout moves.
+`apps/site/release.config.json` moves from a single-platform object to two
+distinct pieces of state, because today's record is doing two jobs at once:
+
+- **One train watermark** — the `{version, commit}` pair `plan-release.mjs`
+  reads to decide whether unreleased desktop work exists and what the next
+  version is, and that the publisher's advance-the-minor validation checks
+  against. This stays **single and global**, advanced by the release that
+  builds both platforms, exactly as today. It never rewinds for a trailing
+  target, so the planner cannot re-release work already shipped for macOS and
+  the publisher's next-version rule is unambiguous.
+- **Per-target publication entries** — one per `{platform, arch}` (prefix,
+  artifact names, hashes, published flag, published version), which may trail
+  the train. The download page and update feeds read these; a delayed Windows
+  publication of version N touches only its own entry.
+
+macOS can therefore advance the train to a version whose Windows build is
+still in verification, and completing that Windows publication later is an
+entry update, not a release. The implementing change migrates every consumer
+of the old flat record — the planner, the publisher's validation, and the
+site-config check — against the split, with tests for the macOS-at-N /
+Windows-at-N-1 state followed by both the next train release and the delayed
+Windows publication. The R2 bucket (`avalon-desktop-releases`) gains the
+`stable/win32/x64/` prefix; nothing about the macOS object layout moves.
 
 ## Impact on the product contract
 
@@ -226,10 +250,16 @@ clauses are affected and should be read against the brief:
 
 - The brief's assumption that the desktop client is macOS-only is retired:
   the client contract now spans two platforms.
-- Meeting recording becomes the one capability with platform-dependent
-  availability. This PRD scopes that as a Windows coverage gap, not a change
-  to what meeting notes are; if the brief enumerates client capabilities, its
-  edit says "macOS only" beside meeting recording and cites this PRD.
+- The meeting-notes workflow — recording, Control Tower, and the surfaces
+  that drive them — becomes the one product surface with platform-dependent
+  availability: absent on Windows, as an explicit product decision (non-goal
+  1), not an engineering accident. What meeting notes *are* is unchanged, and
+  notes already produced by macOS teammates remain readable wherever
+  work-stream content shows them; what Windows lacks is producing them. A
+  future PRD that ships any reduced notes experience on Windows (for example
+  microphone-only) must argue for it against this decision. If the brief
+  enumerates client capabilities, its edit says "macOS only" beside meeting
+  notes and cites this PRD.
 
 ## Decision log
 

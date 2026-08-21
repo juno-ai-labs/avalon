@@ -88,7 +88,9 @@ Effective 2026-03-01, CA/Browser Forum rules cap publicly trusted code-signing
 certificates at 458 days validity, so the OV fallback also implies annual
 reissue ceremony. One more reason the managed service is the default.
 
-- https://sslinsights.com/best-code-signing-certificate-windows-applications/
+- https://cabforum.org/working-groups/code-signing/documents/ (the Code
+  Signing Baseline Requirements; the cap was widely reported by CA vendors
+  ahead of the effective date)
 
 ## What was not researched
 
