@@ -3,7 +3,6 @@ import {
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
-  WorkspaceBlockDashboardPreferenceEventSchema,
   WorkstreamSocketCommandResultSchema,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -21,7 +20,7 @@ import {
 } from 'react';
 import { ApiError, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
 import { uuidV7 } from './telemetry';
-import type { BlockDashboardPreference, Message, WorkstreamSummary } from './types';
+import type { Message, WorkstreamSummary } from './types';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -276,17 +275,6 @@ export function WorkspaceSocketProvider({
               items,
               nextCursor: workstreamPage.data.nextCursor,
             });
-            return;
-          }
-          const preference = WorkspaceBlockDashboardPreferenceEventSchema.safeParse(decoded);
-          if (preference.success) {
-            // The value, not an invalidation: the write that produced it
-            // already had it, so a refetch would only ask the object it just
-            // came from.
-            queryClient.setQueryData<BlockDashboardPreference>(
-              ['block-dashboard-preference', preference.data.workstreamId],
-              preference.data.preference,
-            );
             return;
           }
           const workstreamState = WorkspaceWorkstreamStateEventSchema.safeParse(decoded);

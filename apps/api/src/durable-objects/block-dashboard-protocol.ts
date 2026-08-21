@@ -31,6 +31,16 @@ export const BlockDashboardContextFenceSchema = z.object({
 export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operation", [
   CoordinatesSchema.extend({ operation: z.literal("get") }).strict(),
   CoordinatesSchema.extend({
+    operation: z.literal("get_preference"),
+    userId: IdSchema,
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("update_preference"),
+    userId: IdSchema,
+    visible: z.boolean(),
+    updatedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+  CoordinatesSchema.extend({
     operation: z.literal("update_configuration"),
     userId: IdSchema,
     input: UpdateBlockDashboardRequestSchema,
