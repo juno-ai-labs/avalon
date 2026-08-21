@@ -24,7 +24,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@avalon/contracts";
 
@@ -37,9 +37,14 @@ import {
   post,
   runInput,
   runStatus,
+  seedOpenWorkstreamAuthority,
   seedRun,
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
+
+beforeAll(async () => {
+  await seedOpenWorkstreamAuthority(env.DB);
+});
 
 let unique = 0;
 /**

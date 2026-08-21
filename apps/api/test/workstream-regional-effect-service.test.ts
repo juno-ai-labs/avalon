@@ -26,7 +26,7 @@ import {
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const USER_ID = "00000000-0000-7000-8000-0000000000d1";
 const AUTHOR_ID = "00000000-0000-7000-8000-0000000000d2";
@@ -37,7 +37,7 @@ const EVENT_ID = "00000000-0000-7000-8000-0000000000d6";
 const AT = "2026-08-17T01:00:00.000Z";
 
 function seedAuthority() {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
       ('${USER_ID}', 'effect-recipient', 'recipient@example.com', 'Recipient', '${AT}', '${AT}'),

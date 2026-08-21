@@ -4,8 +4,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  executeWorkstreamObjectSql,
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -19,12 +28,15 @@ const context: HarnessToolContext = {
   executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
 };
 
-const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
 function fixture() {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
+  // Publishing attaches resources through the object's RPC surface, which
+  // only exists once the durable-object authority is open.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'resource-user', 'resource@example.com', 'Resource', '2026-08-13', '2026-08-13');
@@ -35,19 +47,33 @@ function fixture() {
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${S}', '${W}', 'Resource', 'Resource', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${R}', '${W}', '${S}', 'test', '{"type":"user","userId":"${U}"}', 'running', '2026-08-13');
-    INSERT INTO tool_invocations
-      (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
-    VALUES ('${I}', '${W}', '${S}', '${R}', 'resource-call', 'terminal_publish_resource', 'hash', '{}', 'started');
-    INSERT INTO workstream_sandboxes
-      (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-       authority_fingerprint, applied_network_revision, version, last_activity_at,
-       created_at, updated_at)
-    VALUES ('${W}', '${S}', 'running', 'resource-sandbox', 'sandbox', 1,
-            'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  executeWorkstreamObjectSql(objectStore, [
+    {
+      sql: `INSERT INTO harness_runs
+              (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+            VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
+      params: [R, W, S, JSON.stringify({ type: "user", userId: U })],
+    },
+    {
+      sql: `INSERT INTO tool_invocations
+              (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
+            VALUES (?, ?, ?, ?, 'resource-call', 'terminal_publish_resource', 'hash', '{}', 'started')`,
+      params: [I, W, S, R],
+    },
+    {
+      sql: `INSERT INTO workstream_sandboxes
+              (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
+               authority_fingerprint, applied_network_revision, version, last_activity_at,
+               created_at, updated_at)
+            VALUES (?, ?, 'running', 'resource-sandbox', 'sandbox', 1,
+                    'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13')`,
+      params: [W, S],
+    },
+  ]);
   const objects = new Map<string, Uint8Array>();
   const put = vi.fn(async (key: string, value: Uint8Array | string) => {
     objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value);
@@ -60,9 +86,40 @@ function fixture() {
     }),
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
-  const env = createTestEnv({
+  const baseEnv = createTestEnv({
     DB: sqliteD1(database), PAYLOADS: bucket, AVALON_REGION: "global", MAX_ATTACHMENT_BYTES: "25000000",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
+      extra: {
+        attachRuntimeResource: vi.fn((request: {
+          resourceId: string;
+          attachedByUserId: string | null;
+          relationshipType?: string;
+        }) => {
+          objectStore.prepare(
+            `INSERT OR IGNORE INTO workstream_resource_links
+               (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+                resource_json, attached_at, updated_at)
+             VALUES (?, ?, 0, ?, ?, ?, ?)`,
+          ).run(
+            request.resourceId,
+            request.attachedByUserId,
+            request.relationshipType ?? "generated",
+            JSON.stringify({ id: request.resourceId }),
+            Date.parse("2026-08-13T12:00:00.000Z"),
+            Date.parse("2026-08-13T12:00:00.000Z"),
+          );
+          return { status: 200, bodyJson: JSON.stringify({ ok: true }) };
+        }),
+      },
+    }),
   });
+  const env = withWorkstreamRuntimeDatabase(
+    baseEnv,
+    W,
+    S,
+    "0",
+    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+  );
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
@@ -74,12 +131,12 @@ function fixture() {
     }),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
-  return { database, objects, put, env, provider, bridge: createTerminalResourceBridge(env) };
+  return { database, objectStore, objects, put, env, provider, bridge: createTerminalResourceBridge(env) };
 }
 
 describe("Terminal resource bridge", () => {
   it("imports only a currently visible resource and verifies its stored hash", async () => {
-    const { database, objects, provider, bridge } = fixture();
+    const { database, objectStore, objects, provider, bridge } = fixture();
     const bytes = new TextEncoder().encode("attached data\n");
     const digest = "8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169";
     objects.set("global/source", bytes);
@@ -89,9 +146,13 @@ describe("Terminal resource bridge", () => {
         metadata_json, attachment_status, created_at, updated_at)
        VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'Input data.csv', 'text/csv', 'global/source', ?, '{}', 'attached', '2026-08-13', '2026-08-13')`,
     ).run(RESOURCE, W, digest);
-    database.prepare(
-      "INSERT INTO workstream_resources (workstream_id, resource_id, attached_by_user_id, relationship_type, attached_at) VALUES (?, ?, ?, 'attachment', '2026-08-13')",
-    ).run(S, RESOURCE, U);
+    // The attachment membership lives in the object's link table; the compat
+    // view over it is read-only, so the fixture writes the table itself.
+    objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+    ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
 
     await expect(bridge.importResource(context, { resourceId: RESOURCE }, `.avalon/resources/${RESOURCE}/resource`, 1, "sandbox", provider)).resolves.toEqual({
       resourceId: RESOURCE,
@@ -102,10 +163,12 @@ describe("Terminal resource bridge", () => {
       sourceSha256: digest,
     });
     expect(provider.writeFile).toHaveBeenCalledWith("sandbox", `/workspace/.avalon/resources/${RESOURCE}/resource`, bytes, context.signal);
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported
          FROM sandbox_imported_resources WHERE workspace_id = ? AND workstream_id = ?`,
-    ).get(W, S)).toEqual({
+      W, S,
+    )).toEqual({
       destination_path: `.avalon/resources/${RESOURCE}/resource`,
       source_sha256: digest,
       size_bytes: 14,
@@ -123,7 +186,7 @@ describe("Terminal resource bridge", () => {
   });
 
   it("refuses to write through a non-regular explicit destination", async () => {
-    const { database, objects, provider, bridge } = fixture();
+    const { database, objectStore, objects, provider, bridge } = fixture();
     const bytes = new TextEncoder().encode("attached data\n");
     const digest = "8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169";
     objects.set("global/source", bytes);
@@ -133,9 +196,11 @@ describe("Terminal resource bridge", () => {
         metadata_json, attachment_status, created_at, updated_at)
        VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'Input data.csv', 'text/csv', 'global/source', ?, '{}', 'attached', '2026-08-13', '2026-08-13')`,
     ).run(RESOURCE, W, digest);
-    database.prepare(
-      "INSERT INTO workstream_resources (workstream_id, resource_id, attached_by_user_id, relationship_type, attached_at) VALUES (?, ?, ?, 'attachment', '2026-08-13')",
-    ).run(S, RESOURCE, U);
+    objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+    ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
     vi.mocked(provider.runCommand).mockImplementation(async (_id, input) => input.taskName.startsWith("avalon-import-check")
       ? { exitCode: 45, stdout: "", stderr: "" }
       : { exitCode: 0, stdout: "", stderr: "" });
@@ -155,18 +220,26 @@ describe("Terminal resource bridge", () => {
   });
 
   it("publishes a supported regular file as an attached resource with durable cleanup ownership", async () => {
-    const { database, objects, put, bridge } = fixture();
+    const { database, objectStore, objects, put, bridge } = fixture();
     const bytes = new TextEncoder().encode("# Report\n");
     const result = await bridge.publishResource(context, { filePath: "report.md", displayName: "Analysis" }, bytes);
 
     expect(result).toMatchObject({ title: "Analysis", provider: "avalon_generated", mimeType: "text/markdown", sizeBytes: 9 });
     const resourceId = String(result.resourceId);
+    // The resource row is workspace authority (D1) and the attachment is
+    // object authority; the cross-store join production no longer performs is
+    // asserted as its two halves.
     const row = database.prepare(
-      `SELECT r.provider, r.title, r.mime_type, r.content_ref, r.attachment_status, wr.relationship_type
-         FROM resources r JOIN workstream_resources wr ON wr.resource_id = r.id
-        WHERE r.id = ? AND r.workspace_id = ? AND wr.workstream_id = ?`,
-    ).get(resourceId, W, S);
-    expect(row).toMatchObject({ provider: "avalon_generated", title: "Analysis", mime_type: "text/markdown", attachment_status: "attached", relationship_type: "generated" });
+      `SELECT provider, title, mime_type, content_ref, attachment_status
+         FROM resources WHERE id = ? AND workspace_id = ?`,
+    ).get(resourceId, W);
+    expect(row).toMatchObject({ provider: "avalon_generated", title: "Analysis", mime_type: "text/markdown", attachment_status: "attached" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT relationship_type FROM workstream_resources WHERE workstream_id = ? AND resource_id = ?",
+      S,
+      resourceId,
+    )).toEqual({ relationship_type: "generated" });
     expect(objects.has(String((row as { content_ref: string }).content_ref))).toBe(true);
     expect(put).toHaveBeenCalledOnce();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get()).toEqual({ count: 0 });

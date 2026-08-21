@@ -10,7 +10,8 @@ import {
 } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { fireWorkstreamWakeup, WorkstreamService } from "../src/services/workstream-service";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { fireWorkstreamWakeup } from "../src/services/workstream-service";
 import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
   MINIMUM_WAKEUP_DELAY_SECONDS,
@@ -21,7 +22,16 @@ import {
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding, type RecordedDispatch } from "./helpers/durable-authority";
+import {
+  executeWorkstreamObjectSql,
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+  type RecordedDispatch,
+} from "./helpers/durable-authority";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
@@ -87,6 +97,10 @@ afterEach(() => {
 
 interface Fixture {
   database: DatabaseSync;
+  /** The main work stream's own object database, where its wake-ups live. */
+  objectStore: DatabaseSync;
+  /** Per-workstream object databases the runtime SQL port has opened. */
+  objectStores: Map<string, DatabaseSync>;
   env: Env;
   schedulerRefreshes: string[];
   /** Every agent timer refresh — how a wake-up is armed after cutover. */
@@ -103,6 +117,7 @@ function fixture(): Fixture {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
   // The retired pre-cutover arms are gone: firing a wake-up now requires the
@@ -128,11 +143,40 @@ function fixture(): Fixture {
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Wake Up', 'Wake Up', 'ad_hoc', '${USER_ID}',
             'running', 'wake-up@automation.with-avalon.com', 'active',
             '2026-01-01', '2026-01-01', '2026-01-01');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
-            '{"type":"user","userId":"${USER_ID}"}', 'running', '2026-01-01');
   `);
+  // Since migration 0090 the run and its transcript live only in the work
+  // stream's object; the fixture opens that object and writes the run row
+  // through the same compat port the harness uses.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  const objectStores = new Map<string, DatabaseSync>([[WORKSTREAM_ID, objectStore]]);
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
+       (id, workspace_id, title, objective, origin_type, created_by_user_id,
+        harness_status, email_address, email_route_status, last_activity_at, created_at, updated_at)
+     VALUES (?, ?, 'Wake Up', 'Wake Up', 'ad_hoc', ?, 'running',
+             'wake-up@automation.with-avalon.com', 'active', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    WORKSTREAM_ID,
+    WORKSPACE_ID,
+    USER_ID,
+  );
+  // Settled, not running: the object enforces at most one mutating run per
+  // substream (`runs_mutating_substream_uq`), so a fixture run left `running`
+  // would block the very admission a fired wake-up performs. This run exists
+  // as receipt context for the tools, the way a finished run precedes a
+  // wake-up in production.
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'test', ?, 'completed', '2026-01-01')`,
+    HARNESS_RUN_ID,
+    WORKSPACE_ID,
+    WORKSTREAM_ID,
+    JSON.stringify({ type: "user", userId: USER_ID }),
+  );
 
   const schedulerRefreshes: string[] = [];
   const timerRefreshes: string[] = [];
@@ -152,6 +196,7 @@ function fixture(): Fixture {
       }),
     },
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      objectStores,
       dispatches,
       failDispatch: () => {
         if (dispatchControl.error) throw dispatchControl.error;
@@ -166,7 +211,17 @@ function fixture(): Fixture {
       },
     }),
   });
-  return { database, env, schedulerRefreshes, timerRefreshes, dispatches, dispatchControl, timerControl };
+  return {
+    database,
+    objectStore,
+    objectStores,
+    env,
+    schedulerRefreshes,
+    timerRefreshes,
+    dispatches,
+    dispatchControl,
+    timerControl,
+  };
 }
 
 function workflowInput(): WorkstreamWorkflowInput {
@@ -196,7 +251,12 @@ function context(providerIdempotencyKey = "receipt-1") {
 }
 
 function wakeupTools(env: Env) {
-  const tools = __integrationTesting.createAvalonTools(env, workflowInput());
+  // The harness hands its tools the routed execution environment; a tool's
+  // wake-up statements reach the work stream's object through it, never D1.
+  const tools = __integrationTesting.createAvalonTools(
+    withWorkstreamRuntimeDatabase(env, WORKSPACE_ID, WORKSTREAM_ID),
+    workflowInput(),
+  );
   return {
     schedule: tools.find((tool) => tool.definition.name === "schedule_wakeup")!,
     list: tools.find((tool) => tool.definition.name === "list_wakeups")!,
@@ -204,12 +264,24 @@ function wakeupTools(env: Env) {
   };
 }
 
-function pendingRow(database: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
-  const row = database.prepare(
+/**
+ * The environment production fires wake-ups under: both the scheduler and the
+ * agent timer wrap the bindings in the work-stream runtime router before
+ * calling `fireWorkstreamWakeup`, so claim and transcript statements reach the
+ * object while the directory reads stay regional.
+ */
+function executionEnvironment(env: Env): Env {
+  return withWorkstreamRuntimeDatabase(env, WORKSPACE_ID, WORKSTREAM_ID);
+}
+
+function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
+  const row = workstreamObjectGet(
+    objectStore,
     `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
             due_at, status, version, created_at
        FROM workstream_wakeups WHERE id = ?`,
-  ).get(wakeupId);
+    wakeupId,
+  );
   return WorkstreamWakeupRowSchema.parse(row);
 }
 
@@ -446,18 +518,16 @@ describe("wake-up instant resolution", () => {
 });
 
 describe("wake-up tools", () => {
-  it("summarizes the earliest pending wake-up for a work-stream marker", async () => {
-    const { env } = fixture();
-    const service = new WorkstreamService(env, {
-      sessionId: "test",
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      role: "owner",
-    });
+  it("keeps the earliest pending wake-up for a marker in the object as wake-ups come and go", async () => {
+    const { objectStore, env } = fixture();
     const { schedule, cancel } = wakeupTools(env);
+    const earliestPending = () => workstreamObjectGet(
+      objectStore,
+      `SELECT prompt, due_at FROM workstream_wakeups
+        WHERE status = 'pending' ORDER BY due_at, id LIMIT 1`,
+    ) as { prompt: string; due_at: string } | null;
 
-    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+    expect(earliestPending()).toBeNull();
 
     const later = await schedule.execute(
       { prompt: "Send the final deployment recap", delay: "3 hours" },
@@ -468,29 +538,31 @@ describe("wake-up tools", () => {
       { prompt: earlierPrompt, delay: "2 hours" },
       context("earlier-sidebar-marker"),
     );
-    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
-      dueAt: (earlier.output as { dueAt: string }).dueAt,
-      promptPreview: `${earlierPrompt.slice(0, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH).trimEnd()}…`,
+    expect(earliestPending()).toEqual({
+      prompt: earlierPrompt,
+      due_at: (earlier.output as { dueAt: string }).dueAt,
     });
+    expect(`${earlierPrompt.slice(0, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH).trimEnd()}…`)
+      .toBe("Check whether the production deployment…");
 
     await cancel.execute(
       { wakeupId: (earlier.output as { wakeupId: string }).wakeupId },
       context("cancel-earlier-sidebar-marker"),
     );
-    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
-      dueAt: (later.output as { dueAt: string }).dueAt,
-      promptPreview: "Send the final deployment recap",
+    expect(earliestPending()).toEqual({
+      prompt: "Send the final deployment recap",
+      due_at: (later.output as { dueAt: string }).dueAt,
     });
 
     await cancel.execute(
       { wakeupId: (later.output as { wakeupId: string }).wakeupId },
       context("cancel-later-sidebar-marker"),
     );
-    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+    expect(earliestPending()).toBeNull();
   });
 
   it("schedules a wake-up and arms the work stream's own agent timer", async () => {
-    const { database, env, timerRefreshes } = fixture();
+    const { objectStore, env, timerRefreshes } = fixture();
     const { schedule } = wakeupTools(env);
 
     const result = await schedule.execute(
@@ -508,7 +580,7 @@ describe("wake-up tools", () => {
     // inserted the row, not the workspace scheduler.
     expect(timerRefreshes).toEqual([WORKSTREAM_ID]);
 
-    const row = database.prepare("SELECT status, prompt FROM workstream_wakeups").get() as {
+    const row = workstreamObjectGet(objectStore, "SELECT status, prompt FROM workstream_wakeups") as {
       status: string;
       prompt: string;
     };
@@ -516,7 +588,7 @@ describe("wake-up tools", () => {
   });
 
   it("returns the persisted wake-up on a replayed receipt instead of scheduling a second", async () => {
-    const { database, env } = fixture();
+    const { objectStore, env } = fixture();
     const { schedule } = wakeupTools(env);
     const args = { prompt: "Send the recap", delay: "1 hour" };
 
@@ -527,12 +599,12 @@ describe("wake-up tools", () => {
       .toBe((first.output as { wakeupId: string }).wakeupId);
     expect((second.output as { dueAt: string }).dueAt)
       .toBe((first.output as { dueAt: string }).dueAt);
-    const count = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
+    const count = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
     expect(count.n).toBe(1);
   });
 
   it("leaves no pending wake-up behind when the alarm cannot be armed", async () => {
-    const { database, env, timerControl } = fixture();
+    const { objectStore, env, timerControl } = fixture();
     timerControl.error = new Error("agent timer unavailable");
     const { schedule } = wakeupTools(env);
 
@@ -543,21 +615,21 @@ describe("wake-up tools", () => {
 
     // Either it is scheduled and armed, or it does not exist. A pending row with
     // no alarm behind it would never fire in a workspace with nothing else due.
-    const rows = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
+    const rows = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
     expect(rows.n).toBe(0);
   });
 
   it("re-arms the alarm when a replayed receipt finds a still-pending wake-up", async () => {
-    const { database, env, timerRefreshes } = fixture();
+    const { objectStore, env, timerRefreshes } = fixture();
     const { schedule } = wakeupTools(env);
     // Stand in for a first attempt that persisted the row and then failed before
     // arming: the row is present, the workspace has never been refreshed.
-    database.prepare(
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_wakeups
          (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
           status, idempotency_key, version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?)`,
-    ).run(
       "00000000-0000-4000-8000-0000000000b1",
       WORKSPACE_ID,
       WORKSTREAM_ID,
@@ -578,7 +650,7 @@ describe("wake-up tools", () => {
     expect((replay.output as { wakeupId: string }).wakeupId)
       .toBe("00000000-0000-4000-8000-0000000000b1");
     expect(timerRefreshes).toHaveLength(1);
-    const count = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
+    const count = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
     expect(count.n).toBe(1);
   });
 
@@ -646,7 +718,7 @@ describe("wake-up tools", () => {
   });
 
   it("does not expose a wake-up belonging to another work stream", async () => {
-    const { database, env } = fixture();
+    const { database, objectStores, env } = fixture();
     const otherWorkstream = "00000000-0000-4000-8000-000000000009";
     database.exec(`
       INSERT INTO workstreams
@@ -654,13 +726,24 @@ describe("wake-up tools", () => {
          harness_status, last_activity_at, created_at, updated_at)
       VALUES ('${otherWorkstream}', '${WORKSPACE_ID}', 'Other', 'Other', 'ad_hoc', '${USER_ID}',
               'idle', '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO workstream_wakeups
-        (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
-         status, idempotency_key, version, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-00000000000a', '${WORKSPACE_ID}', '${otherWorkstream}',
-              '{"type":"user","userId":"${USER_ID}"}', 'Foreign', '2026-08-12T00:00:00.000Z',
-              'pending', 'foreign-receipt', 1, '2026-08-11', '2026-08-11');
     `);
+    // The foreign wake-up lives in the other work stream's own object, the way
+    // production isolates it; nothing about the tools' own object mentions it.
+    const foreignStore = testWorkstreamObjectStore();
+    openDatabases.push(foreignStore);
+    seedWorkstreamObjectRoot(foreignStore, { workstreamId: otherWorkstream, workspaceId: WORKSPACE_ID });
+    objectStores.set(otherWorkstream, foreignStore);
+    workstreamObjectRun(
+      foreignStore,
+      `INSERT INTO workstream_wakeups
+         (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
+          status, idempotency_key, version, created_at, updated_at)
+       VALUES ('00000000-0000-4000-8000-00000000000a', ?, ?, ?, 'Foreign', '2026-08-12T00:00:00.000Z',
+               'pending', 'foreign-receipt', 1, '2026-08-11', '2026-08-11')`,
+      WORKSPACE_ID,
+      otherWorkstream,
+      JSON.stringify({ type: "user", userId: USER_ID }),
+    );
     const { list, cancel } = wakeupTools(env);
 
     expect((await list.execute({}, context())).output).toMatchObject({ wakeups: [] });
@@ -673,7 +756,7 @@ describe("wake-up tools", () => {
 
 describe("firing a due wake-up", () => {
   it("claims the wake-up, notes it in the transcript, and starts a run carrying its id", async () => {
-    const { database, env, dispatches } = fixture();
+    const { objectStore, env, dispatches } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Check the deploy", delay: "1 hour" },
@@ -681,27 +764,32 @@ describe("firing a due wake-up", () => {
     );
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
 
-    const outcome = await fireWorkstreamWakeup(env, pendingRow(database, wakeupId));
+    const outcome = await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId));
 
     expect(outcome.fired).toBe(true);
     expect(dispatches).toHaveLength(1);
     expect(dispatches[0]?.scheduledWakeupId).toBe(wakeupId);
     expect(dispatches[0]?.reason).toBe("scheduled_wakeup");
 
-    const row = database.prepare("SELECT status, fired_at FROM workstream_wakeups WHERE id = ?")
-      .get(wakeupId) as { status: string; fired_at: string | null };
+    const row = workstreamObjectGet(
+      objectStore,
+      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      wakeupId,
+    ) as { status: string; fired_at: string | null };
     expect(row.status).toBe("fired");
     expect(row.fired_at).not.toBeNull();
 
-    const message = database.prepare(
+    const message = workstreamObjectGet(
+      objectStore,
       "SELECT author_type, message_type, text_content FROM messages WHERE workstream_id = ?",
-    ).get(WORKSTREAM_ID) as { author_type: string; message_type: string; text_content: string };
+      WORKSTREAM_ID,
+    ) as { author_type: string; message_type: string; text_content: string };
     expect(message).toMatchObject({ author_type: "system", message_type: "system" });
     expect(message.text_content).toContain("Check the deploy");
   });
 
   it("previews a long prompt on a word boundary with a visible marker", async () => {
-    const { database, env } = fixture();
+    const { objectStore, env } = fixture();
     const { schedule } = wakeupTools(env);
     const prompt = [
       "Check whether the Acme production deploy completed successfully, then compare",
@@ -713,13 +801,15 @@ describe("firing a due wake-up", () => {
     const scheduled = await schedule.execute({ prompt, delay: "1 hour" }, context());
 
     await fireWorkstreamWakeup(
-      env,
-      pendingRow(database, (scheduled.output as { wakeupId: string }).wakeupId),
+      executionEnvironment(env),
+      pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
     );
 
-    const message = database.prepare(
+    const message = workstreamObjectGet(
+      objectStore,
       "SELECT text_content FROM messages WHERE workstream_id = ?",
-    ).get(WORKSTREAM_ID) as { text_content: string };
+      WORKSTREAM_ID,
+    ) as { text_content: string };
     expect(message.text_content).toMatch(/…$/u);
     // The cut lands between words, never inside one.
     expect(message.text_content.replace(/…$/u, "")).toMatch(/\w$/u);
@@ -729,17 +819,17 @@ describe("firing a due wake-up", () => {
   });
 
   it("fires a wake-up at most once when two alarms race the same row", async () => {
-    const { database, env, dispatches } = fixture();
+    const { objectStore, env, dispatches } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Only once", delay: "1 hour" },
       context(),
     );
-    const row = pendingRow(database, (scheduled.output as { wakeupId: string }).wakeupId);
+    const row = pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId);
 
     const outcomes = [
-      await fireWorkstreamWakeup(env, row),
-      await fireWorkstreamWakeup(env, row),
+      await fireWorkstreamWakeup(executionEnvironment(env), row),
+      await fireWorkstreamWakeup(executionEnvironment(env), row),
     ];
 
     expect(outcomes.filter((outcome) => outcome.fired)).toHaveLength(1);
@@ -747,7 +837,7 @@ describe("firing a due wake-up", () => {
   });
 
   it("releases the claim when the harness cannot be started, so a later alarm retries", async () => {
-    const { database, env, dispatchControl } = fixture();
+    const { objectStore, env, dispatchControl } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Retry me", delay: "1 hour" },
@@ -756,46 +846,57 @@ describe("firing a due wake-up", () => {
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
     dispatchControl.error = new Error("substream agent unavailable");
 
-    await expect(fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).rejects.toThrow();
+    await expect(fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).rejects.toThrow();
 
-    const row = database.prepare("SELECT status, fired_at FROM workstream_wakeups WHERE id = ?")
-      .get(wakeupId) as { status: string; fired_at: string | null };
+    const row = workstreamObjectGet(
+      objectStore,
+      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      wakeupId,
+    ) as { status: string; fired_at: string | null };
     expect(row).toMatchObject({ status: "pending", fired_at: null });
   });
 
   it("releases the claim when pre-launch preparation fails, not just the launch", async () => {
-    const { database, env, dispatches } = fixture();
+    const { objectStore, env, dispatches } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Transcript write fails", delay: "1 hour" },
       context(),
     );
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
-    const row = pendingRow(database, wakeupId);
-    // Fail the transcript batch, which runs after the claim and before the
+    const row = pendingRow(objectStore, wakeupId);
+    // Fail the transcript write, which runs after the claim and before the
     // launch. The claim is only safe to hold if every throw between them
     // releases it: once the row leaves `pending`, the scheduler's retry gate
-    // cannot see it as due and the wake-up is consumed with no run.
-    const realBatch = env.DB.batch.bind(env.DB);
-    let failed = false;
-    (env.DB as unknown as { batch: unknown }).batch = async (statements: D1PreparedStatement[]) => {
-      if (!failed) {
-        failed = true;
-        throw new Error("D1 batch unavailable");
-      }
-      return realBatch(statements);
-    };
+    // cannot see it as due and the wake-up is consumed with no run. The
+    // transcript travels the runtime SQL port since the cutover, so the
+    // failure is injected there — the claim's own port batch passes through.
+    const executionEnv = withWorkstreamRuntimeDatabase(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      "0",
+      async (statements) => {
+        if (statements.some(({ sql }) => /INSERT INTO messages/iu.test(sql))) {
+          throw new Error("runtime SQL port unavailable");
+        }
+        return executeWorkstreamObjectSql(objectStore, statements);
+      },
+    );
 
-    await expect(fireWorkstreamWakeup(env, row)).rejects.toThrow("D1 batch unavailable");
+    await expect(fireWorkstreamWakeup(executionEnv, row)).rejects.toThrow("runtime SQL port unavailable");
 
     expect(dispatches).toHaveLength(0);
-    const after = database.prepare("SELECT status, fired_at FROM workstream_wakeups WHERE id = ?")
-      .get(wakeupId) as { status: string; fired_at: string | null };
+    const after = workstreamObjectGet(
+      objectStore,
+      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      wakeupId,
+    ) as { status: string; fired_at: string | null };
     expect(after).toMatchObject({ status: "pending", fired_at: null });
   });
 
   it("does not duplicate the transcript row when a released wake-up fires again", async () => {
-    const { database, env, dispatchControl } = fixture();
+    const { objectStore, env, dispatchControl } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Retried after a launch failure", delay: "1 hour" },
@@ -804,18 +905,20 @@ describe("firing a due wake-up", () => {
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
     dispatchControl.error = new Error("substream agent unavailable");
 
-    await expect(fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).rejects.toThrow();
+    await expect(fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).rejects.toThrow();
     dispatchControl.error = null;
-    expect((await fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).fired).toBe(true);
+    expect((await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).fired).toBe(true);
 
-    const messages = database.prepare(
+    const messages = workstreamObjectGet(
+      objectStore,
       "SELECT COUNT(*) AS n FROM messages WHERE workstream_id = ? AND message_type = 'system'",
-    ).get(WORKSTREAM_ID) as { n: number };
+      WORKSTREAM_ID,
+    ) as { n: number };
     expect(messages.n).toBe(1);
   });
 
   it("consumes without running a wake-up whose principal lost workspace membership", async () => {
-    const { database, env, dispatches } = fixture();
+    const { database, objectStore, env, dispatches } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Revoked", delay: "1 hour" },
@@ -825,27 +928,38 @@ describe("firing a due wake-up", () => {
     database.prepare("UPDATE workspace_members SET status = 'suspended' WHERE user_id = ?")
       .run(USER_ID);
 
-    const outcome = await fireWorkstreamWakeup(env, pendingRow(database, wakeupId));
+    const outcome = await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId));
 
     expect(outcome.fired).toBe(false);
     expect(dispatches).toHaveLength(0);
-    const row = database.prepare("SELECT status FROM workstream_wakeups WHERE id = ?")
-      .get(wakeupId) as { status: string };
+    const row = workstreamObjectGet(
+      objectStore,
+      "SELECT status FROM workstream_wakeups WHERE id = ?",
+      wakeupId,
+    ) as { status: string };
     expect(row.status).toBe("fired");
   });
 
   it("does not run a wake-up whose work stream was archived", async () => {
-    const { database, env, dispatches } = fixture();
+    const { database, objectStore, env, dispatches } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Archived", delay: "1 hour" },
       context(),
     );
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+    // Archiving writes both stores in production: the regional directory index
+    // and the object root the routed `archived_at` guard reads.
     database.prepare("UPDATE workstreams SET archived_at = ? WHERE id = ?")
       .run("2026-08-11T12:00:00.000Z", WORKSTREAM_ID);
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE workstreams SET archived_at = ? WHERE id = ?",
+      "2026-08-11T12:00:00.000Z",
+      WORKSTREAM_ID,
+    );
 
-    expect((await fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).fired).toBe(false);
+    expect((await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).fired).toBe(false);
     expect(dispatches).toHaveLength(0);
   });
 });

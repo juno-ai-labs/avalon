@@ -6,14 +6,13 @@
 // which is how a defect that failed every production harness run stayed
 // invisible to every local check.
 //
-// The walk respects the same trigger-enforced state machine production used:
-// phases advance one step at a time, seed runs are terminalized before the
-// drain gate, and the seed work streams' routes are advanced with the phases.
-// The seed work streams end up serving *empty* objects — their D1 product rows
-// are not imported, because the import campaign was retired after the
-// production cutover. That is acceptable for local work, which creates fresh
-// work streams; it is why this is a local development script and not an
-// operational tool.
+// The walk respects the remaining trigger-enforced state machine production
+// used: phases advance one step at a time, and this script explicitly creates
+// the seed workspaces' and work streams' routing rows now that migration 0090
+// has removed the completed one-time import-population triggers.
+// After the ledger opens, the development-only HTTP seed route writes
+// seed-product.json into the objects. No product row is read from D1; this is
+// why the script is local bootstrap rather than an operational import tool.
 //
 // Idempotent: a stack already at `durable_object_open` is left untouched.
 import { execFileSync } from "node:child_process";
@@ -86,17 +85,40 @@ if (!reached("maintenance_draining")) {
     WHERE id=1`);
 }
 
-// The drain gate: no live legacy runs may cross into the import phase.
-advance(`UPDATE harness_runs
-    SET status='completed',
-        terminalized_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-        completed_at=COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  WHERE terminalized_at IS NULL`);
-
 if (!reached("maintenance_importing")) {
   advance(`UPDATE workstream_authority_control SET phase='maintenance_importing',
           updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
 }
+
+// These are routing rows, not import receipts on a fresh post-0090 database.
+// Production creates them alongside each new object after the authority is
+// open; the local seed predates that transition, so bootstrap them here.
+advance(`INSERT INTO workstream_authority_routes (
+    workspace_id, workstream_id, generation, object_name, state, stage_index,
+    source_cursor, source_fence_sequence, source_hash, target_hash,
+    row_counts_json, imported_at, verified_at, activated_at, updated_at
+  )
+  SELECT w.workspace_id, w.id, ${generation}, ws.region || ':' || w.workspace_id || ':' || w.id,
+         'pending', 0, 0, 0, 'seeded_in_do', 'seeded_in_do', '{}', NULL, NULL, NULL,
+         strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    FROM workstreams w JOIN workspaces ws ON ws.id = w.workspace_id
+  ON CONFLICT(workstream_id) DO UPDATE SET
+    workspace_id=excluded.workspace_id, generation=excluded.generation,
+    object_name=excluded.object_name, state='pending', stage_index=0,
+    source_cursor=0, source_fence_sequence=0, source_hash='seeded_in_do',
+    target_hash='seeded_in_do', row_counts_json='{}', imported_at=NULL,
+    verified_at=NULL, activated_at=NULL, last_error_code=NULL,
+    updated_at=excluded.updated_at`);
+advance(`INSERT INTO workspace_product_authority_routes (
+    workspace_id, generation, state, stage_index, source_cursor,
+    row_counts_json, last_error_code, updated_at
+  )
+  SELECT id, ${generation}, 'pending', 0, 0, '{}', NULL,
+         strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM workspaces
+  ON CONFLICT(workspace_id) DO UPDATE SET
+    generation=excluded.generation, state='pending', stage_index=0,
+    source_cursor=0, row_counts_json='{}', last_error_code=NULL,
+    updated_at=excluded.updated_at`);
 
 // Route states move with the phases: verified before the verified gate, active
 // before the open gate. `importing` first because the route machine is also

@@ -4,8 +4,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const { loadRunPromptContext, projectModelProtocolTranscript } = __integrationTesting;
 
@@ -28,17 +36,23 @@ const BRIEF = [
 ].join("\n");
 
 const databases: DatabaseSync[] = [];
+/** The work stream's own object database, rebuilt by each `seededDatabase`. */
+let objectStores = new Map<string, DatabaseSync>();
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
 function envFor(database: DatabaseSync): Env {
-  return createTestEnv({
+  const base = createTestEnv({
     DB: sqliteD1(database),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
   });
+  // The prompt loader runs inside the SubstreamAgent, which hands it the
+  // routed execution environment — transcript reads reach the object, never D1.
+  return withWorkstreamRuntimeDatabase(base, WORKSPACE, WORKSTREAM);
 }
 
 /**
@@ -51,8 +65,12 @@ function envFor(database: DatabaseSync): Env {
  * retrieval would otherwise decide whether it runs at all.
  */
 function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // The prompt context is read through the runtime SQL port since the cutover,
+  // so the fixture opens the authority and writes the transcript, run and
+  // frozen memory context into the work stream's own object below.
+  openWorkstreamAuthorityForTest(database);
   const brief = options.brief ?? BRIEF;
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
@@ -77,23 +95,59 @@ function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
        event_count, highlight_count, harness_run_id, workstream_id, status, created_at, updated_at)
     VALUES ('${DELIVERY}', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}', '2026-08-11T16:00:00.000Z',
             NULL, 201, 42, 1, NULL, '${WORKSTREAM}', 'running', '2026-08-11', '2026-08-11');
-    INSERT INTO messages
-      (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-       message_type, text_content, structured_content_json, sequence_number, created_at)
-    VALUES ('${BRIEF_MESSAGE}', 'digest:${DELIVERY}', '${WORKSPACE}', '${WORKSTREAM}', 'system', NULL,
-            'system', '${brief.replaceAll("'", "''")}', NULL, 1, '2026-08-11T16:00:00.000Z');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at,
-       attempt_id, lease_owner, lease_expires_at)
-    VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', 'scheduled_digest',
-            '{"type":"user","userId":"${OWNER}"}', 'running', '2026-08-11',
-            '${ATTEMPT}', '${LEASE_OWNER}', '2099-01-01T00:00:00.000Z');
-    INSERT INTO harness_run_memory_contexts
-      (harness_run_id, workspace_id, workstream_id, attempt_id, memory_scope_ids_json,
-       query_text, retrieval_mode, results_json, memory_context_hash, created_at)
-    VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', '${ATTEMPT}', '[]',
-            'digest', 'fts_only', '[]', 'hash', '2026-08-11');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
+  objectStores = new Map([[WORKSTREAM as string, objectStore]]);
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
+       (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+        next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+     VALUES (?, ?, 'Digest · Ada Lovelace',
+             'Write this person''s scheduled digest of what changed since the last one.',
+             'ad_hoc', ?, 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11', 'digest', 'personal')`,
+    WORKSTREAM,
+    WORKSPACE,
+    OWNER,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at,
+        attempt_id, lease_owner, lease_expires_at)
+     VALUES (?, ?, ?, 'scheduled_digest', ?, 'running', '2026-08-11', ?, ?, '2099-01-01T00:00:00.000Z')`,
+    RUN,
+    WORKSPACE,
+    WORKSTREAM,
+    JSON.stringify({ type: "user", userId: OWNER }),
+    ATTEMPT,
+    LEASE_OWNER,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO messages
+       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+        message_type, text_content, structured_content_json, sequence_number, created_at)
+     VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, NULL, 1, '2026-08-11T16:00:00.000Z')`,
+    BRIEF_MESSAGE,
+    `digest:${DELIVERY}`,
+    WORKSPACE,
+    WORKSTREAM,
+    brief,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_run_memory_contexts
+       (harness_run_id, workspace_id, workstream_id, attempt_id, memory_scope_ids_json,
+        query_text, retrieval_mode, results_json, memory_context_hash, created_at)
+     VALUES (?, ?, ?, ?, '[]', 'digest', 'fts_only', '[]', 'hash', '2026-08-11')`,
+    RUN,
+    WORKSPACE,
+    WORKSTREAM,
+    ATTEMPT,
+  );
   return database;
 }
 

@@ -9,7 +9,6 @@ import type { z } from "zod";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
-import { readWorkstreamAuthorityControl } from "../workstream-authority";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
@@ -413,19 +412,6 @@ export class TerminalSettingsService {
   }
 
   private async loadActiveSandboxes(): Promise<SandboxRow[]> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase !== "durable_object_open") {
-      const legacy = await this.env.DB.prepare(
-        `SELECT sandbox.workstream_id, sandbox.provider_sandbox_id, sandbox.state,
-                sandbox.generation, workstream.title
-           FROM workstream_sandboxes sandbox
-           JOIN workstreams workstream ON workstream.id = sandbox.workstream_id
-          WHERE sandbox.workspace_id = ? AND sandbox.provider_sandbox_id IS NOT NULL
-            AND sandbox.state NOT IN ('absent', 'expired', 'failed')
-          ORDER BY sandbox.workstream_id`,
-      ).bind(this.auth.workspaceId).all<SandboxRow>();
-      return legacy.results ?? [];
-    }
     const directory: Array<{ workstream_id: string; title: string }> = [];
     const service = new WorkstreamDirectoryService(this.env, this.auth);
     let before: string | undefined;

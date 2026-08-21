@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { reapProcessedActivityPayloads } from "../src/services/normalized-activity-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000401";
 const USER_ID = "00000000-0000-7000-8000-000000000402";
@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)

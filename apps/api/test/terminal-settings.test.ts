@@ -6,35 +6,99 @@ import type { AuthContext } from "../src/env";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { TerminalSettingsService } from "../src/services/terminal/settings";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamContract,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const W = asWorkspaceId("50000000-0000-4000-8000-000000000001");
 const S = "50000000-0000-4000-8000-000000000002";
 const U = asUserId("50000000-0000-4000-8000-000000000003");
-const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
+/** Opens a work stream's own object and drops the sandbox row into it. */
+function seedSandboxObject(
+  objectStores: Map<string, DatabaseSync>,
+  workstreamId: string,
+  sandbox: { state: string; stableName: string; providerSandboxId: string },
+): DatabaseSync {
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: W });
+  objectStores.set(workstreamId, objectStore);
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstream_sandboxes
+      (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
+       authority_fingerprint, applied_network_revision, version, last_activity_at,
+       warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 1,
+            'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12', '2026-08-13', '2026-08-13')`,
+    W, workstreamId, sandbox.state, sandbox.stableName, sandbox.providerSandboxId,
+  );
+  return objectStore;
+}
+
 function fixture(role: AuthContext["role"] = "owner") {
-  const database = migratedSqliteDatabase(); databases.push(database);
+  const database = preRetirementProductSqliteDatabase(); databases.push(database);
+  // The settings service walks the directory and reaches each sandbox through
+  // the work-stream object port once the authority is open — the D1 sandbox
+  // copies were dropped by migration 0090.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'settings-user', 'settings@example.com', 'Settings', '2026-08-13', '2026-08-13');
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${W}', 'Settings', 'terminal-settings', 'global', '${U}', '2026-08-13', '2026-08-13');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES ('${W}', '${U}', 'owner', 'active', '2026-08-13');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${S}', '${W}', 'Settings', 'Settings', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO workstream_sandboxes
-      (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-       authority_fingerprint, applied_network_revision, version, last_activity_at,
-       warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-    VALUES ('${W}', '${S}', 'running', 'settings-sandbox', 'provider-1', 1,
-            'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12', '2026-08-13', '2026-08-13');
   `);
+  const objectStores = new Map<string, DatabaseSync>();
+  const objectStore = seedSandboxObject(objectStores, S, {
+    state: "running", stableName: "settings-sandbox", providerSandboxId: "provider-1",
+  });
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    // The cross-workstream directory the settings walk lives in WorkspaceDO;
+    // the stub serves it from the regional index the fixture seeds.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        listWorkstreams: async () => {
+          const rows = database.prepare(
+            "SELECT id, title FROM workstreams WHERE workspace_id = ? ORDER BY id",
+          ).all(W) as Array<{ id: string; title: string }>;
+          return {
+            items: rows.map((row) => testWorkstreamContract({
+              id: row.id, workspaceId: W, title: row.title, harnessStatus: "idle",
+            })),
+            stateVersions: rows.map((row) => ({
+              workstreamId: row.id,
+              commonEventId: "00000000-0000-7000-8000-0000000000e1",
+              viewerEventId: null,
+              authorityGeneration: 1,
+              commonWaterline: 1,
+              viewerWaterline: 0,
+            })),
+            nextCursor: null,
+            directoryWaterline: 0,
+          };
+        },
+      },
+    }),
     DAYTONA_API_KEY: "key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
@@ -46,7 +110,14 @@ function fixture(role: AuthContext["role"] = "owner") {
     readFile: vi.fn(), writeFile: vi.fn(), runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), publishGitBundle: vi.fn(),
   };
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role };
-  return { database, env, provider, service: new TerminalSettingsService(env, auth, provider) };
+  return {
+    database,
+    objectStore,
+    objectStores,
+    env,
+    provider,
+    service: new TerminalSettingsService(env, auth, provider),
+  };
 }
 
 describe("Terminal workspace settings", () => {
@@ -62,7 +133,7 @@ describe("Terminal workspace settings", () => {
   });
 
   it("previews before confirmation and reconciles active sandboxes without restarting", async () => {
-    const { database, provider, service } = fixture();
+    const { objectStore, provider, service } = fixture();
     const preview = await service.preview({ expectedRevision: 1, mode: "trusted_only", customDomains: ["custom.example"] });
     expect(preview).toMatchObject({ affectedWorkstreamIds: [S], customDomains: ["custom.example"], remainingCustomSlots: 6 });
     expect(preview).not.toHaveProperty("effectiveDomains");
@@ -73,12 +144,12 @@ describe("Terminal workspace settings", () => {
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.updateNetworkPolicy).toHaveBeenCalledWith("provider-1", expect.arrayContaining(["custom.example"]));
     expect(provider.startSandbox).not.toHaveBeenCalled();
-    expect(database.prepare("SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ?").get(W))
+    expect(workstreamObjectGet(objectStore, "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ?", W))
       .toEqual({ state: "stopped", applied_network_revision: 2 });
   });
 
   it("does not mark a sandbox created after the policy claim as verified", async () => {
-    const { database, provider, service } = fixture();
+    const { database, objectStores, provider, service } = fixture();
     const lateWorkstream = "50000000-0000-4000-8000-000000000098";
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => {
       database.exec(`
@@ -87,39 +158,42 @@ describe("Terminal workspace settings", () => {
            harness_status, last_activity_at, created_at, updated_at)
         VALUES ('${lateWorkstream}', '${W}', 'Late sandbox', 'Late', 'ad_hoc', '${U}', 'idle',
                 '2026-08-13', '2026-08-13', '2026-08-13');
-        INSERT INTO workstream_sandboxes
-          (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-           authority_fingerprint, applied_network_revision, version, last_activity_at,
-           warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-        VALUES ('${W}', '${lateWorkstream}', 'stopped', 'late-sandbox', 'provider-late', 1,
-                'authority', 1, 1, '2026-08-13', NULL, NULL, '2026-09-12', '2026-08-13', '2026-08-13');
       `);
+      seedSandboxObject(objectStores, lateWorkstream, {
+        state: "stopped", stableName: "late-sandbox", providerSandboxId: "provider-late",
+      });
     });
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStores.get(lateWorkstream)!,
       "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, lateWorkstream)).toEqual({ state: "stopped", applied_network_revision: 1 });
+      W, lateWorkstream,
+    )).toEqual({ state: "stopped", applied_network_revision: 1 });
   });
 
   it("does not mutate a replacement generation created while the old sandbox stops", async () => {
-    const { database, provider, service } = fixture();
+    const { objectStore, provider, service } = fixture();
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => {
-      database.prepare(
+      workstreamObjectRun(
+        objectStore,
         `UPDATE workstream_sandboxes
             SET generation = 2, provider_sandbox_id = 'provider-replacement', state = 'running', version = version + 1
           WHERE workspace_id = ? AND workstream_id = ?`,
-      ).run(W, S);
+        W, S,
+      );
     });
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT generation, provider_sandbox_id, state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({
+      W, S,
+    )).toEqual({
       generation: 2,
       provider_sandbox_id: "provider-replacement",
       state: "running",
@@ -128,10 +202,12 @@ describe("Terminal workspace settings", () => {
   });
 
   it("keeps failed sandboxes out of both preview and apply", async () => {
-    const { database, provider, service } = fixture();
-    database.prepare(
+    const { objectStore, provider, service } = fixture();
+    workstreamObjectRun(
+      objectStore,
       "UPDATE workstream_sandboxes SET state = 'failed' WHERE workspace_id = ? AND workstream_id = ?",
-    ).run(W, S);
+      W, S,
+    );
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
     expect(preview.affectedWorkstreamIds).toEqual([]);
 
@@ -139,9 +215,11 @@ describe("Terminal workspace settings", () => {
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ state: "failed", applied_network_revision: 1 });
+      W, S,
+    )).toEqual({ state: "failed", applied_network_revision: 1 });
   });
 
   it("rejects members and stale revisions with recovery guidance", async () => {
@@ -153,7 +231,7 @@ describe("Terminal workspace settings", () => {
   });
 
   it("stops every affected sandbox even when the first provider stop fails", async () => {
-    const { database, provider, service } = fixture();
+    const { database, objectStores, provider, service } = fixture();
     const second = "50000000-0000-4000-8000-000000000099";
     database.exec(`
       INSERT INTO workstreams
@@ -161,13 +239,10 @@ describe("Terminal workspace settings", () => {
          harness_status, last_activity_at, created_at, updated_at)
       VALUES ('${second}', '${W}', 'Second sandbox', 'Second', 'ad_hoc', '${U}', 'idle',
               '2026-08-13', '2026-08-13', '2026-08-13');
-      INSERT INTO workstream_sandboxes
-        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-         authority_fingerprint, applied_network_revision, version, last_activity_at,
-         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
-      VALUES ('${W}', '${second}', 'running', 'settings-sandbox-two', 'provider-2', 1,
-              'authority', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12', '2026-08-13', '2026-08-13');
     `);
+    seedSandboxObject(objectStores, second, {
+      state: "running", stableName: "settings-sandbox-two", providerSandboxId: "provider-2",
+    });
     vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("first stop failed"));
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
@@ -175,9 +250,11 @@ describe("Terminal workspace settings", () => {
       .rejects.toMatchObject({ status: 502, code: "terminal_policy_verification_failed" });
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-2");
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStores.get(second)!,
       "SELECT state FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, second)).toEqual({ state: "stopped" });
+      W, second,
+    )).toEqual({ state: "stopped" });
     expect(database.prepare(
       "SELECT mode, revision, verification_state FROM workspace_sandbox_network_policies WHERE workspace_id = ?",
     ).get(W)).toEqual({ mode: "trusted_only", revision: 1, verification_state: "verified" });

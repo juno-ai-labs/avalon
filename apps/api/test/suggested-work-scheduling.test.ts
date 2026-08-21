@@ -65,6 +65,7 @@ afterEach(() => {
 function migratedDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
   for (const file of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (file.startsWith("0090_")) break;
     database.exec(readFileSync(new URL(file, migrationsDirectory), "utf8"));
   }
   databases.push(database);

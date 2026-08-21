@@ -268,7 +268,7 @@ export class SlackWorkspaceWorkstreamService {
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at,
           external_actor_json)
-         SELECT ?, ?, ?, w.id, 'system', NULL, 'elicitation', '', ?,
+         SELECT ?, ?, ?, w.id, 'external', NULL, 'elicitation', '', ?,
                 w.next_sequence_number, ?, ?
          FROM workstreams w
          WHERE w.id = ? AND w.workspace_id = ?

@@ -3,7 +3,7 @@ import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
@@ -12,7 +12,16 @@ import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
 } from "../src/services/workstream-attachment-tools";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
+import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
@@ -22,38 +31,6 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
 const SOURCE_HASH = "a".repeat(64);
 const DERIVATIVE_HASH = "b".repeat(64);
-
-class SqliteStatement {
-  private values: unknown[] = [];
-  constructor(private readonly statement: StatementSync) {}
-  bind(...values: unknown[]): SqliteStatement { this.values = values; return this; }
-  async run(): Promise<D1Result<unknown>> {
-    const result = this.statement.run(...this.values as SQLInputValue[]);
-    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
-  }
-  async first<T>(): Promise<T | null> { return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null; }
-  async all<T>(): Promise<D1Result<T>> {
-    return createTestD1Result<T>({ success: true, results: this.statement.all(...this.values as SQLInputValue[]) as T[], meta: { changes: 0 } });
-  }
-}
-
-function sqliteD1(database: DatabaseSync): D1Database {
-  return createTestD1Database({
-    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteStatement(database.prepare(sql))),
-    batch: async (statements: D1PreparedStatement[]) => {
-      const results: D1Result<unknown>[] = [];
-      database.exec("BEGIN");
-      try {
-        for (const statement of statements) results.push(await (statement as unknown as SqliteStatement).run());
-        database.exec("COMMIT");
-        return results;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    },
-  });
-}
 
 class MemoryBucket {
   readonly objects = new Map<string, Uint8Array>();
@@ -78,6 +55,7 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
   database.exec(`
@@ -89,17 +67,101 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     INSERT INTO workstreams (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
       VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Attachments', 'Read safely', 'ad_hoc', '${USER_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01');
   `);
+  // The work stream's attachment links, run row, and tool receipts live in its
+  // own object since migration 0090; the tools reach them through the runtime
+  // router, so the env's DB is that router rather than the raw regional shim.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
+     VALUES (?, ?, 'Attachments', 'Read safely', 'ad_hoc', ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    WORKSTREAM_ID,
+    WORKSPACE_ID,
+    USER_ID,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'test', ?, 'running', '2026-01-01')`,
+    HARNESS_RUN_ID,
+    WORKSPACE_ID,
+    WORKSTREAM_ID,
+    JSON.stringify({ type: "user", userId: USER_ID }),
+  );
   const bucket = new MemoryBucket();
+  const baseEnv = createTestEnv({
+    DB: sqliteD1(database),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+    ...(options.images ? { IMAGES: options.images } : {}),
+    ...(options.ai ? { AI: options.ai } : {}),
+    SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
+  });
   return {
     database,
+    objectStore,
     bucket,
-    env: createTestEnv({
-      DB: sqliteD1(database), PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
-      ...(options.images ? { IMAGES: options.images } : {}),
-      ...(options.ai ? { AI: options.ai } : {}),
-      SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
-    }),
+    // Wrapped the way the harness wraps its execution environment, so
+    // `regionalDatabase(env)` sees through to the regional half and the
+    // receipt services take their per-authority paths.
+    env: withWorkstreamRuntimeDatabase(
+      baseEnv,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      "0",
+      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+    ),
   };
+}
+
+/**
+ * Attach an existing workspace resource to the work-stream object the way the
+ * product attach path does: a link row carrying the frozen descriptor copied
+ * from the workspace row, plus an inventory-revision bump. The legacy
+ * `workstream_resources` D1 table this file used to insert into was dropped by
+ * migration 0090, and the compat view over the link table is read-only for
+ * inserts — attachment is a product operation, not a runtime SQL write.
+ */
+function attachResourceLink(
+  database: DatabaseSync,
+  objectStore: DatabaseSync,
+  resourceId: string,
+  options: { attachedByUserId?: string | null; relationshipType?: string; attachedAt: string },
+): void {
+  const resource = database.prepare(
+    `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
+            mime_type, content_ref, canonical_url, metadata_json
+       FROM resources WHERE id = ?`,
+  ).get(resourceId) as Record<string, string | null>;
+  const at = Date.parse(options.attachedAt);
+  objectStore.prepare(
+    `INSERT INTO workstream_resource_links
+       (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+     VALUES (?, ?, 0, ?, ?, ?, ?)`,
+  ).run(
+    resourceId,
+    options.attachedByUserId === undefined ? USER_ID : options.attachedByUserId,
+    options.relationshipType ?? "context",
+    JSON.stringify({
+      id: resourceId,
+      connectionId: resource.connection_id,
+      type: resource.resource_type,
+      provider: resource.provider,
+      providerResourceId: resource.provider_resource_id,
+      title: resource.title,
+      mimeType: resource.mime_type,
+      contentRef: resource.content_ref,
+      canonicalUrl: resource.canonical_url,
+      metadata: JSON.parse(resource.metadata_json ?? "{}") as Record<string, unknown>,
+    }),
+    at,
+    at,
+  );
+  objectStore.prepare(
+    `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+     ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+  ).run(at);
 }
 
 function blankPdf(): Uint8Array {
@@ -153,7 +215,7 @@ function context(principal = input().executionPrincipal) {
   };
 }
 
-function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordinal: number, options: { mime?: string; title?: string } = {}): string {
+function insertReadyResource(database: DatabaseSync, objectStore: DatabaseSync, bucket: MemoryBucket, ordinal: number, options: { mime?: string; title?: string } = {}): string {
   const id = `10000000-0000-4000-8000-${ordinal.toString().padStart(12, "0")}`;
   const title = options.title ?? `Resource ${ordinal}`;
   const mime = options.mime ?? "text/markdown";
@@ -172,15 +234,11 @@ function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordin
     VALUES (?, ?, 'file', 'avalon_upload', ?, ?, ?, '{"size":123}', ?, ?, ?, ?, 'text/markdown', ?, '{}', 'ready',
             'attachment-text-v1', ?, ?)
   `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, text.length, "2026-08-12T01:00:00.000Z");
-  database.prepare(`
-    INSERT INTO workstream_resources
-      (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-    VALUES (?, ?, ?, 0, 'context', ?)
-  `).run(WORKSTREAM_ID, id, USER_ID, attachedAt);
+  attachResourceLink(database, objectStore, id, { attachedAt });
   return id;
 }
 
-function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal: number): string {
+function insertReadyImage(database: DatabaseSync, objectStore: DatabaseSync, bucket: MemoryBucket, ordinal: number): string {
   const id = `30000000-0000-4000-8000-${ordinal.toString().padStart(12, "0")}`;
   const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const contentRef = `original/${id}.png`;
@@ -197,11 +255,7 @@ function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal:
     VALUES (?, ?, 'file', 'avalon_upload', 'Diagram', 'image/png', ?, '{"size":8}', ?, ?, ?, ?, 'image/png', ?, NULL, 'ready',
             'image-v1', NULL, ?)
   `).run(id, WORKSPACE_ID, contentRef, "2026-08-12T02:00:00.000Z", "2026-08-12T02:00:00.000Z", SOURCE_HASH, modelRef, imageHash, "2026-08-12T02:00:00.000Z");
-  database.prepare(`
-    INSERT INTO workstream_resources
-      (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-    VALUES (?, ?, ?, 0, 'context', ?)
-  `).run(WORKSTREAM_ID, id, USER_ID, "2026-08-12T02:00:00.000Z");
+  attachResourceLink(database, objectStore, id, { attachedAt: "2026-08-12T02:00:00.000Z" });
   return id;
 }
 
@@ -215,7 +269,7 @@ describe("work-stream attachment tools", () => {
       tokens: 4,
     }));
     const ai = createCloudflareTestBinding<Ai>({ toMarkdown });
-    const { database, bucket, env } = fixture({ ai });
+    const { database, objectStore, bucket, env } = fixture({ ai });
     const resourceId = "20000000-0000-4000-8000-000000000001";
     const sourceRef = `original/${resourceId}.pdf`;
     bucket.objects.set(sourceRef, blankPdf());
@@ -226,11 +280,10 @@ describe("work-stream attachment tools", () => {
       VALUES (?, ?, 'file', 'avalon_upload', 'scan.pdf', 'application/pdf', ?,
               '{}', 'pending', '2026-08-12', '2026-08-12')
     `).run(resourceId, WORKSPACE_ID, sourceRef);
-    database.prepare(`
-      INSERT INTO workstream_resources
-        (workstream_id, resource_id, attached_by_user_id, relationship_type, attached_at)
-      VALUES (?, ?, ?, 'explicit', '2026-08-12')
-    `).run(WORKSTREAM_ID, resourceId, USER_ID);
+    attachResourceLink(database, objectStore, resourceId, {
+      relationshipType: "explicit",
+      attachedAt: "2026-08-12T00:00:00.000Z",
+    });
     const read = __integrationTesting.createAvalonTools(env, input())
       .find((tool) => tool.definition.name === "read_resource")!;
 
@@ -249,8 +302,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("reaches Markdown evidence beyond the retired 60,000-character projection boundary", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 50, { title: "Tuple transcript.md" });
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 50, { title: "Tuple transcript.md" });
     const text = `${"opening context. ".repeat(4_200)}\n# Later decision\nThe decisive second-half evidence is MONAD_ATTACHMENT_COMPLETE.\n`;
     const modelRef = `model/${resourceId}.md`;
     bucket.objects.set(modelRef, new TextEncoder().encode(text));
@@ -274,8 +327,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("searches complete chunk text even when the query term falls outside bounded index hints", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 51, { title: "Dense vocabulary" });
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 51, { title: "Dense vocabulary" });
     const vocabulary = Array.from({ length: 70 }, (_, index) => `token${String(index).padStart(2, "0")}`);
     const text = `# Dense vocabulary\n\n${vocabulary.join(" ")} late_unique_evidence`;
     const modelRef = `model/${resourceId}.md`;
@@ -296,8 +349,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("finds one-character and separated multi-term queries around actual matches", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 52, { title: "Query behavior" });
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 52, { title: "Query behavior" });
     const text = `# Query behavior\n\n${"padding ".repeat(430)}x marker ${"between ".repeat(20)}alpha evidence omega`;
     const modelRef = `model/${resourceId}.md`;
     bucket.objects.set(modelRef, new TextEncoder().encode(text));
@@ -316,22 +369,22 @@ describe("work-stream attachment tools", () => {
   });
 
   it("lists more than fifty visible resources without duplicates and filters by every natural-language kind", async () => {
-    const { database, bucket, env } = fixture();
+    const { database, objectStore, bucket, env } = fixture();
     let genericMarkdownId = "";
     for (let ordinal = 0; ordinal < 55; ordinal += 1) {
-      const resourceId = insertReadyResource(database, bucket, ordinal);
+      const resourceId = insertReadyResource(database, objectStore, bucket, ordinal);
       if (ordinal === 54) genericMarkdownId = resourceId;
     }
     database.prepare("UPDATE resources SET mime_type = 'application/octet-stream', title = 'Legacy.md' WHERE id = ?")
       .run(genericMarkdownId);
-    const imageId = insertReadyResource(database, bucket, 55, { mime: "image/png", title: "Diagram" });
+    const imageId = insertReadyResource(database, objectStore, bucket, 55, { mime: "image/png", title: "Diagram" });
     const kindFixtures = {
-      pdf: insertReadyResource(database, bucket, 56, { mime: "application/pdf", title: "Report.pdf" }),
-      document: insertReadyResource(database, bucket, 57, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", title: "Brief.docx" }),
-      spreadsheet: insertReadyResource(database, bucket, 58, { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", title: "Data.xlsx" }),
-      presentation: insertReadyResource(database, bucket, 59, { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", title: "Pitch.pptx" }),
-      text: insertReadyResource(database, bucket, 60, { mime: "text/plain", title: "Notes.txt" }),
-      other: insertReadyResource(database, bucket, 61, { mime: "application/octet-stream", title: "Archive.bin" }),
+      pdf: insertReadyResource(database, objectStore, bucket, 56, { mime: "application/pdf", title: "Report.pdf" }),
+      document: insertReadyResource(database, objectStore, bucket, 57, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", title: "Brief.docx" }),
+      spreadsheet: insertReadyResource(database, objectStore, bucket, 58, { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", title: "Data.xlsx" }),
+      presentation: insertReadyResource(database, objectStore, bucket, 59, { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", title: "Pitch.pptx" }),
+      text: insertReadyResource(database, objectStore, bucket, 60, { mime: "text/plain", title: "Notes.txt" }),
+      other: insertReadyResource(database, objectStore, bucket, 61, { mime: "application/octet-stream", title: "Archive.bin" }),
     } as const;
     database.prepare(
       "UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?",
@@ -379,13 +432,13 @@ describe("work-stream attachment tools", () => {
       },
     });
 
-    insertReadyResource(database, bucket, 62);
+    insertReadyResource(database, objectStore, bucket, 62);
     await expect(list.execute({ cursor: inventoryCursor }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
   });
 
   it("returns exact two-sided character coverage and rejects a changed or tampered continuation", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 1);
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 1);
     const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
 
     const first = await read.execute({ resourceId, startCharacter: 7_000 }, context());
@@ -404,8 +457,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 70);
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 70);
     const row = database.prepare("SELECT model_content_ref FROM resources WHERE id = ?").get(resourceId) as { model_content_ref: string };
     bucket.objects.set(row.model_content_ref, new Uint8Array(8 * 1024 * 1024 + 1));
     const read = __integrationTesting.createAvalonTools(env, input())
@@ -418,8 +471,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("never returns a page that begins or ends inside a surrogate pair", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 71);
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 71);
     const row = database.prepare("SELECT model_content_ref FROM resources WHERE id = ?").get(resourceId) as { model_content_ref: string };
     const text = `A😀${"x".repeat(11_997)}😀Z`;
     await bucket.put(row.model_content_ref, text);
@@ -439,9 +492,9 @@ describe("work-stream attachment tools", () => {
   });
 
   it("searches one authorized derivative, returns bounded ranked passages, and hides private notes from workspace principals", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 2);
-    const privateResourceId = insertReadyResource(database, bucket, 3, { title: "Private note" });
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 2);
+    const privateResourceId = insertReadyResource(database, objectStore, bucket, 3, { title: "Private note" });
     database.prepare("UPDATE resources SET provider = 'avalon_note', resource_type = 'note' WHERE id = ?").run(privateResourceId);
     database.prepare(`INSERT INTO notes
       (id, workspace_id, owner_user_id, resource_id, scope, title, last_activity_at, created_at, updated_at)
@@ -462,10 +515,10 @@ describe("work-stream attachment tools", () => {
   });
 
   it("views ordered image batches with ephemeral parts and self-heals mixed wrong kinds", async () => {
-    const { database, bucket, env } = fixture();
-    const firstImageId = insertReadyImage(database, bucket, 1);
-    const textId = insertReadyResource(database, bucket, 4);
-    const secondImageId = insertReadyImage(database, bucket, 2);
+    const { database, objectStore, bucket, env } = fixture();
+    const firstImageId = insertReadyImage(database, objectStore, bucket, 1);
+    const textId = insertReadyResource(database, objectStore, bucket, 4);
+    const secondImageId = insertReadyImage(database, objectStore, bucket, 2);
     const tools = __integrationTesting.createAvalonTools(env, input());
     const view = tools.find((tool) => tool.definition.name === "view_resource")!;
 
@@ -507,8 +560,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("reauthorizes image receipts and re-executes when visual rehydration is unavailable", async () => {
-    const { database, bucket, env } = fixture();
-    const imageId = insertReadyImage(database, bucket, 62);
+    const { database, objectStore, bucket, env } = fixture();
+    const imageId = insertReadyImage(database, objectStore, bucket, 62);
     const view = __integrationTesting.createAvalonTools(env, input())
       .find((tool) => tool.definition.name === "view_resource")!;
     const result = await view.execute({ resourceIds: [imageId], maxDimension: 2_048 }, context());
@@ -516,13 +569,16 @@ describe("work-stream attachment tools", () => {
     const output = result.output as { items: Array<{ version: { sha256: string } | null }> };
     const invocationId = "70000000-0000-4000-8000-000000000001";
     const outputRef = "receipts/view.json";
-    database.exec("PRAGMA foreign_keys = OFF");
-    database.prepare(`
-      INSERT INTO tool_invocations
+    // The invocation and its receipt live in the work-stream object; the
+    // compat insert satisfies the object's own foreign keys (the effect row
+    // the receipt references is created by the same trigger), so no
+    // enforcement has to be switched off the way the dropped D1 copies needed.
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO tool_invocations
         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
          input_hash, input_json, output_ref, output_summary, status)
-      VALUES (?, ?, ?, ?, 'view-call', 'workstream_view_resource', 'hash', ?, ?, 'Viewed image', 'completed')
-    `).run(
+      VALUES (?, ?, ?, ?, 'view-call', 'workstream_view_resource', 'hash', ?, ?, 'Viewed image', 'completed')`,
       invocationId,
       WORKSPACE_ID,
       WORKSTREAM_ID,
@@ -530,12 +586,11 @@ describe("work-stream attachment tools", () => {
       JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
       outputRef,
     );
-    database.prepare(`
-      INSERT INTO attachment_tool_receipts
+    objectStore.prepare(
+      `INSERT INTO attachment_tool_receipts
         (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-      VALUES (?, ?, ?, ?, '2026-08-12')
-    `).run(WORKSPACE_ID, imageId, invocationId, output.items[0]!.version!.sha256);
-    database.exec("PRAGMA foreign_keys = ON");
+      VALUES (?, ?, ?, ?, ?)`,
+    ).run(WORKSPACE_ID, imageId, invocationId, output.items[0]!.version!.sha256, Date.parse("2026-08-12T00:00:00.000Z"));
     await bucket.put(outputRef, __integrationTesting.serializeToolReplayOutput(result.output));
 
     await expect(__integrationTesting.loadAuthorizedAttachmentReplay(env, input(), {
@@ -562,7 +617,7 @@ describe("work-stream attachment tools", () => {
       rawInput: { resourceIds: [imageId], maxDimension: 2_048 },
       outputRef,
     })).resolves.toBeNull();
-    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = ?").get(invocationId))
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM tool_invocations WHERE id = ?", invocationId))
       .toEqual({ count: 0 });
     expect(database.prepare(
       "SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = ?",
@@ -570,8 +625,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("runs a focused isolated summary and verifies every returned citation range", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 7);
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 7);
     const summarizeDerivative = async (request: { text: string; prompt: string | null; maxOutputCharacters: number }) => ({
       outline: [{ heading: "Resource 7", range: { start: 0, end: 40 } }],
       summary: `Focused: ${request.prompt}; ${request.text.slice(0, 20)}`,
@@ -607,7 +662,7 @@ describe("work-stream attachment tools", () => {
     const invalid = invalidTools.find((tool) => tool.definition.name === "summarize_resource")!;
     await expect(invalid.execute({ resourceId }, context())).rejects.toMatchObject({ code: "resource_conversion_failed" });
 
-    const imageId = insertReadyImage(database, bucket, 8);
+    const imageId = insertReadyImage(database, objectStore, bucket, 8);
     await expect(summarize.execute({ resourceId: imageId }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
       details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
@@ -616,8 +671,8 @@ describe("work-stream attachment tools", () => {
 
   it("enforces current-turn image dimensions and contains normalization failures to one batch item", async () => {
     const transforms: Array<{ width?: number; height?: number }> = [];
-    const { database, bucket, env } = fixture({ images: imageTransformBinding(transforms) });
-    const imageId = insertReadyImage(database, bucket, 9);
+    const { database, objectStore, bucket, env } = fixture({ images: imageTransformBinding(transforms) });
+    const imageId = insertReadyImage(database, objectStore, bucket, 9);
     const view = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "view_resource")!;
 
     await expect(view.execute({ resourceIds: [imageId], maxDimension: 64 }, context())).resolves.toMatchObject({
@@ -626,7 +681,7 @@ describe("work-stream attachment tools", () => {
     expect(transforms).toEqual([expect.objectContaining({ width: 64, height: 64 })]);
 
     const failed = fixture({ images: imageTransformBinding([], true) });
-    const failedImageId = insertReadyImage(failed.database, failed.bucket, 10);
+    const failedImageId = insertReadyImage(failed.database, failed.objectStore, failed.bucket, 10);
     const failedView = __integrationTesting.createAvalonTools(failed.env, input()).find((tool) => tool.definition.name === "view_resource")!;
     await expect(failedView.execute({ resourceIds: [failedImageId], maxDimension: 64 }, context())).resolves.toMatchObject({
       output: {
@@ -638,8 +693,8 @@ describe("work-stream attachment tools", () => {
   });
 
   it("provides exact self-healing calls for every authorized natural-language kind without leaking unsupported or missing resources", async () => {
-    const { database, bucket, env } = fixture();
-    const imageId = insertReadyImage(database, bucket, 11);
+    const { database, objectStore, bucket, env } = fixture();
+    const imageId = insertReadyImage(database, objectStore, bucket, 11);
     const readable = ([
       ["text/markdown", "brief.md"],
       ["application/pdf", "brief.pdf"],
@@ -647,8 +702,8 @@ describe("work-stream attachment tools", () => {
       ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "brief.xlsx"],
       ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "brief.pptx"],
       ["text/plain", "brief.txt"],
-    ] as const).map(([mime, title], index) => insertReadyResource(database, bucket, 20 + index, { mime, title }));
-    const unsupportedId = insertReadyResource(database, bucket, 30, { mime: "application/zip", title: "archive.zip" });
+    ] as const).map(([mime, title], index) => insertReadyResource(database, objectStore, bucket, 20 + index, { mime, title }));
+    const unsupportedId = insertReadyResource(database, objectStore, bucket, 30, { mime: "application/zip", title: "archive.zip" });
     database.prepare("UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?").run(unsupportedId);
     const tools = __integrationTesting.createAvalonTools(env, input());
     const read = tools.find((tool) => tool.definition.name === "read_resource")!;
@@ -681,9 +736,9 @@ describe("work-stream attachment tools", () => {
 
 describe("automation-draft attachment tools", () => {
   it("exposes the complete natural-kind tool family only for the frozen, currently owned draft set", async () => {
-    const { database, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, bucket, 40);
-    const excludedId = insertReadyResource(database, bucket, 41);
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 40);
+    const excludedId = insertReadyResource(database, objectStore, bucket, 41);
     database.prepare("UPDATE resources SET attachment_status = 'draft', uploaded_by_user_id = ? WHERE id IN (?, ?)")
       .run(USER_ID, resourceId, excludedId);
     const tools = createAutomationDraftAttachmentTools(env, {
@@ -710,9 +765,9 @@ describe("automation-draft attachment tools", () => {
   });
 
   it("returns automation-specific wrong-tool remediation", async () => {
-    const { database, bucket, env } = fixture();
-    const textId = insertReadyResource(database, bucket, 42);
-    const imageId = insertReadyImage(database, bucket, 43);
+    const { database, objectStore, bucket, env } = fixture();
+    const textId = insertReadyResource(database, objectStore, bucket, 42);
+    const imageId = insertReadyImage(database, objectStore, bucket, 43);
     database.prepare("UPDATE resources SET attachment_status = 'draft', uploaded_by_user_id = ? WHERE id IN (?, ?)")
       .run(USER_ID, textId, imageId);
     const tools = createAutomationDraftAttachmentTools(env, {

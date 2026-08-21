@@ -187,9 +187,12 @@ Use the structured events `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
 For regional durable diagnosis, query counts/ages and exact IDs from
 the owning object's `terminal_workspace`, `terminal_tasks`, and
-`repository_publications`; workspace-wide policy mutation rows remain in
-`workspace_sandbox_network_policy_mutations` in D1.
-inspect generated logs/diffs only through Avalon's authorized resource surface.
+`repository_publications`; inspect workspace-wide policy mutation history in
+the owning WorkspaceDO's `workspace_sandbox_network_policy_mutations` table.
+That table is not present in D1 after migration 0090, so use the authorized
+object diagnostic/repair surface for the workspace's regional route rather
+than issuing a regional D1 query.
+Inspect generated logs/diffs only through Avalon's authorized resource surface.
 The oldest running `last_activity_at`, nonterminal task beyond
 `command_deadline_at`, expired lifecycle claim, failed policy verification, or
 `ambiguous` publication points to the owning reconciler rather than permission to
@@ -437,6 +440,7 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
 - `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+  Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
 The symbolicator image is the one expensive thing either workflow builds, in the single `crash-symbolicator-container` lane each of them runs it from. Its builder stage compiles `minidump-stackwalk` from source — about three and a half minutes, depending on nothing in this repository — so both workflows run a **Warm the symbolicator image cache** step against a `docker-container` builder before anything builds the image for real. That step is the only one that reads or writes the shared `crash-symbolicator` cache scope; the builds that follow it — the integration lane's own `docker build`, and Wrangler's during a regional deploy — resolve every layer from the warmed builder without naming a cache at all. It warms that builder by **materializing the image** (`load: true`), not by importing cache records alone. A remote cache import is lazy — it resolves the keys without fetching the layers behind them, and BuildKit keeps that only for the solve that imported it — so a cache-only warm-up hands a later, separate `docker build` nothing. That arrangement shipped first and was measured: the warm-up reported every vertex `CACHED` in 2.4s and the lane recompiled the crate from scratch immediately afterwards. Do not revert it to `type=cacheonly` on the reasoning that the image is unused; the image is the point, and its tag is the side effect. `install: true` on `docker/setup-buildx-action` is what points their plain `docker build` at that builder, and it must stay. Buildx now warns that the `docker buildx install` alias it sets is deprecated and names `BUILDX_BUILDER` as the successor; when that alias is finally removed, replace `install: true` with `BUILDX_BUILDER` set to the builder name the setup step outputs, in the same job env the later builds read. Do not simply drop it — a build that silently resolves to the default builder still succeeds, just cold, which is the failure this arrangement exists to make impossible. The warm-up must also stay a JavaScript action rather than a `docker buildx build` line: `type=gha` authenticates with `ACTIONS_RUNTIME_TOKEN`, which the runner injects into actions and never into a `run:` step, so a shell-driven cache silently transfers nothing.
@@ -502,6 +506,21 @@ Because API deployment is continuous, a merge to `main` is a production release.
 ### The window between a migration and the Worker that needs it
 
 The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
+
+Migration `0090_drop_legacy_product_tables.sql` is the one deliberate reverse-order
+exception. It deletes tables and columns the previous Worker still names, so
+applying it first would break every new work-stream creation until deployment
+finished — or indefinitely if deployment failed. The deployment workflow reads
+each remote pending-migration ledger; when 0090 is pending in a region, it
+deploys the replacement Workers first and applies 0090 afterward. The
+replacement Worker probes the regional `workstreams` shape when reserving an
+identity anchor and can write both the through-0089 required-column shape and
+the final three-column shape. Therefore a failed Worker deploy leaves the old
+schema untouched, while a failed migration leaves the compatible Worker serving
+the old schema. Detection comes from the remote ledger, not the triggering Git
+diff, so a superseded workflow or later regional retry retains the barrier.
+Once 0090 is no longer pending, the workflow automatically returns to the
+ordinary migration-first order.
 
 Twenty seconds is the happy path, and it is the figure that makes this rule feel safe to skip. A failed deployment leaves the migrations applied, as the paragraph above says, so a deploy that breaks after the migration step leaves the previous Worker writing through the new default until a fix-forward lands — minutes or hours, not seconds, and every row written in that time takes the default.
 
@@ -616,7 +635,9 @@ Both regions completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
 (the cron importer, the per-object import RPCs, and the deploy workflow's
 cutover steps) has been retired; the control row, the route directory, and the
-legacy D1 fence triggers deliberately remain. The control row is read on every
+minimal three-column work-stream identity anchor deliberately remain. Migration
+0090 removes the product tables, their fences, and the completed route-population
+triggers. The control row is read on every
 request and fails closed — do not delete it, and never edit
 `serving_contract_version` manually. `workstream_authority_routes` is now the
 live work-stream-to-object directory: creation writes it, and regional effect
@@ -643,11 +664,11 @@ Effect receipts and terminal notification shells disappear after 30 days; a
 redelivery older than that converges on the idempotent product identities
 (directory waterline, activity dedupe key, intent ID) instead of a receipt.
 
-The legacy D1 product triggers are the permanent tripwire. An error containing
-`workstream_do_authoritative` (or `workspace_do_authoritative`) means a missed
-writer; quarantine and fix that path. Do not remove the trigger or fall back to
-D1. Workspace resource records, schedules for D1-owned modules, connector
-delivery, audit, and telemetry remain valid D1 writers.
+Migration 0090 removes the legacy D1 product tables and their writer fences. A
+post-cutover `no such table` or `no such column` from a product statement means
+the runtime router was bypassed; quarantine and fix that path, and never recreate
+the table or fall back to D1. Identity, membership, routing, migration/control,
+audit, and telemetry remain valid D1 writers.
 
 ## Timezones
 
@@ -1230,9 +1251,9 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
   `SubstreamAgent` is canonical for its substream product tables,
   `WorkstreamDO` is canonical for aggregate metadata/outbox, `WorkspaceDO` is
   canonical for cross-work-stream directory/viewer/pin/resource/feedback
-  indexes, and D1 stays canonical for identity/membership, schedules and
-  connector/workspace/activity modules that remain relational, migration,
-  external delivery, and audit.
+  indexes and every workspace-scoped product module, and D1 stays canonical for
+  identity/membership, routing, migration/control, and operational
+  audit/telemetry only.
 - R2 stores large payloads, uploads, and snapshots referenced by their owning
   regional database.
 - Use D1 PITR before the work-stream authority open. After open, use object

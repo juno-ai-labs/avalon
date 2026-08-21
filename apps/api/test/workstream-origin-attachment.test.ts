@@ -7,11 +7,15 @@ import type { SlackOriginContext } from "@avalon/contracts";
 import type { AuthContext, Env } from "../src/env";
 import type * as NamingService from "../src/services/workstream-naming-service";
 import { authorizedConnection, type AuthorizedConnectorConnection } from "@avalon/connectors";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamContract,
+  testWorkstreamObjectStore,
+  workstreamObjectAll,
+  workstreamObjectRun,
 } from "./helpers/durable-authority";
 
 vi.mock("../src/services/integrations", () => ({
@@ -73,6 +77,57 @@ const at = "2026-08-12T09:00:00.000Z";
 const databases: DatabaseSync[] = [];
 /** Every resource the created work stream's object was asked to attach. */
 let attachedResourceIds: string[] = [];
+
+/**
+ * Per-workstream object databases, keyed by the regional database they pair
+ * with. The runtime SQL port fills this map lazily; the product stubs below
+ * seat origin links into the same stores, so an assertion reads the one place
+ * the attachment truly lives since the D1 copies were dropped.
+ */
+const objectStoresByDatabase = new WeakMap<DatabaseSync, Map<string, DatabaseSync>>();
+
+function storesFor(database: DatabaseSync): Map<string, DatabaseSync> {
+  let stores = objectStoresByDatabase.get(database);
+  if (!stores) {
+    stores = new Map();
+    objectStoresByDatabase.set(database, stores);
+  }
+  return stores;
+}
+
+function objectStoreFor(database: DatabaseSync, workstreamId: string, wsId: string): DatabaseSync {
+  const stores = storesFor(database);
+  let store = stores.get(workstreamId);
+  if (!store) {
+    store = testWorkstreamObjectStore();
+    stores.set(workstreamId, store);
+    databases.push(store);
+  }
+  seedWorkstreamObjectRoot(store, { workstreamId, workspaceId: wsId });
+  return store;
+}
+
+/** Seat a link the way the object does — links table directly; the compat view has no INSERT arm. */
+function seatObjectResourceLink(store: DatabaseSync, input: {
+  resourceId: string;
+  attachedByUserId: string | null;
+  relationshipType: string;
+}): void {
+  store.prepare(
+    `INSERT INTO workstream_resource_links
+       (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+        resource_json, attached_at, updated_at)
+     VALUES (?, ?, 0, ?, ?, ?, ?)
+     ON CONFLICT(resource_id) DO NOTHING`,
+  ).run(
+    input.resourceId,
+    input.attachedByUserId,
+    input.relationshipType,
+    JSON.stringify({ id: input.resourceId }),
+    Date.parse(at),
+    Date.parse(at),
+  );
+}
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
@@ -189,7 +244,10 @@ describe("attaching a work stream's origin", () => {
     const database = seededDatabase();
     const environmentValue = environment(database);
     const created = await new WorkstreamService(environmentValue, auth(), () => undefined).create(request());
+    // Deletion removes the object along with its anchor; the attach must find
+    // neither half of the work stream.
     database.prepare("DELETE FROM workstreams WHERE id = ?").run(created.workstream.id);
+    storesFor(database).delete(created.workstream.id);
 
     const attachedId = await attachWorkstreamOriginResource(environmentValue, {
       workspaceId,
@@ -215,8 +273,10 @@ describe("a work stream a connector activity created", () => {
       linearActivityRow() as never,
     );
 
+    // The directory anchor carries no product columns since the cutover; the
+    // regional automation_runs row is what names the created work stream.
     const workstream = database.prepare(
-      "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
+      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
     ).get(subscriptionId) as { id: string };
     expect(attachments(database, workstream.id)).toEqual([{
       relationship_type: "origin",
@@ -239,10 +299,16 @@ describe("a work stream a connector activity created", () => {
     seedActivityAutomation(database);
     const env = automationEnvironment(database);
     await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
+    // The directory anchor carries no product columns since the cutover; the
+    // regional automation_runs row is what names the created work stream.
     const workstream = database.prepare(
-      "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
+      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
     ).get(subscriptionId) as { id: string };
-    database.prepare("DELETE FROM workstream_resources WHERE workstream_id = ?").run(workstream.id);
+    workstreamObjectRun(
+      storesFor(database).get(workstream.id)!,
+      "DELETE FROM workstream_resources WHERE workstream_id = ?",
+      workstream.id,
+    );
 
     await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
 
@@ -267,8 +333,10 @@ describe("a work stream a connector activity created", () => {
 
     await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
 
+    // The directory anchor carries no product columns since the cutover; the
+    // regional automation_runs row is what names the created work stream.
     const workstream = database.prepare(
-      "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
+      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
     ).get(subscriptionId) as { id: string };
     expect(attachments(database, workstream.id)).toEqual([expect.objectContaining({
       resource_type: "linear_issue",
@@ -491,6 +559,7 @@ function environment(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      objectStores: storesFor(database),
       product: {
         initialize: (request) => {
           const input = request.input as {
@@ -503,15 +572,16 @@ function environment(database: DatabaseSync): Env {
             emailAddress: string;
             originResourceIds: string[];
           };
-          // The object seats opportunity origins at initialize; mirroring that
-          // into the shared table keeps the assertions on one query.
+          // The object seats opportunity origins at initialize; the stub seats
+          // them into the work stream's own object store, which is where the
+          // link rows live since the D1 copy was dropped.
+          const store = objectStoreFor(database, input.workstreamId, input.workspaceId);
           for (const resourceId of input.originResourceIds) {
-            database.prepare(
-              `INSERT INTO workstream_resources
-                 (workstream_id, resource_id, attached_by_user_id, watch_enabled,
-                  relationship_type, attached_at)
-               VALUES (?, ?, ?, 0, 'origin', ?)`,
-            ).run(input.workstreamId, resourceId, input.creatorUserId, at);
+            seatObjectResourceLink(store, {
+              resourceId,
+              attachedByUserId: input.creatorUserId,
+              relationshipType: "origin",
+            });
           }
           return {
             workstream: testWorkstreamContract({
@@ -556,18 +626,17 @@ function environment(database: DatabaseSync): Env {
           attachedByUserId: string | null;
           relationshipType?: string;
         }) => {
-          database.prepare(
-            `INSERT INTO workstream_resources
-               (workstream_id, resource_id, attached_by_user_id, watch_enabled,
-                relationship_type, attached_at)
-             VALUES (?, ?, ?, 0, ?, ?)`,
-          ).run(
-            input.workstreamId,
-            input.resourceId,
-            input.attachedByUserId,
-            input.relationshipType ?? "generated",
-            at,
-          );
+          // The real object refuses an attach when it holds no identity — a
+          // deleted work stream's object is gone along with its anchor.
+          const store = storesFor(database).get(input.workstreamId);
+          if (!store) {
+            throw new Error("workstream_runtime_identity_mismatch");
+          }
+          seatObjectResourceLink(store, {
+            resourceId: input.resourceId,
+            attachedByUserId: input.attachedByUserId,
+            relationshipType: input.relationshipType ?? "generated",
+          });
           return { status: 200, bodyJson: "{}" };
         }),
       },
@@ -756,17 +825,39 @@ function seedOpportunity(database: DatabaseSync, options: {
 }
 
 function attachments(database: DatabaseSync, workstreamId: string): unknown[] {
-  return database.prepare(
-    `SELECT wr.relationship_type, wr.attached_by_user_id, wr.watch_enabled,
-            r.resource_type, r.provider, r.provider_resource_id, r.title, r.canonical_url
-       FROM workstream_resources wr
-       JOIN resources r ON r.id = wr.resource_id
-      WHERE wr.workstream_id = ?`,
-  ).all(workstreamId);
+  // The link rows live in the work stream's object; the shared resource rows
+  // stay regional. The old one-query join died with the D1 link table, so the
+  // halves are read from their own stores and joined here.
+  const store = storesFor(database).get(workstreamId);
+  if (!store) return [];
+  const links = workstreamObjectAll<{
+    resource_id: string;
+    relationship_type: string;
+    attached_by_user_id: string | null;
+    watch_enabled: number;
+  }>(
+    store,
+    `SELECT resource_id, relationship_type, attached_by_user_id, watch_enabled
+       FROM workstream_resources WHERE workstream_id = ? ORDER BY attached_at, resource_id`,
+    workstreamId,
+  );
+  return links.map((link) => {
+    const resource = database.prepare(
+      `SELECT resource_type, provider, provider_resource_id, title, canonical_url
+         FROM resources WHERE id = ?`,
+    ).get(link.resource_id) as Record<string, unknown> | undefined;
+    if (!resource) throw new Error(`attached resource ${link.resource_id} has no regional row`);
+    return {
+      relationship_type: link.relationship_type,
+      attached_by_user_id: link.attached_by_user_id,
+      watch_enabled: link.watch_enabled,
+      ...resource,
+    };
+  });
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   // Every creation path serves product state from the Durable-Object
   // authority now; open it before any product rows exist.

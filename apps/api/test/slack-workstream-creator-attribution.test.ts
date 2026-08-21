@@ -2,9 +2,14 @@ import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  openWorkstreamAuthorityForTest,
+  testSubstreamAgentsBinding,
+  workstreamObjectGet,
+} from "./helpers/durable-authority";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -52,7 +57,12 @@ describe("Slack work stream creator attribution", () => {
 
   it("credits the mapped Avalon member who started the task from Slack", async () => {
     const database = seededDatabase();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const objectStores = new Map<string, DatabaseSync>();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      AVALON_REGION: "global",
+    });
 
     const created = await new SlackWorkspaceWorkstreamService(env, asWorkspaceId("b0000000-0000-4000-8000-000000000b10")).create({
       actor,
@@ -65,21 +75,32 @@ describe("Slack work stream creator attribution", () => {
     });
 
     expect(created.workstream.createdByUserId).toBe("a0000000-0000-4000-8000-000000000a10");
-    expect(database.prepare(
+    const objectStore = objectStores.get(created.workstream.id);
+    if (!objectStore) throw new Error("expected the creation to open the work-stream object");
+    databases.push(objectStore);
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT created_by_user_id FROM workstreams WHERE id = ?",
-    ).get(created.workstream.id)).toEqual({ created_by_user_id: "a0000000-0000-4000-8000-000000000a10" });
-    expect(database.prepare(
+      created.workstream.id,
+    )).toEqual({ created_by_user_id: "a0000000-0000-4000-8000-000000000a10" });
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = ?",
-    ).get(created.workstream.id)).toEqual({
+      created.workstream.id,
+    )).toEqual({
       user_id: "a0000000-0000-4000-8000-000000000a10",
       participation_reason: "creator",
     });
     // Attribution never rewrites authorship: the opening message stays the
     // external Slack member's, so the audit trail keeps the provider identity.
-    expect(database.prepare(
+    // The object encodes that authorship as `external` + the actor's json —
+    // its parts table refuses the legacy `system` + actor-json shape.
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT author_type, author_user_id, external_actor_json FROM messages WHERE workstream_id = ?",
-    ).get(created.workstream.id)).toMatchObject({
-      author_type: "system",
+      created.workstream.id,
+    )).toMatchObject({
+      author_type: "external",
       author_user_id: null,
       external_actor_json: JSON.stringify(actor),
     });
@@ -98,7 +119,12 @@ describe("Slack work stream creator attribution", () => {
 
   it("leaves the task ownerless when Slack cannot map the member to Avalon", async () => {
     const database = seededDatabase();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const objectStores = new Map<string, DatabaseSync>();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      AVALON_REGION: "global",
+    });
 
     const created = await new SlackWorkspaceWorkstreamService(env, asWorkspaceId("b0000000-0000-4000-8000-000000000b10")).create({
       actor,
@@ -110,9 +136,14 @@ describe("Slack work stream creator attribution", () => {
     });
 
     expect(created.workstream.createdByUserId).toBeNull();
-    expect(database.prepare(
+    const objectStore = objectStores.get(created.workstream.id);
+    if (!objectStore) throw new Error("expected the creation to open the work-stream object");
+    databases.push(objectStore);
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT COUNT(*) AS count FROM workstream_participants WHERE workstream_id = ?",
-    ).get(created.workstream.id)).toEqual({ count: 0 });
+      created.workstream.id,
+    )).toEqual({ count: 0 });
     expect(JSON.parse(String((database.prepare(
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({
@@ -124,8 +155,11 @@ describe("Slack work stream creator attribution", () => {
 });
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // Creation routes its product writes to the work stream's object; the
+  // pre-cutover direct-to-D1 arm no longer exists.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES

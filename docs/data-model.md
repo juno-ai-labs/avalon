@@ -18,9 +18,9 @@ stable HyperSight block has a separate `BlockDashboardAgent` execution ledger,
 while its fenced transcript and Bind runtime rows remain in main
 `SubstreamAgent("0")`. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
-becomes active; their empty table shells remain writer tripwires. Legacy
-per-workstream source rows are still retained frozen after their object import.
-Neither family is a serving fallback. The checked-in migrations are the authoritative D1 schema and the
+becomes active. Migration 0090 removes those sources, the per-work-stream source
+tables, and their writer fences after the authority is open. Neither family is a
+serving fallback or part of the current D1 schema. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
 rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
@@ -42,8 +42,7 @@ knowing an object's ID is enough to read it — it never is.
 | `packages/db/src/index.ts` | Region-aware repositories and the D1 wrapper every service is handed. |
 | `packages/db/test/migrations.test.ts` | Applies every migration in order and asserts on the resulting schema. |
 | `packages/db/seed.sql` | The local development seed. |
-| `apps/api/src/lib/workstream-visibility.ts` | The single expression of who may read a work stream, parameterized by the SQL naming the reader. |
-| `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
+| `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
@@ -147,11 +146,10 @@ hash-checked RPCs rather than cross-object SQL joins.
   each caller has to remember. Existing rows are `workspace`; the one narrower
   rule already in the code — a personal automation's work stream being visible to
   its owner — stays separate, because those rows carry no participants and reading
-  them as `personal` would hide them from the person they belong to. The rule
-  itself is written once, in `apps/api/src/lib/workstream-visibility.ts`, and
-  parameterized by the SQL expression naming the reader so the work-stream room
-  can bind by position and its eviction sweep can ask it of a whole column; a call
-  site that pastes the rule instead of importing it is how it lost `scope` before.
+  them as `personal` would hide them from the person they belong to. WorkstreamDO
+  enforces the authoritative participant/scope rule and publishes its viewer
+  projection to WorkspaceDO, whose directory applies the same rule for lists
+  and socket admission without consulting D1.
 - A work stream born from a connector conversation uses that same scope rather
   than introducing a second visibility model: a public conversation starts as
   `workspace`, while a private or unclassified one starts as `personal` with the
@@ -264,8 +262,8 @@ hash-checked RPCs rather than cross-object SQL joins.
   private card body, enters conversation history.
 
 D1 retains a `workstreams` identity/routing anchor because control tables have
-foreign keys to the stable ID. A post-cutover row has `do_identity_anchor = 1`;
-its metadata and lifecycle columns are not product authority. Common/per-user
+foreign keys to the stable ID. It contains only `id`, `workspace_id`, and
+`do_identity_anchor`; a post-cutover row has `do_identity_anchor = 1`. Common/per-user
 list queries, pins, resource discovery, and resolved work-stream
 suggestion feedback use `WorkspaceDO`'s `workspace_workstream_*` tables. D1 has
 no projection fallback when that object is unavailable.
@@ -560,10 +558,10 @@ collection, opt-out, and destination behavior.
 8. R2 objects are addressed through opaque references. Raw/large provider
    payloads never enter Queue or Workflow inputs; the regional Queue carries
    only the bounded normalized connector event needed to reach WorkspaceDO.
-9. **Who may read a work stream is expressed once**, in
-   `apps/api/src/lib/workstream-visibility.ts`. A call site that pastes the rule
-   instead of importing it is how it lost `scope` before, and the next such call
-   site will lose whatever is added next.
+9. **Who may read a work stream is decided by Durable Object authority.**
+   WorkstreamDO owns scope and participants; WorkspaceDO serves the projected
+   viewer decision for cross-work-stream lists and admission. D1 is never a
+   visibility fallback.
 10. **Migration files are immutable after deployment.** New schema changes receive
     a monotonically numbered SQL file; local and hosted databases are migrated with
     Wrangler *before* code that depends on the new schema is deployed. Editing a
@@ -608,21 +606,19 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Failure modes and limits
 
-- **Frozen D1 `activity_events.digestible` defaults to `1`; WorkspaceDO does
-  not.** The historical default remains only because those tables are immutable
-  migration input after cutover. `workspace_activity_events.digestible` is
+- **The historical D1 `activity_events.digestible` defaulted to `1`;
+  WorkspaceDO does not.** That source table existed only through migration 0089
+  and is absent from the current D1 schema. `workspace_activity_events.digestible` is
   `NOT NULL` with no default, and the typed RPC requires it, so every live
   producer must choose fail-open or fail-closed explicitly.
-- **`artifacts` is retired and no code reads or writes it.** The table is still
-  present only because the Worker live during a migration is the previous one,
-  which did read it; a later release drops it, and [the
-  runbook](runbook.md#finishing-the-artifact-retirement) owns the remaining steps.
-  Do not add a reader.
+- **`artifacts` is retired and absent from current D1.** It remained through
+  migration 0089 so the previous Worker could still read it; 0090 removes it
+  with the rest of the product schema. Do not add a reader or recreate it.
 - **A work-stream wake-up is at-most-once, not at-least-once.** `status` moves
   `pending → fired` under a version guard before the run launches, so a wake-up
   lost between the guard and the launch does not fire at all rather than firing
   twice.
-- **`workstream_pins.position` is not uniquely indexed**, because any intermediate
+- **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
   state of the dense rewrite collides with itself. Uniqueness is a property the
   rewrite maintains, not one the database enforces.
 - **A deleted `automation_subscriptions` row is kept forever.** Automation runs,
@@ -632,7 +628,10 @@ has a document, and the column notes above point at it rather than restating it:
   with `scope_change_unsupported`. That is deliberate, not a missing case.
 - **A migration deployed ahead of the code that needs it is the safe order; the
   reverse is not.** A `CHECK` relaxed before the enum widens means rows the new
-  schema accepts fail the readers still running.
+  schema accepts fail the readers still running. The destructive 0090 retirement
+  is the documented exception: the replacement Worker supports both anchor
+  shapes, and the deployment workflow keys its Worker-first barrier from each
+  remote pending ledger before deleting schema the previous Worker still names.
 
 ## Testing
 
@@ -669,6 +668,48 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-20 — D1 product state is retired completely
+
+**What changed:** Migration 0090 removes every legacy product table and product
+trigger after the Durable Object authority opens. The resulting D1 schema is
+an exact allowlist of 42 identity, membership, routing, migration/control, and
+operational audit/telemetry tables with 26 control-plane triggers. It also
+reduces the retained `workstreams` identity anchor to `id`, `workspace_id`, and
+`do_identity_anchor`. The regional work-stream list, viewer mapper,
+pin implementation, and creator read-state write are deleted; list, pin, and
+socket visibility now use WorkspaceDO's authoritative directory. Frozen
+repository SQL is tested against an explicit through-0089 import fixture, while
+current-topology assertions use the final D1 schema and real workerd objects.
+
+**Why:** Empty compatibility shells were not safety rails. The creator
+read-state insert reached regional D1 after cutover and hit the still-armed
+0079 fence, throwing only after the object-side creation had committed. More
+generally, an empty shell can let a misrouted read return a plausible empty
+result. Removing the whole product schema makes authority mistakes fail at the
+first statement and makes the documented thin-plane boundary mechanically
+auditable.
+
+**Considered and rejected:** Leaving the tables as tombstones — silence is
+the hazard, not the storage. Relaxing only the read-state fence would repair
+the reported creation failure while retaining the second schema and its other
+misrouting traps. Dropping in name order was also rejected: SQLite resolves an
+FK parent while compiling statements against a child, so the migration uses an
+explicit child-before-parent order and proves the result with foreign-key
+checking over both empty and populated pre-0090 databases.
+
+**Consequences:** The D1 `workstreams` row is an index, not a product record;
+its three fields provide only the stable FK/routing identity. Separate
+control-plane tables own the object route, immutable email route, and creation
+receipt. There is no product projection to query or fall back to.
+Compatibility repository tests must deliberately stop at 0089;
+current authority behavior belongs in the workerd Durable Object suite. Because
+the previous Worker still names the removed schema, the deploy workflow applies
+0090 after installing a replacement Worker that can reserve anchors against
+both the through-0089 and final table shapes; the remote pending ledger keeps
+that ordering safe across retries.
+
+
 
 ### 2026-08-20 — The development seed touches no product table
 
