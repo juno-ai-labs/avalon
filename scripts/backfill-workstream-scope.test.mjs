@@ -63,6 +63,7 @@ function context(overrides = {}) {
       written[path] = value;
     },
     readRecord: (path) => written[path],
+    recordExists: (path) => path in written,
     ...overrides,
   };
 }
@@ -123,7 +124,7 @@ test("the record is written before the first change, so an interrupted run is re
 
 test("a work stream whose scope is not what decides who reads it is left alone, not failed", async () => {
   const { fetch } = stubFetch([
-    ["/workstreams/", "PATCH", 409, { error: "scope_change_unsupported" }],
+    ["/workstreams/", "PATCH", 422, { error: "scope_change_unsupported" }],
   ]);
   const result = await setScope(context({ fetch }), "automation-one", "personal");
   assert.deepEqual(result, { outcome: "unsupported" });
@@ -212,4 +213,75 @@ test("a room that already means something gains nobody", async () => {
   assert.deepEqual(seated, []);
   assert.equal(totals.seated, 0);
   assert.equal(totals.changed, 1);
+});
+
+test("a retry after an interrupted apply keeps the rollback data it already had", async () => {
+  // The failure three reviewers found: a retry re-lists, the rows already
+  // flipped now read `personal`, `buildRecord` drops them, and the file loses
+  // the only copy of the scope they used to hold.
+  const ctx = context({
+    apply: true,
+    fetch: async (url, init = {}) => {
+      const method = init.method ?? "GET";
+      if (url.includes("/workspace/members")) {
+        return { status: 200, text: async () => JSON.stringify({ items: [] }) };
+      }
+      // The listing a retry would see: the first work stream is already private.
+      if (url.includes("/workstreams?")) {
+        return {
+          status: 200,
+          text: async () => JSON.stringify({
+            items: [workstream({ id: "already-done", scope: "personal" })],
+            nextCursor: null,
+          }),
+        };
+      }
+      if (method === "PATCH") return { status: 200, text: async () => JSON.stringify(workstream()) };
+      return { status: 200, text: async () => JSON.stringify({ ...workstream(), participants: [{ user: { id: "x" } }] }) };
+    },
+  });
+  // What the interrupted run had already written.
+  ctx.written["/tmp/record.json"] = {
+    baseUrl: "https://api.test",
+    entries: [{ workstreamId: "already-done", title: "Done", priorScope: "workspace" }],
+  };
+
+  await flip(ctx);
+
+  // The entry survived, with the scope that makes it revertible.
+  assert.deepEqual(
+    ctx.written["/tmp/record.json"].entries.map((entry) => entry.workstreamId),
+    ["already-done"],
+  );
+  assert.equal(ctx.written["/tmp/record.json"].entries[0].priorScope, "workspace");
+});
+
+test("a record aimed at another region is refused rather than half-applied", async () => {
+  const ctx = context({ apply: true });
+  ctx.written["/tmp/record.json"] = { baseUrl: "https://eu.api.test", entries: [] };
+  await assert.rejects(() => flip(ctx), /recorded against https:\/\/eu\.api\.test/u);
+
+  const reverting = context({ revert: "/tmp/record.json" });
+  reverting.written["/tmp/record.json"] = { baseUrl: "https://eu.api.test", entries: [] };
+  await assert.rejects(() => revert(reverting), /recorded against https:\/\/eu\.api\.test/u);
+});
+
+test("--apply alongside --revert is refused rather than quietly dropped", () => {
+  assert.throws(
+    () => parseArguments(["--base-url", "https://api.test", "--revert", "./flip.json", "--apply"]),
+    /--apply cannot be combined with --revert/u,
+  );
+});
+
+test("a network failure costs one row, not the sweep", async () => {
+  const ctx = context({
+    fetch: async (url) => {
+      if (url.includes("/workstreams/")) throw new TypeError("fetch failed");
+      throw new Error(`No stub for ${url}`);
+    },
+  });
+  const result = await setScope(ctx, "unreachable", "personal");
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.status, 0);
+  assert.match(result.error, /fetch failed/u);
 });

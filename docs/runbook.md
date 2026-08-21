@@ -1505,8 +1505,20 @@ node scripts/backfill-workstream-scope.mjs --base-url https://api.with-avalon.co
   --revert ./flip-global.json
 ```
 
+**Archived work streams are not reached.** `GET /workstreams` is the only
+enumeration an access token has, and the directory query behind it filters
+`archived_at IS NULL`. An archived work stream therefore keeps its scope, and
+because `PATCH /workstreams/:id` authorizes archived rows and can unarchive
+one, a work stream this pass never saw can return workspace-readable later.
+Closing that needs a listing mode that includes archived rows — a product API
+change, not something the script can work around. Until it exists, treat an
+unarchived work stream as needing its scope checked by hand.
+
 One run per workspace and one per region: a token belongs to one member of one
-workspace, and Global and EU share no identity and no list. Run the dry run
+workspace, and Global and EU share no identity and no list. The record path must
+be **new for each run** — the script refuses to build a fresh plan over an
+existing record, because that is how rollback data gets destroyed, and it
+refuses a record whose base URL does not match the endpoint you aimed it at. Run the dry run
 first and read the count — it is the number of work streams that are about to
 stop being visible to everyone who can see them today.
 
