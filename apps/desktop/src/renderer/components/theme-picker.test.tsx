@@ -40,15 +40,15 @@ describe('ThemePicker', () => {
     expect([...modes.querySelectorAll('[role=radio]')].map((option) => option.textContent))
       .toEqual(['System', 'Light', 'Dark']);
     expect([...families.querySelectorAll('[role=radio]')].map((option) => option.textContent))
-      .toEqual(['Neu', 'Air']);
+      .toEqual(['Terra', 'Air']);
   });
 
   it('starts on the original design following the Mac, and says what that resolves to', () => {
     render(<ThemePicker />);
 
     expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'Neu' })).toBeChecked();
-    expect(screen.getByText('Neu, following this Mac, which is light right now.')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Terra' })).toBeChecked();
+    expect(screen.getByText('Terra, following this Mac, which is light right now.')).toBeInTheDocument();
   });
 
   it('applies and stores a chosen design, keeping the mode', () => {
@@ -96,20 +96,62 @@ describe('ThemePicker', () => {
     const shown = (): (string | null)[] => [...container.querySelectorAll('.settings-theme-swatch')]
       .map((swatch) => swatch.getAttribute('data-theme'));
 
-    expect(shown()).toEqual(['neu-light', 'air']);
+    fireEvent.click(screen.getByRole('radio', { name: 'Light' }));
+    expect(shown()).toEqual(['terra-light', 'air']);
 
     // Both swatches redraw, not only the selected one — which is what makes the
     // mode row legible: it shows what each design looks like under it.
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
-    expect(shown()).toEqual(['neu', 'air-dark']);
+    expect(shown()).toEqual(['terra', 'air-dark']);
+  });
+
+  /**
+   * Under `system` a family has two appearances and which one you get depends
+   * on the Mac. Showing one of them would be quietly wrong for half the day, so
+   * the swatch is split and shows both.
+   */
+  it('splits every swatch into both appearances under the system mode', () => {
+    const { container } = render(<ThemePicker />);
+    const halves = (): (string | null)[] => [
+      ...container.querySelectorAll('.settings-theme-swatch, .settings-theme-swatch-alternate'),
+    ].map((half) => half.getAttribute('data-theme'));
+
+    expect(halves()).toEqual(['terra-light', 'terra', 'air', 'air-dark']);
+
+    // Pinning the lighting removes the ambiguity, and with it the split.
+    fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
+    expect(container.querySelectorAll('.settings-theme-swatch-alternate')).toHaveLength(0);
+    expect(halves()).toEqual(['terra', 'air-dark']);
+  });
+
+  /**
+   * The preview reads `--av-cmp-turn-align` rather than hardcoding a side, so it
+   * cannot say left while the feed says right. Terra puts a person's own turn on
+   * the right; Air runs it left with everything else.
+   */
+  it('draws a person’s turn on the side the design puts it', () => {
+    const { container } = render(<ThemePicker />);
+    const turns = [...container.querySelectorAll('.settings-theme-swatch-turn')];
+
+    expect(turns.length).toBeGreaterThan(0);
+    for (const turn of turns) expect(turn.className).toContain('settings-theme-swatch-turn');
+    // The side itself is a token, so what is asserted here is that the element
+    // exists inside every miniature and takes its alignment from one; jsdom
+    // computes no custom properties, and the rendered result is checked in a
+    // real window per `docs/dev-environment.md`.
+    expect(container.querySelectorAll('.settings-theme-swatch-marker').length).toBe(turns.length);
   });
 
   it('previews the system mode as the appearance the Mac is currently set to', () => {
     installMatchMedia(true);
     const { container } = render(<ThemePicker />);
 
-    expect(container.querySelector('.settings-theme-swatch')?.getAttribute('data-theme')).toBe('neu');
-    expect(screen.getByText('Neu, following this Mac, which is dark right now.')).toBeInTheDocument();
+    // The lighter half is always drawn first, so the pair reads the same way
+    // round whichever way the Mac is set; the status line is what says which of
+    // the two is in force.
+    expect(container.querySelector('.settings-theme-swatch')?.getAttribute('data-theme')).toBe('terra-light');
+    expect(container.querySelector('.settings-theme-swatch-alternate')?.getAttribute('data-theme')).toBe('terra');
+    expect(screen.getByText('Terra, following this Mac, which is dark right now.')).toBeInTheDocument();
   });
 
   it('goes back to following the Mac when System is chosen again', () => {
@@ -118,8 +160,8 @@ describe('ThemePicker', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
     fireEvent.click(screen.getByRole('radio', { name: 'System' }));
 
-    expect(readThemeChoice()).toEqual({ family: 'neu', mode: 'system' });
-    expect(document.documentElement.dataset['theme']).toBe('neu-light');
+    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
+    expect(document.documentElement.dataset['theme']).toBe('terra-light');
     expect(document.documentElement.dataset['themeMode']).toBe('system');
   });
 });

@@ -55,23 +55,23 @@ describe('theme', () => {
   });
 
   it('starts on the original design following the Mac when nothing has been chosen', () => {
-    expect(readThemeChoice()).toEqual({ family: 'neu', mode: 'system' });
+    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
   });
 
   it('records the resolved appearance and the choice that produced it', () => {
     installMatchMedia(true);
-    const choice = { family: 'neu', mode: 'system' } as const;
+    const choice = { family: 'terra', mode: 'system' } as const;
 
-    expect(applyTheme(choice)).toEqual({ choice, resolved: 'neu' });
-    expect(document.documentElement.dataset['theme']).toBe('neu');
-    // Both axes, because "Neu, dark" and "Neu, system, currently dark" look
+    expect(applyTheme(choice)).toEqual({ choice, resolved: 'terra' });
+    expect(document.documentElement.dataset['theme']).toBe('terra');
+    // Both axes, because "Terra, dark" and "Terra, system, currently dark" look
     // identical on the document and the Settings picker has to tell them apart.
-    expect(document.documentElement.dataset['themeFamily']).toBe('neu');
+    expect(document.documentElement.dataset['themeFamily']).toBe('terra');
     expect(document.documentElement.dataset['themeMode']).toBe('system');
   });
 
   it.each([
-    ['neu', 'light', 'neu-light'], ['neu', 'dark', 'neu'],
+    ['terra', 'light', 'terra-light'], ['terra', 'dark', 'terra'],
     ['air', 'light', 'air'], ['air', 'dark', 'air-dark'],
   ] as const)('stamps %s in %s mode whatever the Mac prefers', (family, mode, expected) => {
     installMatchMedia(true);
@@ -100,8 +100,8 @@ describe('theme', () => {
 
     expect(persistThemeChoice(withMode(readThemeChoice(), 'light')))
       .toEqual({ choice: { family: 'air', mode: 'light' }, resolved: 'air' });
-    expect(persistThemeChoice(withFamily(readThemeChoice(), 'neu')))
-      .toEqual({ choice: { family: 'neu', mode: 'light' }, resolved: 'neu-light' });
+    expect(persistThemeChoice(withFamily(readThemeChoice(), 'terra')))
+      .toEqual({ choice: { family: 'terra', mode: 'light' }, resolved: 'terra-light' });
   });
 
   it('applies the stored choice at install rather than the default', () => {
@@ -125,8 +125,8 @@ describe('theme', () => {
       JSON.stringify({ version: 1, theme: { family: 'sepia', mode: 'dark' } }),
     );
 
-    expect(readThemeChoice()).toEqual({ family: 'neu', mode: 'system' });
-    expect(installTheme().resolved).toBe('neu-light');
+    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
+    expect(installTheme().resolved).toBe('terra-light');
   });
 
   /**
@@ -148,7 +148,7 @@ describe('theme', () => {
     // certain of. Resolving `system` to light matches what Chromium answers
     // when the platform expresses no preference.
     it('resolves the system mode to light and subscribes to nothing', () => {
-      expect(resolvedThemeFor({ family: 'neu', mode: 'system' })).toBe('neu-light');
+      expect(resolvedThemeFor({ family: 'terra', mode: 'system' })).toBe('terra-light');
       expect(() => watchSystemAppearance()()).not.toThrow();
     });
   });
@@ -156,14 +156,14 @@ describe('theme', () => {
   describe('watching the system appearance', () => {
     it('re-resolves when the Mac changes and the mode is system', () => {
       const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'neu', mode: 'system' });
+      persistThemeChoice({ family: 'terra', mode: 'system' });
       const stop = watchSystemAppearance();
 
       media.change(true);
-      expect(document.documentElement.dataset['theme']).toBe('neu');
+      expect(document.documentElement.dataset['theme']).toBe('terra');
 
       media.change(false);
-      expect(document.documentElement.dataset['theme']).toBe('neu-light');
+      expect(document.documentElement.dataset['theme']).toBe('terra-light');
       stop();
     });
 
@@ -199,12 +199,12 @@ describe('theme', () => {
 
     it('stops re-resolving once detached', () => {
       const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'neu', mode: 'system' });
+      persistThemeChoice({ family: 'terra', mode: 'system' });
       watchSystemAppearance()();
 
       media.change(true);
 
-      expect(document.documentElement.dataset['theme']).toBe('neu-light');
+      expect(document.documentElement.dataset['theme']).toBe('terra-light');
     });
   });
 

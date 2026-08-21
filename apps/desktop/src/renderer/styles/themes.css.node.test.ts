@@ -167,9 +167,15 @@ describe('no colour is written into app.css', () => {
       .filter((block) => /background-image\s*:\s*var\(--av-sys-backdrop-image\)/u.test(block))
       .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '');
 
-    // The Settings miniature is the second painter on purpose: it draws the
-    // offered theme's backdrop, not the running one's, at swatch scale.
-    expect(painters).toEqual(['.workspace-shell', '.settings-theme-swatch']);
+    // The Settings miniature is the exception, twice over: it draws the offered
+    // theme's backdrop rather than the running one's, and under the `system`
+    // mode it draws both halves of a family because which one you get depends
+    // on the Mac. Neither is the window's backdrop, and both are 92px wide.
+    expect(painters).toEqual([
+      '.workspace-shell',
+      '.settings-theme-swatch',
+      '.settings-theme-swatch-alternate',
+    ]);
   });
 
   // The guard has to be able to see one, or it is asserting that its own
