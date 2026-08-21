@@ -14,13 +14,17 @@
     // is the Access application's AUD tag, which is an identifier rather than a
     // credential — the signature is what authorizes, and it is verified against
     // the team's JWKS on every request.
-    "ACCESS_TEAM_DOMAIN": "avalon.cloudflareaccess.com",
+    // Set when Zero Trust Access is enabled on the account and a team name is
+    // chosen; it is an account setting, not derived from the web domain. Empty
+    // until then, which makes the Worker refuse every request rather than look
+    // configured while pointing at a team that does not exist.
+    "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_APPLICATION_AUD": "",
-    "ACCESS_ALLOWED_EMAIL_DOMAINS": "with-avalon.com",
+    "ACCESS_ALLOWED_EMAIL_DOMAINS": "rallywith.ai",
     "CLOUDFLARE_ACCOUNT_ID": ""
   },
   "routes": [
-    { "pattern": "migrations.internal.with-avalon.com", "custom_domain": true }
+    { "pattern": "migrations.rallywith.ai", "custom_domain": true }
   ],
   // Hourly. Objects are discovered by the sweep and described by their own
   // reports, so a faster sweep would find the same set more often without

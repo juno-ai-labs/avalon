@@ -3,6 +3,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import type { Env } from "../src/env";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
@@ -73,7 +74,7 @@ async function withScheduler<T>(
   seed: string,
   run: (state: DurableObjectState) => Promise<T> | T,
 ): Promise<T> {
-  const name = workspaceDOName("global", `${WORKSPACE_PREFIX}${seed}`);
+  const name = workspaceDOName("global", asWorkspaceId(`${WORKSPACE_PREFIX}${seed}`));
   const stub = env.WORKSPACE_SCHEDULERS.get(env.WORKSPACE_SCHEDULERS.idFromName(name));
   return runInDurableObject(stub, async (_instance, state) => run(state));
 }

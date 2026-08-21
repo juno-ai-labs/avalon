@@ -10,7 +10,7 @@ constructor, on whichever isolate happened to wake it.
 
 This document owns the subsystem that answers the question — a separate Worker,
 `avalon-migration-tracker`, serving an operator site at
-`migrations.internal.with-avalon.com`, fed by two independent sources: **each
+`migrations.rallywith.ai`, fed by two independent sources: **each
 object reports its own migration outcome**, and **an hourly sweep enumerates the
 account** so an object that never wakes is still visible as one nobody has heard
 from. Read it before changing a migration runner, adding a Durable Object class,
@@ -324,17 +324,17 @@ throughput nothing needs and turn each read into a scatter-gather.
 
 The steady state is not the case this is built for. Objects do not wake *because*
 of a deploy, so an ordinary release produces a trickle shaped by user traffic.
-The herd is `scripts/run-authority-cutover.mjs` walking every workspace and
-work-stream route, and `WorkspaceScheduler` fanning out over due work — both of
-which touch hundreds of objects at once, on a build whose `APP_VERSION` has just
-changed.
+The herd is any fan-out that touches many objects at once on a build whose
+`APP_VERSION` has just changed: `WorkspaceScheduler` sweeping every workspace's
+due schedules, watches, and wake-ups, or an operator pass walking the fleet to
+seed or repair it.
 
 ## Changelog
 
 ### 2026-08-19 — Durable Object migration state becomes observable
 
 **What changed:** A new Worker, `avalon-migration-tracker`, serves
-`migrations.internal.with-avalon.com` behind Cloudflare Access. Every Durable
+`migrations.rallywith.ai` behind Cloudflare Access. Every Durable
 Object in `apps/api` now reports its migration outcome — version on success,
 error on failure — onto a regional Queue that the tracker consumes in batches,
 and an hourly sweep enumerates the account so objects that have never woken are
@@ -370,10 +370,10 @@ only at the moment it applies one.
   near a thousand requests a second, so a herd serializes behind itself. Each
   reporter is a Durable Object held open on `waitUntil` for the whole wait, and
   an RPC that times out defers the report to the object's next wake, which for a
-  hibernating object may be days. The herd is real: `run-authority-cutover.mjs`
-  and the scheduler's fan-out each touch hundreds of objects at once. Batching
-  100 messages into one transaction is what makes the single registry object
-  affordable, and only a queue can hand a consumer a batch.
+  hibernating object may be days. The herd is real: the scheduler's due-work
+  fan-out, and any operator pass over the fleet, each touch hundreds of objects
+  at once. Batching 100 messages into one transaction is what makes the single
+  registry object affordable, and only a queue can hand a consumer a batch.
 - *An HTTP ingest route with a shared secret.* Another secret to rotate in three
   places, protecting a path that would still be publicly addressable. Neither a
   queue nor a `WorkerEntrypoint` has a public address, which is a stronger

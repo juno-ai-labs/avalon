@@ -375,7 +375,7 @@ copy/delete count that does not match the plan.
 ### The Durable Object migration tracker
 
 `avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
-at `migrations.internal.with-avalon.com` and receives a migration report from
+at `migrations.rallywith.ai` and receives a migration report from
 every Durable Object in both API Workers.
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
 owns the design; this is the provisioning and deployment procedure.
@@ -409,18 +409,29 @@ The tracker needs no D1 database and no R2 bucket: its entire store is the
 `MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
 further one-time steps are required outside the repository.
 
-**1. The hostname.** `migrations.internal.with-avalon.com` is declared as a
-custom domain in `wrangler.jsonc`; the `with-avalon.com` zone must be able to
-resolve it, and the deploy provisions the route.
+**1. The hostname.** `migrations.rallywith.ai` is declared as a custom domain in
+`wrangler.jsonc`, and the deploy provisions the route on the `rallywith.ai` zone.
 
-**2. Cloudflare Access.** In Zero Trust, add **Google** as a login method, then
-create a self-hosted application for that hostname with an Allow policy whose
-include rule is `Emails ending in @with-avalon.com`. Copy the application's
-**Application Audience (AUD) tag** into `ACCESS_APPLICATION_AUD` in
-`wrangler.jsonc`, and confirm `ACCESS_TEAM_DOMAIN` matches the team domain. The
-Worker verifies the assertion itself on every request, so the site refuses all
-traffic until both values are set — an unconfigured deployment is unreachable
-rather than open. Widening access is a policy change in Zero Trust plus a change
+It is deliberately one label deep. That zone carries Universal SSL only, which
+covers `rallywith.ai` and `*.rallywith.ai` and nothing below that, so a
+`migrations.internal.rallywith.ai` would need Advanced Certificate Manager to
+present a valid certificate. The site is protected by Cloudflare Access, not by
+being hard to guess, so the extra label bought nothing worth a certificate
+purchase. Every other Avalon hostname is single-level for the same reason.
+
+**2. Cloudflare Access.** Access is **not enabled on the account yet**, so this
+starts one step earlier than it otherwise would: enable it from the Zero Trust
+dashboard and choose a team name. That name becomes the team domain
+(`<team>.cloudflareaccess.com`) and is an account setting — it is not derived
+from the web domain and does not follow a rebrand of the site. Put it in
+`ACCESS_TEAM_DOMAIN`, which ships empty for exactly that reason.
+
+Then add **Google** as a login method and create a self-hosted application for
+the hostname, with an Allow policy whose include rule is `Emails ending in
+@rallywith.ai`. Copy the application's **Application Audience (AUD) tag** into
+`ACCESS_APPLICATION_AUD`. The Worker verifies the assertion itself on every
+request, so the site refuses all traffic until both values are set — an
+unconfigured deployment is unreachable rather than open. Widening access is a policy change in Zero Trust plus a change
 to `ACCESS_ALLOWED_EMAIL_DOMAINS`; both are required, and the Worker is the one
 that fails closed.
 

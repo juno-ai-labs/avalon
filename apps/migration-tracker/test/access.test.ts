@@ -4,13 +4,13 @@ import { SignJWT, generateKeyPair, type JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { readAccessConfiguration, verifyAccessRequest } from "../src/access";
 
-const TEAM_DOMAIN = "avalon.cloudflareaccess.com";
+const TEAM_DOMAIN = "rally.cloudflareaccess.com";
 const AUDIENCE = "test-audience";
 
 const CONFIGURATION = {
   teamDomain: TEAM_DOMAIN,
   applicationAudience: AUDIENCE,
-  allowedEmailDomains: ["with-avalon.com"],
+  allowedEmailDomains: ["rallywith.ai"],
 };
 
 let signingKey: CryptoKey;
@@ -41,19 +41,19 @@ async function assertion(claims: {
 }
 
 function request(headers: Record<string, string> = {}): Request {
-  return new Request("https://migrations.internal.with-avalon.com/", { headers });
+  return new Request("https://migrations.rallywith.ai/", { headers });
 }
 
 describe("readAccessConfiguration", () => {
   it("reads a complete configuration", () => {
     expect(readAccessConfiguration({
-      ACCESS_TEAM_DOMAIN: " Avalon.cloudflareaccess.com ",
+      ACCESS_TEAM_DOMAIN: " Rally.cloudflareaccess.com ",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "with-avalon.com, With-Avalon.dev ",
+      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai, RallyWith.dev ",
     })).toEqual({
       teamDomain: TEAM_DOMAIN,
       applicationAudience: AUDIENCE,
-      allowedEmailDomains: ["with-avalon.com", "with-avalon.dev"],
+      allowedEmailDomains: ["rallywith.ai", "rallywith.dev"],
     });
   });
 
@@ -65,21 +65,21 @@ describe("readAccessConfiguration", () => {
       ACCESS_ALLOWED_EMAIL_DOMAINS: "",
     })).toBeNull();
     expect(readAccessConfiguration({
-      ACCESS_TEAM_DOMAIN: "https://avalon.cloudflareaccess.com/x",
+      ACCESS_TEAM_DOMAIN: "https://rally.cloudflareaccess.com/x",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "with-avalon.com",
+      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai",
     })).toBeNull();
     expect(readAccessConfiguration({
       ACCESS_TEAM_DOMAIN: "attacker.example.com",
       ACCESS_APPLICATION_AUD: AUDIENCE,
-      ACCESS_ALLOWED_EMAIL_DOMAINS: "with-avalon.com",
+      ACCESS_ALLOWED_EMAIL_DOMAINS: "rallywith.ai",
     })).toBeNull();
   });
 });
 
 describe("verifyAccessRequest", () => {
   it("admits a signed assertion from an allowed domain", async () => {
-    const token = await assertion({ email: "Operator@With-Avalon.com" });
+    const token = await assertion({ email: "Operator@RallyWith.ai" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       CONFIGURATION,
@@ -89,7 +89,7 @@ describe("verifyAccessRequest", () => {
     expect(result).toEqual({
       ok: true,
       principal: {
-        email: "operator@with-avalon.com",
+        email: "operator@rallywith.ai",
         subject: "access-subject",
         audience: AUDIENCE,
       },
@@ -97,7 +97,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("accepts the assertion from the CF_Authorization cookie", async () => {
-    const token = await assertion({ email: "operator@with-avalon.com" });
+    const token = await assertion({ email: "operator@rallywith.ai" });
     const result = await verifyAccessRequest(
       request({ cookie: `other=1; CF_Authorization=${token}` }),
       CONFIGURATION,
@@ -108,7 +108,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("refuses every request while Access is unconfigured", async () => {
-    const token = await assertion({ email: "operator@with-avalon.com" });
+    const token = await assertion({ email: "operator@rallywith.ai" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       null,
@@ -124,7 +124,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("refuses an assertion signed by another key", async () => {
-    const token = await assertion({ email: "operator@with-avalon.com" });
+    const token = await assertion({ email: "operator@rallywith.ai" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       CONFIGURATION,
@@ -136,11 +136,11 @@ describe("verifyAccessRequest", () => {
 
   it("refuses an assertion minted for another team or application", async () => {
     const wrongIssuer = await assertion({
-      email: "operator@with-avalon.com",
+      email: "operator@rallywith.ai",
       issuer: "https://attacker.cloudflareaccess.com",
     });
     const wrongAudience = await assertion({
-      email: "operator@with-avalon.com",
+      email: "operator@rallywith.ai",
       audience: "another-application",
     });
 
@@ -168,7 +168,7 @@ describe("verifyAccessRequest", () => {
   });
 
   it("takes the domain from the last @, so a crafted local part cannot pass", async () => {
-    const token = await assertion({ email: "attacker@with-avalon.com@example.com" });
+    const token = await assertion({ email: "attacker@rallywith.ai@example.com" });
     const result = await verifyAccessRequest(
       request({ "cf-access-jwt-assertion": token }),
       CONFIGURATION,
