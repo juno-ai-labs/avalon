@@ -308,6 +308,99 @@ export async function workstreamExecutionEnvironment(
 }
 
 /**
+ * Build the regional work-stream identity insert for the schema currently
+ * deployed in this region.
+ *
+ * Migration 0090 is intentionally Worker-first: a destructive D1 migration
+ * cannot run under the previous Worker, while the replacement Worker must
+ * still be able to create work streams before both regions finish applying
+ * the drop. Through 0089 the anchor table has required product columns; after
+ * 0090 it has only the three routing columns. The values supplied to the old
+ * shape are inert placeholders and are never read as product state.
+ */
+function finalRegionalWorkstreamAnchorStatement(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  workstreamId: string,
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT INTO workstreams (id, workspace_id, do_identity_anchor)
+     VALUES (?, ?, 1)
+     ON CONFLICT(id) DO NOTHING`,
+  ).bind(workstreamId, workspaceId);
+}
+
+async function regionalWorkstreamAnchorStatement(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  workstreamId: string,
+  at: string,
+): Promise<{ legacyShape: boolean; statement: D1PreparedStatement }> {
+  const legacyShape = await env.DB.prepare(
+    `SELECT 1 AS legacy FROM pragma_table_info('workstreams')
+      WHERE name = 'title' LIMIT 1`,
+  ).first<{ legacy: number }>();
+  if (!legacyShape) {
+    return {
+      legacyShape: false,
+      statement: finalRegionalWorkstreamAnchorStatement(env, workspaceId, workstreamId),
+    };
+  }
+  return {
+    legacyShape: true,
+    statement: env.DB.prepare(
+      `INSERT INTO workstreams
+         (id, workspace_id, title, objective, origin_type, harness_status,
+          next_sequence_number, last_activity_at, created_at, updated_at,
+          do_identity_anchor)
+       VALUES (?, ?, ?, '', 'ad_hoc', 'idle', 1, ?, ?, ?, 1)
+       ON CONFLICT(id) DO NOTHING`,
+    ).bind(
+      workstreamId,
+      workspaceId,
+      `[WorkstreamDO] ${workstreamId}`,
+      at,
+      at,
+      at,
+    ),
+  };
+}
+
+/**
+ * Commit an anchor with related route statements across the 0090 rollout.
+ * D1 serializes each query, not the schema probe and the later batch together,
+ * so 0090 may commit between them. In that one race the legacy insert is
+ * re-prepared against the final shape and retried; every other error propagates.
+ */
+export async function writeRegionalWorkstreamAnchorBatch(
+  env: Pick<Env, "DB">,
+  input: { workspaceId: string; workstreamId: string; at: string },
+  additionalStatements: () => D1PreparedStatement[],
+): Promise<void> {
+  const anchor = await regionalWorkstreamAnchorStatement(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+    input.at,
+  );
+  try {
+    await env.DB.batch([anchor.statement, ...additionalStatements()]);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const migrationRemovedLegacyColumns =
+      /(?:no such column|has no column named).*title|title.*(?:no such column|has no column named)/iu
+        .test(reason);
+    if (!anchor.legacyShape || !migrationRemovedLegacyColumns) {
+      throw error;
+    }
+    await env.DB.batch([
+      finalRegionalWorkstreamAnchorStatement(env, input.workspaceId, input.workstreamId),
+      ...additionalStatements(),
+    ]);
+  }
+}
+
+/**
  * Reserve the regional identity/routing anchor and open an empty normalized
  * object for a system producer that will populate it through the runtime SQL
  * compatibility port.
@@ -320,14 +413,7 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   const authority = await readWorkstreamAuthorityControl(env);
   if (authority.phase !== "durable_object_open") return env;
   const at = new Date().toISOString();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id,
-          harness_status, next_sequence_number, last_activity_at, created_at,
-          updated_at, do_identity_anchor)
-       VALUES (?, ?, ?, '', 'ad_hoc', NULL, 'idle', 1, ?, ?, ?, 1)`,
-    ).bind(workstreamId, workspaceId, `[WorkstreamDO] ${workstreamId}`, at, at, at),
+  await writeRegionalWorkstreamAnchorBatch(env, { workspaceId, workstreamId, at }, () => [
     env.DB.prepare(
       `INSERT OR IGNORE INTO workstream_authority_routes
          (workspace_id, workstream_id, generation, object_name, state, stage_index,

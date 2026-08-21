@@ -1,68 +1,29 @@
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { NoteService } from "../src/services/note-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
+import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
-
-class SqliteD1Statement {
-  private values: unknown[] = [];
-
-  constructor(private readonly statement: StatementSync) {}
-
-  bind(...values: unknown[]): SqliteD1Statement {
-    this.values = values;
-    return this;
-  }
-
-  async run(): Promise<D1Result<unknown>> {
-    const result = this.statement.run(...this.values as SQLInputValue[]);
-    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
-  }
-
-  async first<T>(): Promise<T | null> {
-    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
-  }
-
-  async all<T>(): Promise<D1Result<T>> {
-    return createTestD1Result<T>({
-      success: true,
-      results: this.statement.all(...this.values as SQLInputValue[]) as T[],
-      meta: { changes: 0 },
-    });
-  }
-}
-
-function sqliteD1(database: DatabaseSync): D1Database {
-  return createTestD1Database({
-    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
-    batch: async (statements: D1PreparedStatement[]) => {
-      const results: D1Result<unknown>[] = [];
-      database.exec("BEGIN");
-      try {
-        for (const statement of statements) {
-          results.push(await (statement as unknown as SqliteD1Statement).run());
-        }
-        database.exec("COMMIT");
-        return results;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    },
-  });
-}
 
 /**
  * The `PAYLOADS` binding the tools under test need in order to construct, kept
@@ -99,10 +60,11 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(): { database: DatabaseSync; env: Env } {
+function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv: Env; env: Env } {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    if (fileName.startsWith("0090_")) break;
     database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
   }
   database.exec(`
@@ -117,20 +79,93 @@ function fixture(): { database: DatabaseSync; env: Env } {
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Core Tool', 'Core Tool', 'ad_hoc', '${USER_ID}',
             'running', '2026-01-01', '2026-01-01', '2026-01-01');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
-            '{"type":"user","userId":"${USER_ID}"}', 'running', '2026-08-03');
   `);
+  // The run, transcript, and elicitations live in the work stream's own
+  // object since migration 0090; the tools reach them through the runtime
+  // router, so the env under test is the routed execution environment the
+  // harness hands its tools.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
+      (id, workspace_id, title, objective, origin_type, created_by_user_id,
+       harness_status, last_activity_at, created_at, updated_at)
+     VALUES (?, ?, 'Core Tool', 'Core Tool', 'ad_hoc', ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    WORKSTREAM_ID,
+    WORKSPACE_ID,
+    USER_ID,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-03')`,
+    HARNESS_RUN_ID,
+    WORKSPACE_ID,
+    WORKSTREAM_ID,
+    JSON.stringify({ type: "user", userId: USER_ID }),
+  );
+  const baseEnv = createTestEnv({
+    DB: sqliteD1(database),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+  });
   return {
     database,
-    env: createTestEnv({
-      DB: sqliteD1(database),
-      PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
-      AVALON_REGION: "global",
-      APP_ENV: "test",
-    }),
+    objectStore,
+    baseEnv,
+    env: withWorkstreamRuntimeDatabase(
+      baseEnv,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      "0",
+      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+    ),
   };
+}
+
+/**
+ * Attach a workspace resource to the work-stream object the way the product
+ * attach path does: a link row carrying the frozen descriptor copied from the
+ * workspace row. The legacy `workstream_resources` D1 table was dropped by
+ * migration 0090 and the compat view over the link table is read-only for
+ * inserts — attachment is a product operation, not a runtime SQL write.
+ */
+function attachResourceLink(
+  database: DatabaseSync,
+  objectStore: DatabaseSync,
+  resourceId: string,
+  attachedAt: string,
+): void {
+  const resource = database.prepare(
+    `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
+            mime_type, content_ref, canonical_url, metadata_json
+       FROM resources WHERE id = ?`,
+  ).get(resourceId) as Record<string, string | null>;
+  const at = Date.parse(attachedAt);
+  objectStore.prepare(
+    `INSERT INTO workstream_resource_links
+       (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+     VALUES (?, ?, 0, 'context', ?, ?, ?)`,
+  ).run(resourceId, USER_ID, JSON.stringify({
+    id: resourceId,
+    connectionId: resource.connection_id,
+    type: resource.resource_type,
+    provider: resource.provider,
+    providerResourceId: resource.provider_resource_id,
+    title: resource.title,
+    mimeType: resource.mime_type,
+    contentRef: resource.content_ref,
+    canonicalUrl: resource.canonical_url,
+    metadata: JSON.parse(resource.metadata_json ?? "{}") as Record<string, unknown>,
+  }), at, at);
+  objectStore.prepare(
+    `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+     ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+  ).run(at);
 }
 
 function workflowInput(): WorkstreamWorkflowInput {
@@ -161,7 +196,7 @@ function context(providerIdempotencyKey?: string) {
 
 describe("Avalon core write-tool idempotency", () => {
   it("revokes private note access from workspace-principal resource tools", async () => {
-    const { database, env } = fixture();
+    const { database, objectStore, env } = fixture();
     const noteService = new NoteService(env, {
       sessionId: "note-owner-session",
       userId: USER_ID,
@@ -174,11 +209,7 @@ describe("Avalon core write-tool idempotency", () => {
       title: "Sensitive note",
       scope: "personal",
     });
-    database.prepare(
-      `INSERT INTO workstream_resources
-       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-       VALUES (?, ?, ?, 0, 'context', ?)`,
-    ).run(WORKSTREAM_ID, note.resourceId, USER_ID, "2026-08-07T18:00:00.000Z");
+    attachResourceLink(database, objectStore, note.resourceId, "2026-08-07T18:00:00.000Z");
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
     const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
@@ -268,26 +299,24 @@ describe("Avalon core write-tool idempotency", () => {
   });
 
   it("converges elicitation retries on one durable question", async () => {
-    const { database, env } = fixture();
-    const databaseBinding = env.DB;
+    const { objectStore, baseEnv } = fixture();
+    // The existence check travels the runtime SQL port since the cutover, so
+    // the stale read is injected there: the port answers the check with no
+    // rows both times while every other statement reaches the object.
     let staleExistenceChecks = 0;
-    const staleExistenceEnv = createTestEnv({
-      ...env,
-      DB: createTestD1Database({
-        prepare: (sql: string) => {
-          if (sql.includes("SELECT id FROM elicitations")) {
-            staleExistenceChecks += 1;
-            const statement = {
-              bind: () => statement,
-              first: async () => null,
-            };
-            return createTestD1PreparedStatement(statement);
-          }
-          return databaseBinding.prepare(sql);
-        },
-        batch: databaseBinding.batch.bind(databaseBinding),
-      }),
-    });
+    const staleExistenceEnv = withWorkstreamRuntimeDatabase(
+      baseEnv,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      "0",
+      async (statements) => {
+        if (statements.length === 1 && statements[0]!.sql.includes("SELECT id FROM elicitations")) {
+          staleExistenceChecks += 1;
+          return [{ columns: [], rows: [], changes: 0 }];
+        }
+        return executeWorkstreamObjectSql(objectStore, statements);
+      },
+    );
     const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
@@ -309,15 +338,18 @@ describe("Avalon core write-tool idempotency", () => {
     expect(staleExistenceChecks).toBe(2);
     expect(second).toEqual(first);
     expect(first).toMatchObject({ halt: "needs_input" });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM elicitations").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT target_user_id FROM elicitations").get()).toEqual({ target_user_id: null });
-    expect(database.prepare(
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM elicitations")).toEqual({ count: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT target_user_id FROM elicitations")).toEqual({ target_user_id: null });
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",
-    ).get()).toEqual({ count: 1 });
-    expect(database.prepare(
+    )).toEqual({ count: 1 });
+    expect(workstreamObjectGet(
+      objectStore,
       `SELECT harness_status, next_sequence_number, latest_attention_sequence_number
        FROM workstreams WHERE id = ?`,
-    ).get(WORKSTREAM_ID)).toEqual({
+      WORKSTREAM_ID,
+    )).toEqual({
       harness_status: "needs_input",
       next_sequence_number: 2,
       latest_attention_sequence_number: 1,

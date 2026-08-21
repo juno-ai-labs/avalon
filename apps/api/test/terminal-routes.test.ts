@@ -12,18 +12,30 @@ import { errorHandler } from "../src/middleware/errors";
 import { workspaceRoutes } from "../src/routes/workspace";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamContract,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const W = asWorkspaceId("72000000-0000-4000-8000-000000000001");
 const S = "72000000-0000-4000-8000-000000000002";
 const U = asUserId("72000000-0000-4000-8000-000000000003");
-const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 function fixture(options: { authenticated?: boolean; role?: "owner" | "member" } = {}): { app: Hono<HonoAppEnv>; env: Env } {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // Terminal state and the settings walk read through the object port and the
+  // WorkspaceDO directory once the authority is open; the D1 copies are gone.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'terminal-route', 'route@example.com', 'Route', '2026-08-13', '2026-08-13');
@@ -40,10 +52,44 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${S}', '${U}', '${U}', 'creator', '2026-08-13');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  // The participant gate reads through the object port, so the creator's
+  // membership has to exist there, not only in the regional index.
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstream_participants
+      (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+     VALUES (?, ?, ?, 'creator', '2026-08-13')`,
+    S, U, U,
+  );
+  const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     TERMINAL_REGION_CAPABILITY: "unsupported",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        canReadWorkstream: async () => true,
+        listWorkstreams: async () => ({
+          items: [testWorkstreamContract({
+            id: S, workspaceId: W, title: "Terminal route", harnessStatus: "idle",
+          })],
+          stateVersions: [{
+            workstreamId: S,
+            commonEventId: "00000000-0000-7000-8000-0000000000e1",
+            viewerEventId: null,
+            authorityGeneration: 1,
+            commonWaterline: 1,
+            viewerWaterline: 0,
+          }],
+          nextCursor: null,
+          directoryWaterline: 0,
+        }),
+      },
+    }),
   });
   const app = new Hono<HonoAppEnv>();
   app.use("*", async (context, next) => {

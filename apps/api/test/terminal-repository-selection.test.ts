@@ -10,8 +10,18 @@ import {
   createGitHubTerminalCatalogGateway,
   type TerminalRepositoryCatalogGateway,
 } from "../src/services/terminal/workstream-state";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  executeWorkstreamObjectSql,
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const W = "71000000-0000-4000-8000-000000000001";
 const S = "71000000-0000-4000-8000-000000000002";
@@ -19,7 +29,7 @@ const U = asUserId("71000000-0000-4000-8000-000000000003");
 const R = "71000000-0000-4000-8000-000000000004";
 const PERSONAL = "71000000-0000-4000-8000-000000000005";
 const WORKSPACE = "71000000-0000-4000-8000-000000000006";
-const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -27,7 +37,7 @@ afterEach(() => {
 });
 
 async function fixture(input?: { backupResult?: string; baseSha?: string; emailAddress?: string | null }) {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   const emailAddressSql = input?.emailAddress === null
     ? "NULL"
@@ -50,6 +60,11 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
       repositories: [],
     },
   });
+  // The routed statements read work-stream product state (the branch name
+  // comes from the work stream's email address) and the run rows from the
+  // object, so the fixture opens the authority and seeds the object the way
+  // the cutover left production.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'repository-selection', 'repo@example.com', 'Repo', '2026-08-13', '2026-08-13');
@@ -63,13 +78,42 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
     VALUES ('${S}', '${W}', 'Repo', 'Repo', 'ad_hoc', '${U}', 'running',
             ${emailAddressSql},
             '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO workstream_participants
-      (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-    VALUES ('${S}', '${U}', '${U}', 'creator', '2026-08-13');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${R}', '${W}', '${S}', 'manual', '{"type":"user","userId":"${U}"}', 'running', '2026-08-13');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  databases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams
+       (id, workspace_id, title, objective, origin_type, created_by_user_id,
+        harness_status, email_address, last_activity_at, created_at, updated_at)
+     VALUES (?, ?, 'Repo', 'Repo', 'ad_hoc', ?, 'running', ?, '2026-08-13', '2026-08-13', '2026-08-13')`,
+    S,
+    W,
+    U,
+    input?.emailAddress === null
+      ? null
+      : input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com",
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstream_participants
+       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+     VALUES (?, ?, ?, 'creator', '2026-08-13')`,
+    S,
+    U,
+    U,
+  );
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'manual', ?, 'running', '2026-08-13')`,
+    R,
+    W,
+    S,
+    JSON.stringify({ type: "user", userId: U }),
+  );
   database.prepare(
     `INSERT INTO connector_connections
      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
@@ -115,11 +159,47 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
     })),
   };
   const payloadPut = vi.fn(async () => undefined);
-  const env = createTestEnv({
+  // Wrapped the way the harness wraps its execution environment, so the
+  // routed DB carries object statements to the store while
+  // `regionalDatabase(env)` still reaches the raw regional binding.
+  const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+    // Backup uploads attach their resource through the object's RPC surface;
+    // the stub records the link the way the SubstreamAgent's product does.
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
+      extra: {
+        attachRuntimeResource: vi.fn((request: {
+          resourceId: string;
+          attachedByUserId: string | null;
+          relationshipType?: string;
+        }) => {
+          objectStore.prepare(
+            `INSERT OR IGNORE INTO workstream_resource_links
+               (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+                resource_json, attached_at, updated_at)
+             VALUES (?, ?, 0, ?, ?, ?, ?)`,
+          ).run(
+            request.resourceId,
+            request.attachedByUserId,
+            request.relationshipType ?? "generated",
+            JSON.stringify({ id: request.resourceId }),
+            Date.parse("2026-08-13T12:00:00.000Z"),
+            Date.parse("2026-08-13T12:00:00.000Z"),
+          );
+          return { status: 200, bodyJson: JSON.stringify({ ok: true }) };
+        }),
+      },
+    }),
   });
+  const env = withWorkstreamRuntimeDatabase(
+    baseEnv,
+    W,
+    S,
+    "0",
+    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
+  );
   const context: HarnessToolContext = {
     workspaceId: W,
     workstreamId: S,
@@ -130,6 +210,7 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
   };
   return {
     database,
+    objectStore,
     env,
     provider,
     payloadPut,
@@ -146,14 +227,16 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
 
 describe("Terminal model repository selection", () => {
   it("prefers read-only remote authority while keeping local edits available and backs up before replacement", async () => {
-    const { database, provider, payloadPut, context, selector } = await fixture();
-    database.prepare(
+    const { objectStore, provider, payloadPut, context, selector } = await fixture();
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_sandboxes
        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
         authority_fingerprint, applied_network_revision, version, last_activity_at,
         created_at, updated_at)
        VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-    ).run(W, S, "2026-08-13", "2026-08-13", "2026-08-13");
+      W, S, "2026-08-13", "2026-08-13", "2026-08-13",
+    );
 
     await expect(selector.checkout(context, {
       repositoryFullName: "acme/widget",
@@ -177,12 +260,16 @@ describe("Terminal model repository selection", () => {
     expect(archiveCommand).toContain("--exclude='*/node_modules'");
     expect(provider.runCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT connection_id, repository_full_name FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ connection_id: PERSONAL, repository_full_name: "acme/widget" });
-    expect(database.prepare(
+      W, S,
+    )).toEqual({ connection_id: PERSONAL, repository_full_name: "acme/widget" });
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT COUNT(*) AS count FROM workstream_resources WHERE workstream_id = ?",
-    ).get(S)).toEqual({ count: 1 });
+      S,
+    )).toEqual({ count: 1 });
   });
 
   it("selects full remote authority only when the model explicitly requires it", async () => {
@@ -201,7 +288,7 @@ describe("Terminal model repository selection", () => {
   });
 
   it("treats a read-only request as a durable ceiling even when the policy allows full access", async () => {
-    const { database, context, selector } = await fixture();
+    const { database, objectStore, context, selector } = await fixture();
     database.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?")
       .run(PERSONAL);
 
@@ -213,9 +300,11 @@ describe("Terminal model repository selection", () => {
       remoteAccess: "read_only",
       remoteWritesAllowed: false,
     });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT remote_access FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ remote_access: "read_only" });
+      W, S,
+    )).toEqual({ remote_access: "read_only" });
   });
 
   it("reuses the shared four-word Avalon naming scheme when no work-stream address exists", async () => {
@@ -251,13 +340,13 @@ describe("Terminal model repository selection", () => {
 
   it("refreshes an existing repository selection when its default branch advances", async () => {
     const nextBase = "b".repeat(40);
-    const { database, context, selector } = await fixture({ baseSha: nextBase });
-    database.prepare(
+    const { objectStore, context, selector } = await fixture({ baseSha: nextBase });
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_terminal_repositories
        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
         base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
        VALUES (?, ?, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?)`,
-    ).run(
       W,
       S,
       PERSONAL,
@@ -276,26 +365,33 @@ describe("Terminal model repository selection", () => {
       baseSha: nextBase,
       headRef: "avalon/bright-coastal-exact-heron",
     });
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT base_sha FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ base_sha: nextBase });
+      W, S,
+    )).toEqual({ base_sha: nextBase });
   });
 
   it("claims the shared sandbox lease before replacing repository state", async () => {
-    const { database, provider, context, selector } = await fixture();
+    const { objectStore, provider, context, selector } = await fixture();
     const otherRun = "71000000-0000-4000-8000-000000000099";
-    database.prepare(
+    // 'scheduled' rather than 'running': the object allows one mutating run
+    // per substream and the fixture's own run holds that slot; the lease
+    // check counts a scheduled run as active all the same.
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', ?, 'running', ?)`,
-    ).run(otherRun, W, S, JSON.stringify({ type: "user", userId: U }), "2026-08-13");
-    database.prepare(
+       VALUES (?, ?, ?, 'manual', ?, 'scheduled', ?)`,
+      otherRun, W, S, JSON.stringify({ type: "user", userId: U }), "2026-08-13",
+    );
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_sandboxes
        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
         authority_fingerprint, applied_network_revision, version, operation_run_id,
         operation_lease_expires_at, last_activity_at, created_at, updated_at)
        VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?, ?, ?)`,
-    ).run(
       W,
       S,
       otherRun,
@@ -316,14 +412,16 @@ describe("Terminal model repository selection", () => {
   it.each(["stopped", "archived"] as const)(
     "restores a %s sandbox when backup fails after temporary startup",
     async (state) => {
-      const { database, provider, context, selector } = await fixture();
-      database.prepare(
+      const { objectStore, provider, context, selector } = await fixture();
+      workstreamObjectRun(
+        objectStore,
         `INSERT INTO workstream_sandboxes
          (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
           authority_fingerprint, applied_network_revision, version, last_activity_at,
           created_at, updated_at)
          VALUES (?, ?, ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-      ).run(W, S, state, "2026-08-13", "2026-08-13", "2026-08-13");
+        W, S, state, "2026-08-13", "2026-08-13", "2026-08-13",
+      );
       vi.mocked(provider.runCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
 
       await expect(selector.checkout(context, {
@@ -339,26 +437,32 @@ describe("Terminal model repository selection", () => {
   );
 
   it("fails closed without deleting the sandbox when the harness backup exceeds its limit", async () => {
-    const { database, provider, context, selector } = await fixture({ backupResult: "TOO_LARGE 60000000\n" });
-    database.prepare(
+    const { objectStore, provider, context, selector } = await fixture({ backupResult: "TOO_LARGE 60000000\n" });
+    workstreamObjectRun(
+      objectStore,
       `INSERT INTO workstream_sandboxes
        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
         authority_fingerprint, applied_network_revision, version, last_activity_at,
         created_at, updated_at)
        VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
-    ).run(W, S, "2026-08-13", "2026-08-13", "2026-08-13");
+      W, S, "2026-08-13", "2026-08-13", "2026-08-13",
+    );
 
     await expect(selector.checkout(context, {
       repositoryFullName: "acme/widget",
       requiredRemoteAccess: "read_only",
     })).rejects.toMatchObject({ code: "workspace_backup_too_large" });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    expect(database.prepare(
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT provider_sandbox_id FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ provider_sandbox_id: "provider-1" });
-    expect(database.prepare(
+      W, S,
+    )).toEqual({ provider_sandbox_id: "provider-1" });
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT COUNT(*) AS count FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
-    ).get(W, S)).toEqual({ count: 0 });
+      W, S,
+    )).toEqual({ count: 0 });
   });
 
   it("revalidates a personal GitHub user's current repository visibility before App checkout", async () => {

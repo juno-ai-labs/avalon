@@ -33,18 +33,45 @@ describe("database primitives", () => {
     expect(sql).toContain("ELSE workstream_participants.joined_at");
   });
 
-  it("lists work streams strictly by latest activity instead of harness status", async () => {
-    const statement = {
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ success: true, results: [] })
-    };
+  it("returns the committed initial work-stream shape without a retired-schema read", async () => {
+    const statement = { bind: vi.fn().mockReturnThis() };
     const prepare = vi.fn().mockReturnValue(statement);
-    const db = createDatabase({ prepare, batch: vi.fn() } as never);
+    const batch = vi.fn(async (statements: unknown[]) => (
+      statements.map(() => ({ success: true }))
+    ));
+    const db = createDatabase({ prepare, batch } as never);
+    const id = newId();
+    const workspaceId = newId();
+    const creatorUserId = newId();
 
-    await db.workstreams.list(newId());
+    const created = await db.workstreams.create({
+      id,
+      workspaceId,
+      title: "Finish the D1 retirement",
+      titleStatus: "settled",
+      objective: "Keep product state in Durable Objects",
+      emailAddress: "finish@example.com",
+      creatorUserId,
+      openingAuthor: { type: "human", userId: creatorUserId },
+      openingMessage: "Finish it",
+      clientMessageId: newId(),
+      participantUserIds: [],
+      scope: "workspace",
+    });
 
-    const sql = String(prepare.mock.calls[0]?.[0]);
-    expect(sql).toContain("ORDER BY w.last_activity_at DESC");
-    expect(sql).not.toContain("CASE w.harness_status");
+    expect(created.workstream).toMatchObject({
+      id,
+      workspaceId,
+      title: "Finish the D1 retirement",
+      objective: "Keep product state in Durable Objects",
+      createdByUserId: creatorUserId,
+      harnessStatus: "running",
+      latestAttentionSequenceNumber: 1,
+      nextPendingWakeup: null,
+    });
+    expect(batch).toHaveBeenCalledOnce();
+    expect(prepare.mock.calls.map(([sql]) => String(sql)).join("\n"))
+      .not.toMatch(/LEFT JOIN workstream_wakeups|automation_subscriptions/u);
   });
+
 });

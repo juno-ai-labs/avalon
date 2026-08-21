@@ -8,10 +8,10 @@
 // visible change to the template should be checked here before it is called
 // done.
 //
-// The digest body itself is written by a model at send time, so this cannot
-// invent one. It renders whichever body you give it — a saved digest that has
-// already been delivered, or a representative sample — through the real
-// template, with the real counts and the real recipient.
+// The digest body itself is written by a model at send time, so this renders a
+// representative sample through the real template for each real recipient.
+// Product bodies and work-stream titles live in WorkspaceDO, not D1; this tool
+// deliberately reads only regional identity data.
 //
 // Run it through tsx, because it imports the real template rather than a copy
 // of it, and that template is TypeScript:
@@ -120,6 +120,12 @@ export function sampleBody(input) {
   ].join("\n");
 }
 
+const SAMPLE_WORKSTREAMS = [
+  { id: null, title: "Prepare the Acme client follow-up" },
+  { id: null, title: "Investigate the invoice retry failures" },
+  { id: null, title: "Review the onboarding handoff" },
+];
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const { readFileSync, readdirSync } = await import("node:fs");
@@ -145,7 +151,7 @@ async function main() {
   const { occurrenceLabel } = await import("../apps/api/src/services/digest-delivery-service.ts");
 
   const members = database.prepare(
-    `SELECT u.id, u.name, u.email, u.timezone, w.id AS workspace_id, w.name AS workspace_name
+    `SELECT u.id, u.name, u.email, u.timezone, w.name AS workspace_name
        FROM workspace_members m
        JOIN users u ON u.id = m.user_id
        JOIN workspaces w ON w.id = m.workspace_id
@@ -157,40 +163,28 @@ async function main() {
   mkdirSync(options.out, { recursive: true });
   const written = [];
   for (const member of members) {
-    const workstreams = database.prepare(
-      "SELECT id, title FROM workstreams WHERE workspace_id = ? AND system_kind IS NULL ORDER BY last_activity_at DESC LIMIT 4",
-    ).all(member.workspace_id);
     const others = members.filter((candidate) => candidate.id !== member.id);
-    // A digest that has already been delivered is the truest preview there is;
-    // fall back to the sample only when this person has never received one.
-    const delivered = database.prepare(
-      `SELECT summary_markdown, event_count, highlight_count, planned_for
-         FROM digest_deliveries
-        WHERE user_id = ? AND status = 'delivered' AND summary_markdown IS NOT NULL
-        ORDER BY planned_for DESC LIMIT 1`,
-    ).get(member.id);
-
-    const highlightCount = delivered ? Number(delivered.highlight_count) : 1;
-    const bodyMarkdown = delivered?.summary_markdown ?? sampleBody({
-      workstreams,
+    const highlightCount = 1;
+    const bodyMarkdown = sampleBody({
+      workstreams: SAMPLE_WORKSTREAMS,
       otherName: others[0]?.name ?? "A teammate",
       highlightCount,
     });
-    const plannedFor = delivered?.planned_for ?? new Date().toISOString();
+    const plannedFor = new Date().toISOString();
 
     const html = digestEmailHtml({
       recipientName: member.name,
       workspaceName: member.workspace_name,
       occurrenceLabel: occurrenceLabel(plannedFor, member.timezone),
       bodyMarkdown,
-      itemCount: delivered ? Number(delivered.event_count) : Math.max(workstreams.length * 2, 3),
+      itemCount: SAMPLE_WORKSTREAMS.length * 2,
       highlightCount,
       appUrl: "https://with-avalon.com",
       settingsUrl: "https://with-avalon.com/app/settings/digest",
     });
     const file = join(options.out, `${member.email.replace(/[^a-z0-9]+/giu, "-")}.html`);
     writeFileSync(file, html);
-    written.push({ file, name: member.name, source: delivered ? "delivered digest" : "sample body" });
+    written.push({ file, name: member.name, source: "sample body" });
   }
 
   database.close();

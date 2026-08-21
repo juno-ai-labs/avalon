@@ -150,8 +150,8 @@ beforeEach(async () => {
   even for a test that inherited state because a previous test's own cleanup
   never ran.
 - **Know what `reset()` reaches: everything.** It deletes all data from every
-  attached binding. For D1 that includes the *schema* — measured here, 154 tables
-  before the call and none after — and it reaches Durable Object storage too: a
+  attached binding. For D1 that includes the *schema* — the complete migrated
+  schema before the call and no tables after — and it reaches Durable Object storage too: a
   table written through `runInDurableObject` is gone when the same object id is
   opened after a reset. A file that isolates its tests some other way is not
   evidence against that: `agent-run-lifecycle.test.ts` and

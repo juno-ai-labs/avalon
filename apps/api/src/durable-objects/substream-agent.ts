@@ -35,7 +35,6 @@ import {
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import {
   SUBSTREAM_AGENT_RUN_DISPATCHES,
   claimAgentRunDispatch,
@@ -73,10 +72,7 @@ import { refreshWorkstreamDescription } from "../services/workstream-description
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import {
-  fireWorkstreamWakeup,
-  WorkstreamService,
-} from "../services/workstream-service";
+import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import {
   acceptsNewWorkstreamWork,
@@ -2246,26 +2242,13 @@ export class SubstreamAgent extends DurableObject<Env> {
       span.setError("socket_identity_failed");
       throw error;
     }
-    const authorized = currentAuthority.phase === "durable_object_open"
-      ? Boolean(await span.step("workstream.room.socket.member_authorize", () => this.env.DB.prepare(
+    const authorized = Boolean(await span.step(
+      "workstream.room.socket.member_authorize",
+      () => this.env.DB.prepare(
         `SELECT 1 AS one FROM workspace_members
           WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-      ).bind(identity.data.workspaceId, identity.data.userId).first<{ one: number }>()))
-        && this.product.canRead(identity.data.userId)
-      : Boolean(await span.step("workstream.room.socket.member_authorize", () => this.env.DB.prepare(
-        `SELECT 1
-           FROM workstreams w
-           JOIN workspace_members member ON member.workspace_id = w.workspace_id
-          WHERE w.id = ?1 AND w.workspace_id = ?2
-            AND member.user_id = ? AND member.status = 'active'
-            AND w.archived_at IS NULL
-            AND ${workstreamVisibilitySql("?3")}
-          LIMIT 1`,
-      ).bind(
-        identity.data.workstreamId,
-        identity.data.workspaceId,
-        identity.data.userId,
-      ).first()));
+      ).bind(identity.data.workspaceId, identity.data.userId).first<{ one: number }>(),
+    )) && this.product.canRead(identity.data.userId);
     if (!authorized) {
       span.setError("forbidden");
       return jsonResponse({ error: "forbidden" }, 403);
@@ -2481,29 +2464,15 @@ export class SubstreamAgent extends DurableObject<Env> {
     const placeholders = userIds.map(() => "?").join(",");
     let permitted: Set<string>;
     try {
-      const authority = await readWorkstreamAuthorityControl(this.env);
-      if (authority.phase === "durable_object_open") {
-        const result = await this.env.DB.prepare(
-          `SELECT member.user_id
-             FROM workspace_members member
-            WHERE member.workspace_id = ? AND member.status = 'active'
-              AND member.user_id IN (${placeholders})`,
-        ).bind(identity.workspaceId, ...userIds).all<{ user_id: string }>();
-        permitted = new Set((result.results ?? [])
-          .map((row) => row.user_id)
-          .filter((userId) => this.product.canRead(userId)));
-      } else {
-        const result = await this.env.DB.prepare(
-          `SELECT member.user_id
-             FROM workstreams w
-             JOIN workspace_members member ON member.workspace_id = w.workspace_id
-            WHERE w.id = ? AND w.workspace_id = ?
-              AND member.status = 'active' AND member.user_id IN (${placeholders})
-              AND ${workstreamVisibilitySql("member.user_id")}`,
-        ).bind(identity.workstreamId, identity.workspaceId, ...userIds)
-          .all<{ user_id: string }>();
-        permitted = new Set((result.results ?? []).map((row) => row.user_id));
-      }
+      const result = await this.env.DB.prepare(
+        `SELECT member.user_id
+           FROM workspace_members member
+          WHERE member.workspace_id = ? AND member.status = 'active'
+            AND member.user_id IN (${placeholders})`,
+      ).bind(identity.workspaceId, ...userIds).all<{ user_id: string }>();
+      permitted = new Set((result.results ?? [])
+        .map((row) => row.user_id)
+        .filter((userId) => this.product.canRead(userId)));
     } catch {
       if (certain) {
         this.evictEveryReaderPendingReauthorization(sockets);
@@ -2688,7 +2657,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     span: FlowSpan = noFlowSpan,
   ): Promise<void> {
     let deliveredThrough = await span.step("workstream.room.subscribe.current_sequence", () =>
-      this.currentSequence(workstreamId));
+      this.currentSequence());
     const plan = planSocketReplay(
       afterSequence,
       deliveredThrough,
@@ -2706,11 +2675,11 @@ export class SubstreamAgent extends DurableObject<Env> {
     await span.step("workstream.room.subscribe.deliver", () =>
       this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, plan, span));
 
-    // Loading an initial snapshot awaits D1 and can yield to a concurrently
+    // Loading an initial snapshot awaits object storage and can yield to a concurrently
     // published event. Keep this socket out of broadcasts until a second,
     // in-memory catch-up closes that bootstrap race.
     const catchUpSequence = await span.step("workstream.room.subscribe.catch_up_sequence", () =>
-      this.currentSequence(workstreamId));
+      this.currentSequence());
     if (catchUpSequence > deliveredThrough) {
       span.setAttributes({ "avalon.subscribe.catch_up_events": catchUpSequence - deliveredThrough });
       await span.step("workstream.room.subscribe.deliver_catch_up", () => this.deliverReplayPlan(
@@ -2790,7 +2759,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       const canonicalFeed = await span.step("workstream.room.snapshot.transcript", () =>
         this.product.messages(auth, 250));
       const messageFeed = { ...canonicalFeed, items: [...canonicalFeed.items] };
-      const sequence = knownSequence ?? await this.currentSequence(workstreamId);
+      const sequence = knownSequence ?? await this.currentSequence();
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
       const activeStreams = workstream.harnessStatus === "running"
         ? storedCheckpoints.filter((checkpoint) =>
@@ -2857,10 +2826,6 @@ export class SubstreamAgent extends DurableObject<Env> {
     const auth = await this.socketAuth(attachment);
     if (!auth) throw new Error("Snapshot viewer is no longer authorized");
     const viewers = await this.loadViewers(workspaceId, workstreamId);
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase !== "durable_object_open") {
-      return { ...await new WorkstreamService(this.env, auth).get(workstreamId), viewers };
-    }
     return this.product.get(auth, viewers);
   }
 
@@ -2882,13 +2847,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         )
       );
 
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    const participantIds = authority.phase === "durable_object_open"
-      ? new Set(this.product.activeParticipantIds())
-      : new Set((await this.env.DB.prepare(
-        `SELECT user_id FROM workstream_participants
-          WHERE workstream_id = ? AND removed_at IS NULL`,
-      ).bind(workstreamId).all<{ user_id: string }>()).results.map((row) => row.user_id));
+    const participantIds = new Set(this.product.activeParticipantIds());
     const viewers = distinctNonParticipantViewers(attachments, participantIds);
 
     return Promise.all(
@@ -2985,14 +2944,8 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
-  private async currentSequence(workstreamId: string): Promise<number> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open") return this.objectStore.currentSequence();
-    const canonical = await this.env.DB.prepare(
-      `SELECT COALESCE(MAX(sequence_number), 0) AS sequence
-         FROM messages WHERE workstream_id = ?`,
-    ).bind(workstreamId).first<{ sequence: number }>();
-    return this.objectStore.currentSequence(canonical?.sequence ?? 0);
+  private async currentSequence(): Promise<number> {
+    return this.objectStore.currentSequence();
   }
 
   private async allocateSequence(requested?: number): Promise<number> {

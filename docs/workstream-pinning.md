@@ -16,7 +16,7 @@ the different question of who a work stream is *for*.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/db/migrations/0064_workstream_pins.sql` | Frozen legacy D1 pins imported during the maintenance cutover; post-cutover triggers reject writes. |
+| `packages/db/migrations/0064_workstream_pins.sql`, `0090_drop_legacy_product_tables.sql` | Historical D1 pin source through 0089, then its final removal after import. |
 | `packages/contracts/src/index.ts` | `WorkstreamSchema.pinPosition` — the per-viewer position on the wire — and `ReorderWorkstreamPinsRequestSchema`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative `workspace_workstream_pins`, transactional position rewrites, readability checks, directory waterline, and socket invalidation. |
 | `apps/api/src/services/workstream-directory-service.ts` | Typed Worker-to-WorkspaceDO pin/unpin/reorder adapter used by the existing HTTP command routes. |
@@ -233,8 +233,7 @@ It deliberately does not:
 
 | Suite | What it covers |
 | --- | --- |
-| `apps/api/test/workstream-pinning.test.ts` | Append-on-pin, per-person isolation, dense rewrite on unpin, tolerant reorder, the first-page backfill, and that an unreadable work stream cannot be pinned but a stale pin can be removed. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO directory/pin ownership, ordering, and hibernating page delivery. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and continuous number navigation from pins into recent work streams and notes for the first nine rows, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
@@ -259,6 +258,24 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-20 — The imported D1 pin source is removed
+
+**What changed:** Migration 0090 drops `workstream_pins` and its writer fences,
+and the obsolete D1 pin/list service and Node fixture are deleted. The real
+workerd suite now owns pin-order and per-user isolation coverage against
+WorkspaceDO SQLite.
+
+**Why:** Import is complete, and retaining an empty regional pin table leaves a
+second schema that a misrouted read can mistake for authority. The old Node test
+proved SQLite statements against that dead table, not the deployed owner.
+
+**Considered and rejected:** Keeping the D1 test as compatibility coverage.
+Pin commands are native typed WorkspaceDO RPCs, so there is no regional SQL
+dialect to preserve.
+
+**Consequences:** A WorkspaceDO outage fails the pin surface closed. D1 contains
+neither pin data nor a fallback query.
 
 ### 2026-08-18 — Pin pages use the workspace directory waterline
 

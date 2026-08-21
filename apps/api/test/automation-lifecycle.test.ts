@@ -5,9 +5,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
+
+/** Per-workstream object databases, shared by every binding built over one regional database. */
+const objectStoresByDatabase = new WeakMap<DatabaseSync, Map<string, DatabaseSync>>();
+
+function storesFor(database: DatabaseSync): Map<string, DatabaseSync> {
+  let stores = objectStoresByDatabase.get(database);
+  if (!stores) {
+    stores = new Map();
+    objectStoresByDatabase.set(database, stores);
+  }
+  return stores;
+}
 
 const ensureAutomationAddress = vi.hoisted(() => vi.fn(async () => ({ emailAddress: null })));
 
@@ -40,6 +60,7 @@ function serviceFor(database: DatabaseSync): AutomationService {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ refresh: async () => undefined }),
@@ -56,6 +77,7 @@ function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ refresh: async () => { throw new Error("scheduler unreachable"); } }),
@@ -81,7 +103,22 @@ function schedulerFor(database: DatabaseSync) {
       blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
       storage,
     }),
-    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" }),
+    createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
+      // Post-cutover the scheduler reads work-stream alarm targets from the
+      // WorkspaceDO directory and serves workspace product SQL through its
+      // port. The stub keeps the seeded rows in the same database while
+      // answering the directory RPCs with no extra targets.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          workstreamScheduleTargets: async () => ({ items: [] }),
+          dueWorkstreamDirectory: async () => [],
+          plannedWorkstream: async () => null,
+        },
+      }),
+    }),
   );
   return { scheduler, setAlarm, deleteAlarm };
 }
@@ -277,6 +314,28 @@ describe("automation lifecycle", () => {
       VALUES ('00000000-0000-7000-8000-00000000000b', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000007', '00000000-0000-7000-8000-00000000000a', 'schedule',
               '2026-01-02T16:00:00.000Z', NULL, 'scheduled', '2026-01-01');
     `);
+    // The planned work stream's product state lives in its own object; the
+    // archive the delete performs is routed there, so the row it guards on
+    // (harness_status = 'scheduled') has to exist there too.
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    seedWorkstreamObjectRoot(objectStore, {
+      workstreamId: "00000000-0000-7000-8000-00000000000a",
+      workspaceId: "00000000-0000-7000-8000-000000000001",
+    });
+    storesFor(database).set("00000000-0000-7000-8000-00000000000a", objectStore);
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO workstreams
+         (id, workspace_id, title, objective, origin_type, created_by_user_id, automation_subscription_id,
+          automation_run_id, planned_for, harness_status, last_activity_at, created_at, updated_at)
+       VALUES (?, ?, 'Daily product brief', 'Write the brief', 'automation', NULL, ?,
+               ?, '2026-01-02T16:00:00.000Z', 'scheduled', '2026-01-01', '2026-01-01', '2026-01-01')`,
+      "00000000-0000-7000-8000-00000000000a",
+      "00000000-0000-7000-8000-000000000001",
+      "00000000-0000-7000-8000-000000000007",
+      "00000000-0000-7000-8000-00000000000b",
+    );
 
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
@@ -286,9 +345,12 @@ describe("automation lifecycle", () => {
       status: "failed",
       result_summary: "The automation was deleted before this run started",
     });
-    expect(database.prepare(
+    // The archive is a product write, applied in the work stream's own object.
+    expect(workstreamObjectGet(
+      objectStore,
       "SELECT archived_at IS NOT NULL AS archived FROM workstreams WHERE id = ?",
-    ).get("00000000-0000-7000-8000-00000000000a")).toEqual({ archived: 1 });
+      "00000000-0000-7000-8000-00000000000a",
+    )).toEqual({ archived: 1 });
   });
 
   it("refuses inbound email to a deleted automation's address", async () => {
@@ -318,8 +380,11 @@ describe("automation lifecycle", () => {
 });
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // Every automation path serves work-stream product state from the
+  // Durable-Object authority now; open it before any product rows exist.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('00000000-0000-7000-8000-000000000002', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');

@@ -1096,16 +1096,20 @@ export async function heartbeatInlineChildAttempt(
 ): Promise<AttemptLease> {
   const boundedSeconds = Math.max(10, Math.min(300, Math.trunc(leaseSeconds)));
   const result = await db.prepare(
-    `UPDATE harness_runs AS child
+    // No alias on the UPDATE target: post-cutover this statement lands on the
+    // object's INSTEAD-OF-trigger view, and SQLite cannot resolve an alias on
+    // a view target ("no such column: child.id"). Qualifying by name works on
+    // both a table and a view.
+    `UPDATE harness_runs
         SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
             lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', printf('+%d seconds', ?8))
-      WHERE child.id = ?4 AND child.workspace_id = ?2 AND child.workstream_id = ?3
-        AND child.parent_harness_run_id = ?1
-        AND child.parent_tool_call_id IS NOT NULL
-        AND child.attempt_id = ?5 AND child.lease_owner = ?6
-        AND child.status = 'running' AND child.terminalized_at IS NULL
-        AND child.cancellation_requested_at IS NULL
-        AND child.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE harness_runs.id = ?4 AND harness_runs.workspace_id = ?2 AND harness_runs.workstream_id = ?3
+        AND harness_runs.parent_harness_run_id = ?1
+        AND harness_runs.parent_tool_call_id IS NOT NULL
+        AND harness_runs.attempt_id = ?5 AND harness_runs.lease_owner = ?6
+        AND harness_runs.status = 'running' AND harness_runs.terminalized_at IS NULL
+        AND harness_runs.cancellation_requested_at IS NULL
+        AND harness_runs.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         AND EXISTS (
           SELECT 1 FROM harness_runs parent
            WHERE parent.id = ?1 AND parent.workspace_id = ?2 AND parent.workstream_id = ?3
@@ -2258,18 +2262,21 @@ export async function terminalizeInlineChildAttempt(
       parentLease.owner,
     ),
     db.prepare(
-      `UPDATE harness_runs AS child
+      // Alias-free for the same reason as the inline-child heartbeat: the
+      // object's harness_runs is an INSTEAD-OF-trigger view, and SQLite cannot
+      // resolve an alias on a view UPDATE target.
+      `UPDATE harness_runs
           SET status = ?8, completed_at = ?9, terminalized_at = ?9,
               model = COALESCE(?10, model), usage_json = COALESCE(?11, usage_json),
               error_json = ?12, child_result_json = ?13, child_result_hash = ?14,
               lease_owner = NULL, lease_expires_at = NULL
-        WHERE child.id = ?5 AND child.workspace_id = ?3 AND child.workstream_id = ?4
-          AND child.parent_harness_run_id = ?2
-          AND child.parent_tool_call_id IS NOT NULL
-          AND child.attempt_id = ?6 AND child.lease_owner = ?7
-          AND child.terminalized_at IS NULL
-          AND (?8 = 'stopped' OR child.cancellation_requested_at IS NULL)
-          AND child.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE harness_runs.id = ?5 AND harness_runs.workspace_id = ?3 AND harness_runs.workstream_id = ?4
+          AND harness_runs.parent_harness_run_id = ?2
+          AND harness_runs.parent_tool_call_id IS NOT NULL
+          AND harness_runs.attempt_id = ?6 AND harness_runs.lease_owner = ?7
+          AND harness_runs.terminalized_at IS NULL
+          AND (?8 = 'stopped' OR harness_runs.cancellation_requested_at IS NULL)
+          AND harness_runs.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           AND EXISTS (
             SELECT 1 FROM harness_runs parent
              WHERE parent.id = ?2 AND parent.attempt_id = ?15 AND parent.lease_owner = ?16
@@ -2743,19 +2750,22 @@ export async function reapStaleHarnessRuns(
         now,
       ),
       db.prepare(
-        `UPDATE harness_runs AS child
+        // Alias-free because the object's harness_runs is an INSTEAD-OF-trigger
+        // view and SQLite cannot resolve an alias on a view UPDATE target; the
+        // outer rows correlate into the subqueries by the view's own name.
+        `UPDATE harness_runs
             SET status = ?6, completed_at = ?7, terminalized_at = ?7,
                 error_json = ?8, child_result_json = ?9, child_result_hash = ?10,
                 lease_owner = NULL, lease_expires_at = NULL
-          WHERE child.id = ?1 AND child.attempt_id = ?2 AND child.lease_expires_at = ?3
-            AND child.parent_harness_run_id = ?4 AND child.parent_tool_call_id = ?5
-            AND child.status = 'running' AND child.terminalized_at IS NULL
-            AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            AND ${invalidParentPredicate}
+          WHERE harness_runs.id = ?1 AND harness_runs.attempt_id = ?2 AND harness_runs.lease_expires_at = ?3
+            AND harness_runs.parent_harness_run_id = ?4 AND harness_runs.parent_tool_call_id = ?5
+            AND harness_runs.status = 'running' AND harness_runs.terminalized_at IS NULL
+            AND harness_runs.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            AND ${invalidParentPredicate.replaceAll("child.", "harness_runs.")}
             AND EXISTS (
               SELECT 1 FROM harness_run_lifecycle_events lifecycle
-               WHERE lifecycle.id = ?11 AND lifecycle.harness_run_id = child.id
-                 AND lifecycle.attempt_id = child.attempt_id
+               WHERE lifecycle.id = ?11 AND lifecycle.harness_run_id = harness_runs.id
+                 AND lifecycle.attempt_id = harness_runs.attempt_id
                  AND lifecycle.event_key = 'terminal'
             )`,
       ).bind(

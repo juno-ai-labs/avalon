@@ -10,7 +10,7 @@ vi.mock("../src/services/structured-inference", () => ({ runStructuredInference 
 import type { Env } from "../src/env";
 import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const { routeContextually } = __testing;
@@ -104,7 +104,7 @@ function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknow
 }
 
 function seededDatabase(): DatabaseSync {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)

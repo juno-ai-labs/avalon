@@ -4,20 +4,33 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  openWorkstreamAuthorityForTest,
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const W = asWorkspaceId("30000000-0000-4000-8000-000000000001");
 const S = asWorkstreamId("30000000-0000-4000-8000-000000000002");
 const R = asHarnessRunId("30000000-0000-4000-8000-000000000003");
 const U = asUserId("30000000-0000-4000-8000-000000000004");
 
-const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
+const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
 function fixture(capability: "supported" | "unsupported", emergencyDisabled = false) {
-  const database = migratedSqliteDatabase();
+  const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
+  // Tool loading routes work-stream state through the object port once the
+  // authority is open; the run row lives only there since migration 0090.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${U}', 'plugin-user', 'plugin@example.com', 'Plugin', '2026-08-13', '2026-08-13');
@@ -30,12 +43,21 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
        harness_status, last_activity_at, created_at, updated_at)
     VALUES ('${S}', '${W}', 'Plugin', 'Plugin', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
-    INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES ('${R}', '${W}', '${S}', 'test', '{"type":"user","userId":"${U}"}', 'running', '2026-08-13');
   `);
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO harness_runs
+      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+    VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
+    R, W, S, JSON.stringify({ type: "user", userId: U }),
+  );
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     TERMINAL_REGION_CAPABILITY: capability,
     DAYTONA_API_KEY: "daytona-key", DAYTONA_API_URL: "https://app.daytona.io/api",
@@ -47,13 +69,13 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
     triggerMessageId: null, automationSubscriptionId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
   };
-  return { database, env, input };
+  return { database, objectStore, env, input };
 }
 
 describe("Terminal Bind integration", () => {
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
-    const { database, env, input } = fixture("supported");
-    const tools = await __integrationTesting.loadHarnessTools(env, input);
+    const { objectStore, env, input } = fixture("supported");
+    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "terminal" });
@@ -61,12 +83,12 @@ describe("Terminal Bind integration", () => {
       "read_file", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
   });
 
   it("omits Terminal in unsupported regions", async () => {
     const { env, input } = fixture("unsupported");
-    const tools = await __integrationTesting.loadHarnessTools(env, input);
+    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
     expect(tools.plugins.some((plugin) => plugin.canonicalId === "avalon:terminal")).toBe(false);
   });
 
@@ -74,13 +96,13 @@ describe("Terminal Bind integration", () => {
     const { env, input } = fixture("supported");
     delete env.DAYTONA_API_KEY;
     delete env.DAYTONA_TARGET;
-    const tools = await __integrationTesting.loadHarnessTools(env, input);
+    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
     expect(tools.plugins.some((plugin) => plugin.canonicalId === "avalon:terminal")).toBe(false);
   });
 
   it("keeps the complete plugin visible while the emergency breaker blocks provider operations", async () => {
     const { env, input } = fixture("supported", true);
-    const tools = await __integrationTesting.loadHarnessTools(env, input);
+    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
     expect(plugin?.tools).toHaveLength(9);
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
