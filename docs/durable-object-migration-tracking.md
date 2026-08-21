@@ -10,7 +10,7 @@ constructor, on whichever isolate happened to wake it.
 
 This document owns the subsystem that answers the question — a separate Worker,
 `avalon-migration-tracker`, serving an operator site at
-`migrations.rallywith.ai`, fed by two independent sources: **each
+`migrations.internal.rallywith.ai`, fed by two independent sources: **each
 object reports its own migration outcome**, and **an hourly sweep enumerates the
 account** so an object that never wakes is still visible as one nobody has heard
 from. Read it before changing a migration runner, adding a Durable Object class,
@@ -367,6 +367,30 @@ seed or repair it.
 
 ## Changelog
 
+### 2026-08-21 — The operator site moves to migrations.internal.rallywith.ai
+
+**What changed:** the tracker's custom domain gained an `internal.` label, and
+the `rallywith.ai` zone gained an Advanced Certificate Manager pack covering
+`*.internal.rallywith.ai` to serve it.
+
+**Why:** the hostname was originally specified with the `internal.` label and
+shipped without it, because the zone carried Universal SSL only — a Universal
+pack covers the apex and one wildcard label, so `migrations.internal.` was not
+in it, and the certificate would not have validated. That was a real constraint
+and it made the shorter name the right call at zero cost. It stopped being the
+right call once the naming was worth a per-zone add-on: `internal.` is the label
+this account will keep putting operator tools behind, and buying the certificate
+once is cheaper than renaming later, when the Access application is bound to the
+old hostname and its AUD tag changes with it.
+
+**What a future change has to respect:** the certificate is the prerequisite,
+not a consequence — Wrangler creates the route and the DNS record whether or not
+a certificate covers them, and the hostname then fails TLS in a way that reads as
+an outage. The ACM pack is a wildcard rather than the exact hostname so the next
+tool under `internal.` needs no new order. Nothing in the Worker knows the
+hostname except `wrangler.jsonc`; the deployment health check reads it from
+there, so a future move needs no second edit.
+
 ### 2026-08-21 — The tracker deploys itself, and proves it is wired up
 
 **What changed:** `.github/workflows/deploy-migration-tracker.yml` deploys this
@@ -449,7 +473,7 @@ would not: the sweep sees an id, never a version or an error.
 ### 2026-08-19 — Durable Object migration state becomes observable
 
 **What changed:** A new Worker, `avalon-migration-tracker`, serves
-`migrations.rallywith.ai` behind Cloudflare Access. Every Durable
+`migrations.internal.rallywith.ai` behind Cloudflare Access. Every Durable
 Object in `apps/api` now reports its migration outcome — version on success,
 error on failure — onto a regional Queue that the tracker consumes in batches,
 and an hourly sweep enumerates the account so objects that have never woken are

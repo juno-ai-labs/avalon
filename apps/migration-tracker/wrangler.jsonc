@@ -24,7 +24,7 @@
     "CLOUDFLARE_ACCOUNT_ID": ""
   },
   "routes": [
-    { "pattern": "migrations.rallywith.ai", "custom_domain": true }
+    { "pattern": "migrations.internal.rallywith.ai", "custom_domain": true }
   ],
   // Hourly. Objects are discovered by the sweep and described by their own
   // reports, so a faster sweep would find the same set more often without

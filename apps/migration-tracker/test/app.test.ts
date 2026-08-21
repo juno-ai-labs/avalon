@@ -51,7 +51,7 @@ function developerEnv(): Env {
 
 async function get(path: string, environment: Env = developerEnv()): Promise<Response> {
   return app.fetch(
-    new Request(`https://migrations.rallywith.ai${path}`),
+    new Request(`https://migrations.internal.rallywith.ai${path}`),
     environment,
   );
 }
