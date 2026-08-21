@@ -603,3 +603,78 @@ test("a bare [] in a banner line does not win over the real payload", () => {
 test("a payload that is the last thing printed is still found when it is empty", () => {
   assert.deepEqual(parseWranglerJson("▲ [WARNING] retries: []\n[]", "global"), []);
 });
+
+// ---------------------------------------------------------------------------
+// Normalization must not reach inside a quoted token
+// ---------------------------------------------------------------------------
+
+test("a comment sequence inside a string literal is not treated as a comment", () => {
+  // Two different schemas hashing equal is the exact failure the fingerprint
+  // exists to detect, and it is worse than no check because the production
+  // drift comparison is trusted. A regex over the whole statement cannot tell
+  // `--` in a literal from a comment, and collapses both defaults to
+  // `DEFAULT '`.
+  const a = "CREATE TABLE t (v TEXT DEFAULT '--a')";
+  const b = "CREATE TABLE t (v TEXT DEFAULT '--b')";
+  assert.notEqual(normalizeSchemaSql(a), normalizeSchemaSql(b));
+  assert.match(normalizeSchemaSql(a), /'--a'/u);
+});
+
+test("a block-comment sequence inside a string literal is preserved", () => {
+  assert.notEqual(
+    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT '/*x*/')"),
+    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT '/*y*/')"),
+  );
+});
+
+test("whitespace inside a string literal is significant", () => {
+  assert.notEqual(
+    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'a  b')"),
+    normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'a b')"),
+  );
+});
+
+test("a quote escaped by doubling does not end the literal early", () => {
+  const doubled = normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'it''s  x', w TEXT)");
+  assert.match(doubled, /'it''s {2}x'/u);
+  assert.match(doubled, /, w TEXT\)/u);
+});
+
+test("whitespace inside a quoted or bracketed identifier is significant", () => {
+  for (const [open, close] of [['"', '"'], ["`", "`"], ["[", "]"]]) {
+    assert.notEqual(
+      normalizeSchemaSql(`CREATE TABLE ${open}a  b${close} (id TEXT)`),
+      normalizeSchemaSql(`CREATE TABLE ${open}a b${close} (id TEXT)`),
+      `${open}${close}`,
+    );
+  }
+});
+
+test("a comment outside a literal is still removed, and separates its neighbours", () => {
+  assert.equal(
+    normalizeSchemaSql("CREATE TABLE t (\n  -- why\n  id TEXT\n)"),
+    normalizeSchemaSql("CREATE TABLE t ( id TEXT )"),
+  );
+  assert.equal(
+    normalizeSchemaSql("CREATE TABLE t (/* c */ id TEXT)"),
+    normalizeSchemaSql("CREATE TABLE t ( id TEXT)"),
+  );
+});
+
+test("an unterminated literal is copied to the end rather than throwing", () => {
+  // This reads schema back from a database, not user input; a parse error would
+  // be a worse failure than a conservative comparison.
+  assert.equal(normalizeSchemaSql("CREATE TABLE t (v TEXT DEFAULT 'oops"), "CREATE TABLE t (v TEXT DEFAULT 'oops");
+});
+
+test("normalization leaves every real schema object in the baseline unchanged", () => {
+  // Guards the recorded production fingerprint: a change to normalization that
+  // moves any of the 129 objects invalidates `production-fingerprint.json`,
+  // which then has to be re-recorded against the hosted databases rather than
+  // regenerated locally.
+  const database = new DatabaseSync(":memory:");
+  database.exec(baselineSql);
+  const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
+  assert.deepEqual(schemaFingerprint(snapshotDatabase(database).objects), recorded.objects);
+  database.close();
+});
