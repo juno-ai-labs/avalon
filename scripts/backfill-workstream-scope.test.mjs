@@ -178,9 +178,9 @@ test("every page of the listing is walked", async () => {
   );
 });
 
-test("an empty room is seated with the whole workspace before it is narrowed", async () => {
-  // The access-preserving half. Without this the work stream would come out
-  // readable by whoever ran the script and nobody else.
+test("the workspace is seated before the work stream is narrowed", async () => {
+  // The access-preserving half, and the ordering that matters: a work stream is
+  // never private with a smaller room than it started with.
   const order = [];
   const { fetch } = stubFetch(applyRoutes({ participants: [] }));
   const ctx = context({
@@ -201,23 +201,27 @@ test("an empty room is seated with the whole workspace before it is narrowed", a
   assert.deepEqual(ctx.written["/tmp/record.json"].entries[0].seatedUserIds, ["member-a", "member-b"]);
 });
 
-test("a room that already means something gains nobody", async () => {
-  // A work stream carrying a private Slack channel's members. Seating the
-  // workspace on top would re-publish exactly what the release made private.
-  const seated = [];
-  const { fetch } = stubFetch(applyRoutes({ participants: ["slack-member"] }));
+test("a populated room is seated too, and members already in it are not re-posted", async () => {
+  // The population that actually exists: a room of one, its creator. Narrowing
+  // it without seating is what takes the work stream away from everyone else.
+  const seatedUsers = [];
+  const { fetch } = stubFetch(applyRoutes({
+    participants: ["member-a"],
+    members: ["member-a", "member-b"],
+  }));
   const ctx = context({
     apply: true,
     fetch: async (url, init = {}) => {
-      if ((init.method ?? "GET") === "POST") seated.push(url);
+      if ((init.method ?? "GET") === "POST") seatedUsers.push(JSON.parse(init.body).userId);
       return fetch(url, init);
     },
   });
 
   const totals = await flip(ctx);
 
-  assert.deepEqual(seated, []);
-  assert.equal(totals.seated, 0);
+  // `member-a` was already there; only the missing one costs a request.
+  assert.deepEqual(seatedUsers, ["member-b"]);
+  assert.equal(totals.seated, 1);
   assert.equal(totals.changed, 1);
 });
 

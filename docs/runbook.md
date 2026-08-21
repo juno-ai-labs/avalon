@@ -1461,19 +1461,25 @@ the visibility it was created with.
 `scripts/backfill-workstream-scope.mjs` is the retroactive pass over them.
 
 **It preserves who can read what.** `personal` is enforced against the
-participant list, and the rows this touches were never rooms — a work stream
-created workspace-scoped often has no participant at all, because nothing needed
-to seat one. Narrowing one of those on its own would leave it readable by
-whoever ran the pass and nobody else. So a work stream whose room is empty has
-every active workspace member seated into it *first*, which turns implicit
-workspace-wide access into an explicit room holding the same people. The only
-thing that changes for them is that members who join later are no longer
-included, which is what being private means.
+participant list, so narrowing a work stream whose room is smaller than the
+workspace takes it away from everyone outside that room — and almost every room
+is smaller, because `initialize()` seats only the creator plus anyone explicitly
+named. Every work stream the pass touches therefore has all active members
+seated into it *first*, turning implicit workspace-wide access into an explicit
+room holding the same people. The only change for them is that members who join
+later are not included, which is what being private means.
 
-A work stream that already has participants keeps them and gains nobody. Its
-room means something: one started from a private Slack channel carries that
-channel's members, and seating the workspace on top would re-publish exactly
-what this release made private.
+**This is blunt, and the cost is the leaked Slack set.** A work stream born from
+a private Slack channel is workspace-scoped only because of the bug this release
+fixed, and its participants are already the right room — that channel's members.
+Seating the whole workspace into it widens the audience rather than correcting
+it, and undoing that afterwards means removing participants rather than simply
+narrowing scope again. Nothing in the product API distinguishes those from
+ordinary shared work streams, so this is a deliberate trade: nobody loses access
+to anything, and the private-Slack rows are corrected by hand afterwards. If
+that set is large, get it from D1 first — `slack_agent_sessions` survived
+migration 0090, so `SELECT workstream_id FROM slack_agent_sessions WHERE
+channel_type IN ('private','im')` names them.
 
 Still tell the workspace before running it, and say what breaks. The clearest
 case is suggested work: `work_opportunities.created_workstream_id` points a
