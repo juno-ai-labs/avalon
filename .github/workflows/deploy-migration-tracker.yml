@@ -1,0 +1,121 @@
+name: Deploy Avalon migration tracker
+
+# `avalon-migration-tracker` deploys on its own, not with the API.
+#
+# That is the point of the Queue between them: a queue is a resource both sides
+# bind to, so neither Worker's deploy depends on the other's script existing and
+# neither can be blocked by the other's failure. Folding this into
+# `deploy-api.yml` would put the coupling back in the pipeline after the design
+# spent a redesign taking it out of the code — and would mean an urgent API
+# release waits on a monitoring Worker.
+#
+# The path filter is what keeps that honest: an API-only change never runs this,
+# and a tracker-only change never redeploys the API.
+#
+# Prerequisites this workflow does not perform (one-time, per docs/runbook.md):
+# the `avalon-migration-reports` queue must exist (proved below, not created),
+# Cloudflare Access must be configured, and the sweep's read-only
+# `CLOUDFLARE_API_TOKEN` must be set as a Worker secret. None of them block the
+# deploy: an unconfigured tracker refuses every request and logs a skipped
+# sweep, rather than serving the fleet's state unauthenticated.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/migration-tracker/**"
+      # The report contract is shared with the API Workers. A change to it that
+      # only reached one side would have the producer and the consumer
+      # disagreeing about the message they both parse against.
+      - "packages/contracts/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/check-cloudflare-queues.mjs"
+      - "scripts/check-migration-tracker-health.mjs"
+      - ".github/workflows/deploy-migration-tracker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize rather than cancel: a superseded deploy that is already applying
+  # a Durable Object migration should finish before the next one starts.
+  group: deploy-migration-tracker
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: migration-tracker-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require Cloudflare deployment credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || {
+            echo "CLOUDFLARE_API_TOKEN secret is not set on the migration-tracker-production environment."
+            echo "Grant it Account · Workers Scripts · Edit and Account · Queues · Edit."
+            exit 1
+          }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || {
+            echo "CLOUDFLARE_ACCOUNT_ID variable is not set on the migration-tracker-production environment."
+            exit 1
+          }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ci.yml runs on the same push but cannot gate this workflow, so the
+      # deployment verifies the workspace itself rather than racing it. This
+      # mirrors deploy-site.yml.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test the migration tracker
+        run: pnpm --filter @avalon/migration-tracker test
+
+      - name: Test the deployment scripts
+        run: pnpm test:scripts
+
+      # Wrangler applies a consumer's settings but will not create the queue it
+      # names, so a missing queue fails the deploy halfway through. Prove it
+      # first, and name the creation command if it is absent.
+      - name: Require every Queue declared by the Wrangler configs
+        run: node scripts/check-cloudflare-queues.mjs
+
+      - name: Deploy the migration tracker
+        run: pnpm --filter @avalon/migration-tracker run deploy
+
+      # A successful upload is not a working tracker. This checks the two things
+      # the Worker exists to do: that it became a consumer of the report queue
+      # with the batch settings the repo declares, and that it refuses a request
+      # carrying no Access assertion.
+      - name: Verify the tracker is wired up and fails closed
+        run: node scripts/check-migration-tracker-health.mjs
