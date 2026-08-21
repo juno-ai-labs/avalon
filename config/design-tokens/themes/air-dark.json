@@ -97,6 +97,7 @@
     "sys.color.danger.wash": "#1d100c",
     "sys.color.danger.edge": "#3a201a",
     "sys.color.danger.on": "#150b08",
+    "sys.color.stopped.base": "#ab8a6d",
     "sys.color.danger.tint": "rgba(204, 122, 106, 0.14)",
     "sys.color.danger.tint-strong": "rgba(204, 122, 106, 0.3)",
     "sys.color.scrim.default": "rgba(6, 4, 2, 0.72)",

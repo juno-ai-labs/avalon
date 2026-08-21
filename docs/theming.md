@@ -602,6 +602,32 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-21 — A stopped run gets its own hue
+
+**What changed:** `sys.color.stopped.base`, and the two `main` features that
+needed it — `.status-stopped .status-dot` and the `.run-stopped-notice` block —
+now read from the theme rather than from literals.
+
+**Why:** these arrived on `main` while this branch was open, written against the
+stylesheet's old vocabulary (`--muted`, `--surface-2`, `--line`, `--ink`). The
+rebase replayed the tokenisation over them, which left the notice pointing at
+five variables that no longer exist and dropped the status dot entirely. The
+`var()`-is-declared invariant caught the first; nothing could catch the second,
+because a rule that is gone asserts nothing — it was found by diffing the
+rebased tree against `main`.
+
+**Why a new token rather than an existing one.** A stopped run is not a failure
+and not a warning: someone halted it on purpose and nothing went wrong. Reusing
+`danger` or `warning` would say otherwise in every theme, and the neutral ramp
+has no warm step — `#a78668` is a dimmed ember with no equivalent anywhere in
+the existing scales. The light appearances take it down to `#8a6a4d` so it holds
+against a near-white ground; Air Dark lifts it to `#ab8a6d`.
+
+**What a future change has to respect:** a feature that lands on `main` while a
+theming branch is open will be written in whatever vocabulary `main` has. The
+rebase will not flag it. Diff the rebased tree against `main` for the files both
+sides touched, rather than trusting a clean replay.
+
 ### 2026-08-20 — Rendered markdown takes its scale from the theme
 
 **What changed:** `cmp.markdown.*` — heading sizes, leading and margin, `strong`
