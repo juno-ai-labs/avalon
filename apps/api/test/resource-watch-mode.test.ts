@@ -9,10 +9,10 @@ import type { AuthContext, Env } from "../src/env";
 // asked to re-derive its alarm afterwards, so the call itself is the seam.
 vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => ({
   ...await importOriginal<typeof WakeupService>(),
-  refreshWorkspaceSchedulerAlarm: vi.fn(async () => undefined),
+  refreshWorkspaceSchedule: vi.fn(async () => undefined),
 }));
 
-import { refreshWorkspaceSchedulerAlarm } from "../src/services/workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "../src/services/workstream-wakeup-service";
 import { ResourceService } from "../src/services/resource-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -109,7 +109,7 @@ function environment(database: WatchDatabase): Env {
   });
 }
 
-beforeEach(() => vi.mocked(refreshWorkspaceSchedulerAlarm).mockClear());
+beforeEach(() => vi.mocked(refreshWorkspaceSchedule).mockClear());
 afterEach(() => vi.useRealTimers());
 
 describe("resource watch scheduling modes", () => {
@@ -129,7 +129,7 @@ describe("resource watch scheduling modes", () => {
       "2026-08-01T12:00:00.000Z",
     ]);
     expect(database.batches).toBe(1);
-    expect(refreshWorkspaceSchedulerAlarm).toHaveBeenCalledOnce();
+    expect(refreshWorkspaceSchedule).toHaveBeenCalledOnce();
   });
 
   it("preserves an immediate poll deadline for polling connectors", async () => {
@@ -154,6 +154,6 @@ describe("resource watch scheduling modes", () => {
     await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
       .rejects.toMatchObject({ status: 422, code: "watch_not_supported" });
     expect(database.batches).toBe(0);
-    expect(refreshWorkspaceSchedulerAlarm).not.toHaveBeenCalled();
+    expect(refreshWorkspaceSchedule).not.toHaveBeenCalled();
   });
 });

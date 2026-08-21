@@ -16,7 +16,7 @@ import {
   type ConnectorCursorCommit,
 } from "../services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
 const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
@@ -174,7 +174,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       // attempt may have committed D1 but lost its response before re-arming
       // the workspace alarm.
       await step.do("refresh-workspace-scheduler", async () => {
-        await refreshWorkspaceSchedulerAlarm(this.env, input.workspaceId);
+        await refreshWorkspaceSchedule(this.env, input.workspaceId);
       });
     }
 

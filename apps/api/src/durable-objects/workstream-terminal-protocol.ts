@@ -149,7 +149,7 @@ export function isTerminalOperation(value: string): value is TerminalOperation {
  * Operations that cannot change what the workspace directory publishes.
  *
  * `workspace_workstream_directory.next_terminal_action_at` is the only input
- * `WorkspaceScheduler` has for Terminal work, and the `directory_common`
+ * WorkspaceDO's alarm has for Terminal work, and the `directory_common`
  * regional effect is its only writer. That effect is enqueued from
  * `commitRuntimeMutation`, so an operation that moves a deadline in
  * `terminal_workspace` and does not enqueue one leaves the sweep with nothing

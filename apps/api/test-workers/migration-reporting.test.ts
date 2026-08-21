@@ -16,7 +16,7 @@ import {
   type DurableObjectSqliteMigration,
 } from "../src/durable-objects/sqlite-migrations";
 import { workspaceDOName } from "../src/durable-objects/names";
-import { WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-scheduler";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
 const WORKSPACE_PREFIX = "00000000-0000-7000-8000-0000005000";
 
@@ -52,9 +52,9 @@ function context(
   return {
     state,
     env: environment,
-    component: "workspace_scheduler",
-    className: "WorkspaceScheduler",
-    latestVersion: latestMigrationVersion(WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS),
+    component: "workspace_do",
+    className: "WorkspaceDO",
+    latestVersion: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
   };
 }
 
@@ -66,16 +66,16 @@ async function settle(): Promise<void> {
 }
 
 /**
- * A distinct scheduler object per test. The reporter keeps its ledger inside the
- * object, so sharing one between tests would make every assertion depend on the
- * order they ran in.
+ * A distinct object per test. The reporter keeps its ledger inside the object,
+ * so sharing one between tests would make every assertion depend on the order
+ * they ran in.
  */
-async function withScheduler<T>(
+async function withObject<T>(
   seed: string,
   run: (state: DurableObjectState) => Promise<T> | T,
 ): Promise<T> {
   const name = workspaceDOName("global", asWorkspaceId(`${WORKSPACE_PREFIX}${seed}`));
-  const stub = env.WORKSPACE_SCHEDULERS.get(env.WORKSPACE_SCHEDULERS.idFromName(name));
+  const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(name));
   return runInDurableObject(stub, async (_instance, state) => run(state));
 }
 
@@ -91,7 +91,7 @@ function reportState(state: DurableObjectState): {
 describe("withMigrationReport", () => {
   it("reports the object's current schema version on its first wake", async () => {
     const observer = tracker();
-    await withScheduler("01", async (state) => {
+    await withObject("01", async (state) => {
       await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
@@ -101,19 +101,19 @@ describe("withMigrationReport", () => {
 
     expect(observer.reports).toHaveLength(1);
     const report = observer.reports[0];
-    expect(report?.component).toBe("workspace_scheduler");
-    expect(report?.className).toBe("WorkspaceScheduler");
+    expect(report?.component).toBe("workspace_do");
+    expect(report?.className).toBe("WorkspaceDO");
     expect(report?.status).toBe("current");
     expect(report?.region).toBe("global");
     expect(report?.schemaVersion)
-      .toBe(latestMigrationVersion(WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS));
+      .toBe(latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS));
     expect(report?.objectId).toMatch(/^[0-9a-f]{64}$/u);
     expect(report?.reportId).toMatch(/^[0-9a-f-]{36}$/u);
   });
 
   it("gives every send its own report id, so a redelivery is distinguishable", async () => {
     const observer = tracker();
-    await withScheduler("09", async (state) => {
+    await withObject("09", async (state) => {
       await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
@@ -137,7 +137,7 @@ describe("withMigrationReport", () => {
 
   it("says nothing on a later wake that changes nothing", async () => {
     const observer = tracker();
-    await withScheduler("02", async (state) => {
+    await withObject("02", async (state) => {
       const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
       await withMigrationReport(reportContext, () => undefined);
       await settle();
@@ -151,7 +151,7 @@ describe("withMigrationReport", () => {
 
   it("reports again once the running build changes", async () => {
     const observer = tracker();
-    await withScheduler("03", async (state) => {
+    await withObject("03", async (state) => {
       await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => undefined,
@@ -175,7 +175,7 @@ describe("withMigrationReport", () => {
   it("reports the versions a wake actually applied", async () => {
     const observer = tracker();
     const extended: DurableObjectSqliteMigration[] = [
-      ...WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS,
+      ...WORKSPACE_DO_SCHEMA_MIGRATIONS,
       {
         version: 900,
         description: "test-only trailing migration",
@@ -183,13 +183,13 @@ describe("withMigrationReport", () => {
       },
     ];
 
-    await withScheduler("04", async (state) => {
+    await withObject("04", async (state) => {
       await withMigrationReport(
         { ...context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }), latestVersion: 900 },
         () => applyDurableObjectSqliteMigrations({
           storage: state.storage,
           migrations: extended,
-          component: "workspace_scheduler",
+          component: "workspace_do",
           workerVersionId: "workerd-test",
         }),
       );
@@ -204,27 +204,27 @@ describe("withMigrationReport", () => {
 
   it("reports a failure with the version that broke, then rethrows", async () => {
     const observer = tracker();
-    await withScheduler("05", async (state) => {
+    await withObject("05", async (state) => {
       await expect(withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding }),
         () => {
-          throw new Error("workspace_scheduler_schema_hash_mismatch:1");
+          throw new Error("workspace_do_schema_hash_mismatch:1");
         },
-      )).rejects.toThrow("workspace_scheduler_schema_hash_mismatch:1");
+      )).rejects.toThrow("workspace_do_schema_hash_mismatch:1");
       await settle();
     });
 
     expect(observer.reports).toHaveLength(1);
     expect(observer.reports[0]?.status).toBe("failed");
     expect(observer.reports[0]?.failure).toEqual({
-      message: "workspace_scheduler_schema_hash_mismatch:1",
+      message: "workspace_do_schema_hash_mismatch:1",
       version: 1,
     });
   });
 
   it("retries on the next wake when the queue refused the message", async () => {
     const observer = tracker({ reject: true });
-    const recorded = await withScheduler("06", async (state) => {
+    const recorded = await withObject("06", async (state) => {
       const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
       await withMigrationReport(reportContext, () => undefined);
       await settle();
@@ -238,7 +238,7 @@ describe("withMigrationReport", () => {
   });
 
   it("leaves the object alone when no report queue is bound", async () => {
-    const applied = await withScheduler("07", async (state) => {
+    const applied = await withObject("07", async (state) => {
       const value = await withMigrationReport(context(state, { ...env }), () => "constructed");
       await settle();
       return value;
@@ -253,7 +253,7 @@ describe("withMigrationReport", () => {
         throw new Error("queue_is_down");
       },
     });
-    const applied = await withScheduler("08", async (state) => {
+    const applied = await withObject("08", async (state) => {
       const value = await withMigrationReport(
         context(state, { ...env, MIGRATION_REPORT_QUEUE: exploding }),
         () => "constructed",
@@ -290,16 +290,16 @@ describe("withMigrationReport", () => {
     // Breaking the input gate aborts the object, so the rejection surfaces from
     // `runInDurableObject` itself rather than from the inner call — which is
     // precisely the teardown that used to take the report with it.
-    await expect(withScheduler("10", async (state) => {
+    await expect(withObject("10", async (state) => {
       await state.blockConcurrencyWhile(async () => {
         await withMigrationReport(
           context(state, { ...env, MIGRATION_REPORT_QUEUE: slow }),
           () => {
-            throw new Error("workspace_scheduler_schema_hash_mismatch:1");
+            throw new Error("workspace_do_schema_hash_mismatch:1");
           },
         );
       });
-    })).rejects.toThrow("workspace_scheduler_schema_hash_mismatch:1");
+    })).rejects.toThrow("workspace_do_schema_hash_mismatch:1");
     await settle();
 
     expect(delivered).toEqual(["failed"]);
@@ -313,13 +313,13 @@ describe("withMigrationReport", () => {
    */
   it("reports the recovery when a rollback restores the build it last reported", async () => {
     const observer = tracker();
-    await withScheduler("11", async (state) => {
+    await withObject("11", async (state) => {
       const reportContext = context(state, { ...env, MIGRATION_REPORT_QUEUE: observer.binding });
       await withMigrationReport(reportContext, () => undefined);
       await settle();
 
       await expect(withMigrationReport(reportContext, () => {
-        throw new Error("workspace_scheduler_schema_hash_mismatch:1");
+        throw new Error("workspace_do_schema_hash_mismatch:1");
       })).rejects.toThrow();
       await settle();
 

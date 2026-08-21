@@ -11,7 +11,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logWarn } from "../observability/logger";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 import {
@@ -166,7 +166,7 @@ export async function rebuildDigestSchedulesForTimezone(
     }));
   }
   await Promise.all([...new Set(digests.map((digest) => digest.workspace_id))]
-    .map((workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId)));
+    .map((workspaceId) => refreshWorkspaceSchedule(env, workspaceId)));
 }
 
 /** What a person gets before they have chosen anything: weekdays at 09:00, by email. */
@@ -312,7 +312,7 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   // One refresh per workspace, after its rows exist: the Durable Object reads
   // D1, so refreshing per digest would just recompute the same alarm N times.
   await Promise.all([...workspaces].map((workspaceId) =>
-    refreshWorkspaceSchedulerAlarm(env, workspaceId).catch((error: unknown) => {
+    refreshWorkspaceSchedule(env, workspaceId).catch((error: unknown) => {
       logWarn(env, "digest_alarm_refresh_failed", {
         workspace_id: workspaceId,
         reason: error instanceof Error ? error.message : "unknown",
@@ -427,7 +427,7 @@ export class DigestService {
     ]);
     // The alarm is recomputed after the write, never before: the Durable Object
     // reads D1, so refreshing early would compute the alarm from the old rows.
-    await refreshWorkspaceSchedulerAlarm(this.env, this.auth.workspaceId);
+    await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
     const schedule = await this.get();
     const cadence = !input.enabled || days.length === 0 || times.length === 0
       ? "disabled" as const

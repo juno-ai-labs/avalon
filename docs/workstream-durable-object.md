@@ -15,7 +15,7 @@ visible product copy continue to say HyperSight.
 
 All five Durable Object classes in this subsystem (`WorkspaceDO`,
 `WorkstreamDO`, `SubstreamAgent`, `BlockDashboardAgent`, and
-`WorkspaceScheduler`) use SQLite-backed namespaces and explicit SQL only.
+`BlockDashboardAgent`) use SQLite-backed namespaces and explicit SQL only.
 Durable Object key/value persistence is forbidden by lint. `WorkspaceDO` is the
 authoritative cross-work-stream directory and inverted-index owner, first-party
 activity/digest log, connector-event store, and complete suggested-work product
@@ -975,18 +975,16 @@ from its own `workstream_wakeups`. The entry is an index, never the record: each
 handler reloads its row, so a cancellation racing an alarm is a no-op.
 [`durable-object-alarms.md`](durable-object-alarms.md) owns the mechanism.
 
-### `WorkspaceScheduler`
+### The retired `WorkspaceScheduler`
 
-| Table | Key and relationship |
-| --- | --- |
-| `_sql_schema_migrations` | Immutable scheduler schema history. |
-| `workspace_scheduler_state` | Singleton workspace identity, still read so a surviving alarm knows which workspace to hand over. |
-| `scheduler_retry_states` | Retained by the immutable ledger; no longer written. Per-target gates live in WorkspaceDO's `_internal_durable_alarms`. |
-
-This object no longer schedules anything. Its work moved into WorkspaceDO, and
-it survives only to drain alarms armed before that change: each one calls
-`WorkspaceDO.refreshSchedule` and then deletes itself. Once the fleet has
-drained, the class and its `WORKSPACE_SCHEDULERS` binding can be retired.
+There was a fifth class: one alarm coordinator per workspace, holding
+`workspace_scheduler_state` and `scheduler_retry_states`. Its work moved into
+WorkspaceDO — which already owned every table it read — and the class was
+deleted, binding and all, by Wrangler migration tag `v4`. Nothing routes to it;
+`v1` still names it in `new_sqlite_classes` only because a deployed migration
+tag is immutable history.
+[`durable-object-alarms.md`](durable-object-alarms.md) records what the deletion
+cost and what replaces it.
 
 ## Regional impact
 
@@ -1149,9 +1147,11 @@ work loop the `WorkspaceScheduler` object used to run — schedules, resource
 watches, maintenance passes, Terminal deadlines — with its execution code in
 `services/workspace-schedule-execution.ts`. SubstreamAgent's agent timers became
 one entry per pending wake-up instead of a derived `MIN(due_at)`. The scheduler
-object is now a forwarder that hands each surviving alarm to WorkspaceDO.
+object was deleted outright — binding, class, and Wrangler tag `v4` — and a
+one-shot `schedule_bootstrap` entry in WorkspaceDO's alarm migration reconciles
+each carried-over workspace once instead.
 [`durable-object-alarms.md`](durable-object-alarms.md) is the new module
-document and holds the full reasoning.
+document and holds the full reasoning, including what deleting the class costs.
 
 **Why:** The scheduler held an alarm for tables it did not own. Every tick cost
 routed SQL back into WorkspaceDO plus an RPC to its directory, and every writer

@@ -19,7 +19,6 @@ import {
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
-import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
@@ -800,13 +799,6 @@ describe("Durable Objects in the Workers runtime", () => {
         // will — its statements are hashed into the migration receipt — so a
         // fresh object proves the drop only by not having them at the end.
         absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist"],
-      },
-      {
-        namespace: env.WORKSPACE_SCHEDULERS,
-        name: workspaceDOName("global", WORKSPACE_ID),
-        constructor: WorkspaceScheduler,
-        migrations: 1,
-        tables: ["_sql_schema_migrations", "workspace_scheduler_state", "scheduler_retry_states"],
       },
     ] as const;
 

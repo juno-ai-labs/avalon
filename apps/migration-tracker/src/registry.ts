@@ -103,14 +103,15 @@ type EventRow = {
  *
  * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
  * class missing from here reads as permanently silent; a class listed here that
- * does not report reads as stranded.
+ * does not report reads as stranded. `WorkspaceScheduler` was removed when the
+ * class was deleted: its objects can no longer report, so leaving it here would
+ * have made every one of them look stranded forever.
  */
 export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "BlockDashboardAgent",
   "WorkstreamDO",
   "WorkspaceDO",
-  "WorkspaceScheduler",
 ] as const;
 
 const REPORTING_CLASS_LIST = REPORTING_CLASSES.map((name) => `'${name}'`).join(", ");
