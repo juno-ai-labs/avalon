@@ -72,13 +72,29 @@ screen the person using it reports. A refetch storm is latency spread over
 whichever surfaces happened to be mounted, which presents as "the app is slow
 today" and needs tooling this repository does not have to attribute.
 
-| Do | Don't |
-| --- | --- |
-| Choose the channel by who owns the field and how often it changes. | Choose by what is reachable from the component or route you happen to be editing. |
-| Push anything an open window keeps looking at, from the authority that owns it. | Add a REST read for the first value of a field the socket will push later — that is two code paths to one field, and the second one is used once per mount. |
-| Let the connection's proven identity decide what is sent. | Make the client restate identity, scope, or filters the handshake already established. |
-| Keep one authority per field, and let it be the only sender. | Serve the same field from a second projection because that one was easier to reach. |
-| Let a stale screen be the failure mode, since somebody reports it. | Accept a failure mode that only shows up as diffuse latency; nothing here can attribute that. |
+**Do**
+
+- Choose the channel by who owns the field and how often it changes.
+- Push anything an open window keeps looking at, from the authority that owns
+  it.
+- Let the connection's proven identity decide what is sent.
+- Keep one authority per field, and let it be the only sender of that field.
+- Prefer a design whose failure mode is a stale screen, because somebody
+  reports that.
+
+**Don't**
+
+- Don't choose the channel by what is reachable from the component or route you
+  happen to be editing.
+- Don't add a REST read for the first value of a field the socket will push
+  later. That is two code paths to one field, and the second one runs once per
+  mount.
+- Don't make the client restate identity, scope, or filters that the handshake
+  already established.
+- Don't serve the same field from a second projection because that one was
+  easier to reach; two projections of one row drift.
+- Don't accept a failure mode that shows up only as diffuse latency. Nothing
+  here can attribute that to a cause.
 
 ## Push before it is asked for
 
@@ -161,14 +177,30 @@ the next one:
    canonical state again; that request should be answered with the same
    authoritative frame the connect sent, not a special one.
 
-| Do | Don't |
-| --- | --- |
-| Send everything the opened surface paints, in the connect exchange. | Require a follow-up frame or a REST call for something the connect could have carried. |
-| Carry a resume position in the subscribe frame. | Carry a query — a collection name, a filter, a page size — in it; that is a fetch wearing a socket. |
-| Keep cold connect and resume on one code path that differs only in position. | Write a separate first-connect path; the rarely-run one drifts and fails when it is finally needed. |
-| Bound every collection to a first page and a cursor. | Push a whole collection because it happens to be small today. |
-| Budget the payload against what that specific window renders. | Load one payload with every surface the app has — every window and every reconnect pays it. |
-| Answer a "resend canonical state" request with the ordinary authoritative frame. | Invent a second, special reply shape for it; two shapes for one truth diverge. |
+**Do**
+
+- Send everything the opened surface paints, in the connect exchange.
+- Carry a resume position in the subscribe frame — where this client got to.
+- Keep the cold connect and the resume on one code path that differs only in
+  the position it starts from.
+- Bound every collection to a first page plus a cursor.
+- Budget the payload against what that specific window renders.
+- Answer a "resend canonical state" request with the ordinary authoritative
+  frame the connect already sends.
+
+**Don't**
+
+- Don't require a follow-up frame or a REST call for something the connect
+  could have carried.
+- Don't carry a query — a collection name, a filter, a page size — in the
+  subscribe frame. That is a fetch wearing a socket.
+- Don't write a separate first-connect path. The rarely-run one drifts, and it
+  fails when it is finally needed.
+- Don't push a whole collection because it happens to be small today.
+- Don't load one payload with every surface the app has. Every window and every
+  reconnect pays it.
+- Don't invent a second, special reply shape for a canonical-state request; two
+  shapes for one truth diverge.
 
 ## Ordering and de-duplication
 
@@ -335,19 +367,45 @@ means. A delta at an equal position is a duplicate and is dropped; a snapshot at
 an equal position is the truth and is applied. A stream that has not made that
 call will eventually do both, and the bug will be intermittent.
 
-| Do | Don't |
-| --- | --- |
-| Stamp the version at the authority that owns the data, at commit time. | Stamp it at the socket, the connection, or the moment of send. |
-| Apply by comparing against a stored position. | Apply because a frame arrived, or infer order from arrival, a timestamp, or which channel it came on. |
-| Carry the same version unchanged down every path that can deliver the payload. | Let a relaying hop re-number, re-wrap, or drop the version it forwards. |
-| Give independently-moving field families independent counters. | Share one counter across fields that different authorities advance — the faster one will censor the slower. |
-| Pair the counter with an authority identity wherever it can restart. | Assume a counter is monotonic across a re-import, a rebuild, or a cutover. |
-| Funnel every sender into one receiver per family. | Let each socket handler write the cache with its own comparison. |
-| State what an equal position means for this stream, and make snapshots the explicit exception. | Leave equal undefined; the stream will drop repairs sometimes and duplicate deltas other times. |
-| Make the version a pure function of the state, and fail loudly when one version carries two payloads. | Assume duplicates are byte-identical, or resolve a conflict by picking the newer arrival. |
-| Keep event ids for tracing and correlation. | De-duplicate on a set of seen ids: it grows without bound and answers "have I seen exactly this", never "is this older than what I have". |
-| Reload the surfaces a socket holds after it reconnects. | Assume the ledger still covers the gap — current-state pushes are not replayed frame by frame. |
-| Design for the second sender before it exists. | Skip the comparison because only one socket sends this today; the second one arrives as a feature and finds a rewrite. |
+**Do**
+
+- Stamp the version at the authority that owns the data, at commit time.
+- Apply a payload by comparing its version against a stored position.
+- Carry the same version unchanged down every path that can deliver the
+  payload.
+- Give independently-moving field families their own counters.
+- Pair a counter with an authority identity wherever the counter can restart.
+- Funnel every sender of a field family into one receiver that owns the ledger
+  and the comparison.
+- State what an *equal* position means for this stream, and make the snapshot
+  the explicit exception that applies at one.
+- Make the version a pure function of the state, and fail loudly when one
+  version turns up carrying two different payloads.
+- Keep event ids for tracing and correlation.
+- Reload the surfaces a socket holds after it reconnects.
+- Design for a second sender before one exists.
+
+**Don't**
+
+- Don't stamp the version at the socket, the connection, or the moment of send.
+- Don't apply a payload because a frame arrived, and don't infer order from
+  arrival, from a timestamp, or from which channel carried it.
+- Don't let a relaying hop re-number, re-wrap, or drop the version it forwards.
+- Don't share one counter across fields that different authorities advance. The
+  faster one will censor the slower.
+- Don't assume a counter is monotonic across a re-import, a rebuild, or a
+  cutover.
+- Don't let each socket handler write the cache with its own comparison.
+- Don't leave the meaning of an equal position undefined. The stream will drop
+  repairs sometimes and duplicate deltas other times, intermittently.
+- Don't assume duplicates are byte-identical, and don't resolve a version
+  conflict by picking whichever arrived later.
+- Don't de-duplicate on a set of seen ids. It grows without bound, and it
+  answers "have I seen exactly this", never "is this older than what I have".
+- Don't assume the ledger still covers the gap after a reconnect;
+  current-state pushes are not replayed frame by frame.
+- Don't skip the comparison because only one socket sends this today. The
+  second sender arrives as a feature and finds a rewrite.
 
 ## Why mutations go up over REST
 
@@ -387,14 +445,29 @@ with `workspace_socket_required`. A frame type existing in a shared client
 schema is not permission to send it; the authority decides, and it says so in an
 error a client author can act on.
 
-| Do | Don't |
-| --- | --- |
-| Send state changes as HTTP, with a status code and an idempotency key. | Build a command frame, correlation id, timeout, and error envelope on a socket — that is HTTP rebuilt by hand and maintained by us. |
-| Return the authoritative result when the caller needs read-your-write. | Make a caller learn the outcome of its own write by waiting for a broadcast. |
-| Publish the durable consequence to every subscriber, the mutator included. | Let the caller's response be the only place the change appears; the mutator's view then merely resembles everyone else's. |
-| Refuse mutation frames at the authority, with an error naming the right path. | Rely on a shared schema, a code review, or a comment to keep them off the socket. |
-| Treat a socket command as an exception that has to be argued for, in writing. | Add one because it is fewer lines in the renderer, or because a similar one already exists. |
-| Let the push be the ordering for everyone, including the caller. | Apply the response optimistically in a way the later push cannot correct. |
+**Do**
+
+- Send state changes as HTTP, with a status code and an idempotency key.
+- Return the authoritative result when the caller needs read-your-write.
+- Publish the durable consequence to every subscriber, the mutator included.
+- Refuse mutation frames at the authority, with an error that names the right
+  path.
+- Treat a socket command as an exception that has to be argued for in writing.
+- Let the push be the ordering for everyone, the caller included.
+
+**Don't**
+
+- Don't build a command frame, correlation id, timeout, and error envelope on a
+  socket. That is HTTP rebuilt by hand and maintained by us.
+- Don't make a caller learn the outcome of its own write by waiting for a
+  broadcast.
+- Don't let the caller's response be the only place a change appears; the
+  mutator's view then merely resembles everyone else's.
+- Don't rely on a shared schema, a code review, or a comment to keep mutations
+  off a socket.
+- Don't add a socket command because it is fewer lines in the renderer, or
+  because a similar one already exists.
+- Don't apply a response optimistically in a way the later push cannot correct.
 
 ## When a REST read is still right
 
@@ -417,12 +490,21 @@ Not every read is a push. Reach for a `GET` when one of these holds:
 The common thread: push what a window will paint and keep painting; fetch what a
 person went looking for.
 
-| Do | Don't |
-| --- | --- |
-| Fetch what a person explicitly went looking for. | Push a surface almost nobody opens to every window on every connect. |
-| Keep the pre-socket bootstrap to what is needed to open the socket. | Let the bootstrap grow into a second data plane that shadows the first. |
-| Say at the call site why this one is a fetch. | Leave a fetch whose reason nobody can reconstruct; it will be copied into the next surface. |
-| Re-read over HTTP when the socket has told you to resync. | Use HTTP to paper over a surface that goes stale for any other reason — that is a missing push. |
+**Do**
+
+- Fetch what a person explicitly went looking for.
+- Keep the pre-socket bootstrap to what is needed to open the socket.
+- Say at the call site why this one is a fetch.
+- Re-read over HTTP when the socket has told you to resync.
+
+**Don't**
+
+- Don't push a surface almost nobody opens to every window on every connect.
+- Don't let the bootstrap grow into a second data plane that shadows the first.
+- Don't leave a fetch whose reason nobody can reconstruct. It will be copied
+  into the next surface.
+- Don't use HTTP to paper over a surface that goes stale for any other reason.
+  That is a missing push.
 
 ## How to decide
 
