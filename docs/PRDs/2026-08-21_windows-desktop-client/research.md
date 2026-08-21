@@ -35,10 +35,15 @@ now build per-file-hash reputation identically, through download volume. Paying
 the EV premium for SmartScreen is no longer justified, and any advice
 recommending it predates the change.
 
-Consequence for Avalon regardless of certificate choice: **the first
-downloaders of every new release see the SmartScreen warning**, because
-reputation attaches to the file hash and each release is a new hash. The PRD
-handles this with disclosure on the download page, not with spend.
+Consequence for Avalon regardless of certificate choice: **early downloaders
+of a new file are likely to see the SmartScreen warning until reputation
+accumulates.** Reputation attaches to both the file hash and the publisher
+identity: a new release is a new hash, but a consistently used signing
+identity carries reputation across versions, so warnings should become rarer
+as the publisher record builds rather than resetting to zero each release.
+The PRD handles the early period with disclosure on the download page, not
+with spend, and treats a warning that appears after publisher reputation is
+established as a signing-path regression to investigate.
 
 - https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation
 - https://knowledge.digicert.com/alerts/ev-signed-application-showing-microsoft-defender-smartscreen-warnings

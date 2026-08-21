@@ -131,13 +131,17 @@ The `with-avalon.com` download surface offers two platforms: macOS
 (`oneClick: false`, user-choosable install directory). The installer and the
 application binaries inside it are Authenticode-signed.
 
-**SmartScreen is expected and disclosed.** Since Microsoft's March 2024 change,
-no certificate class bypasses SmartScreen reputation-building — a newly signed
-installer shows "Windows protected your PC" to early downloaders until the
-file hash accumulates download history, and each release resets it. The
-download page states this next to the Windows download, so the first-run
-experience is explained rather than alarming. This is a platform property, not
-a defect to fix.
+**SmartScreen is expected early, disclosed, and investigated late.** Since
+Microsoft's March 2024 change, no certificate class buys instant trust:
+SmartScreen builds reputation on both the file hash and the signing identity.
+Early releases are therefore likely to show "Windows protected your PC" while
+both accumulate download history — but a consistently used publisher identity
+carries reputation across versions, so the warning should fade as releases
+accumulate rather than resetting on each one. The download page copy is
+conditional ("Windows may warn…"), stated next to the Windows download so the
+first-run experience is explained rather than alarming. Once publisher
+reputation is established, an unexpected warning on a new release is a signal
+to investigate the signing path, not a platform property to normalize.
 
 ### Sign-in
 
@@ -171,8 +175,11 @@ exercised end to end; goal 1 is its acceptance test.
 ### What is absent on Windows, and how
 
 - **Meeting notes:** every entry point is hidden — not disabled — on Windows:
-  no meeting row in the application menu, no meeting-notes surfaces in the
-  renderer, no meeting-audio permission prompts. The capability flag the main
+  the renderer's meeting-notes surfaces, the meeting-notes window, and the
+  meeting-audio permission prompts never appear. (The other macOS entry
+  point, the menu bar item's meeting rows, never arises on Windows because
+  the tray is not ported — non-goal 2; the application menu has no meeting
+  row on any platform.) The capability flag the main
   process already exposes (`NativeSystemAudioController` throws off-darwin;
   `meetingAudioSettingsUrl` returns `undefined`) becomes an explicit
   `supported: false` the renderer consumes, rather than a latent throw.
@@ -223,6 +230,10 @@ clauses are affected and should be read against the brief:
   availability. This PRD scopes that as a Windows coverage gap, not a change
   to what meeting notes are; if the brief enumerates client capabilities, its
   edit says "macOS only" beside meeting recording and cites this PRD.
+
+## Decision log
+
+None yet.
 
 ## Key design decisions
 
@@ -346,7 +357,3 @@ offer without touching macOS. No feature flag — the client itself has no
 Windows-conditional behavior to toggle, and the platform's own failure surface
 (a build that will not verify, an update that will not apply) is the
 monitoring this stage of the company can support.
-
-## Decision log
-
-None yet.
