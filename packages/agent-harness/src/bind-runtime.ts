@@ -740,7 +740,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           signal,
           turnId: `${input.harnessRunId}:turn:${stableTurnIndex}`,
           emit,
-          acceptEmptyCompletion: Boolean(onTurnWouldEnd),
+          acceptEmptyCompletion: input.acceptEmptyCompletion === true,
           ...(onOutputProgress ? { onOutputProgress } : {}),
         });
         routedAttempts += routed.attemptCount;

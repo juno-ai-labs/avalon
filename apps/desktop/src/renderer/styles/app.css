@@ -354,7 +354,7 @@ pre {
 
 .status-needs_input .status-dot { background: var(--yellow); }
 .status-failed .status-dot { background: var(--red); }
-.status-stopped .status-dot { background: #77766f; }
+.status-stopped .status-dot { background: #a78668; }
 .status-running .status-dot { animation: active-pulse 1.4s ease-in-out infinite; background: var(--blue); }
 .status-completed .status-dot { background: #77766f; }
 .status-scheduled .status-dot { background: transparent; border: 1px solid #696962; }

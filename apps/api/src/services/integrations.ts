@@ -52,6 +52,7 @@ import {
   ElicitationSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
+  WorkstreamViewResourceOutputSchema,
   readStructuredFailure,
   asSubstreamId,
   asWorkspaceId,
@@ -505,7 +506,33 @@ class AttachmentGroundingGuard {
     if (!isAttachmentContentCapability(event.policy.capability)) return;
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
-    for (const resourceId of access?.resourceIds ?? []) this.unresolved.delete(`resource:${resourceId}`);
+    if (!access) return;
+    if (event.policy.capability !== "workstream.resources.view") {
+      const verifiedResourceIds = new Set([
+        ...access.resourceIds,
+        ...attachmentResourceIds(event.result.output),
+      ]);
+      for (const resourceId of verifiedResourceIds) this.unresolved.delete(`resource:${resourceId}`);
+      return;
+    }
+
+    const parsed = WorkstreamViewResourceOutputSchema.safeParse(event.result.output);
+    for (const resourceId of access.resourceIds) {
+      const matching = parsed.success
+        ? parsed.data.items.filter((item) => item.resourceId === resourceId)
+        : [];
+      const item = matching.length === 1 ? matching[0] : undefined;
+      if (item?.status === "included") {
+        this.unresolved.delete(`resource:${resourceId}`);
+        continue;
+      }
+      this.unresolved.set(`resource:${resourceId}`, {
+        resourceIds: [resourceId],
+        toolCallId: event.toolCallId,
+        toolName: access.toolName,
+        errorCode: item?.reasonCode ?? "resource_view_result_invalid",
+      });
+    }
   }
 
   onFailed(event: Extract<HarnessEvent, { type: "tool_failed" }>): void {
@@ -513,8 +540,11 @@ class AttachmentGroundingGuard {
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
     if (!access && event.phase === "validation") return;
+    const resourceIds = access?.resourceIds.length
+      ? access.resourceIds
+      : structuredAttachmentFailureResourceIds(event);
     const failure: FailedAttachmentAccess = {
-      resourceIds: access?.resourceIds ?? [],
+      resourceIds,
       toolCallId: event.toolCallId,
       toolName: access?.toolName ?? event.toolName,
       errorCode: structuredAttachmentFailureCode(event),
@@ -591,6 +621,16 @@ function structuredAttachmentFailureCode(event: Extract<HarnessEvent, { type: "t
   if (event.outcome === "aborted") return "tool_aborted";
   if (event.outcome === "ambiguous_external_write") return "ambiguous_external_write";
   return event.phase === "validation" ? "tool_validation_failed" : "tool_failed";
+}
+
+function structuredAttachmentFailureResourceIds(
+  event: Extract<HarnessEvent, { type: "tool_failed" }>,
+): string[] {
+  const data = event.data as Record<string, unknown> | undefined;
+  const details = data?.["details"];
+  if (!details || typeof details !== "object" || Array.isArray(details)) return [];
+  const resourceId = (details as Record<string, unknown>)["resourceId"];
+  return typeof resourceId === "string" ? [resourceId] : [];
 }
 
 /**
@@ -2398,6 +2438,7 @@ export async function runWorkstreamHarness(
         stream_seq: event.streamSeq,
       });
     },
+    acceptEmptyCompletion: blockDashboardRun !== null,
     onTurnWouldEnd: () => {
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;

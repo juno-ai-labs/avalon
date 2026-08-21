@@ -633,10 +633,14 @@ silently return every test to the shared key while each still passes alone.
 ### 2026-08-20 — Terminal runs close tools and attachment claims stay grounded
 
 **What changed:** The stale root-run reaper terminalizes pending and started
-tool invocations in its ownership-fenced batch. Attachment content failures are
-tracked across tool calls, receive one recovery turn, and end behind a
-deterministic content-free boundary if unresolved. The desktop renders stopped
-runs explicitly and offers a fresh retry.
+tool invocations in its ownership-fenced batch, preserving ambiguity for a
+started receipt that is not proven to be a read. Attachment content failures
+are tracked across tool calls, receive one recovery turn, and end behind a
+deterministic content-free boundary if unresolved. End-of-turn hooks no longer
+implicitly accept empty provider completions; bounded callers opt in explicitly.
+Stopped realtime events map to the object's `cancelled` run state, and the
+desktop renders stopped runs explicitly with a distinct status indicator and a
+fresh retry.
 
 **Why:** QA observed a terminal retry whose durable tool row still said
 `started`, no transcript outcome for a member stop, and a model that converted
@@ -649,9 +653,11 @@ failed. Those respectively preserve contradictory durable state, lack an
 enforcement boundary, or misstate an intentional member action.
 
 **Consequences:** Any future terminalization path must audit child and tool
-receipts atomically. Content-bearing tools must expose stable resource identity
-to the grounding guard, and stopped remains a distinct terminal state through
-the wire and UI.
+receipts atomically and must not turn an uncertain external write into a
+definitive failure. Content-bearing tools must expose stable resource identity
+to the grounding guard, empty-completion acceptance must be an explicit caller
+decision, and stopped remains a distinct terminal state through storage, wire,
+and UI.
 
 ### 2026-08-18 — Durable memory authority moves into WorkspaceDO
 
