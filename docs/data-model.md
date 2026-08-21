@@ -590,7 +590,10 @@ collection, opt-out, and destination behavior.
     a monotonically numbered SQL file; local and hosted databases are migrated with
     Wrangler *before* code that depends on the new schema is deployed. Editing a
     deployed migration leaves every database that already ran it permanently
-    diverged from every database that has not.
+    diverged from every database that has not. This is also what makes the local
+    baseline in `packages/db/baselines/` safe to derive — its input cannot change
+    under it — and a digest over the subsumed files fails the suite if one ever
+    does. See [`d1-baseline-migrations.md`](d1-baseline-migrations.md).
 11. **Runtime request handlers never attempt broad schema migration.** A Worker
     that migrates on demand migrates concurrently, once per isolate.
 12. **A telemetry deletion deadline is absolute and immutable.** Delivery,
@@ -617,6 +620,7 @@ has a document, and the column notes above point at it rather than restating it:
 | For | Read |
 | --- | --- |
 | The DDL itself | `packages/db/migrations/` — authoritative, always |
+| The local-only snapshot a fresh development database starts from | [`d1-baseline-migrations.md`](d1-baseline-migrations.md) |
 | The surfaces, flows, and contract boundaries around this schema | [`architecture.md`](architecture.md) |
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
 | The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
@@ -669,6 +673,11 @@ has a document, and the column notes above point at it rather than restating it:
   building a bespoke database.
 - `packages/db/test/workstreams.test.ts` drives the repositories over that same
   migrated SQLite database through a `D1DatabaseLike` shim.
+- `packages/db/test/baseline-migration.test.ts` proves the checked-in baseline
+  leaves the same database as replaying the migrations it subsumes, comparing
+  through `PRAGMA` introspection rather than SQL text. It is the reason a fresh
+  local database can skip the chain; see
+  [`d1-baseline-migrations.md`](d1-baseline-migrations.md).
 
 Durable Object-local schemas are covered separately by
 `apps/api/test/workstream-object-schema.test.ts`; the real-workerd suite in
