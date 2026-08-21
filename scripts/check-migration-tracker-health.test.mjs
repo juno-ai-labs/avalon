@@ -207,6 +207,7 @@ test('fails when the hostname cannot be reached at all', async () => {
       log: () => {},
       fetchImpl,
       siteAttempts: 3,
+      siteTimeoutMs: 50,
       wait: async () => {},
     }),
     /could not be reached/u,
@@ -238,14 +239,114 @@ test('waits for a route that is still propagating rather than calling it broken'
     log: (line) => lines.push(line),
     fetchImpl,
     siteAttempts: 6,
+    siteTimeoutMs: 50,
     wait: async (ms) => { waits.push(ms); },
   });
 
   assert.equal(siteCalls, 3);
   // Linear, so a slow propagation is waited out rather than backed off from.
   assert.deepEqual(waits, [4_000, 8_000]);
-  assert.ok(lines.some((line) => line.includes('not reachable yet')));
+  assert.ok(lines.some((line) => line.includes('not reachable (')));
   assert.ok(lines.some((line) => line.includes('answered HTTP 302')));
+});
+
+/**
+ * The bound the retry budget claims. `fetch` with no signal does not time out on
+ * any useful scale — a connection accepted and never answered stays pending for
+ * undici's default five minutes — so six attempts could outlast the deploy
+ * workflow's own timeout while holding its serialized concurrency group. The
+ * signal is what turns "roughly two minutes" from a wish into a guarantee.
+ */
+test('bounds every attempt with a timeout signal rather than waiting forever', async () => {
+  const signals = [];
+  let siteCalls = 0;
+  const fetchImpl = async (input, init) => {
+    if (!String(input).startsWith('https://migrations.')) {
+      return Response.json({ success: true, result: [attached()] });
+    }
+    siteCalls += 1;
+    signals.push(init?.signal);
+    if (siteCalls < 2) {
+      // What an aborted request actually throws, so the retry path is exercised
+      // by the real shape rather than a stand-in.
+      const error = new Error('The operation was aborted due to timeout');
+      error.name = 'TimeoutError';
+      throw error;
+    }
+    return new Response(null, { status: 302 });
+  };
+
+  const lines = [];
+  await checkMigrationTrackerHealth({
+    environment,
+    expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+    log: (line) => lines.push(line),
+    fetchImpl,
+    siteTimeoutMs: 50,
+    wait: async () => {},
+  });
+
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal));
+  // The reason is named in the log, so a hung far end is distinguishable from a
+  // refused connection when reading the job output.
+  assert.ok(lines.some((line) => line.includes('no response within')));
+});
+
+/**
+ * A route can resolve before the Worker has reached that edge, which is the
+ * same propagation phenomenon one layer up from DNS. Retrying it is the whole
+ * point of the change; not retrying it would mean the check waited for the name
+ * and then failed the deploy the moment the name arrived.
+ */
+test('retries a 5xx, which is propagation one layer up from DNS', async () => {
+  let siteCalls = 0;
+  const waits = [];
+  const fetchImpl = async (input) => {
+    if (!String(input).startsWith('https://migrations.')) {
+      return Response.json({ success: true, result: [attached()] });
+    }
+    siteCalls += 1;
+    return siteCalls < 3
+      ? new Response('bad gateway', { status: 502 })
+      : new Response(null, { status: 302 });
+  };
+
+  const lines = [];
+  await checkMigrationTrackerHealth({
+    environment,
+    expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+    log: (line) => lines.push(line),
+    fetchImpl,
+    siteTimeoutMs: 50,
+    wait: async (ms) => { waits.push(ms); },
+  });
+
+  assert.equal(siteCalls, 3);
+  assert.deepEqual(waits, [4_000, 8_000]);
+  assert.ok(lines.some((line) => line.includes('answered HTTP 502')));
+  assert.ok(lines.some((line) => line.includes('answered HTTP 302')));
+});
+
+test('reports an exhausted 5xx as the status it served, not as unreachable', async () => {
+  const fetchImpl = async (input) => (String(input).startsWith('https://migrations.')
+    ? new Response('worker threw', { status: 500 })
+    : Response.json({ success: true, result: [attached()] }));
+
+  await assert.rejects(
+    checkMigrationTrackerHealth({
+      environment,
+      expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+      log: () => {},
+      fetchImpl,
+      siteAttempts: 3,
+      siteTimeoutMs: 50,
+      wait: async () => {},
+    }),
+    // A Worker that is genuinely throwing must not be reported as a missing
+    // host: the two have completely different fixes.
+    /answered HTTP 500, so the Worker is not serving/u,
+  );
 });
 
 test('does not retry a route that answered, however wrong the answer', async () => {
@@ -265,6 +366,7 @@ test('does not retry a route that answered, however wrong the answer', async () 
       log: () => {},
       fetchImpl,
       siteAttempts: 6,
+      siteTimeoutMs: 50,
       wait: async () => { throw new Error('must not wait after a real response'); },
     }),
     /served unauthenticated/u,

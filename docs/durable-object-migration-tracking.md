@@ -388,16 +388,29 @@ reported a broken deployment because it had measured its own impatience. A
 verification step that cries wolf on its own first run is worse than none: the
 next real failure gets waved through as "the DNS thing again".
 
-Only a connection failure is retried. Any response means the route is live and
-the question is answered, so a `2xx` that should have been a redirect still
-fails on the first attempt rather than being asked five more times — the
-security assertion must not become slower to report than the liveness one.
+Two conditions count as "not settled yet": a connection failure, and a `5xx`.
+They are the same phenomenon one layer apart — the name not resolving, and the
+name resolving to an edge that does not have the Worker yet. Every other
+response is an answer and ends the loop at once, so the `2xx` that would mean
+the site is being served unauthenticated is never delayed. On exhaustion the
+last `5xx` is reported as the status it served rather than as an unreachable
+host, because a Worker that is throwing and a hostname that does not exist have
+completely different fixes.
+
+Each attempt carries an `AbortSignal.timeout`, which is what makes the budget a
+bound rather than a wish. `fetch` without a signal does not time out on any
+useful scale: a connection accepted and then never answered stays pending for
+undici's default five minutes, so six attempts could run half an hour — past
+this workflow's twenty-minute cap, holding a serialized concurrency group and
+blocking the next release behind a check meant to take a minute. Verified
+against a socket that accepts and stays silent.
 
 **What a future change has to respect:** the backoff is linear because what is
 being waited on is DNS and route propagation for a new hostname, not an
 overloaded service. The bound matters in both directions: long enough that
-propagation is never mistaken for breakage, short enough that a genuinely
-broken deploy fails the job instead of hanging it.
+propagation is never mistaken for breakage, short enough that a genuinely broken
+deploy fails the job instead of hanging it — and the per-attempt timeout is
+load-bearing for the second half of that, not decoration.
 
 ### 2026-08-21 — The operator site moves to migrations.internal.rallywith.ai
 
