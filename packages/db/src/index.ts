@@ -1,13 +1,11 @@
 import {
   AgentModelOverrideSchema,
   ExternalActorSchema,
-  WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
 } from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import type {
   AutomationSummary,
   ExternalActor,
-  HarnessStatus,
   Message,
   Scope,
   Workstream
@@ -183,65 +181,6 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
-function workstreamTitleStatus(value: unknown): Workstream["titleStatus"] {
-  return value === "naming" || value === "automatic" ? value : "settled";
-}
-
-/** Turns the bounded database prefix into the exact compact wire preview. */
-function wakeupPromptPreview(prefix: string): string {
-  const truncated = truncateUtf16Safe(prefix, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH);
-  const trimmed = truncated.trimEnd();
-  return truncated.length < prefix.length ? `${trimmed}…` : truncated;
-}
-
-function toWorkstream(row: Record<string, unknown>): Workstream {
-  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
-  return {
-    id: String(row.id),
-    workspaceId: String(row.workspace_id),
-    title: String(row.title),
-    objective: String(row.objective ?? ""),
-    emailAddress: row.email_address == null ? null : String(row.email_address),
-    originType: row.origin_type === "automation" ? "automation" : "ad_hoc",
-    originLabel: row.origin_label == null ? null : String(row.origin_label),
-    createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
-    automationSubscriptionId:
-      row.automation_subscription_id == null ? null : String(row.automation_subscription_id),
-    automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
-    plannedFor: row.planned_for == null ? null : String(row.planned_for),
-    harnessStatus: String(row.harness_status) as HarnessStatus,
-    titleStatus: workstreamTitleStatus(row.title_status),
-    latestAttentionSequenceNumber,
-    readThroughSequenceNumber: latestAttentionSequenceNumber,
-    manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 0,
-    hasUnread: false,
-    youAreMentioned: false,
-    firstUnreadSequenceNumber: null,
-    lastActivityAt: String(row.last_activity_at),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-    archivedAt: row.archived_at == null ? null : String(row.archived_at),
-    scope: row.scope === "personal" ? "personal" : "workspace",
-    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
-    // Re-validated on read rather than trusted, the same way the API's mapper
-    // does it: a model retired from the closed set reads as unpinned here
-    // because that is what the work stream will actually run as.
-    modelOverride: AgentModelOverrideSchema.safeParse(row.model_override).data ?? null,
-    nextPendingWakeup: row.next_pending_wakeup_at != null
-      && row.next_pending_wakeup_prompt_prefix != null
-      ? {
-        dueAt: String(row.next_pending_wakeup_at),
-        promptPreview: wakeupPromptPreview(String(row.next_pending_wakeup_prompt_prefix)),
-      }
-      : null,
-    // Nothing is pinned at the moment it is created. Viewer-specific pin state
-    // is added by WorkspaceDO's directory response, not this object-local
-    // compatibility mapper.
-    pinPosition: null
-  };
-}
-
 function toMessage(row: Record<string, unknown>): Message {
   const authorType = String(row.author_type);
   const externalActor = ExternalActorSchema.safeParse(
@@ -365,51 +304,6 @@ export interface CreateExternalMessageInput {
 
 export function createDatabase(db: D1DatabaseLike) {
   const workstreams = {
-    async get(workspaceId: string, id: string): Promise<Workstream | null> {
-      // Two statements by necessity: workstreams and wakeups are work-stream
-      // authority while the automation tables are workspace authority, and a
-      // single statement cannot span authorities through the runtime router.
-      // The origin label resolves separately, against whichever side of the
-      // router owns the automation tables for the handle in use.
-      const row = await db
-        .prepare(
-          `SELECT w.*,
-                  next_wakeup.due_at AS next_pending_wakeup_at,
-                  substr(
-                    next_wakeup.prompt,
-                    1,
-                    ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
-                  ) AS next_pending_wakeup_prompt_prefix
-           FROM workstreams w
-           LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
-             SELECT wakeup.id FROM workstream_wakeups wakeup
-             WHERE wakeup.workspace_id = w.workspace_id
-               AND wakeup.workstream_id = w.id
-               AND wakeup.status = 'pending'
-             ORDER BY wakeup.due_at, wakeup.id
-             LIMIT 1
-           )
-           WHERE w.workspace_id = ? AND w.id = ? AND w.archived_at IS NULL`
-        )
-        .bind(workspaceId, id)
-        .first<Record<string, unknown>>();
-      if (!row) return null;
-      let originLabel: string | null = null;
-      if (row.automation_subscription_id != null) {
-        const label = await db
-          .prepare(
-            `SELECT t.name AS origin_label
-             FROM automation_subscriptions s
-             JOIN automation_templates t ON t.id = s.template_id
-             WHERE s.id = ?`
-          )
-          .bind(row.automation_subscription_id)
-          .first<{ origin_label: string | null }>();
-        originLabel = label?.origin_label ?? null;
-      }
-      return toWorkstream({ ...row, origin_label: originLabel });
-    },
-
     async create(input: CreateWorkstreamInput): Promise<{ workstream: Workstream; messageId: string }> {
       const workstreamId = input.id ?? newId();
       const messageId = newId();
@@ -510,8 +404,40 @@ export function createDatabase(db: D1DatabaseLike) {
       // Deliberately no separate read-state insert. Object initialization
       // creates the creator's authoritative attention row; the regional D1
       // schema has no read-state table after migration 0090.
-      const created = await workstreams.get(input.workspaceId, workstreamId);
-      if (!created) throw new RepositoryError("database_error", "Created work stream was not readable");
+      // Every field below is either part of the committed batch or a new-row
+      // invariant. The former read-back joined retired D1 tables even though
+      // creation already had the canonical initial shape.
+      const created = {
+        id: workstreamId,
+        workspaceId: input.workspaceId,
+        title: input.title,
+        objective: input.objective,
+        emailAddress: input.emailAddress,
+        originType: "ad_hoc",
+        originLabel: null,
+        createdByUserId: input.creatorUserId,
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        harnessStatus: "running",
+        titleStatus: input.titleStatus ?? "settled",
+        latestAttentionSequenceNumber: 1,
+        readThroughSequenceNumber: 1,
+        manualUnreadFromSequenceNumber: null,
+        manualUnreadGeneration: 0,
+        hasUnread: false,
+        youAreMentioned: false,
+        firstUnreadSequenceNumber: null,
+        lastActivityAt: at,
+        createdAt: at,
+        updatedAt: at,
+        archivedAt: null,
+        scope: input.scope ?? "workspace",
+        systemKind: null,
+        modelOverride: AgentModelOverrideSchema.safeParse(input.modelOverride).data ?? null,
+        nextPendingWakeup: null,
+        pinPosition: null,
+      } satisfies Workstream;
       return { workstream: created, messageId };
     },
 

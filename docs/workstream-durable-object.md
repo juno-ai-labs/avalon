@@ -971,7 +971,8 @@ directory write at all.
 
 **What changed:** Migration 0090 removes every D1 product table and reduces the
 regional `workstreams` row to its three-column identity anchor. The D1 list,
-pin, and viewer mapper paths are deleted; WorkspaceDO now answers listing,
+pin, viewer mapper, and unused shared-package getter paths are deleted;
+WorkspaceDO now answers listing,
 pinning, and socket visibility, with real workerd coverage for per-user order
 and personal system-work-stream filtering.
 
@@ -988,9 +989,11 @@ misroutes capable of returning stale or empty product data.
 Durable Object runtime ports. Focused Node fixtures pin that frozen through-0089
 dialect explicitly; current topology and ownership assertions run against the
 final D1 schema and real Durable Object SQLite. The deploy workflow treats 0090
-as Worker-first and detects it from each remote pending ledger; the replacement
-Worker's regional anchor insert supports both table shapes so either a failed
-deploy or a failed migration leaves a serving configuration.
+as Worker-first only when it is the sole pending migration, and 0090 itself
+refuses a populated region whose authority is not open. The replacement Worker's
+regional anchor insert supports both table shapes so either a failed deploy or a
+failed migration leaves a serving configuration without moving a later
+migration behind its Worker.
 
 ### 2026-08-20 — The room opens custom spans for the work a person waits on
 
@@ -1033,13 +1036,19 @@ depends on the alias in `apps/api/test/helpers/cloudflare-workers.ts`.
 
 Shipped in #203.
 
-### 2026-08-20 — Object schema v7–v9: the parity gaps the ported test suite surfaced
+### 2026-08-20 — Object schema v6–v9: the parity gaps the ported test suite surfaced
 
 **What changed:** Rebasing the API test harness onto the real object schema
-(instead of a D1-shaped emulation) surfaced four ways the object's runtime
+(instead of a D1-shaped emulation) surfaced five ways the object's runtime
 port diverged from the D1 semantics the harness code was written against; all
-four are fixed here.
+five are fixed here.
 
+- **v6 — description-refresh keep ratchet.** A claim omits
+  `consecutive_keeps`, but the object's insert trigger coalesced that absence
+  to zero and overwrote the standing count in its conflict arm. The rebuilt
+  trigger preserves the count for claims while still accepting the settle
+  path's explicit value, restoring the D1 contract and making the 24/48-hour
+  rest tiers reachable.
 - **v7 — `runs_parent_tool_call_uq`.** D1's `harness_runs_parent_tool_call_idx`
   never made it into the object, and the inline-child admission depends on it:
   its INSERT ends in `ON CONFLICT DO NOTHING`, and the zero-change result is

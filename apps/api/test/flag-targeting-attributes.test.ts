@@ -351,6 +351,38 @@ describe("flag targeting attributes", () => {
     expect(prepare).toHaveBeenCalledTimes(2);
   });
 
+  it("does not cache partial work-stream facts when creator enrichment fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const healthy = sqliteD1(database);
+    let creatorReads = 0;
+    const flaky = createTestD1Database({
+      prepare: (sql: string) => {
+        if (sql.includes("SELECT email FROM users")) {
+          creatorReads += 1;
+          if (creatorReads === 1) throw new Error("D1_ERROR: storage unavailable");
+        }
+        return healthy.prepare(sql);
+      },
+    });
+    const env = envWith(flaky);
+
+    await expect(loadFlagTargetingAttributes(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: AD_HOC_WORKSTREAM,
+    })).resolves.not.toHaveProperty("workstreamOrigin");
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 11_000));
+    await expect(loadFlagTargetingAttributes(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: AD_HOC_WORKSTREAM,
+    })).resolves.toMatchObject({
+      workstreamOrigin: "ad_hoc",
+      workstreamCreatorEmailDomain: "customer.example",
+    });
+    expect(creatorReads).toBe(2);
+  });
+
   // The suppression is per entity and per subject: one workspace's failure must
   // not silence the reads a different subject would make.
   it("suppresses only the subject whose read failed", async () => {

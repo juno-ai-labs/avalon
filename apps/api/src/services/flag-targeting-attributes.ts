@@ -311,6 +311,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
         [outcome.value.created_by_user_id],
       )
       : { value: null, failed: false };
+    if (creator.failed) return { value: null, failed: true };
     return {
       value: {
         origin: outcome.value.origin_type,
@@ -320,7 +321,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
         fromOpportunity: Boolean(outcome.value.created_from_opportunity_id),
         system: Boolean(outcome.value.system_kind),
       } satisfies WorkstreamFacts,
-      failed: false,
+      failed: outcome.failed,
     };
   });
 }

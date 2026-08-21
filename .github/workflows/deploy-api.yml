@@ -253,9 +253,9 @@ jobs:
           set -euo pipefail
           pending="$(pnpm --filter @avalon/api db:migrate:remote:list:eu)"
           echo "$pending"
-          if grep -Fq "0090_drop_legacy_product_tables.sql" <<< "$pending"; then
-            echo "worker_first=true" >> "$GITHUB_OUTPUT"
-          fi
+          classification="$(node scripts/classify-pending-d1-migrations.mjs \
+            0090_drop_legacy_product_tables.sql <<< "$pending")"
+          echo "$classification" >> "$GITHUB_OUTPUT"
 
       - name: List the pending remote migrations for Global
         id: pending_global
@@ -264,9 +264,9 @@ jobs:
           set -euo pipefail
           pending="$(pnpm --filter @avalon/api db:migrate:remote:list)"
           echo "$pending"
-          if grep -Fq "0090_drop_legacy_product_tables.sql" <<< "$pending"; then
-            echo "worker_first=true" >> "$GITHUB_OUTPUT"
-          fi
+          classification="$(node scripts/classify-pending-d1-migrations.mjs \
+            0090_drop_legacy_product_tables.sql <<< "$pending")"
+          echo "$classification" >> "$GITHUB_OUTPUT"
 
       - name: Apply the remote D1 migrations to EU
         if: >-

@@ -18,6 +18,32 @@
 -- anchor are removed in place before their parents disappear. Thus no DROP
 -- can cascade, SET NULL, or RESTRICT a retained control-plane row.
 
+-- A brand-new database has no workspace rows and may walk straight through all
+-- migrations before local authority bootstrap. Any populated region, however,
+-- must have completed the regional cutover before its product source tables
+-- can be retired. The named CHECK makes a stale or accidentally targeted
+-- region fail before the first destructive statement.
+DROP TABLE IF EXISTS _migration_0090_authority_guard;
+CREATE TABLE _migration_0090_authority_guard (
+  ready INTEGER NOT NULL
+    CONSTRAINT workstream_authority_must_be_open CHECK (ready = 1)
+);
+
+INSERT INTO _migration_0090_authority_guard (ready)
+VALUES (
+  CASE
+    WHEN NOT EXISTS (SELECT 1 FROM workspaces)
+      OR EXISTS (
+        SELECT 1 FROM workstream_authority_control
+        WHERE id = 1 AND phase = 'durable_object_open'
+      )
+    THEN 1
+    ELSE 0
+  END
+);
+
+DROP TABLE _migration_0090_authority_guard;
+
 DROP TRIGGER IF EXISTS activities_reject_workspace_do_delete;
 DROP TRIGGER IF EXISTS activities_reject_workspace_do_insert;
 DROP TRIGGER IF EXISTS activities_reject_workspace_do_update;
