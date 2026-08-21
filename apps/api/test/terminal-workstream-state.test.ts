@@ -81,20 +81,25 @@ describe("Terminal work-stream state", () => {
     const { objectStore, service } = fixture();
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_terminal_repositories
-       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+      `INSERT INTO terminal_repository
+       (id, connection_id, repository_id, repository_full_name,
         base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
-       VALUES (?, ?, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, ?, ?)`,
-      W, S, C, "a".repeat(40), `avalon/${S}`, U, "2026-08-13", "2026-08-13",
+       VALUES (1, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, ?, ?)`,
+      C, "a".repeat(40), `avalon/${S}`, U,
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
     );
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-        authority_fingerprint, applied_network_revision, version, last_activity_at,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, last_command_at,
         expire_due_at, final_diff_resource_id, created_at, updated_at)
-       VALUES (?, ?, 'stopped', 'state-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, NULL, ?, ?)`,
-      W, S, "2026-08-13T12:00:00.000Z", "2026-09-12T12:00:00.000Z", "2026-08-13T12:00:00.000Z", "2026-08-13T12:00:00.000Z",
+       VALUES (1, 'daytona', 'stopped', 'state-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, NULL, ?, ?)`,
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-09-12T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
     );
     await expect(service.get(S)).resolves.toMatchObject({
       state: "stopped", lastActivityAt: "2026-08-13T12:00:00.000Z", expiresAt: "2026-09-12T12:00:00.000Z",

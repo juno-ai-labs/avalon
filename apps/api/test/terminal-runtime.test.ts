@@ -23,6 +23,7 @@ import {
   testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
+  testTerminalPortFactory,
 } from "./helpers/durable-authority";
 
 const W = "00000000-0000-4000-8000-000000000011";
@@ -123,8 +124,9 @@ function fixture() {
     })),
   };
   const db = testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S });
-  const coordinator = new TerminalSandboxCoordinator(db, provider, { now: () => new Date("2026-08-13T12:00:00.000Z") });
-  return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(db, coordinator, provider, resources, publisher) };
+  const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, { now: () => new Date("2026-08-13T12:00:00.000Z") });
+  return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(
+    testTerminalPortFactory(objectStore), db, coordinator, provider, resources, publisher) };
 }
 
 const context: HarnessToolContext = {
@@ -139,7 +141,7 @@ const context: HarnessToolContext = {
 describe("Daytona Terminal runtime", () => {
   it("does not allocate until an operation and resolves paths inside the root", async () => {
     const { objectStore, provider, runtime } = fixture();
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
 
     await runtime.readFile(context, "src/file.txt");
     expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -193,8 +195,8 @@ describe("Daytona Terminal runtime", () => {
     }));
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, exit_code, termination_reason FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W, I,
+      "SELECT state, exit_code, termination_reason FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
     )).toEqual({ state: "failed", exit_code: 1, termination_reason: "exited" });
   });
 
@@ -211,8 +213,8 @@ describe("Daytona Terminal runtime", () => {
       });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, completed_at FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W, I,
+      "SELECT state, completed_at FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
     )).toEqual({ state: "running", completed_at: null });
 
     await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 3_000 }))
@@ -230,8 +232,8 @@ describe("Daytona Terminal runtime", () => {
       .resolves.toMatchObject({ stdout: "[REDACTED] [REDACTED]\n" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT stdout_head FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W, I,
+      "SELECT stdout_head FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
     )).toEqual({ stdout_head: "[REDACTED] [REDACTED]\n" });
   });
 
@@ -247,14 +249,17 @@ describe("Daytona Terminal runtime", () => {
     }));
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO sandbox_tasks
-       (id, workspace_id, workstream_id, harness_run_id, tool_invocation_id,
-        sandbox_generation, provider_task_name, state, command_sha256,
-        command_deadline_at, started_at, created_at, updated_at)
-       VALUES ('task-existing', ?, ?, ?, ?, 1, ?, 'running', ?,
-               '2026-08-13T12:02:00.000Z', '2026-08-13T12:00:00.000Z',
-               '2026-08-13T12:00:00.000Z', '2026-08-13T12:00:00.000Z')`,
-      W, S, R, I, `avalon-task-${I}`, commandHash,
+      `INSERT INTO terminal_tasks
+       (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+        state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+        stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
+        created_at, updated_at)
+       VALUES ('task-existing', ?, ?, 1, ?, 'running', ?, ?, '', '', '', '', 0, 0, ?, ?, ?)`,
+      R, I, `avalon-task-${I}`, commandHash,
+      Date.parse("2026-08-13T12:02:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
     );
 
     await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 120_000 })).resolves.toMatchObject({
@@ -265,9 +270,9 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runCommand).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, started_at FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W, I,
-    )).toEqual({ state: "completed", started_at: "2026-08-13T12:00:00.000Z" });
+      "SELECT state, started_at FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
+    )).toEqual({ state: "completed", started_at: Date.parse("2026-08-13T12:00:00.000Z") });
   });
 
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {
@@ -308,8 +313,8 @@ describe("Daytona Terminal runtime", () => {
     );
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT output_resource_id FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?",
-      W, I,
+      "SELECT output_resource_id FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
     )).toEqual({ output_resource_id: "command-log" });
   });
 

@@ -13,6 +13,8 @@ import type {
   TerminalRuntime,
 } from "./tools";
 import { sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import type { TerminalPortFactory } from "./object-port";
+import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
 
 const ROOT = "/workspace";
@@ -53,21 +55,12 @@ export interface TerminalRepositoryPublisher {
 
 interface InvocationRow { id: string }
 
-interface TaskRow {
-  sandbox_generation: number;
-  provider_task_name: string;
-  state: "planned" | "submitting" | "running" | "completed" | "failed" | "timed_out" | "cancelled";
-  command_sha256: string;
-  command_deadline_at: string;
-  exit_code: number | null;
-  termination_reason: TerminalCommandOutput["terminationReason"] | null;
-  stdout_head: string;
-  stdout_tail: string;
-  stderr_head: string;
-  stderr_tail: string;
-  output_resource_id: string | null;
-  started_at: string | null;
-  completed_at: string | null;
+/**
+ * The object stores unix milliseconds; a tool result reports ISO-8601, which
+ * is the model-facing contract. This is the only place the two meet.
+ */
+function isoAt(epochMs: number | null): string {
+  return new Date(epochMs ?? 0).toISOString();
 }
 
 function shellQuote(value: string): string {
@@ -94,18 +87,22 @@ function joinedCapture(head: string, tail: string): string {
   return tail ? `${head}\n… provider output omitted …\n${tail}` : head;
 }
 
-function commandOutputFromTask(row: TaskRow): TerminalCommandOutput | null {
-  if (row.state !== "completed" && row.state !== "failed" && row.state !== "timed_out" && row.state !== "cancelled") return null;
-  const state = row.state;
+function commandOutputFromTask(task: TerminalTaskRecord): TerminalCommandOutput | null {
+  if (task.state !== "completed" && task.state !== "failed"
+    && task.state !== "timed_out" && task.state !== "cancelled") return null;
+  const state = task.state;
+  const terminationReason = (task.terminationReason
+    ?? (state === "timed_out" ? "timed_out" : state === "cancelled" ? "cancelled" : "exited")
+  ) as TerminalCommandOutput["terminationReason"];
   return {
     state,
-    terminationReason: row.termination_reason ?? (state === "timed_out" ? "timed_out" : state === "cancelled" ? "cancelled" : "exited"),
-    exitCode: row.exit_code,
-    stdout: joinedCapture(row.stdout_head, row.stdout_tail),
-    stderr: joinedCapture(row.stderr_head, row.stderr_tail),
-    ...(row.output_resource_id ? { outputResourceId: row.output_resource_id } : {}),
-    startedAt: row.started_at ?? new Date(0).toISOString(),
-    completedAt: row.completed_at ?? row.started_at ?? new Date(0).toISOString(),
+    terminationReason,
+    exitCode: task.exitCode,
+    stdout: joinedCapture(task.stdoutHead, task.stdoutTail),
+    stderr: joinedCapture(task.stderrHead, task.stderrTail),
+    ...(task.outputResourceId ? { outputResourceId: task.outputResourceId } : {}),
+    startedAt: isoAt(task.startedAt),
+    completedAt: isoAt(task.completedAt ?? task.startedAt),
   };
 }
 
@@ -161,6 +158,7 @@ function parsePatch(patch: string): TerminalPatchOutput {
 }
 
 export function createDaytonaTerminalRuntime(
+  terminalPort: TerminalPortFactory,
   database: D1Database,
   coordinator: TerminalSandboxCoordinator,
   provider: TerminalSandboxProvider,
@@ -345,13 +343,8 @@ export function createDaytonaTerminalRuntime(
       }
       const taskName = `avalon-task-${invocation.id}`;
       const commandHash = await sha256Hex(JSON.stringify({ command: input.command, cwd, timeoutMs: input.timeoutMs }));
-      const existing = await database.prepare(
-        `SELECT sandbox_generation, provider_task_name, state, command_sha256,
-                command_deadline_at, exit_code, termination_reason, stdout_head,
-                stdout_tail, stderr_head, stderr_tail, output_resource_id,
-                started_at, completed_at
-           FROM sandbox_tasks WHERE workspace_id = ? AND tool_invocation_id = ?`,
-      ).bind(context.workspaceId, invocation.id).first<TaskRow>();
+      const terminal = terminalPort(context.workspaceId, context.workstreamId);
+      const existing = await terminal.taskByEffect(invocation.id);
       const replay = existing && commandOutputFromTask(existing);
       if (replay) {
         await provider.cleanupCommand?.(sandbox.providerSandboxId, taskName).catch(() => undefined);
@@ -361,9 +354,9 @@ export function createDaytonaTerminalRuntime(
       if (
         existing
         && (
-          existing.sandbox_generation !== sandbox.generation
-          || existing.provider_task_name !== taskName
-          || existing.command_sha256 !== commandHash
+          existing.sandboxGeneration !== sandbox.generation
+          || existing.providerTaskName !== taskName
+          || existing.commandSha256 !== commandHash
         )
       ) {
         throw new TerminalToolError(
@@ -372,30 +365,19 @@ export function createDaytonaTerminalRuntime(
         );
       }
 
-      const startedAt = existing?.started_at ?? new Date().toISOString();
-      const deadlineAt = existing?.command_deadline_at ?? new Date(Date.now() + input.timeoutMs).toISOString();
-      const taskId = newId();
-      await database.prepare(
-        `INSERT INTO sandbox_tasks
-         (id, workspace_id, workstream_id, harness_run_id, tool_invocation_id,
-          sandbox_generation, provider_task_name, state, command_sha256,
-          command_deadline_at, started_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
-         ON CONFLICT(workspace_id, tool_invocation_id) DO NOTHING`,
-      ).bind(
-        taskId,
-        context.workspaceId,
-        context.workstreamId,
-        context.harnessRunId,
-        invocation.id,
-        sandbox.generation,
-        taskName,
-        commandHash,
-        deadlineAt,
+      const startedAt = existing?.startedAt ?? Date.now();
+      const deadlineAt = existing?.commandDeadlineAt ?? Date.now() + input.timeoutMs;
+      await terminal.insertTask({
+        taskId: newId(),
+        runId: context.harnessRunId,
+        effectIntentId: invocation.id,
+        sandboxGeneration: sandbox.generation,
+        providerTaskName: taskName,
+        commandSha256: commandHash,
+        commandDeadlineAt: deadlineAt,
         startedAt,
-        startedAt,
-        startedAt,
-      ).run();
+        now: startedAt,
+      });
 
       let result: { exitCode: number; stdout: string; stderr: string; timedOut?: boolean };
       let state: TerminalCommandOutput["state"];
@@ -458,30 +440,24 @@ export function createDaytonaTerminalRuntime(
         state = "failed";
         terminationReason = "output_limit_exceeded";
       }
-      const completedAt = new Date().toISOString();
-      await database.prepare(
-        `UPDATE sandbox_tasks
-            SET state = ?, exit_code = ?, termination_reason = ?, stdout_head = ?, stdout_tail = ?,
-                stderr_head = ?, stderr_tail = ?, stdout_bytes = ?, stderr_bytes = ?,
-                output_resource_id = ?,
-                completed_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND tool_invocation_id = ?`,
-      ).bind(
+      const completedAt = Date.now();
+      await terminal.settleTask({
+        effectIntentId: invocation.id,
         state,
-        state === "timed_out" || state === "cancelled" || outputLimitExceeded ? null : result.exitCode,
+        exitCode: state === "timed_out" || state === "cancelled" || outputLimitExceeded
+          ? null
+          : result.exitCode,
         terminationReason,
-        stdout.head,
-        stdout.tail,
-        stderr.head,
-        stderr.tail,
-        stdout.bytes,
-        stderr.bytes,
-        outputResourceId ?? null,
+        stdoutHead: stdout.head,
+        stdoutTail: stdout.tail,
+        stderrHead: stderr.head,
+        stderrTail: stderr.tail,
+        stdoutBytes: stdout.bytes,
+        stderrBytes: stderr.bytes,
+        outputResourceId: outputResourceId ?? null,
         completedAt,
-        completedAt,
-        context.workspaceId,
-        invocation.id,
-      ).run();
+        now: completedAt,
+      });
       await provider.cleanupCommand?.(sandbox.providerSandboxId, taskName).catch(() => undefined);
       return {
         state,
@@ -490,8 +466,8 @@ export function createDaytonaTerminalRuntime(
         stdout: joinedCapture(stdout.head, stdout.tail),
         stderr: joinedCapture(stderr.head, stderr.tail),
         ...(outputResourceId ? { outputResourceId } : {}),
-        startedAt,
-        completedAt,
+        startedAt: isoAt(startedAt),
+        completedAt: isoAt(completedAt),
       };
     },
 

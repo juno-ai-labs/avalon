@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 12;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 13;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1260,7 +1260,131 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // the transcript's hottest table. That is its own change.
     ],
   },
+  {
+    version: 13,
+    description: "give the Terminal lifecycle real columns and retire its compatibility views",
+    statements: terminalAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Promotes the Terminal lifecycle out of a JSON blob and retires the
+ * compatibility views that put it there.
+ *
+ * `terminal_workspace` carried nine lifecycle fields inside `lifecycle_json`
+ * for one reason: the Terminal services addressed this object through
+ * `_runtime_terminal_workspace`, a view whose INSTEAD OF triggers packed D1's
+ * flat columns into JSON on write and unpacked them on read. So
+ * `archive_due_at` — a deadline the workspace scheduler sorts alarms by — had
+ * no type, no CHECK, and no index, because it was a JSON key. The services now
+ * hold a typed port onto the real tables, and the blob has no remaining reason
+ * to exist.
+ *
+ * The table is rebuilt rather than extended with `ALTER TABLE ADD COLUMN`:
+ * SQLite cannot add a CHECK constraint to an existing table, and a shape whose
+ * lifecycle states are constrained in one place and its claim invariants in
+ * none would be a worse schema than the blob it replaces. The table is a
+ * singleton, so the rebuild copies at most one row.
+ *
+ * `authority_epoch` does not survive the rebuild. The compatibility triggers
+ * set it equal to `version` on every write and nothing ever read it back, so
+ * it was a second name for one number.
+ *
+ * Views and triggers are dropped before the rebuild. SQLite does not validate
+ * a view body until the view is used, so a `DROP TABLE` under a live view
+ * would succeed and leave a view that fails on next read; dropping first keeps
+ * every intermediate state of this transaction selectable.
+ */
+function terminalAuthorityPromotion(): string[] {
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (_runtime_(?:terminal_|repository_publications)\S*)/
+      .exec(statement)?.[1];
+    if (trigger) return [`DROP TRIGGER IF EXISTS ${trigger}`];
+    const view = /CREATE VIEW IF NOT EXISTS (_runtime_(?:terminal_|repository_publications)\S*)/
+      .exec(statement)?.[1];
+    return view ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length === 0) throw new Error("terminal compat statements not found");
+  // Triggers first: dropping a view out from under its own INSTEAD OF trigger
+  // is legal but leaves the trigger orphaned in `sqlite_schema`.
+  const drops = [
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+
+  const isoToEpochMs = (path: string) =>
+    `CASE WHEN json_extract(lifecycle_json, '${path}') IS NULL THEN NULL
+       ELSE CAST((julianday(json_extract(lifecycle_json, '${path}')) - 2440587.5)
+              * 86400000 + 0.5 AS INTEGER) END`;
+
+  return [
+    ...drops,
+    `CREATE TABLE terminal_workspace_promoted (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      provider TEXT NOT NULL CHECK (provider = 'daytona'),
+      sandbox_id TEXT,
+      lifecycle_state TEXT NOT NULL CHECK (
+        lifecycle_state IN (
+          'absent', 'starting', 'running', 'stopping', 'stopped', 'archiving',
+          'archived', 'restoring', 'expiring', 'expired', 'failed'
+        )
+      ),
+      generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
+      stable_name TEXT,
+      authority_fingerprint TEXT NOT NULL DEFAULT '',
+      applied_network_revision INTEGER NOT NULL DEFAULT 0
+        CHECK (applied_network_revision >= 0),
+      version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
+      operation_run_id TEXT,
+      operation_lease_expires_at INTEGER,
+      lifecycle_claim_id TEXT,
+      lifecycle_claim_expires_at INTEGER,
+      last_command_at INTEGER,
+      idle_expires_at INTEGER,
+      archive_due_at INTEGER,
+      expire_due_at INTEGER,
+      final_diff_resource_id TEXT,
+      failure_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (lifecycle_state != 'absent' OR sandbox_id IS NULL),
+      -- A lease or claim without its deadline is unreleasable: nothing can
+      -- decide it has expired, so the workspace stays held forever. The blob
+      -- could not say this; the table can.
+      -- The copy above drops both halves together when either is missing: the
+      -- CHECK is enforced on INSERT, so a repair afterwards would never run.
+      CHECK ((operation_run_id IS NULL) = (operation_lease_expires_at IS NULL)),
+      CHECK ((lifecycle_claim_id IS NULL) = (lifecycle_claim_expires_at IS NULL))
+    ) STRICT`,
+    `INSERT INTO terminal_workspace_promoted
+       (id, provider, sandbox_id, lifecycle_state, generation, stable_name,
+        authority_fingerprint, applied_network_revision, version,
+        operation_run_id, operation_lease_expires_at, lifecycle_claim_id,
+        lifecycle_claim_expires_at, last_command_at, idle_expires_at,
+        archive_due_at, expire_due_at, final_diff_resource_id, failure_code,
+        created_at, updated_at)
+     SELECT id, provider, sandbox_id, lifecycle_state, generation, stable_name,
+        COALESCE(json_extract(lifecycle_json, '$.authorityFingerprint'), ''),
+        applied_network_revision, version,
+        CASE WHEN ${isoToEpochMs("$.operationLeaseExpiresAt")} IS NULL THEN NULL
+          ELSE json_extract(lifecycle_json, '$.operationRunId') END,
+        CASE WHEN json_extract(lifecycle_json, '$.operationRunId') IS NULL THEN NULL
+          ELSE ${isoToEpochMs("$.operationLeaseExpiresAt")} END,
+        CASE WHEN ${isoToEpochMs("$.lifecycleClaimExpiresAt")} IS NULL THEN NULL
+          ELSE json_extract(lifecycle_json, '$.lifecycleClaimId') END,
+        CASE WHEN json_extract(lifecycle_json, '$.lifecycleClaimId') IS NULL THEN NULL
+          ELSE ${isoToEpochMs("$.lifecycleClaimExpiresAt")} END,
+        last_command_at, idle_expires_at,
+        ${isoToEpochMs("$.archiveDueAt")},
+        ${isoToEpochMs("$.expireDueAt")},
+        json_extract(lifecycle_json, '$.finalDiffResourceId'),
+        json_extract(lifecycle_json, '$.failureCode'),
+        created_at, updated_at
+       FROM terminal_workspace`,
+    `DROP TABLE terminal_workspace`,
+    `ALTER TABLE terminal_workspace_promoted RENAME TO terminal_workspace`,
+  ];
+}
 
 /**
  * Rebuilds the workstreams compatibility view and its write triggers so the
