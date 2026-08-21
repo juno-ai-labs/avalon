@@ -330,6 +330,138 @@ describe('WorkspaceSocketProvider', () => {
     });
   });
 
+  it('opens the sidebar with one batched answer carrying all three lists', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let listSidebar: ReturnType<typeof useWorkspaceSocket>['listSidebar'] | null = null;
+    function Probe(): null {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => {
+        listSidebar = workspaceSocket.listSidebar;
+      }, [workspaceSocket.listSidebar]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    let result: Promise<unknown> | null = null;
+    act(() => {
+      result = listSidebar!({ limit: 250, includeSystem: false });
+    });
+    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
+      type: string;
+      requestId: string;
+    };
+    // No cursor: the batch is the cold read, and a later page is the paged
+    // command's job.
+    expect(command).toMatchObject({ type: 'list_sidebar', limit: 250, includeSystem: false });
+    expect(command).not.toHaveProperty('before');
+
+    act(() => socket.message({
+      type: 'workspace_sidebar_page',
+      requestId: command.requestId,
+      workstreams: {
+        directoryWaterline: 7,
+        nextCursor: null,
+        stateVersions: [{
+          workstreamId: '00000000-0000-7000-8000-000000000002',
+          commonEventId: '00000000-0000-7000-8000-000000000007',
+          viewerEventId: '00000000-0000-7000-8001-000000000004',
+          authorityGeneration: 1,
+          commonWaterline: 7,
+          viewerWaterline: 4,
+        }],
+        items: [{
+          id: '00000000-0000-7000-8000-000000000002',
+          workspaceId: '00000000-0000-7000-8000-000000000001',
+          title: 'Socket-owned directory',
+          titleStatus: 'settled',
+          objective: 'Served by WorkspaceDO SQL',
+          emailAddress: null,
+          originType: 'ad_hoc',
+          originLabel: null,
+          createdByUserId: '00000000-0000-7000-8000-000000000003',
+          automationSubscriptionId: null,
+          automationRunId: null,
+          plannedFor: null,
+          harnessStatus: 'running',
+          latestAttentionSequenceNumber: 4,
+          readThroughSequenceNumber: 2,
+          manualUnreadFromSequenceNumber: null,
+          manualUnreadGeneration: 0,
+          hasUnread: true,
+          youAreMentioned: true,
+          firstUnreadSequenceNumber: 3,
+          lastActivityAt: '2026-08-17T20:00:00.000Z',
+          createdAt: '2026-08-17T19:00:00.000Z',
+          updatedAt: '2026-08-17T20:00:00.000Z',
+          archivedAt: null,
+          scope: 'workspace',
+          systemKind: null,
+          nextPendingWakeup: null,
+          pinPosition: null,
+        }],
+      },
+      automations: [{
+        id: '00000000-0000-7000-8000-000000000005',
+        name: 'Monday brief',
+        description: 'Every Monday',
+        emailAddress: null,
+        scope: 'workspace',
+        status: 'active',
+        nextRunAt: null,
+        lastRunAt: null,
+        updatedAt: '2026-08-17T19:00:00.000Z',
+        updateAvailable: false,
+      }],
+      notes: [{
+        id: '00000000-0000-7000-8000-000000000006',
+        workspaceId: '00000000-0000-7000-8000-000000000001',
+        resourceId: '00000000-0000-7000-8000-000000000009',
+        ownerUserId: '00000000-0000-7000-8000-000000000003',
+        scope: 'workspace',
+        title: 'Standup',
+        recordingStatus: 'idle',
+        recordedMs: 0,
+        startedAt: null,
+        endedAt: null,
+        generatedAt: null,
+        lastActivityAt: '2026-08-17T21:00:00.000Z',
+        createdAt: '2026-08-17T19:00:00.000Z',
+        updatedAt: '2026-08-17T21:00:00.000Z',
+        archivedAt: null,
+      }],
+    }));
+
+    await expect(result).resolves.toMatchObject({
+      nextCursor: null,
+      items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
+      // Mapped the way the REST list maps it: the sidebar renders `you` for a
+      // personal row, so the wire's `personal`/`workspace` cannot reach it raw.
+      automations: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Monday brief', scope: 'workspace' }],
+      notes: [{ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' }],
+    });
+    // The batch also lands in the shared ledger, so a row it carried is not
+    // re-fetched by the work-stream caches behind it.
+    expect(queryClient.getQueryData(['workstreams'])).toBeDefined();
+  });
+
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     let online = true;

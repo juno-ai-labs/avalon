@@ -116,7 +116,12 @@ describe("database migrations", () => {
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'messages'",
     ).get()).toEqual({ name: "messages" });
     database.close();
-  });
+    // Walks all 89 migrations before it can apply the one under test, which is
+    // the longest setup in this file and lands within a few hundred
+    // milliseconds of the 5s default. It passed alone and timed out inside a
+    // full `pnpm test`, where the suites share the machine. The bound is stated
+    // rather than inherited, at the same 15s the other long walk here uses.
+  }, 15_000);
 
   it("keeps the deployed HyperSight filename and renames its tables forward", () => {
     const migrationFiles = readdirSync(migrationsDirectory)

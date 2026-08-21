@@ -141,13 +141,22 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // and is still fading out, which is on screen and has to be laid out for.
   const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
+  // One socket answer opens the sidebar: the first page of work streams, the
+  // automations and the notes together. The two REST queries below stay the
+  // refresh path — their topics invalidate them, and their own fetchers serve
+  // anything the batch left out — but they must not race the batch on a cold
+  // start, or the sidebar pays for three round trips to fill in three stages.
+  // They wait for it to settle, then find their caches already seeded and
+  // fresh. `settled`, not `succeeded`: a batch that failed hands the sidebar
+  // back to REST rather than leaving two lists that can never load.
+  const workstreams = useWorkstreamsQuery();
+  const sidebarBatchSettled = !workstreams.isPending;
   const automations = useQuery({
     queryKey: ['automations'],
     queryFn: ({ signal }) => api!.getAutomations(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api) && sidebarBatchSettled,
     staleTime: 20_000,
   });
-  const workstreams = useWorkstreamsQuery();
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(0);
@@ -170,7 +179,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const notes = useQuery({
     queryKey: ['notes'],
     queryFn: ({ signal }) => api!.getNotes(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api) && sidebarBatchSettled,
     staleTime: Number.POSITIVE_INFINITY,
   });
 
