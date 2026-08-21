@@ -126,6 +126,22 @@ export function watchSystemAppearance(): () => void {
 }
 
 /**
+ * Follows a theme chosen in another window.
+ *
+ * Every window reads the same stored preference, but each holds its own
+ * document, so a choice made in the Settings window would otherwise repaint only
+ * the Settings window. The stored choice is re-read rather than taken from the
+ * event: the store holds both axes, and re-resolving locally keeps a window that
+ * is following `system` doing so.
+ */
+export function watchThemeBroadcast(): () => void {
+  if (!desktopServicesAvailable()) return () => undefined;
+  return desktopBridge().onThemeChanged(() => {
+    applyTheme(readThemeChoice());
+  });
+}
+
+/**
  * The active theme, for a component that has to name it. Reads the document
  * rather than the store so that a surface mounted after `installTheme` cannot
  * disagree with what is on screen.
