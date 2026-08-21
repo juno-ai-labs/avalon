@@ -487,6 +487,49 @@ describe("Terminal authority on real workerd", () => {
       });
     });
 
+    it("keeps a live generation's import provenance when a stale reset misses", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "replaceGeneration", {
+        generation: 1,
+        authorityFingerprint: "authority-two",
+        networkRevision: 1,
+        runId: RUN_A,
+        operationLeaseExpiresAt: 9_000_000,
+        idleExpiresAt: 9_000_000,
+        archiveDueAt: 9_000_000,
+        expireDueAt: 9_000_000,
+        now: 5_000,
+      });
+      await terminal(stub, "recordImportedResource", {
+        sandboxGeneration: 2,
+        resourceId: "00000000-0000-7000-8000-0000000000e2",
+        destinationPath: ".avalon/resources/two",
+        sourceSha256: "b".repeat(64),
+        sizeBytes: 20,
+        state: "completed",
+        importedAt: 6_000,
+        now: 6_000,
+      });
+
+      // `startFresh` reads a generation, then awaits the provider's delete
+      // before resetting. Another run can replace the generation in that
+      // window, so the reset arrives naming one that is no longer current.
+      const stale = await terminal(stub, "resetSandbox", { generation: 1, now: 7_000 });
+
+      expect(stale.value).toEqual({ deleted: false });
+      // The live generation keeps its provenance. Losing it would read as
+      // "nothing was imported" to the next authority check, which is how a
+      // revoked resource would go unnoticed and its files be reused.
+      expect((await terminal(stub, "importedResources", 2)).value).toHaveLength(1);
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({ generation: 2 });
+    });
+
     it("refuses to select a repository while a sandbox still exists", async () => {
       const stub = agent();
       await boot(stub);
