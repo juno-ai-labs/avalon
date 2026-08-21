@@ -5,6 +5,7 @@ import {
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
+  ScopeSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
@@ -101,9 +102,24 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   openingMessage: z.string().max(50_000),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
-  participantUserIds: z.array(z.string().uuid()).max(100),
+  participantUserIds: z.array(z.string().uuid()),
   attachmentIds: z.array(z.string().uuid()).max(10),
   originResourceIds: z.array(z.string().uuid()).max(8).default([]),
+  /**
+   * Who may read it from birth. Defaulted to `personal`: a work stream nobody
+   * has said anything about is the one somebody just started for themselves,
+   * and the two mistakes are not symmetrical — a private work stream that
+   * should have been public is opened from its own right-click menu, while the
+   * reverse has already been read. Callers that *know* the audience — a public
+   * Slack channel's thread, an automation whose row is reached by owning the
+   * automation rather than by being a participant — say `workspace` outright.
+   *
+   * Defaulted rather than required so a rolling deploy stays safe in the one
+   * direction it can go wrong: the previous Worker's creation service names no
+   * scope, and a required field would turn every create it issues against a
+   * replaced object into a validation failure for the length of the deploy.
+   */
+  scope: ScopeSchema.default("personal"),
   modelOverride: z.string().max(200).nullable(),
   originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
   automationSubscriptionId: z.string().uuid().nullable().default(null),
@@ -123,6 +139,17 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
 }).strict();
 
 export type InitializeWorkstreamObjectInput = z.infer<typeof InitializeWorkstreamObjectInputSchema>;
+
+/**
+ * What a caller hands `initialize`, before the schema fills its defaults in.
+ *
+ * Separate from {@link InitializeWorkstreamObjectInput} — the parsed shape the
+ * method works with — because a defaulted field is optional on the way in and
+ * present on the way out. Typing the boundary with the output shape would make
+ * every default unreachable, which is how `scope` would have arrived required
+ * at exactly the callers the default exists for.
+ */
+export type InitializeWorkstreamObjectRequest = z.input<typeof InitializeWorkstreamObjectInputSchema>;
 
 export type WorkstreamObjectCreateMessageInput = z.infer<typeof WorkstreamObjectCreateMessageInputSchema>;
 export type WorkstreamObjectUpdateInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -340,7 +367,7 @@ export class WorkstreamObjectProductService {
 
   async initialize(
     auth: AuthContext,
-    rawInput: InitializeWorkstreamObjectInput,
+    rawInput: InitializeWorkstreamObjectRequest,
   ): Promise<{
     workstream: Workstream;
     messageId: string;
@@ -421,7 +448,7 @@ export class WorkstreamObjectProductService {
     this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
-             title = ?, description = ?, scope = 'workspace', exact_state = 'scheduled',
+             title = ?, description = ?, scope = ?, exact_state = 'scheduled',
              state_reason_code = ?, next_sequence_number = 2, next_attention_ordinal = 2,
              authority_epoch = 1, scope_epoch = 0, listing_epoch = 1, run_revision = 1,
              created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
@@ -431,7 +458,7 @@ export class WorkstreamObjectProductService {
              opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
              description_source = ?, system_kind = ?, title_status = ?, model_override = ?, updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
-        input.generation, input.title, input.objective, input.reason, now, now, now,
+        input.generation, input.title, input.objective, input.scope, input.reason, now, now, now,
         input.originType, input.creatorUserId, input.automationSubscriptionId,
         input.automationRunId, input.plannedFor ? Date.parse(input.plannedFor) : null,
         input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
