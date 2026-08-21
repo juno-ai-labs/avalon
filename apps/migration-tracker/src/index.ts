@@ -131,6 +131,13 @@ export default {
   fetch: app.fetch,
   queue: consumeMigrationReports,
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    // No retry: `sweepInventory` already absorbs every Cloudflare API failure
+    // into a recorded `failed` sweep, so the only thing left that can throw is a
+    // registry write — and the next hourly sweep supersedes a lost one entirely,
+    // since the sweep is a full re-enumeration rather than an increment.
+    // Retrying would re-walk the whole account to produce a result an hour of
+    // waiting produces anyway. A throw here is not swallowed: it surfaces as a
+    // failed cron invocation, which is the signal worth having.
     controller.noRetry();
     await runInventorySweep(env);
   },

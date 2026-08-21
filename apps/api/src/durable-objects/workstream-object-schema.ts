@@ -1424,6 +1424,15 @@ export function workstreamObjectSchemaImplementationHash(
   return durableObjectMigrationHash(migration);
 }
 
+/**
+ * The migration runner's component key for the workstream object's schema.
+ *
+ * Exported because `SubstreamAgent` reports under it while this module migrates
+ * under it; a second literal there could drift from this one and file the report
+ * against a component the object's own ledger does not use.
+ */
+export const WORKSTREAM_OBJECT_SCHEMA_COMPONENT = "workstream";
+
 export function applyWorkstreamObjectSchema(
   storage: DurableObjectStorage,
   workerVersionId: string,
@@ -1432,7 +1441,7 @@ export function applyWorkstreamObjectSchema(
   applyDurableObjectSqliteMigrations({
     storage,
     migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
-    component: "workstream",
+    component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
     workerVersionId,
     now,
     afterMigrations: (sql) => {

@@ -251,6 +251,22 @@ describe("parseObjectQuery", () => {
     expect(query).toMatchObject({ limit: 50, offset: 0 });
     expect(query.status).toBeUndefined();
   });
+
+  /**
+   * A bad value drops its own field, not the operator's whole query. Dropping
+   * everything turns "your limit was out of range" into a page showing the
+   * entire unfiltered fleet under the component heading they asked for.
+   */
+  it("keeps the filters that are valid when one value is not", () => {
+    const query = parseObjectQuery(
+      "https://x/objects?component=workstream&region=eu&status=nonsense&limit=99999",
+    );
+
+    expect(query.component).toBe("workstream");
+    expect(query.region).toBe("eu");
+    expect(query.status).toBeUndefined();
+    expect(query.limit).toBe(50);
+  });
 });
 
 describe("the queue consumer", () => {

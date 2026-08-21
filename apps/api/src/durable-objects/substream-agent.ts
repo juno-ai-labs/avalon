@@ -92,7 +92,10 @@ import {
   WorkstreamObjectStore,
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
-import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "./workstream-object-schema";
+import {
+  WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+  WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+} from "./workstream-object-schema";
 import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   InitializeWorkstreamObjectInputSchema,
@@ -460,7 +463,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       this.objectStore = await withMigrationReport({
         state,
         env,
-        component: "workstream",
+        component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
         className: "SubstreamAgent",
         latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
       }, () => new WorkstreamObjectStore(
