@@ -271,9 +271,15 @@ This document describes the platform. It does not decide what Avalon traces —
 that is [`performance-tracing.md`](performance-tracing.md) — nor what it logs
 and how those rows are queried, which is
 [`runbook.md`](runbook.md#observability-views-and-retention). It does not cover
-product analytics: [`telemetry.md`](telemetry.md) owns the regional
-PostHog-bound pipeline, which is a different system with different privacy rules
-and is not built on any of this.
+product analytics: [`telemetry.md`](telemetry.md) owns the regional PostHog-bound
+pipeline — the collector, the outbox, and the adapter — which is a different
+system with different privacy rules and is not built on any of this.
+
+Since #207 there are **two** paths to PostHog and only one of them is that one.
+The Global Worker also exports its Workers Logs and traces to PostHog over OTLP,
+and that path *is* built on everything described here: it carries whatever the
+platform puts on a span, under the platform's rules rather than the telemetry
+pipeline's. "PostHog" alone is no longer enough to say which path is meant.
 
 ## Failure modes and limits
 
