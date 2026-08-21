@@ -5,6 +5,7 @@ import {
   WorkspaceIdSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
+  WorkspaceBlockDashboardPreferenceEventSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
@@ -63,6 +64,9 @@ import {
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
+  WorkspaceBlockDashboardPreferenceRequestSchema,
+  WorkspaceBlockDashboardPreferenceUpdateSchema,
+  WorkspaceBlockDashboardPreferenceResultSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
@@ -91,6 +95,9 @@ import {
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
+  type WorkspaceBlockDashboardPreferenceRequest,
+  type WorkspaceBlockDashboardPreferenceUpdate,
+  type WorkspaceBlockDashboardPreferenceResult,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
   type WorkspaceRegionalEffectApplyRequest,
@@ -544,6 +551,26 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_scope TEXT`,
     `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_capability_count INTEGER`,
     `ALTER TABLE connector_oauth_attempts ADD COLUMN telemetry_reconnect INTEGER NOT NULL DEFAULT 0`,
+  ],
+}, {
+  version: 3,
+  description: "the viewer's HyperSight panel preference, owned where every other viewer preference is",
+  statements: [
+    // Held in WorkstreamDO until now, which made reading one boolean the thing
+    // that woke that object on the work-stream open path — 2.9s of it in the
+    // production trace this moved for. Nothing about the preference needs the
+    // work stream's own authority: it is a per-viewer UI opinion, the workspace
+    // already answers whether the viewer may see the work stream at all, and
+    // `viewer_preferences` was already a workspace sync topic pointing at this
+    // exact query. Keyed by work stream as well as user because the preference
+    // stays per work stream; only its owner moved.
+    `CREATE TABLE workspace_block_dashboard_preferences (
+      workstream_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (workstream_id, user_id)
+    ) STRICT`,
   ],
 }];
 
@@ -1797,6 +1824,91 @@ export class WorkspaceDO extends DurableObject<Env> {
     const request = WorkspaceDirectoryVisibilityRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return this.directoryVisible(request.userId, request.workstreamId);
+  }
+
+  /**
+   * The viewer's HyperSight panel preference.
+   *
+   * Visibility is resolved here rather than by the caller, so a read is one
+   * round trip. It used to be two — a `canReadWorkstream` call to this object
+   * followed by a preference call to WorkstreamDO — and the second was what
+   * woke that object on the work-stream open path for the sake of a boolean.
+   *
+   * A work stream the viewer may not read answers `null` rather than a default,
+   * so the caller can tell "not yours" from "not set" and return the same 404
+   * the visibility check used to raise.
+   */
+  async blockDashboardPreference(
+    input: WorkspaceBlockDashboardPreferenceRequest,
+  ): Promise<WorkspaceBlockDashboardPreferenceResult> {
+    await this.initialized;
+    const request = WorkspaceBlockDashboardPreferenceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!this.directoryVisible(request.userId, request.workstreamId)) {
+      return WorkspaceBlockDashboardPreferenceResultSchema.parse({ preference: null });
+    }
+    const row = this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
+      `SELECT visible, updated_at FROM workspace_block_dashboard_preferences
+        WHERE workstream_id = ? AND user_id = ?`,
+      request.workstreamId,
+      request.userId,
+    ).toArray()[0];
+    return WorkspaceBlockDashboardPreferenceResultSchema.parse({
+      preference: {
+        visible: row?.visible === 1,
+        updatedAt: row ? new Date(row.updated_at).toISOString() : null,
+      },
+    });
+  }
+
+  async setBlockDashboardPreference(
+    input: WorkspaceBlockDashboardPreferenceUpdate,
+  ): Promise<WorkspaceBlockDashboardPreferenceResult> {
+    await this.initialized;
+    const request = WorkspaceBlockDashboardPreferenceUpdateSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!this.directoryVisible(request.userId, request.workstreamId)) {
+      return WorkspaceBlockDashboardPreferenceResultSchema.parse({ preference: null });
+    }
+    this.state.storage.sql.exec(
+      `INSERT INTO workspace_block_dashboard_preferences(workstream_id, user_id, visible, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET visible = excluded.visible,
+         updated_at = excluded.updated_at`,
+      request.workstreamId,
+      request.userId,
+      request.visible ? 1 : 0,
+      Date.parse(request.updatedAt),
+    );
+    const preference = { visible: request.visible, updatedAt: request.updatedAt };
+    // Pushed to the one person it belongs to, on the socket that now owns it.
+    // A viewer preference is not workspace news: broadcasting it would put one
+    // person's panel state on every other member's connection.
+    await this.publishBlockDashboardPreference(request.workstreamId, request.userId, preference);
+    return WorkspaceBlockDashboardPreferenceResultSchema.parse({ preference });
+  }
+
+  private async publishBlockDashboardPreference(
+    workstreamId: string,
+    userId: string,
+    preference: { visible: boolean; updatedAt: string },
+  ): Promise<void> {
+    const payload = JSON.stringify(WorkspaceBlockDashboardPreferenceEventSchema.parse({
+      type: "workspace_block_dashboard_preference",
+      occurredAt: preference.updatedAt,
+      workstreamId,
+      preference,
+    }));
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== userId) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns close cleanup, and the next read returns the row
+        // this write already committed.
+      }
+    }
   }
 
   async visibleWorkstreamIds(input: WorkspaceDirectoryVisibleIdsRequest): Promise<WorkspaceDirectoryVisibleIdsPage> {

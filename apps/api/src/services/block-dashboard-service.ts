@@ -15,7 +15,8 @@ import { z } from "zod";
 
 import { BlockDashboardControlRequestSchema } from "../durable-objects/block-dashboard-protocol";
 import type { BlockDashboardContextFence } from "../durable-objects/block-dashboard-protocol";
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { WorkspaceBlockDashboardPreferenceResultSchema } from "../durable-objects/workspace-directory-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
@@ -27,9 +28,6 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 
 const BlockDashboardResponseSchema = z.object({ blockDashboard: BlockDashboardSchema }).passthrough();
-const BlockDashboardPreferenceResponseSchema = z.object({
-  preference: BlockDashboardPreferenceSchema,
-}).strict();
 const BlockDashboardRunsResponseSchema = z.object({
   runs: z.array(BlockDashboardBlockRunSchema),
 }).strict();
@@ -88,31 +86,54 @@ export class BlockDashboardService {
     return loadBlockDashboard(this.env, this.auth.workspaceId, workstreamId);
   }
 
+  /**
+   * One WorkspaceDO call, not a visibility check followed by a WorkstreamDO
+   * read. The object resolves both, and answering `null` for a work stream this
+   * viewer may not read is what preserves the 404 the separate check raised.
+   *
+   * The second call was the expensive one: it woke WorkstreamDO to read a
+   * boolean, and on the work-stream open path that wake was measured at 2.9s.
+   * WorkspaceDO is already awake for anyone with the app open, because the
+   * workspace socket is connected to it.
+   */
   async getPreference(workstreamId: string): Promise<BlockDashboardPreference> {
-    await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
-      operation: "get_preference",
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
-      userId: this.auth.userId,
-    });
-    return BlockDashboardPreferenceResponseSchema.parse(payload).preference;
+    const workspace = await this.workspaceObject();
+    const result = WorkspaceBlockDashboardPreferenceResultSchema.parse(
+      await workspace.blockDashboardPreference({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        workstreamId,
+      }),
+    );
+    if (!result.preference) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    return BlockDashboardPreferenceSchema.parse(result.preference);
   }
 
   async updatePreference(
     workstreamId: string,
     input: UpdateBlockDashboardPreferenceRequest,
   ): Promise<BlockDashboardPreference> {
-    await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
-      operation: "update_preference",
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
-      userId: this.auth.userId,
-      visible: input.visible,
-      updatedAt: nowIso(),
-    });
-    return BlockDashboardPreferenceResponseSchema.parse(payload).preference;
+    const workspace = await this.workspaceObject();
+    const result = WorkspaceBlockDashboardPreferenceResultSchema.parse(
+      await workspace.setBlockDashboardPreference({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        workstreamId,
+        visible: input.visible,
+        updatedAt: nowIso(),
+      }),
+    );
+    if (!result.preference) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    return BlockDashboardPreferenceSchema.parse(result.preference);
+  }
+
+  private workspaceObject() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
   }
 
   async update(workstreamId: string, input: UpdateBlockDashboardRequest): Promise<BlockDashboard> {
