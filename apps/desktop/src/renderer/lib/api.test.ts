@@ -641,32 +641,21 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
-  it('loads durable rail context from the deferred work-stream endpoint', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      void input;
-      return json({
-        backgroundTasks: [{
-          id: taskId,
-          harnessRunId: messageId,
-          title: 'Respond to message',
-          taskType: 'agent',
-          status: 'completed',
-          startedAt: timestamp,
-          completedAt: '2026-07-31T20:00:12.000Z',
-          tokenCount: 1_250,
-          toolUses: 3,
-          transcriptMessageId: messageId,
-        }],
-      });
-    });
+  it('asks for nothing when a work stream has no automation behind it', async () => {
+    // `/context` is gone. Its only field was `backgroundTasks`, which rides on
+    // the work-stream detail, so the deferred rail now makes no request at all
+    // unless there is an automation to describe — and that is a different
+    // resource with its own endpoint.
+    const workstreamId = '00000000-0000-7000-8000-000000000012';
+    const fetchMock = vi.fn(async () => json({}));
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.getWorkstreamContext(workstreamId)).resolves.toMatchObject({
-      backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000 }],
+    await expect(api.getWorkstreamContext(workstreamId)).resolves.toEqual({
+      backgroundTasks: [],
       automationRuns: [],
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}/context`);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces nested service errors with their code and details', async () => {

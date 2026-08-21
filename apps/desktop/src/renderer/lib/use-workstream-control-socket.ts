@@ -150,6 +150,13 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
+      // The boot frame is where the panel preference arrives now; it has no
+      // request of its own. Written straight in rather than invalidated: this
+      // frame is the answer a refetch would go and ask for.
+      queryClient.setQueryData<BlockDashboardPreference>(
+        ['block-dashboard-preference', workstreamId],
+        metadata.viewer.blockDashboardPreference,
+      );
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,

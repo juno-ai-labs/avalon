@@ -862,7 +862,7 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   openElicitations: z.array(ElicitationSchema),
   suggestions: z.array(ActivitySuggestionSchema),
   latestHarnessRunId: IdSchema.nullable(),
-  latestHarnessRun: HarnessRunMetadataSchema.nullable().optional()
+  latestHarnessRun: HarnessRunMetadataSchema.nullable().optional(),
 });
 
 export const WorkstreamContextSchema = z.object({
@@ -1437,6 +1437,41 @@ export const MessageFeedPageSchema = z.object({
   newerCursor: z.string().nullable(),
 }).strict();
 
+/**
+ * Everything the desktop needs to paint a work stream, in one response.
+ *
+ * The REST twin of the SubstreamAgent `snapshot` frame, and assembled by the
+ * same code so the two cannot drift. Opening used to be five sequential
+ * requests — detail, transcript, context, panel preference, Terminal — of which
+ * four read state the room already had in hand while answering the first. They
+ * are folded in here rather than kept separate because none of them was a
+ * decision the client made; they were fields it went and collected.
+ *
+ * `blockDashboardPreference` is the exception that proves the shape: its row
+ * belongs to WorkstreamDO, so the route fetches it beside the room call rather
+ * than the room reaching sideways for it. That keeps snapshot assembly free of
+ * cross-object calls, which is the cost this whole change removes.
+ */
+export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
+  /**
+   * Newest page. Bounded: a screen shows tens of messages, not hundreds.
+   *
+   * Optional, and absent is not empty. A Worker that predates this field still
+   * answers this route, and EU deploys before Global, so one region serves the
+   * old shape for part of every rollout — the same skew `WorkstreamContextSchema`
+   * documents at length. Requiring it would fail the whole response there, and
+   * the failure is not a missing transcript but a work stream that will not
+   * open. The client falls back to `GET /:id/messages` when it is undefined,
+   * which is exactly what it did before this existed.
+   */
+  messageFeed: MessageFeedPageSchema.optional(),
+  /** The window around where this viewer stopped, or null if that is this page. */
+  resumeFeed: MessageFeedPageSchema.nullable().default(null),
+  /** Absent from an older Worker; the control socket's boot frame also carries it. */
+  blockDashboardPreference: BlockDashboardPreferenceSchema.optional(),
+});
+
+
 const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value) =>
   Number.isSafeInteger(Number(value)), "Cursor must be a safe integer");
 const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
@@ -1648,6 +1683,21 @@ export const WorkstreamControlMetadataSchema = z.object({
     manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
     manualUnreadGeneration: z.number().int().nonnegative(),
     latestMentionSequenceNumber: z.number().int().nonnegative(),
+    /**
+     * Whether this viewer has the HyperSight panel open.
+     *
+     * Carried on the boot frame because it was a REST request of its own on the
+     * work-stream open path, and the object answering it is the one already
+     * assembling this message. It rides here rather than on the SubstreamAgent
+     * snapshot for the same reason: WorkstreamDO owns the row, so putting it on
+     * the child's frame would need a cross-object call on the critical path —
+     * which is the cost being removed.
+     *
+     * Optional for rollout skew: a Worker that predates it still sends this
+     * frame, and requiring it would make the whole frame unparseable — costing
+     * the reader every field on it, not just this one.
+     */
+    blockDashboardPreference: BlockDashboardPreferenceSchema.optional(),
   }).strict(),
 }).strict();
 
@@ -2543,6 +2593,7 @@ export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSche
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
+export type WorkstreamBoot = z.infer<typeof WorkstreamBootSchema>;
 export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
