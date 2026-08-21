@@ -112,8 +112,7 @@ describe('useWorkstreamsQuery', () => {
     expect(listWorkstreams).not.toHaveBeenCalled();
   });
 
-  // A batch that failed has left the automations and notes with nothing to load
-  // them: the REST queries are waiting on it, and a retry that asked for the
+  // Nothing else loads the automations and notes, so a retry that asked for the
   // directory alone would open a sidebar permanently missing two of its lists.
   it('retries a failed batch as a batch', async () => {
     listSidebar.mockRejectedValueOnce(new Error('offline'));
@@ -157,18 +156,17 @@ describe('useWorkstreamsQuery', () => {
     const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
-    // The cold read is the batch; the preference change reloads the directory
-    // alone, because the automations and notes it also carried do not vary
-    // with it and are the topics' to refresh from here on.
     expect(listSidebar).toHaveBeenCalledTimes(1);
     expect(listSidebar.mock.calls[0]?.[0]).toMatchObject({ includeSystem: false });
     expect(listWorkstreams).not.toHaveBeenCalled();
 
     announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
-    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
-    expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
-    expect(listSidebar).toHaveBeenCalledTimes(1);
+    // The reload is another batch, not a bare directory page: the two lists
+    // riding along have no other loader, so every reload has to carry them.
+    await waitFor(() => expect(listSidebar).toHaveBeenCalledTimes(2));
+    expect(listSidebar.mock.calls[1]?.[0]).toMatchObject({ includeSystem: true });
+    expect(listWorkstreams).not.toHaveBeenCalled();
   });
 
   describe('paging', () => {
@@ -233,12 +231,12 @@ describe('useWorkstreamsQuery', () => {
         await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       });
 
-      // Three: the appended page, then both pages again on the refetch. The
-      // batch is not re-sent — the sidebar has already opened.
-      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(3));
-      expect(listSidebar).toHaveBeenCalledTimes(1);
-      expect(listWorkstreams.mock.calls[1]?.[0]).not.toHaveProperty('before');
-      expect(listWorkstreams.mock.calls[2]?.[0]).toMatchObject({ before: 'cursor-1' });
+      // The refetch walks both pages again: page one as a batch, page two as a
+      // directory page. So two paged requests in total, and two batches.
+      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(2));
+      expect(listSidebar).toHaveBeenCalledTimes(2);
+      expect(listSidebar.mock.calls[1]?.[0]).not.toHaveProperty('before');
+      expect(listWorkstreams.mock.calls[1]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
     });
@@ -269,14 +267,16 @@ describe('useWorkstreamsQuery', () => {
       act(() => result.current.fetchMore());
       await waitFor(() => expect(result.current.data).toHaveLength(2));
       listWorkstreams.mockClear();
+      listSidebar.mockClear();
 
       announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
       // The rows are a different population now, so the pages walked before
       // describe a list that no longer exists: one request, from the start.
-      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
-      expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
-      expect(listWorkstreams.mock.calls[0]?.[0]).not.toHaveProperty('before');
+      await waitFor(() => expect(listSidebar).toHaveBeenCalledTimes(1));
+      expect(listSidebar.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
+      expect(listSidebar.mock.calls[0]?.[0]).not.toHaveProperty('before');
+      expect(listWorkstreams).not.toHaveBeenCalled();
     });
   });
 });

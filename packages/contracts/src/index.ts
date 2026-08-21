@@ -1696,6 +1696,36 @@ export const WorkspaceSidebarPageEventSchema = z.object({
   notes: z.array(NoteSummarySchema).max(250),
 }).strict();
 
+/**
+ * A sidebar list, re-sent whole because WorkspaceDO changed one of its rows.
+ *
+ * Whole rather than a patch, and without the per-row waterlines the work-stream
+ * row carries, because the situations are not alike. A work-stream row is
+ * assembled from child objects over an unordered, at-least-once Queue, so it
+ * needs a version per field to reject a delayed update. These two lists are
+ * read and written inside the single object that owns them, on one thread, and
+ * sent down a transport that preserves order — the last send is always the
+ * newest state, and a list of at most 250 summaries is small enough that
+ * diffing it would buy nothing but a way to be wrong.
+ *
+ * A row that is gone is simply absent from the next list, so deletion and
+ * archive need no tombstone of their own.
+ */
+export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
+  z.object({
+    type: z.literal("workspace_sidebar_list"),
+    occurredAt: TimestampSchema,
+    list: z.literal("automations"),
+    items: z.array(AutomationSummarySchema).max(250),
+  }).strict(),
+  z.object({
+    type: z.literal("workspace_sidebar_list"),
+    occurredAt: TimestampSchema,
+    list: z.literal("notes"),
+    items: z.array(NoteSummarySchema).max(250),
+  }).strict(),
+]);
+
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.object({
   type: z.literal("workspace_workstream_state"),
@@ -1804,6 +1834,7 @@ export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEve
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebarPageEvent = z.infer<typeof WorkspaceSidebarPageEventSchema>;
+export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

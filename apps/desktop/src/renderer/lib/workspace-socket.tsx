@@ -1,5 +1,6 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceSidebarListEventSchema,
   WorkspaceSidebarPageEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -120,8 +121,12 @@ function invalidateTopic(
     connector_oauth_attempts: [],
     terminal_policy: [['terminal-workspace-settings']],
     digest_schedule: [['digest-schedule']],
-    automations: [['automations'], ['automation'], ['automation-draft']],
-    notes: [['notes'], ['note']],
+    // The lists themselves are pushed whole by WorkspaceDO, so the topic no
+    // longer names them — it carries the detail surfaces REST still serves.
+    // `automation-email-reconciliation` is the repair pass the pause/resume
+    // path depends on; see the app shell.
+    automations: [['automation'], ['automation-draft'], ['automation-email-reconciliation']],
+    notes: [['note']],
     resources: [['resources'], ['workstream-context']],
     activity: [['work-opportunities']],
     work_opportunities: [['work-opportunities']],
@@ -366,6 +371,20 @@ export function WorkspaceSocketProvider({
                 queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
                 exact: true,
               });
+            }
+            return;
+          }
+          const sidebarList = WorkspaceSidebarListEventSchema.safeParse(decoded);
+          if (sidebarList.success) {
+            // The whole list, so it replaces rather than merges: a row the
+            // viewer can no longer see is expressed by its absence.
+            if (sidebarList.data.list === 'automations') {
+              queryClient.setQueryData<AutomationSummary[]>(
+                ['automations'],
+                sidebarList.data.items.map(mapAutomationSummary),
+              );
+            } else {
+              queryClient.setQueryData<NoteSummary[]>(['notes'], sidebarList.data.items);
             }
             return;
           }
