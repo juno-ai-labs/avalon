@@ -1,20 +1,31 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ThemePicker } from './theme-picker';
-import { readThemeChoice } from '../lib/theme';
+import { readThemeChoice, watchSystemAppearance } from '../lib/theme';
 
-function installMatchMedia(prefersDark: boolean): void {
+/**
+ * A `matchMedia` whose `change` listeners can actually be fired, so a test can
+ * put the Mac into dark and see what the picker does about it. Returns the
+ * switch; calling it flips `matches` and notifies, the way the platform does.
+ */
+function installMatchMedia(prefersDark: boolean): (dark: boolean) => void {
+  let dark = prefersDark;
+  const listeners = new Set<() => void>();
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     writable: true,
     value: (query: string) => ({
-      matches: query.includes('dark') ? prefersDark : false,
+      get matches() { return query.includes('dark') ? dark : false; },
       media: query,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
+      addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
     }),
   });
+  return (next: boolean) => {
+    dark = next;
+    for (const listener of [...listeners]) listener();
+  };
 }
 
 describe('ThemePicker', () => {
@@ -152,6 +163,41 @@ describe('ThemePicker', () => {
     expect(container.querySelector('.settings-theme-swatch')?.getAttribute('data-theme')).toBe('terra-light');
     expect(container.querySelector('.settings-theme-swatch-alternate')?.getAttribute('data-theme')).toBe('terra');
     expect(screen.getByText('Terra, following this Mac, which is dark right now.')).toBeInTheDocument();
+  });
+
+  /**
+   * Under `system` the status line is the only thing that says which appearance
+   * is actually in force, so it has to survive the Mac changing underneath it —
+   * the sunset case, where nobody touches the picker at all. `applyTheme`
+   * notifies every `useTheme` subscriber, which is what re-renders the live
+   * region; a review read this as not wired up, so it is now pinned.
+   */
+  it('re-announces the appearance when the Mac changes underneath System mode', () => {
+    const setDark = installMatchMedia(false);
+    render(<ThemePicker />);
+    const stop = watchSystemAppearance();
+
+    expect(screen.getByText('Terra, following this Mac, which is light right now.')).toBeInTheDocument();
+
+    act(() => setDark(true));
+
+    expect(screen.getByText('Terra, following this Mac, which is dark right now.')).toBeInTheDocument();
+    expect(document.documentElement.dataset['theme']).toBe('terra');
+    stop();
+  });
+
+  /** The counterpart: a pinned mode ignores the Mac, so nothing re-announces. */
+  it('leaves a pinned mode alone when the Mac changes', () => {
+    const setDark = installMatchMedia(false);
+    render(<ThemePicker />);
+    const stop = watchSystemAppearance();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Light' }));
+    act(() => setDark(true));
+
+    expect(screen.getByText('Terra, always light.')).toBeInTheDocument();
+    expect(document.documentElement.dataset['theme']).toBe('terra-light');
+    stop();
   });
 
   it('goes back to following the Mac when System is chosen again', () => {
