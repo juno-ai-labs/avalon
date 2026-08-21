@@ -347,6 +347,18 @@ frames, and reconciles to the agent's final local-SQL transcript page plus the
 matching terminal metadata waterline. WorkspaceDO directory queries refresh
 regional lists but never override canonical child transcript content.
 
+That reconciliation runs over the socket, not REST. A viewer that needs
+canonical state sends `request_snapshot` and the room answers with the same
+sequenced `snapshot` frame an initial subscription receives: one frame carrying
+the work stream, the newest transcript page, both cursors, and the active-stream
+checkpoints, assembled at one sequence. The room holds the asking socket out of
+broadcasts while it assembles, exactly as it does for an initial subscribe, then
+replays anything published in that window. Because the answer is ordered against
+every other frame, the client's ordinary cursor guard decides whether to apply
+it, and a viewer keeps at most one request outstanding. REST reconciliation
+remains only where there is no socket to ask on: recovery after
+`resync_required`.
+
 The desktop applies each complete WorkstreamDO snapshot through one shared
 common/viewer waterline ledger behind the open detail and sidebar caches, so the
 header and status dot cannot disagree across a delayed Queue copy. WorkspaceDO
@@ -733,6 +745,74 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-21 — Canonical reconciliation is served by the room, not refetched
+
+**What changed:** The desktop no longer reconciles a work stream by fetching
+`GET /workstreams/:id` and `GET /workstreams/:id/messages`. It sends
+`request_snapshot` on the SubstreamAgent socket it already holds, and the room
+replies with the ordinary sequenced `snapshot` frame — `fulfillSubscription` at
+sequence zero, with the socket held out of broadcasts while the frame is
+assembled and the in-memory catch-up replayed after it. One request is
+outstanding at a time. A reconnect no longer reconciles separately at all: the
+`subscribe` cursor already makes the room replay what was missed, snapshot when
+it cannot, and ask for a resync when it can prove neither. REST reconciliation
+survives only for recovery after `resync_required`, where there is no socket to
+ask on.
+
+**Why:** The old reconciliation restarted itself whenever the room sequence
+advanced while its two fetches were in flight, and it measured that with
+`lastSequence` — the *room event* cursor, which `stream_delta` advances once per
+coalesced token batch. Streaming frames carry no canonical state, so the test
+that asked "did canonical state move under me?" was answered "yes" by the one
+class of event that provably could not have moved it. During a run the condition
+was therefore always true and the restart had no convergence criterion: one
+viewer of one streaming work stream refetched the detail and the transcript
+every ~600–900 ms for as long as the run lasted. Production logs for
+2026-08-20T22:48Z show 15 detail reads and 14 transcript reads for a single work
+stream in 21 seconds, each pair costing two authenticated D1 session reads and
+two authority reads before doing any work.
+
+The transport was the deeper error. The room is the authority for both halves a
+reconciliation needs and can assemble them at one sequence; two REST reads are
+separately authorized, separately timed, and can straddle a write, so detail and
+transcript could disagree with each other in a way one snapshot cannot. The
+socket's own subscribe path had already solved the concurrency problem correctly
+— hold the socket out of broadcasts, deliver, then replay the window — and the
+client had reimplemented it as an unbounded retry. The code comment asserting
+"REST is now used only to page older history or recover after `resync_required`"
+predates this change; reconciliation was the standing violation of it.
+
+**Considered and rejected:** *Keeping REST and fixing only the staleness test*,
+by tracking a separate canonical-only sequence that streaming frames do not
+advance. It removes the observed loop and nothing else: two round trips remain,
+the two halves can still disagree, and the next event class that is neither
+clearly canonical nor clearly transient has to be classified correctly by
+whoever adds it. *A correlated direct reply*, like `message_page`, carrying a
+`requestId`. Direct frames are deliberately outside the room sequence, so the
+answer would arrive unordered against the feed and the client would be back to
+reasoning about which of two concurrent answers is newer — the exact question
+the sequenced frame makes unnecessary. *Re-sending `subscribe` with
+`afterSequence: 0`*, which needs no contract change and reaches the same code.
+Rejected as a pun: it reads as "I am joining" on a socket that is already
+joined, resets the resume cursor as a side effect, and rebroadcasts presence.
+*Letting the room push canonical state on terminal status by itself*, which
+would send a full transcript to every subscriber on every run completion whether
+or not any of them had drifted.
+
+**Consequences:** `request_snapshot` is refused unless the socket is subscribed
+— an unsubscribed socket has no feed to refresh, and answering one would serve
+canonical state on a connection that skipped the subscribe path's authority and
+maintenance checks. The handler must leave the attachment subscribed on every
+exit, including a throw: a socket left unsubscribed stops receiving every future
+frame, and a reader cannot tell that from a quiet work stream. Anything that
+makes `snapshot` frames non-sequenced, or removes the client's cursor guard,
+re-creates the staleness question this change removed and will most likely be
+patched with another retry. The path is deliberately **not** traced: it is a
+background repair rather than one of the three flows a person waits on, and
+`docs/performance-tracing.md` reserves `PerfFlow` for those — the cost is that a
+slow reconciliation shows up only as its `http_request`-free absence, and adding
+a fourth flow is the lever if that turns out to matter.
 
 ### 2026-08-20 — The thin D1 plane is enforced by schema
 

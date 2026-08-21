@@ -2497,6 +2497,103 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.close(1000, "done");
   });
 
+  it("re-serves canonical state to a subscribed viewer and puts it back in the room", async () => {
+    await seedOpenAuthority();
+    // The snapshot is assembled from D1 as well as object-local SQL, and this
+    // suite starts with no schema, so a test declares what the path it exercises
+    // reads.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000131",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // A viewer that never subscribed has no feed to refresh, and answering one
+    // would hand out canonical state on a socket that skipped the subscribe
+    // path's authority and maintenance checks.
+    const refusal = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "request_snapshot" }));
+    expect(JSON.parse(String((await refusal).data))).toMatchObject({
+      type: "error",
+      code: "subscription_required",
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Re-served snapshot', updated_at = ? WHERE id = 1`,
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 3; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `canonical ${sequence}`,
+          2_000 + sequence,
+          2_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "request_snapshot" }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      workstream: { id: string };
+      messageFeed: { items: { sequenceNumber: number }[] };
+    };
+    expect(frame.type).toBe("snapshot");
+    expect(frame.workstream.id).toBe(WORKSTREAM_ID);
+    expect(frame.messageFeed.items.map((item) => item.sequenceNumber)).toEqual([1, 2, 3]);
+
+    // The request holds the socket out of broadcasts while the snapshot is
+    // assembled. Leaving it that way would silently stop every later frame, so
+    // the end state is the one thing worth pinning here.
+    await runInDurableObject(stub, (_instance, state) => {
+      const attachment = state.getWebSockets()[0]!.deserializeAttachment() as { subscribed: boolean };
+      expect(attachment.subscribed).toBe(true);
+    });
+  });
+
   it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
