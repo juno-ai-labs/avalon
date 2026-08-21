@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 10;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 11;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1217,6 +1217,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "preserve a stopped top-level run in the workstream projection",
     statements: rebuiltWorkstreamsStoppedProjection(),
   },
+  {
+    version: 11,
+    description: "settle same-id tool transcript writes before replay deduplication",
+    statements: [
+      ...repairStrandedToolTranscriptParts(),
+      ...rebuiltMessagesInsertTriggerForToolSettlement(),
+    ],
+  },
 ];
 
 /**
@@ -1318,8 +1326,10 @@ function rebuiltDescriptionRefreshInsertTrigger(): string[] {
  * that clause was silently dropped, so the trigger's bare INSERT hit
  * `parts_client_message_uq` and crashed the run's settlement instead of
  * deduplicating it. The trigger now carries a second upsert arm: same id and
- * tool-typed updates in place (as before), same client id from a different
- * message id is a replay and is ignored.
+ * tool-typed updates in place when no client-id conflict selects the first
+ * arm, while the same client id from a different message id is a replay and
+ * is ignored. Schema v11 repairs the same-id plus same-client-id case that
+ * SQLite resolves through this first arm.
  *
  * Derived from the frozen v1 body with the v3 rounding applied, so the three
  * versions cannot drift apart.
@@ -1345,6 +1355,87 @@ function rebuiltMessagesInsertTrigger(): string[] {
          updated_at = excluded.updated_at
        WHERE parts.message_type = 'tool';`);
   return ["DROP TRIGGER IF EXISTS _runtime_messages_insert", patched];
+}
+
+/**
+ * Rebuilds `_runtime_messages_insert` so one tool row can move from started to
+ * its terminal state when both durable identifiers stay the same.
+ *
+ * The v5 trigger put `client_message_id DO NOTHING` before its `id DO UPDATE`
+ * arm. Tool lifecycle writes conflict on both columns, and SQLite chooses the
+ * first matching arm, so the terminal write was discarded permanently. The
+ * first arm now updates only when it names the same tool row; a different id
+ * under the same client id remains a replay and still changes nothing. This is
+ * a new migration rather than an edit to v5 because deployed schema hashes are
+ * immutable.
+ */
+function rebuiltMessagesInsertTriggerForToolSettlement(): string[] {
+  const source = rebuiltMessagesInsertTrigger()[1];
+  if (!source) throw new Error("rebuilt messages insert trigger not found");
+  const anchor = `       ON CONFLICT(client_message_id) WHERE client_message_id IS NOT NULL
+         DO NOTHING
+       ON CONFLICT(id) DO UPDATE SET`;
+  if (!source.includes(anchor)) throw new Error("messages replay conflict arm changed");
+  const patched = source.replace(anchor, `       ON CONFLICT(client_message_id) WHERE client_message_id IS NOT NULL
+         DO UPDATE SET
+           structured_content_json = excluded.structured_content_json,
+           tool_status = excluded.tool_status,
+           edited_at = excluded.edited_at,
+           updated_at = excluded.updated_at
+         WHERE parts.id = excluded.id AND parts.message_type = 'tool'
+       ON CONFLICT(id) DO UPDATE SET`);
+  return ["DROP TRIGGER IF EXISTS _runtime_messages_insert", patched];
+}
+
+/**
+ * Repairs terminal tool effects whose transcript completion was discarded by
+ * v5 before v11 could correct the trigger. The effect receipt is the durable
+ * execution authority and carries the same invocation id, terminal status,
+ * member-safe summary/error, and settlement time needed by the transcript.
+ */
+function repairStrandedToolTranscriptParts(): string[] {
+  return [
+    `UPDATE parts SET
+       structured_content_json = json_set(
+         parts.structured_content_json,
+         '$.invocation.status', (
+           SELECT effect.status FROM tool_effects effect
+            WHERE effect.effect_intent_id = parts.id
+         ),
+         '$.invocation.outputSummary', (
+           SELECT effect.output_summary FROM tool_effects effect
+            WHERE effect.effect_intent_id = parts.id
+         ),
+         '$.invocation.completedAt', (
+           SELECT CASE WHEN effect.settled_at IS NULL THEN NULL
+             ELSE strftime('%Y-%m-%dT%H:%M:%fZ', effect.settled_at / 1000.0, 'unixepoch') END
+             FROM tool_effects effect WHERE effect.effect_intent_id = parts.id
+         ),
+         '$.invocation.error', json(COALESCE((
+           SELECT effect.error_json FROM tool_effects effect
+            WHERE effect.effect_intent_id = parts.id
+         ), 'null'))
+       ),
+       tool_status = (
+         SELECT effect.status FROM tool_effects effect
+          WHERE effect.effect_intent_id = parts.id
+       ),
+       edited_at = COALESCE((
+         SELECT effect.settled_at FROM tool_effects effect
+          WHERE effect.effect_intent_id = parts.id
+       ), parts.edited_at, parts.updated_at),
+       updated_at = MAX(parts.updated_at, COALESCE((
+         SELECT effect.settled_at FROM tool_effects effect
+          WHERE effect.effect_intent_id = parts.id
+       ), parts.updated_at))
+     WHERE parts.message_type = 'tool'
+       AND json_extract(parts.structured_content_json, '$.invocation.status') IN ('pending', 'started')
+       AND EXISTS (
+         SELECT 1 FROM tool_effects effect
+          WHERE effect.effect_intent_id = parts.id
+            AND effect.status IN ('completed', 'failed', 'ambiguous')
+       )`,
+  ];
 }
 
 /**

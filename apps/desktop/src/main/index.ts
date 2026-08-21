@@ -194,6 +194,10 @@ const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
+/** A signed-in cold launch can pay DNS, TLS, Worker activation, and the
+ * canonical regional D1 read. Keep the verification bounded without treating
+ * a normal cold request as an outage. */
+const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;
 /** Well inside the flag's poll interval, so a lost poll costs one round rather
  * than blocking the next. */
 const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
@@ -1002,7 +1006,7 @@ async function requestProductAnalyticsPreference(): Promise<{
   if (!auth) throw new Error('Sign in before changing Product analytics');
   const response = await net.fetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-    signal: AbortSignal.timeout(1_000),
+    signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw await responseError(response);
   return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
