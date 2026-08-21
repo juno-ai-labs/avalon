@@ -4,8 +4,9 @@
  * Reports only ever describe objects that woke up. An object that has not been
  * touched since before the tracker existed — or since its last migration —
  * never says anything, and those are precisely the objects a schema change is
- * most likely to strand. Cloudflare's account API can list them: one call for
- * the namespaces, one paged call per namespace for the object IDs it holds.
+ * most likely to strand. Cloudflare's account API can list them: a paged call
+ * for the namespaces, then a paged call per namespace for the object IDs it
+ * holds.
  *
  * What the sweep deliberately does *not* do is ask each object for its version.
  * A Durable Object binding can address another script's class, so it would be
@@ -20,6 +21,20 @@ const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
 
 /** Cloudflare's maximum page size for the object listing. */
 const OBJECT_PAGE_SIZE = 1_000;
+
+/**
+ * The namespace listing is paged too, defensively.
+ *
+ * Cloudflare does not document this endpoint as paginated and today's account
+ * returns every namespace in one response — but the whole retirement pass in
+ * the registry treats a `complete` sweep as the account's full inventory, and
+ * a first page mistaken for the whole list would retire every namespace behind
+ * it. The termination rule works whether or not the endpoint honours `page`:
+ * stop on a short page, and stop on a page that returned nothing new, which is
+ * what an endpoint that ignores the parameter answers on the second request.
+ */
+const NAMESPACE_PAGE_SIZE = 100;
+const MAX_NAMESPACE_PAGES = 20;
 
 /**
  * Pages per namespace. Twenty full pages is 20,000 objects — far above the
@@ -76,7 +91,7 @@ export async function sweepInventory(
   const truncatedNamespaces: string[] = [];
   let errorMessage: string | null = null;
 
-  let discovered: NamespacePayload[];
+  let discovered: NamespaceListing;
   try {
     discovered = await listNamespaces(credentials, fetcher);
   } catch (error) {
@@ -90,9 +105,16 @@ export async function sweepInventory(
     };
   }
 
-  for (const payload of discovered) {
+  // A namespace payload the API returned and this code could not read is not
+  // "one fewer namespace" — it is a namespace whose existence is known and
+  // whose identity is not. Left silent it would make the sweep `complete` while
+  // omitting a live namespace, and the registry would retire it.
+  if (discovered.rejected > 0) {
+    errorMessage = `${discovered.rejected} namespace payload(s) had no usable id`;
+  }
+
+  for (const payload of discovered.namespaces) {
     const namespaceId = payload.id;
-    if (typeof namespaceId !== "string" || namespaceId.length === 0) continue;
     const namespace: InventoryNamespace = {
       namespaceId,
       scriptName: payload.script ?? payload.name ?? "unknown",
@@ -113,6 +135,8 @@ export async function sweepInventory(
   }
 
   const incomplete = truncatedNamespaces.length > 0
+    || discovered.truncated
+    || discovered.rejected > 0
     || namespaces.some((namespace) => namespace.objects === null);
   return {
     startedAt,
@@ -124,14 +148,51 @@ export async function sweepInventory(
   };
 }
 
+interface NamespaceListing {
+  namespaces: (NamespacePayload & { id: string })[];
+  /** The page cap was reached, so this listing is not the whole account. */
+  truncated: boolean;
+  /** Payloads returned by the API that carried no usable id. */
+  rejected: number;
+}
+
 async function listNamespaces(
   credentials: InventoryCredentials,
   fetcher: typeof fetch,
-): Promise<NamespacePayload[]> {
-  const url = `${CLOUDFLARE_API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}`
-    + `/workers/durable_objects/namespaces`;
-  const envelope = await request<NamespacePayload[]>(url, credentials, fetcher);
-  return envelope.result ?? [];
+): Promise<NamespaceListing> {
+  const namespaces: (NamespacePayload & { id: string })[] = [];
+  const seen = new Set<string>();
+  let rejected = 0;
+
+  for (let page = 1; page <= MAX_NAMESPACE_PAGES; page += 1) {
+    const url = new URL(
+      `${CLOUDFLARE_API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}`
+      + `/workers/durable_objects/namespaces`,
+    );
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(NAMESPACE_PAGE_SIZE));
+
+    const envelope = await request<NamespacePayload[]>(url.toString(), credentials, fetcher);
+    const results = envelope.result ?? [];
+    let fresh = 0;
+    for (const payload of results) {
+      const id = payload.id;
+      if (typeof id !== "string" || id.length === 0) {
+        rejected += 1;
+        continue;
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      namespaces.push({ ...payload, id });
+      fresh += 1;
+    }
+
+    if (results.length < NAMESPACE_PAGE_SIZE || fresh === 0) {
+      return { namespaces, truncated: false, rejected };
+    }
+  }
+
+  return { namespaces, truncated: true, rejected };
 }
 
 async function listObjects(

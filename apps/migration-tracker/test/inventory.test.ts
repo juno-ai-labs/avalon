@@ -133,6 +133,89 @@ describe("sweepInventory", () => {
     expect(sweep.errorMessage).toBe("ns-1: cloudflare_api_status_429");
   });
 
+  /**
+   * The namespace listing is the account's inventory, and the registry retires
+   * everything missing from a `complete` one. These three cases are the ways it
+   * could report less than the whole account while still calling itself
+   * complete — each of which would retire live classes.
+   */
+  describe("the namespace listing has to be the whole account", () => {
+    /** `count` namespaces, page `page`, in the API's envelope shape. */
+    function page(index: number, size: number): unknown {
+      return {
+        success: true,
+        result: Array.from({ length: size }, (_unused, offset) => ({
+          id: `ns-${index * 100 + offset}`,
+          script: "avalon-api-global",
+          class: `Class${index * 100 + offset}`,
+          use_sqlite: true,
+        })),
+      };
+    }
+
+    it("follows the namespace pages past the first", async () => {
+      let requested = 0;
+      const { fetcher } = stubFetch((url) => {
+        if (url.pathname.endsWith("/objects")) {
+          return { body: { success: true, result: [], result_info: { cursor: "" } } };
+        }
+        requested += 1;
+        // A full page, then a short one: 150 namespaces over two requests.
+        return { body: requested === 1 ? page(0, 100) : page(1, 50) };
+      });
+
+      const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+
+      expect(sweep.status).toBe("complete");
+      expect(sweep.namespaces).toHaveLength(150);
+      expect(requested).toBe(2);
+    });
+
+    /**
+     * Cloudflare does not document this endpoint as paginated, so it may simply
+     * ignore `page` and answer with the same list every time. That must
+     * terminate, and must not report each namespace more than once.
+     */
+    it("stops when a page repeats what the last one returned", async () => {
+      let requested = 0;
+      const { fetcher } = stubFetch((url) => {
+        if (url.pathname.endsWith("/objects")) {
+          return { body: { success: true, result: [], result_info: { cursor: "" } } };
+        }
+        requested += 1;
+        return { body: page(0, 100) };
+      });
+
+      const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+
+      expect(sweep.status).toBe("complete");
+      expect(sweep.namespaces).toHaveLength(100);
+      expect(requested).toBe(2);
+    });
+
+    it("refuses to call the sweep complete when a namespace payload has no id", async () => {
+      const { fetcher } = stubFetch((url) => (url.pathname.endsWith("/objects")
+        ? { body: { success: true, result: [], result_info: { cursor: "" } } }
+        : {
+            body: {
+              success: true,
+              result: [
+                { id: "ns-1", script: "avalon-api-global", class: "SubstreamAgent" },
+                { script: "avalon-api-global", class: "MysteryAgent" },
+              ],
+            },
+          }));
+
+      const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+
+      // The namespace it could read is still reported; the sweep just stops
+      // claiming to be the account's full inventory.
+      expect(sweep.namespaces).toHaveLength(1);
+      expect(sweep.status).toBe("partial");
+      expect(sweep.errorMessage).toContain("no usable id");
+    });
+  });
+
   it("returns a failed sweep rather than throwing when the account cannot be listed", async () => {
     const { fetcher } = stubFetch(() => ({
       body: { success: false, errors: [{ code: 10000, message: "Authentication error" }] },

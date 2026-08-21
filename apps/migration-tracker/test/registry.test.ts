@@ -588,6 +588,67 @@ describe("retiring a namespace that has left the account", () => {
     expect(namespaces.find((entry) => entry.namespaceId === "ns-2")?.retiredAt).toBeNull();
   });
 
+  /**
+   * The fleet size the platform actually imposes a limit at.
+   *
+   * Durable Object SQL allows **100 bound parameters per query**, and an
+   * account may hold up to 500 Durable Object classes. Expressing the set
+   * difference as `NOT IN (?, ?, …)` over the swept ids is correct code that
+   * throws once the account crosses that line — and it throws inside the
+   * sweep's `transactionSync`, so the whole sweep is rolled back, not just the
+   * retirement. This asserts the receipt survived, which is what distinguishes
+   * "the pass ran" from "the sweep was lost".
+   */
+  it("retires a namespace in a fleet past the SQL parameter limit", async () => {
+    const NAMESPACES = 150;
+    const paddedId = (index: number): string => String(index).padStart(64, "0");
+    const wholeFleet = (count: number) => Array.from({ length: count }, (_unused, index) => ({
+      namespaceId: `ns-${index}`,
+      scriptName: "avalon-api-global",
+      className: `Class${index}`,
+      usesSqlite: true,
+      objects: [{ objectId: paddedId(index), hasStoredData: true }],
+    }));
+
+    const { gone, survivor, receipt } = await withRegistry((registry) => {
+      registry.recordSweep(sweep({ namespaces: wholeFleet(NAMESPACES) }));
+      // Everything but the first namespace comes back on the next sweep.
+      registry.recordSweep(sweep({ namespaces: wholeFleet(NAMESPACES).slice(1) }));
+      const overview = registry.overview();
+      return {
+        gone: registry.objectDetail(paddedId(0)),
+        survivor: registry.objectDetail(paddedId(NAMESPACES - 1)),
+        receipt: overview.latestSweep,
+      };
+    });
+
+    expect(gone?.object.status).toBe("absent");
+    expect(survivor?.object.absentSince).toBeNull();
+    // The second sweep's receipt is present, so its transaction committed.
+    expect(receipt?.namespaceCount).toBe(NAMESPACES - 1);
+  });
+
+  /**
+   * The detail page is where an operator lands after clicking an absent object,
+   * and `absent` on its own does not say whether one instance was deleted or
+   * the whole class was. The overview tables distinguish those; this is what
+   * lets the detail page do the same.
+   */
+  it("tells an absent object's page that its class is the thing that went", async () => {
+    const { retired, ordinary } = await withRegistry((registry) => {
+      seed(registry);
+      registry.recordSweep(withoutTheDoomedOne());
+      return {
+        retired: registry.objectDetail(objectId("b")),
+        ordinary: registry.objectDetail(objectId("a")),
+      };
+    });
+
+    expect(retired?.object.namespaceRetiredAt).toEqual(expect.any(Number));
+    // An object whose namespace is still there says nothing of the kind.
+    expect(ordinary?.object.namespaceRetiredAt).toBeNull();
+  });
+
   it("marks the component retired once its class has no namespace left", async () => {
     const components = await withRegistry((registry) => {
       record(registry, report({ objectId: objectId("b"), className: "RetiredAgent", component: "retired" }));
