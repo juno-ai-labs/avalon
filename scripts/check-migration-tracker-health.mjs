@@ -19,6 +19,13 @@
  *   the Access login or the Worker's own `403` are both correct; `5xx` or a
  *   connection failure means the deploy is broken.
  *
+ *   This one retries. Wrangler returns as soon as the script uploads, and on a
+ *   deploy that provisions a *new* custom domain the route and its DNS record
+ *   are not resolvable for some seconds afterwards. The first run of this check
+ *   in CI failed for exactly that reason, one second after a deploy that was
+ *   entirely correct — so a single attempt reports "the deploy is broken" when
+ *   what it has actually measured is its own impatience.
+ *
  * The expectations come from `apps/migration-tracker/wrangler.jsonc`, so this
  * cannot drift from what the deploy applies — there is no second copy of the
  * batch size here to keep in step.
@@ -122,6 +129,46 @@ export function siteProblems(status) {
   return [];
 }
 
+/**
+ * How long to keep asking the hostname before believing it is not there.
+ *
+ * Linear rather than exponential, because the thing being waited on is DNS and
+ * route propagation for a domain that was just created — a few seconds in the
+ * ordinary case — not an overloaded service that needs backing off. Six
+ * attempts spans roughly a minute, which is far longer than propagation has
+ * taken, and still short enough that a genuinely broken deploy fails the job
+ * rather than hanging it.
+ */
+const SITE_ATTEMPTS = 6;
+const SITE_RETRY_BASE_MS = 4_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Ask the hostname until it answers, or until the attempts run out.
+ *
+ * Only a connection failure is retried. A response — any response — means the
+ * route is live and the question is answered, so a `2xx` that should have been
+ * a redirect fails immediately rather than being asked five more times.
+ */
+async function reachSite(url, fetchImpl, { attempts, wait, log }) {
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchImpl(url, { redirect: "manual" });
+    } catch (error) {
+      last = error;
+      if (attempt < attempts) {
+        log(`${url} not reachable yet (attempt ${attempt}/${attempts}); the route may still be propagating`);
+        await wait(SITE_RETRY_BASE_MS * attempt);
+      }
+    }
+  }
+  return { status: 0, error: last };
+}
+
 export async function checkMigrationTrackerHealth(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -147,8 +194,11 @@ export async function checkMigrationTrackerHealth(options = {}) {
     // `redirect: manual` on purpose: Access answers with a 302 to its login
     // page, and following it would report the identity provider's health
     // instead of this Worker's.
-    const response = await fetchImpl(url, { redirect: 'manual' })
-      .catch((error) => ({ status: 0, error }));
+    const response = await reachSite(url, fetchImpl, {
+      attempts: options.siteAttempts ?? SITE_ATTEMPTS,
+      wait: options.wait ?? sleep,
+      log,
+    });
     if (response.status === 0) {
       problems.push(`${url} could not be reached: ${String(response.error)}`);
     } else {

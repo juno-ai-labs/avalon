@@ -206,9 +206,71 @@ test('fails when the hostname cannot be reached at all', async () => {
       expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
       log: () => {},
       fetchImpl,
+      siteAttempts: 3,
+      wait: async () => {},
     }),
     /could not be reached/u,
   );
+});
+
+/**
+ * The regression this retry exists for. Wrangler returns once the script
+ * uploads, and a deploy that provisions a *new* custom domain leaves the route
+ * unresolvable for some seconds after that — which is how the first CI run of
+ * this check failed one second after an entirely correct deploy.
+ */
+test('waits for a route that is still propagating rather than calling it broken', async () => {
+  let siteCalls = 0;
+  const waits = [];
+  const fetchImpl = async (input) => {
+    if (!String(input).startsWith('https://migrations.')) {
+      return Response.json({ success: true, result: [attached()] });
+    }
+    siteCalls += 1;
+    if (siteCalls < 3) throw new TypeError('fetch failed');
+    return new Response(null, { status: 302 });
+  };
+
+  const lines = [];
+  await checkMigrationTrackerHealth({
+    environment,
+    expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+    log: (line) => lines.push(line),
+    fetchImpl,
+    siteAttempts: 6,
+    wait: async (ms) => { waits.push(ms); },
+  });
+
+  assert.equal(siteCalls, 3);
+  // Linear, so a slow propagation is waited out rather than backed off from.
+  assert.deepEqual(waits, [4_000, 8_000]);
+  assert.ok(lines.some((line) => line.includes('not reachable yet')));
+  assert.ok(lines.some((line) => line.includes('answered HTTP 302')));
+});
+
+test('does not retry a route that answered, however wrong the answer', async () => {
+  let siteCalls = 0;
+  const fetchImpl = async (input) => {
+    if (!String(input).startsWith('https://migrations.')) {
+      return Response.json({ success: true, result: [attached()] });
+    }
+    siteCalls += 1;
+    return new Response('<h1>Objects</h1>', { status: 200 });
+  };
+
+  await assert.rejects(
+    checkMigrationTrackerHealth({
+      environment,
+      expected: { ...EXPECTED, hostname: 'migrations.internal.rallywith.ai' },
+      log: () => {},
+      fetchImpl,
+      siteAttempts: 6,
+      wait: async () => { throw new Error('must not wait after a real response'); },
+    }),
+    /served unauthenticated/u,
+  );
+  // A response is an answer. Asking five more times would only delay the report.
+  assert.equal(siteCalls, 1);
 });
 
 test('requires the credentials rather than reporting a vacuous pass', async () => {
