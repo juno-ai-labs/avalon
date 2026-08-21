@@ -14,6 +14,13 @@ import {
   TERMINAL_NETWORK_MANIFEST_VERSION,
   type TerminalNetworkMode,
 } from "./network-policy";
+import type { TerminalPortFactory } from "./object-port";
+import type {
+  TerminalObjectPort,
+} from "../../durable-objects/workstream-terminal-protocol";
+import type {
+  TerminalSandboxRecord,
+} from "../../durable-objects/workstream-terminal-storage";
 import { TerminalToolError } from "./tools";
 
 const WARM_STOP_MINUTES = 5;
@@ -25,20 +32,6 @@ export interface TerminalClock {
 }
 
 const systemClock: TerminalClock = { now: () => new Date() };
-
-interface SandboxRow {
-  workspace_id: string;
-  workstream_id: string;
-  state: string;
-  stable_name: string;
-  provider_sandbox_id: string | null;
-  generation: number;
-  authority_fingerprint: string;
-  applied_network_revision: number;
-  version: number;
-  operation_run_id: string | null;
-  operation_lease_expires_at: string | null;
-}
 
 interface NetworkPolicyRow {
   mode: TerminalNetworkMode;
@@ -77,12 +70,30 @@ export interface TerminalAcquisitionObservation {
   localFilesRetained: boolean;
 }
 
-function plusMinutes(now: Date, minutes: number): string {
-  return new Date(now.getTime() + minutes * 60_000).toISOString();
+function plusMinutes(now: Date, minutes: number): number {
+  return now.getTime() + minutes * 60_000;
 }
 
-function plusDays(now: Date, days: number): string {
-  return new Date(now.getTime() + days * 86_400_000).toISOString();
+function plusDays(now: Date, days: number): number {
+  return now.getTime() + days * 86_400_000;
+}
+
+/** The three deadlines every sandbox transition pushes out together. */
+function deadlines(now: Date): {
+  idleExpiresAt: number;
+  archiveDueAt: number;
+  expireDueAt: number;
+} {
+  return {
+    idleExpiresAt: plusMinutes(now, WARM_STOP_MINUTES),
+    archiveDueAt: plusMinutes(now, ARCHIVE_MINUTES),
+    expireDueAt: plusDays(now, EXPIRE_DAYS),
+  };
+}
+
+function requireStableName(row: TerminalSandboxRecord): string {
+  if (!row.stableName) throw new Error("terminal_sandbox_stable_name_missing");
+  return row.stableName;
 }
 
 function providerStateError(state: TerminalSandboxState): TerminalToolError {
@@ -109,7 +120,13 @@ function parseEffectiveDomains(row: NetworkPolicyRow): string[] {
 
 export class TerminalSandboxCoordinator {
   constructor(
+    /**
+     * Workspace-scoped and cross-authority reads only: the network policy and
+     * connector rows in WorkspaceDO, and the resource/note visibility joins.
+     * Terminal's own tables are reached through `terminalPort`.
+     */
     private readonly database: D1Database,
+    private readonly terminalPort: TerminalPortFactory,
     private readonly provider: TerminalSandboxProvider,
     private readonly clock: TerminalClock = systemClock,
     private readonly lifecycleChanged?: (workspaceId: string) => Promise<void>,
@@ -131,11 +148,12 @@ export class TerminalSandboxCoordinator {
     if (context.signal.aborted) {
       throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before workspace mutation.");
     }
-    const timestamp = this.clock.now().toISOString();
-    let row = await this.loadSandbox(context.workspaceId, context.workstreamId);
+    const now = this.clock.now().getTime();
+    const nowIso = this.clock.now().toISOString();
+    let row = await this.terminal(context).sandbox();
     if (!row) {
       const [policy, repositoryAuthority] = await Promise.all([
-        this.loadOrCreatePolicy(context.workspaceId, timestamp),
+        this.loadOrCreatePolicy(context.workspaceId, nowIso),
         this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
       ]);
       const authorityFingerprint = await sha256(JSON.stringify({
@@ -146,13 +164,13 @@ export class TerminalSandboxCoordinator {
         context,
         authorityFingerprint,
         policy.revision,
-        timestamp,
+        now,
       );
     }
-    const claimed = await this.claimOperation(context, row, timestamp);
+    const claimed = await this.claimOperation(context, row, now);
     return {
-      providerSandboxId: claimed.provider_sandbox_id,
-      state: claimed.state,
+      providerSandboxId: claimed.sandboxId,
+      state: claimed.lifecycleState,
       generation: claimed.generation,
     };
   }
@@ -169,10 +187,11 @@ export class TerminalSandboxCoordinator {
     if (context.signal.aborted) {
       throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before sandbox startup.");
     }
-    const now = this.clock.now();
-    const timestamp = now.toISOString();
+    const clockNow = this.clock.now();
+    const now = clockNow.getTime();
+    const nowIso = clockNow.toISOString();
     const [policy, repositoryAuthority] = await Promise.all([
-      this.loadOrCreatePolicy(context.workspaceId, timestamp),
+      this.loadOrCreatePolicy(context.workspaceId, nowIso),
       this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
     ]);
     if (policy.verification_state !== "verified") {
@@ -189,52 +208,52 @@ export class TerminalSandboxCoordinator {
       repository: repositoryAuthority ?? "scratch",
     }));
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
-    let row = await this.loadSandbox(context.workspaceId, context.workstreamId);
+    let row = await this.terminal(context).sandbox();
     let telemetryAction: TerminalAcquisitionObservation["action"] | null = !row
       ? "start"
-      : row.state === "stopped" || row.state === "archived"
+      : row.lifecycleState === "stopped" || row.lifecycleState === "archived"
         ? "restore"
-        : row.state === "running" && row.provider_sandbox_id
+        : row.lifecycleState === "running" && row.sandboxId
           ? null
           : "start";
-    const localFilesRetained = Boolean(row?.provider_sandbox_id);
+    const localFilesRetained = Boolean(row?.sandboxId);
     if (!row) {
-      row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, timestamp);
+      row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, now);
     }
-    row = await this.claimOperation(context, row, timestamp);
+    row = await this.claimOperation(context, row, now);
 
     const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
-    if (row.authority_fingerprint !== authorityFingerprint || importedResourceRevoked) {
+    if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
       telemetryAction = "repository_replace";
-      row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, timestamp);
+      row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
     }
 
-    if (row.applied_network_revision !== policy.revision) {
-      row = await this.reconcileNetworkPolicy(context, row, policy.revision, domains, timestamp);
+    if (row.appliedNetworkRevision !== policy.revision) {
+      row = await this.reconcileNetworkPolicy(context, row, policy.revision, domains, now);
     }
 
-    if (!row.provider_sandbox_id) {
-      row = await this.createReservedSandbox(context, row, domains, timestamp);
-    } else if (row.state === "stopped" || row.state === "archived") {
-      await this.provider.startSandbox(row.provider_sandbox_id);
-      await this.setRunning(context, row, timestamp);
-      row = { ...row, state: "running", version: row.version + 1 };
-    } else if (row.state !== "running") {
-      const observed = await this.provider.getSandbox(row.provider_sandbox_id);
+    if (!row.sandboxId) {
+      row = await this.createReservedSandbox(context, row, domains, now);
+    } else if (row.lifecycleState === "stopped" || row.lifecycleState === "archived") {
+      await this.provider.startSandbox(row.sandboxId);
+      await this.setRunning(context, row, now);
+      row = { ...row, lifecycleState: "running", version: row.version + 1 };
+    } else if (row.lifecycleState !== "running") {
+      const observed = await this.provider.getSandbox(row.sandboxId);
       if (observed.state === "stopped" || observed.state === "archived") {
-        await this.provider.startSandbox(row.provider_sandbox_id);
+        await this.provider.startSandbox(row.sandboxId);
       } else if (observed.state !== "running") {
         throw providerStateError(observed.state);
       }
-      await this.setRunning(context, row, timestamp);
-      row = { ...row, state: "running", version: row.version + 1 };
+      await this.setRunning(context, row, now);
+      row = { ...row, lifecycleState: "running", version: row.version + 1 };
     } else {
-      await this.refreshDeadlines(context, row, timestamp);
+      await this.refreshDeadlines(context, row, now);
     }
 
-    const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, timestamp);
+    const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
     if (currentPolicy.verification_state !== "verified" || currentPolicy.revision !== policy.revision) {
-      if (row.provider_sandbox_id) await this.provider.stopSandbox(row.provider_sandbox_id).catch(() => undefined);
+      if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
       throw new TerminalToolError(
         "network_policy_unverified",
         "The workspace Terminal network policy changed during sandbox startup. Avalon stopped the sandbox; retry after the new policy is verified.",
@@ -251,8 +270,8 @@ export class TerminalSandboxCoordinator {
       }).catch(() => undefined);
     }
     return {
-      providerSandboxId: row.provider_sandbox_id!,
-      stableName: row.stable_name,
+      providerSandboxId: row.sandboxId!,
+      stableName: requireStableName(row),
       generation: row.generation,
       state: "running",
       authorityFingerprint,
@@ -284,49 +303,21 @@ export class TerminalSandboxCoordinator {
     return policy;
   }
 
-  private loadSandbox(workspaceId: string, workstreamId: string): Promise<SandboxRow | null> {
-    return this.database.prepare(
-      `SELECT workspace_id, workstream_id, state, stable_name, provider_sandbox_id,
-              generation, authority_fingerprint, applied_network_revision, version,
-              operation_run_id, operation_lease_expires_at
-         FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?`,
-    ).bind(workspaceId, workstreamId).first<SandboxRow>();
+  private terminal(context: HarnessToolContext): TerminalObjectPort {
+    return this.terminalPort(context.workspaceId, context.workstreamId);
   }
 
   private async claimOperation(
     context: HarnessToolContext,
-    row: SandboxRow,
-    timestamp: string,
-  ): Promise<SandboxRow> {
-    const leaseExpiresAt = plusMinutes(this.clock.now(), 16);
-    const claimed = await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET operation_run_id = ?, operation_lease_expires_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
-          AND (
-            operation_run_id IS NULL
-            OR operation_run_id = ?
-            OR operation_lease_expires_at IS NULL
-            OR operation_lease_expires_at <= ?
-            OR NOT EXISTS (
-              SELECT 1 FROM harness_runs active
-               WHERE active.id = workstream_sandboxes.operation_run_id
-                 AND active.workspace_id = workstream_sandboxes.workspace_id
-                 AND active.workstream_id = workstream_sandboxes.workstream_id
-                 AND active.status IN ('scheduled', 'running', 'needs_input')
-            )
-          )
-        RETURNING operation_run_id, operation_lease_expires_at`,
-    ).bind(
-      context.harnessRunId,
-      leaseExpiresAt,
-      timestamp,
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-      context.harnessRunId,
-      timestamp,
-    ).first<{ operation_run_id: string; operation_lease_expires_at: string }>();
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
+    const claimed = await this.terminal(context).claimOperation({
+      runId: context.harnessRunId,
+      generation: row.generation,
+      leaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      now,
+    });
     if (!claimed) {
       throw new TerminalToolError(
         "sandbox_busy",
@@ -334,56 +325,61 @@ export class TerminalSandboxCoordinator {
         { retryAfterMs: 5_000, reason: "Wait for the current agent run to release the Terminal workspace, then retry." },
       );
     }
-    return { ...row, ...claimed };
+    return claimed;
   }
 
-  private loadRepositoryAuthority(workspaceId: string, workstreamId: string): Promise<RepositoryAuthorityRow | null> {
-    return this.loadRepositoryAuthorityAcrossBoundaries(workspaceId, workstreamId);
-  }
-
-  private async loadRepositoryAuthorityAcrossBoundaries(
+  /**
+   * The repository half of the authority fingerprint, or null when there is
+   * none a run may still use.
+   *
+   * Two objects, deliberately not one query: the selection is the work
+   * stream's own provenance, while whether its connection is still usable
+   * belongs to the workspace. Disabling a connector therefore needs no fan-out
+   * write to every child — the next acquisition simply fails this check.
+   */
+  private async loadRepositoryAuthority(
     workspaceId: string,
     workstreamId: string,
   ): Promise<RepositoryAuthorityRow | null> {
-    const repository = await this.database.prepare(
-      `SELECT repository.connection_id, repository.repository_full_name, repository.base_ref,
-              repository.base_sha, repository.head_ref
-         FROM workstream_terminal_repositories repository
-        WHERE repository.workspace_id = ? AND repository.workstream_id = ?
-          AND repository.state = 'selected'`,
-    ).bind(workspaceId, workstreamId).first<RepositoryAuthorityRow>();
+    const repository = await this.terminalPort(workspaceId, workstreamId).selectedRepository();
     if (!repository) return null;
     const connection = await this.database.prepare(
       `SELECT id FROM connector_connections
         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
-    ).bind(repository.connection_id, workspaceId).first<{ id: string }>();
-    return connection ? repository : null;
+    ).bind(repository.connectionId, workspaceId).first<{ id: string }>();
+    return connection
+      ? {
+          connection_id: repository.connectionId,
+          repository_full_name: repository.repositoryFullName,
+          base_ref: repository.baseRef,
+          base_sha: repository.baseSha,
+          head_ref: repository.headRef,
+        }
+      : null;
   }
 
-  private async hasRevokedImportedResource(context: HarnessToolContext, row: SandboxRow): Promise<boolean> {
+  private async hasRevokedImportedResource(context: HarnessToolContext, row: TerminalSandboxRecord): Promise<boolean> {
     const principalUserId = context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null;
-    const imported = await this.database.prepare(
-      `SELECT imported.resource_id, imported.state,
-              CASE WHEN relationship.resource_id IS NULL THEN 0 ELSE 1 END AS attached
-         FROM sandbox_imported_resources imported
-         LEFT JOIN workstream_resources relationship
-           ON relationship.workstream_id = imported.workstream_id
-          AND relationship.resource_id = imported.resource_id
-        WHERE imported.workspace_id = ? AND imported.workstream_id = ?
-          AND imported.sandbox_generation = ?`,
-    ).bind(
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-    ).all<{ resource_id: string; state: string; attached: number }>();
-    const links = imported.results ?? [];
-    if (links.some((candidate) => candidate.state !== "completed" || candidate.attached !== 1)) return true;
+    const links = await this.terminal(context).importedResources(row.generation);
     if (links.length === 0) return false;
+    if (links.some((candidate) => candidate.state !== "completed")) return true;
+    // The attachment join used to ride along with the import rows. It cannot:
+    // the imports are object-local and the relationship rows are not, so the
+    // link check is its own statement against its own authority.
+    const attachedPlaceholders = links.map(() => "?").join(", ");
+    const attached = await this.database.prepare(
+      `SELECT resource_id FROM workstream_resources
+        WHERE workstream_id = ? AND resource_id IN (${attachedPlaceholders})`,
+    ).bind(context.workstreamId, ...links.map((candidate) => candidate.resourceId))
+      .all<{ resource_id: string }>();
+    if (new Set((attached.results ?? []).map((link) => link.resource_id)).size !== links.length) {
+      return true;
+    }
     const placeholders = links.map(() => "?").join(", ");
     const resources = await this.database.prepare(
       `SELECT id, provider FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
-    ).bind(context.workspaceId, ...links.map((candidate) => candidate.resource_id))
+    ).bind(context.workspaceId, ...links.map((candidate) => candidate.resourceId))
       .all<{ id: string; provider: string }>();
     if (resources.results.length !== links.length) return true;
     const noteIds = resources.results.filter((candidate) => candidate.provider === "avalon_note")
@@ -402,48 +398,31 @@ export class TerminalSandboxCoordinator {
     context: HarnessToolContext,
     authorityFingerprint: string,
     networkRevision: number,
-    timestamp: string,
-  ): Promise<SandboxRow> {
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
     const stableHash = await sha256(`${context.workspaceId}:${context.workstreamId}`);
     const stableName = `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
-    await this.database.prepare(
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-        authority_fingerprint, applied_network_revision, version, operation_run_id,
-        operation_lease_expires_at, last_activity_at, warm_stop_due_at, archive_due_at,
-        expire_due_at, created_at, updated_at)
-       VALUES (?, ?, 'starting', ?, NULL, 1, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(workspace_id, workstream_id) DO NOTHING`,
-    ).bind(
-      context.workspaceId,
-      context.workstreamId,
+    return this.terminal(context).reserveFirstGeneration({
       stableName,
       authorityFingerprint,
       networkRevision,
-      context.harnessRunId,
-      plusMinutes(this.clock.now(), 16),
-      timestamp,
-      plusMinutes(this.clock.now(), WARM_STOP_MINUTES),
-      plusMinutes(this.clock.now(), ARCHIVE_MINUTES),
-      plusDays(this.clock.now(), EXPIRE_DAYS),
-      timestamp,
-      timestamp,
-    ).run();
-    const row = await this.loadSandbox(context.workspaceId, context.workstreamId);
-    if (!row) throw new Error("Unable to reserve a Terminal sandbox");
-    return row;
+      runId: context.harnessRunId,
+      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      ...deadlines(this.clock.now()),
+      now,
+    });
   }
 
   private async createReservedSandbox(
     context: HarnessToolContext,
-    row: SandboxRow,
+    row: TerminalSandboxRecord,
     domains: string[],
-    timestamp: string,
-  ): Promise<SandboxRow> {
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
     let created: TerminalSandboxSnapshot;
     try {
       created = await this.provider.createSandbox({
-        stableName: row.stable_name,
+        stableName: requireStableName(row),
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
         generation: row.generation,
@@ -452,13 +431,13 @@ export class TerminalSandboxCoordinator {
       });
     } catch {
       try {
-        created = await this.provider.getSandbox(row.stable_name);
+        created = await this.provider.getSandbox(requireStableName(row));
       } catch {
-        await this.database.prepare(
-          `UPDATE workstream_sandboxes SET state = 'failed', failure_code = 'provider_create_failed',
-                  version = version + 1, updated_at = ?
-            WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-        ).bind(timestamp, context.workspaceId, context.workstreamId, row.generation).run();
+        await this.terminal(context).failGeneration({
+          generation: row.generation,
+          failureCode: "provider_create_failed",
+          now,
+        });
         throw new TerminalToolError(
           "sandbox_unavailable",
           "Daytona did not confirm sandbox creation. Retry the Terminal tool; Avalon will reconcile the stable sandbox name before creating another.",
@@ -480,12 +459,11 @@ export class TerminalSandboxCoordinator {
         await this.provider.deleteSandbox(created.id).catch(() => (
           this.provider.stopSandbox(created.id).catch(() => undefined)
         ));
-        await this.database.prepare(
-          `UPDATE workstream_sandboxes
-              SET state = 'failed', failure_code = 'provider_initialize_failed',
-                  version = version + 1, updated_at = ?
-            WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-        ).bind(timestamp, context.workspaceId, context.workstreamId, row.generation).run();
+        await this.terminal(context).failGeneration({
+          generation: row.generation,
+          failureCode: "provider_initialize_failed",
+          now,
+        });
         throw new TerminalToolError(
           "sandbox_unavailable",
           "Daytona could not verify the managed Terminal environment. The sandbox was discarded; retry after provider health or the managed snapshot is repaired.",
@@ -499,140 +477,87 @@ export class TerminalSandboxCoordinator {
       await this.provider.deleteSandbox(created.id).catch(() => (
         this.provider.stopSandbox(created.id).catch(() => undefined)
       ));
-      await this.database.prepare(
-        `UPDATE workstream_sandboxes
-            SET state = 'failed', failure_code = 'provider_policy_mismatch',
-                version = version + 1, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-      ).bind(timestamp, context.workspaceId, context.workstreamId, row.generation).run();
+      await this.terminal(context).failGeneration({
+        generation: row.generation,
+        failureCode: "provider_policy_mismatch",
+        now,
+      });
       throw new TerminalToolError(
         "network_policy_unverified",
         "Daytona did not confirm the workspace Terminal network policy. The sandbox was discarded; ask a workspace owner to verify the policy before retrying.",
         { reason: "Ask a workspace owner to verify the Terminal network policy before retrying." },
       );
     }
-    await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET provider_sandbox_id = ?, state = 'running', failure_code = NULL,
-              final_diff_resource_id = NULL,
-              version = version + 1, last_activity_at = ?, warm_stop_due_at = ?,
-              archive_due_at = ?, expire_due_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-    ).bind(
-      created.id,
-      timestamp,
-      plusMinutes(this.clock.now(), WARM_STOP_MINUTES),
-      plusMinutes(this.clock.now(), ARCHIVE_MINUTES),
-      plusDays(this.clock.now(), EXPIRE_DAYS),
-      timestamp,
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-    ).run();
-    return { ...row, provider_sandbox_id: created.id, state: "running", version: row.version + 1 };
+    await this.terminal(context).attachProviderSandbox({
+      generation: row.generation,
+      sandboxId: created.id,
+      lifecycleState: "running",
+      ...deadlines(this.clock.now()),
+      now,
+    });
+    return { ...row, sandboxId: created.id, lifecycleState: "running", version: row.version + 1 };
   }
 
   private async replaceForAuthority(
     context: HarnessToolContext,
-    row: SandboxRow,
+    row: TerminalSandboxRecord,
     authorityFingerprint: string,
     networkRevision: number,
-    timestamp: string,
-  ): Promise<SandboxRow> {
-    if (row.provider_sandbox_id) await this.provider.deleteSandbox(row.provider_sandbox_id);
-    await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET state = 'starting', provider_sandbox_id = NULL, generation = generation + 1,
-              authority_fingerprint = ?, applied_network_revision = ?, version = version + 1,
-              operation_run_id = ?, operation_lease_expires_at = ?, failure_code = NULL,
-              final_diff_resource_id = NULL,
-              last_activity_at = ?, warm_stop_due_at = ?, archive_due_at = ?, expire_due_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-    ).bind(
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
+    if (row.sandboxId) await this.provider.deleteSandbox(row.sandboxId);
+    return this.terminal(context).replaceGeneration({
+      generation: row.generation,
       authorityFingerprint,
       networkRevision,
-      context.harnessRunId,
-      plusMinutes(this.clock.now(), 16),
-      timestamp,
-      plusMinutes(this.clock.now(), WARM_STOP_MINUTES),
-      plusMinutes(this.clock.now(), ARCHIVE_MINUTES),
-      plusDays(this.clock.now(), EXPIRE_DAYS),
-      timestamp,
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-    ).run();
-    return {
-      ...row,
-      state: "starting",
-      provider_sandbox_id: null,
-      generation: row.generation + 1,
-      authority_fingerprint: authorityFingerprint,
-      applied_network_revision: networkRevision,
-      version: row.version + 1,
-      operation_run_id: context.harnessRunId,
-      operation_lease_expires_at: plusMinutes(this.clock.now(), 16),
-    };
+      runId: context.harnessRunId,
+      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      ...deadlines(this.clock.now()),
+      now,
+    });
   }
 
   private async reconcileNetworkPolicy(
     context: HarnessToolContext,
-    row: SandboxRow,
+    row: TerminalSandboxRecord,
     revision: number,
     domains: string[],
-    timestamp: string,
-  ): Promise<SandboxRow> {
-    if (row.provider_sandbox_id) {
-      if (row.state === "running") await this.provider.stopSandbox(row.provider_sandbox_id);
-      await this.provider.updateNetworkPolicy(row.provider_sandbox_id, domains.length ? domains : null);
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
+    if (row.sandboxId) {
+      if (row.lifecycleState === "running") await this.provider.stopSandbox(row.sandboxId);
+      await this.provider.updateNetworkPolicy(row.sandboxId, domains.length ? domains : null);
     }
-    await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET state = CASE WHEN provider_sandbox_id IS NULL THEN 'starting' ELSE 'stopped' END,
-              applied_network_revision = ?, version = version + 1, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ?`,
-    ).bind(revision, timestamp, context.workspaceId, context.workstreamId).run();
+    await this.terminal(context).setAppliedNetworkRevision({ networkRevision: revision, now });
     return {
       ...row,
-      state: row.provider_sandbox_id ? "stopped" : "starting",
-      applied_network_revision: revision,
+      lifecycleState: row.sandboxId ? "stopped" : "starting",
+      appliedNetworkRevision: revision,
       version: row.version + 1,
     };
   }
 
-  private async setRunning(context: HarnessToolContext, row: SandboxRow, timestamp: string): Promise<void> {
-    await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET state = 'running', version = version + 1, last_activity_at = ?,
-              final_diff_resource_id = NULL,
-              warm_stop_due_at = ?, archive_due_at = ?, expire_due_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-    ).bind(
-      timestamp,
-      plusMinutes(this.clock.now(), WARM_STOP_MINUTES),
-      plusMinutes(this.clock.now(), ARCHIVE_MINUTES),
-      plusDays(this.clock.now(), EXPIRE_DAYS),
-      timestamp,
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-    ).run();
+  private async setRunning(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<void> {
+    await this.terminal(context).setRunning({
+      generation: row.generation,
+      ...deadlines(this.clock.now()),
+      now,
+    });
   }
 
-  private async refreshDeadlines(context: HarnessToolContext, row: SandboxRow, timestamp: string): Promise<void> {
-    await this.database.prepare(
-      `UPDATE workstream_sandboxes
-          SET last_activity_at = ?, warm_stop_due_at = ?, archive_due_at = ?, expire_due_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?`,
-    ).bind(
-      timestamp,
-      plusMinutes(this.clock.now(), WARM_STOP_MINUTES),
-      plusMinutes(this.clock.now(), ARCHIVE_MINUTES),
-      plusDays(this.clock.now(), EXPIRE_DAYS),
-      timestamp,
-      context.workspaceId,
-      context.workstreamId,
-      row.generation,
-    ).run();
+  private async refreshDeadlines(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<void> {
+    await this.terminal(context).refreshDeadlines({
+      generation: row.generation,
+      ...deadlines(this.clock.now()),
+      now,
+    });
   }
 }

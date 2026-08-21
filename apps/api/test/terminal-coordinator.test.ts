@@ -15,6 +15,7 @@ import {
   testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
+  testTerminalPortFactory,
 } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -107,18 +108,16 @@ function context(userId = USER_ID): HarnessToolContext {
 
 describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, db,  provider, clock } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
-    const coordinator = new TerminalSandboxCoordinator(
-      db,
-      provider,
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider,
       clock,
       undefined,
       false,
       acquisitionObserved,
     );
 
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
     const first = await coordinator.acquire(context());
     const second = await coordinator.acquire({ ...context(), toolCallId: "call-2" });
 
@@ -128,11 +127,11 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.startSandbox).not.toHaveBeenCalled();
     expect(acquisitionObserved).toHaveBeenCalledOnce();
     expect(acquisitionObserved).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ action: "start" }));
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM workstream_sandboxes")).toEqual({ count: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 1 });
   });
 
   it("recovers an ambiguous create by the stable provider name", async () => {
-    const { db, provider, clock } = fixture();
+    const { db, objectStore, provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockRejectedValueOnce(new Error("provider timeout"));
     provider.prepareSandbox = vi.fn(async (id: string, expectedDomainAllowList: string[]) => ({
       id,
@@ -140,7 +139,7 @@ describe("Terminal sandbox coordinator", () => {
       state: "running" as const,
       domainAllowList: expectedDomainAllowList,
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).resolves.toMatchObject({
       providerSandboxId: "sandbox-recovered",
@@ -154,14 +153,14 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("fails closed when a new sandbox does not report the requested trusted policy", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, db,  provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockImplementationOnce(async (input) => ({
       id: "sandbox-policy-mismatch",
       name: input.stableName,
       state: "running",
       domainAllowList: [],
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).rejects.toMatchObject({
       code: "network_policy_unverified",
@@ -169,17 +168,16 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-policy-mismatch");
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT state, failure_code FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      WORKSPACE_ID, WORKSTREAM_ID,
+      "SELECT lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1",
     )).toEqual({
-      state: "failed",
+      lifecycle_state: "failed",
       failure_code: "provider_policy_mismatch",
     });
   });
 
   it("destroys and reprovisions before reuse when execution authority changes", async () => {
-    const { database, db, provider, clock } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const { database, db, objectStore, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -196,12 +194,11 @@ describe("Terminal sandbox coordinator", () => {
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {
     const { objectStore, db, provider, clock, advance } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     workstreamObjectRun(
       objectStore,
-      "UPDATE workstream_sandboxes SET state = 'stopped' WHERE workspace_id = ? AND workstream_id = ?",
-      WORKSPACE_ID, WORKSTREAM_ID,
+      "UPDATE terminal_workspace SET lifecycle_state = 'stopped' WHERE id = 1",
     );
     advance(10);
 
@@ -210,17 +207,16 @@ describe("Terminal sandbox coordinator", () => {
     expect(acquired).toMatchObject({ state: "running" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT warm_stop_due_at, archive_due_at, expire_due_at FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-      WORKSPACE_ID, WORKSTREAM_ID,
+      "SELECT idle_expires_at, archive_due_at, expire_due_at FROM terminal_workspace WHERE id = 1",
     )).toEqual({
-      warm_stop_due_at: "2026-08-13T12:15:00.000Z",
-      archive_due_at: "2026-08-13T13:10:00.000Z",
-      expire_due_at: "2026-09-12T12:10:00.000Z",
+      idle_expires_at: Date.parse("2026-08-13T12:15:00.000Z"),
+      archive_due_at: Date.parse("2026-08-13T13:10:00.000Z"),
+      expire_due_at: Date.parse("2026-09-12T12:10:00.000Z"),
     });
   });
 
   it("serializes mutating runs with the durable operation lease", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, db,  provider, clock } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
     // Scheduled, not running: the object admits at most one mutating run per
     // substream (`runs_mutating_substream_uq`), so the contender waits in the
@@ -232,7 +228,7 @@ describe("Terminal sandbox coordinator", () => {
        VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
       otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
     );
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
 
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))

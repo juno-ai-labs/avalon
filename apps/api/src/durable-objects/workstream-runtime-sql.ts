@@ -25,12 +25,6 @@ export interface WorkstreamRuntimeSqlResult {
 }
 
 const TABLE_REWRITES = [
-  ["workstream_terminal_repositories", "_runtime_terminal_repository"],
-  ["sandbox_imported_resources", "_runtime_terminal_imported_resources"],
-  ["terminal_publication_grants", "_runtime_terminal_publication_grants"],
-  ["repository_publications", "_runtime_repository_publications"],
-  ["workstream_sandboxes", "_runtime_terminal_workspace"],
-  ["sandbox_tasks", "_runtime_terminal_tasks"],
   ["harness_run_memory_contexts", "_runtime_run_memory_contexts"],
   ["harness_run_plugin_activations", "_runtime_run_plugin_activations"],
   ["harness_run_lifecycle_events", "_runtime_run_lifecycle_events"],
@@ -136,7 +130,7 @@ export async function executeWorkstreamRuntimeSql(
   }
 
   const affectsDirectory = request.statements.some((statement) =>
-    /\b(?:workstreams|messages|workstream_wakeups|workstream_sandboxes|workstream_resources|workstream_participants)\b/iu
+    /\b(?:workstreams|messages|workstream_wakeups|workstream_resources|workstream_participants)\b/iu
       .test(statement.sql));
   const committed = await product.commitRuntimeMutation(
     (sql) => {

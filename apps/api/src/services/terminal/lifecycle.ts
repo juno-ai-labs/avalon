@@ -1,4 +1,5 @@
 import { newId } from "@avalon/db";
+import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
 
 import type { Env } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
@@ -18,119 +19,86 @@ export interface TerminalWorkspaceBackup {
   createdAt: string;
 }
 
-interface LifecycleRow {
-  state: string;
-  provider_sandbox_id: string | null;
-  generation: number;
-  version: number;
-  warm_stop_due_at: string | null;
-  archive_due_at: string | null;
-  expire_due_at: string | null;
-  lifecycle_claim_id: string | null;
-  lifecycle_claim_expires_at: string | null;
-  operation_run_id: string | null;
-  operation_lease_expires_at: string | null;
-}
-
 export type TerminalLifecycleTransition = "none" | "deferred" | "stopped" | "archived" | "expired";
 
-function isDue(value: string | null, now: Date): boolean {
-  return value !== null && Number.isFinite(Date.parse(value)) && Date.parse(value) <= now.getTime();
+function isDue(value: number | null, now: Date): boolean {
+  return value !== null && value <= now.getTime();
 }
 
 export async function reconcileDueTerminalSandbox(
   database: D1Database,
+  terminalPort: TerminalPortFactory,
   provider: TerminalSandboxProvider,
   workspaceId: string,
   workstreamId: string,
   now = new Date(),
   preserveBeforeExpiry?: (providerSandboxId: string, generation: number) => Promise<void>,
 ): Promise<{ transition: TerminalLifecycleTransition }> {
-  const row = await database.prepare(
-    `SELECT state, provider_sandbox_id, generation, version, warm_stop_due_at,
-            archive_due_at, expire_due_at, lifecycle_claim_id, lifecycle_claim_expires_at,
-            operation_run_id, operation_lease_expires_at
-       FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?`,
-  ).bind(workspaceId, workstreamId).first<LifecycleRow>();
-  if (!row?.provider_sandbox_id || row.state === "expired") return { transition: "none" };
+  const terminal = terminalPort(workspaceId, workstreamId);
+  const row = await terminal.sandbox();
+  if (!row?.sandboxId || row.lifecycleState === "expired") return { transition: "none" };
 
   if (
-    row.operation_run_id
-    && row.operation_lease_expires_at
-    && Date.parse(row.operation_lease_expires_at) > now.getTime()
+    row.operationRunId
+    && row.operationLeaseExpiresAt
+    && row.operationLeaseExpiresAt > now.getTime()
   ) {
     const activeRun = await database.prepare(
       `SELECT 1 AS active FROM harness_runs
         WHERE id = ? AND workspace_id = ? AND workstream_id = ?
           AND status IN ('scheduled', 'running', 'needs_input')`,
-    ).bind(row.operation_run_id, workspaceId, workstreamId).first<{ active: number }>();
+    ).bind(row.operationRunId, workspaceId, workstreamId).first<{ active: number }>();
     if (activeRun) return { transition: "deferred" };
   }
 
-  const activeTask = await database.prepare(
-    `SELECT id FROM sandbox_tasks
-      WHERE workspace_id = ? AND workstream_id = ? AND sandbox_generation = ?
-        AND state IN ('planned', 'submitting', 'running') AND command_deadline_at > ?
-      LIMIT 1`,
-  ).bind(workspaceId, workstreamId, row.generation, now.toISOString()).first<{ id: string }>();
-  if (activeTask) return { transition: "deferred" };
+  if (await terminal.hasLiveTask(row.generation, now.getTime())) return { transition: "deferred" };
 
-  const desired = row.state === "expiring"
+  const desired = row.lifecycleState === "expiring"
     ? "expired" as const
-    : row.state === "archiving"
+    : row.lifecycleState === "archiving"
       ? "archived" as const
-      : row.state === "stopping"
+      : row.lifecycleState === "stopping"
         ? "stopped" as const
-        : isDue(row.expire_due_at, now)
+        : isDue(row.expireDueAt, now)
     ? "expired" as const
-    : row.state === "running" && isDue(row.warm_stop_due_at, now)
+    : row.lifecycleState === "running" && isDue(row.idleExpiresAt, now)
       ? "stopped" as const
-      : row.state === "stopped" && isDue(row.archive_due_at, now)
+      : row.lifecycleState === "stopped" && isDue(row.archiveDueAt, now)
         ? "archived" as const
         : null;
   if (!desired) return { transition: "none" };
 
   const claimId = newId(now.getTime());
-  const claimExpiresAt = new Date(now.getTime() + 2 * 60_000).toISOString();
   const intermediate = desired === "expired" ? "expiring" : desired === "archived" ? "archiving" : "stopping";
-  const claimed = await database.prepare(
-    `UPDATE workstream_sandboxes
-        SET state = ?, lifecycle_claim_id = ?, lifecycle_claim_expires_at = ?,
-            version = version + 1, updated_at = ?
-      WHERE workspace_id = ? AND workstream_id = ? AND generation = ? AND version = ?
-        AND (lifecycle_claim_id IS NULL OR lifecycle_claim_expires_at <= ?)
-      RETURNING provider_sandbox_id`,
-  ).bind(
-    intermediate,
+  const claimed = await terminal.claimLifecycleTransition({
+    lifecycleState: intermediate,
     claimId,
-    claimExpiresAt,
-    now.toISOString(),
-    workspaceId,
-    workstreamId,
-    row.generation,
-    row.version,
-    now.toISOString(),
-  ).first<{ provider_sandbox_id: string }>();
-  if (!claimed) return { transition: "none" };
+    claimExpiresAt: now.getTime() + 2 * 60_000,
+    generation: row.generation,
+    version: row.version,
+    now: now.getTime(),
+  });
+  if (!claimed?.sandboxId) return { transition: "none" };
+  const claimedSandboxId = claimed.sandboxId;
 
   try {
     if (desired === "stopped") {
-      await preserveBeforeExpiry?.(claimed.provider_sandbox_id, row.generation);
-      await provider.stopSandbox(claimed.provider_sandbox_id);
+      await preserveBeforeExpiry?.(claimedSandboxId, row.generation);
+      await provider.stopSandbox(claimedSandboxId);
     } else if (desired === "archived") {
-      await provider.archiveSandbox(claimed.provider_sandbox_id);
+      await provider.archiveSandbox(claimedSandboxId);
     } else {
       // The final diff was captured before the sandbox was stopped. Daytona
       // archives cannot execute commands, so expiry only deletes them.
-      if (row.state !== "archived") await preserveBeforeExpiry?.(claimed.provider_sandbox_id, row.generation);
-      await provider.clearGitHubReadAccess(claimed.provider_sandbox_id).catch(() => undefined);
-      await provider.deleteSandbox(claimed.provider_sandbox_id);
+      if (row.lifecycleState !== "archived") await preserveBeforeExpiry?.(claimedSandboxId, row.generation);
+      await provider.clearGitHubReadAccess(claimedSandboxId).catch(() => undefined);
+      await provider.deleteSandbox(claimedSandboxId);
     }
   } catch (error) {
     let observed = null;
     let observedNotFound = false;
     try {
-      observed = await provider.getSandbox(claimed.provider_sandbox_id);
+      observed = await provider.getSandbox(claimedSandboxId);
     } catch (observationError) {
       observedNotFound = isTerminalProviderNotFound(observationError);
     }
@@ -142,49 +110,26 @@ export async function reconcileDueTerminalSandbox(
         ? observed?.state === "archived"
         : observed?.state === "expired";
     if (!reconciled) {
-      const stableState = desired === "stopped" ? "running" : desired === "archived" ? "stopped" : row.state === "archived" ? "archived" : "stopped";
-      await database.prepare(
-        `UPDATE workstream_sandboxes
-            SET state = ?, failure_code = ?, lifecycle_claim_id = NULL,
-                lifecycle_claim_expires_at = NULL, version = version + 1, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ? AND lifecycle_claim_id = ?`,
-      ).bind(
-        stableState,
-        `${desired}_provider_failed`,
-        now.toISOString(),
-        workspaceId,
-        workstreamId,
+      const stableState = desired === "stopped"
+        ? "running" as const
+        : desired === "archived"
+          ? "stopped" as const
+          : row.lifecycleState === "archived" ? "archived" as const : "stopped" as const;
+      await terminal.failLifecycleClaim({
+        lifecycleState: stableState,
+        failureCode: `${desired}_provider_failed`,
         claimId,
-      ).run();
+        now: now.getTime(),
+      });
       throw error;
     }
   }
 
-  await database.prepare(
-    `UPDATE workstream_sandboxes
-        SET state = ?,
-            provider_sandbox_id = CASE WHEN ? = 'expired' THEN NULL ELSE provider_sandbox_id END,
-            warm_stop_due_at = CASE WHEN ? IN ('stopped', 'expired') THEN NULL ELSE warm_stop_due_at END,
-            archive_due_at = CASE WHEN ? IN ('archived', 'expired') THEN NULL ELSE archive_due_at END,
-            expire_due_at = CASE WHEN ? = 'expired' THEN NULL ELSE expire_due_at END,
-            operation_run_id = CASE WHEN ? = 'expired' THEN NULL ELSE operation_run_id END,
-            operation_lease_expires_at = CASE WHEN ? = 'expired' THEN NULL ELSE operation_lease_expires_at END,
-            lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
-            failure_code = NULL, version = version + 1, updated_at = ?
-      WHERE workspace_id = ? AND workstream_id = ? AND lifecycle_claim_id = ?`,
-  ).bind(
-    desired,
-    desired,
-    desired,
-    desired,
-    desired,
-    desired,
-    desired,
-    now.toISOString(),
-    workspaceId,
-    workstreamId,
+  await terminal.settleLifecycleTransition({
+    lifecycleState: desired,
     claimId,
-  ).run();
+    now: now.getTime(),
+  });
   return { transition: desired };
 }
 
@@ -202,11 +147,8 @@ export function createTerminalFinalDiffPreserver(
 ): (providerSandboxId: string, generation: number) => Promise<void> {
   return async (providerSandboxId, generation) => {
     const regional = regionalDatabase(env);
-    const alreadyCaptured = await env.DB.prepare(
-      `SELECT final_diff_resource_id FROM workstream_sandboxes
-        WHERE workspace_id = ? AND workstream_id = ?`,
-    ).bind(workspaceId, workstreamId).first<{ final_diff_resource_id: string | null }>();
-    if (alreadyCaptured?.final_diff_resource_id) return;
+    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
+    if (await terminal.finalDiffResourceId()) return;
     const result = await provider.runCommand(providerSandboxId, {
       taskName: `avalon-final-diff-${generation}`,
       cwd: "/workspace",
@@ -265,15 +207,16 @@ export function createTerminalFinalDiffPreserver(
          (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
          VALUES (?, ?, NULL, 0, 'generated', ?)`,
       ).bind(workstreamId, resourceId, timestamp);
-    const terminalStatement = env.DB.prepare(
-        `UPDATE workstream_sandboxes SET final_diff_resource_id = ?
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(resourceId, workspaceId, workstreamId);
+
     const cleanupStatement = regional.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(workspaceId, objectRef);
+    // The Terminal write no longer joins this batch: it belongs to the owning
+    // object, and a D1 batch cannot span that boundary. It runs last, after
+    // the resource and its link are durable, so a failure here leaves a
+    // capturable diff rather than a resource id pointing at nothing.
     if (regional === env.DB) {
-      await env.DB.batch([resourceStatement, attachmentStatement, terminalStatement, cleanupStatement]);
+      await env.DB.batch([resourceStatement, attachmentStatement, cleanupStatement]);
     } else {
       await resourceStatement.run();
       await attachWorkstreamRuntimeResource(env, {
@@ -283,9 +226,9 @@ export function createTerminalFinalDiffPreserver(
         attachedByUserId: null,
         relationshipType: "generated",
       });
-      await terminalStatement.run();
       await cleanupStatement.run();
     }
+    await terminal.setFinalDiffResourceId(resourceId, Date.now());
   };
 }
 

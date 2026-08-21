@@ -402,7 +402,7 @@ harness attempt, index, trigger, and start time; the matching
 (or the attempt fails). A finish from an abandoned attempt cannot clear a
 recovered attempt at the same run/index. Snapshot and resync frames carry that
 singleton. It exists solely to restore the desktop activity indicator and never
-substitutes for `compaction_jobs` or `compaction_checkpoints`.
+substitutes for `compaction_checkpoints`.
 
 The child keeps a bounded replay window in memory. A connected desktop can
 switch from stream A to stream B and back with no loss: it sends its last room
@@ -771,7 +771,7 @@ already have committed across the object boundary.
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents`, `external_delivery_attempts` | Causally fenced mention intents plus the normalized ledger available to multi-destination delivery paths. Existing automation/digest transports keep their smaller idempotency receipts on their local target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
+| `workstream_notification_intents` | Causally fenced mention intents. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by the per-workspace scheduler after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -855,18 +855,18 @@ join crosses an object boundary.
 
 | Table group | Meaning and relationships |
 | --- | --- |
-| `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Schema/data/import versions and resumable maintenance receipts. |
+| `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
-| `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
+| `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources, the authorization revision every relationship change advances (compat-routed changes included), and operational suggestion overlays. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
-| `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
+| `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
 `parts.sequence_number` is transcript order, including tool and system rows.
@@ -975,6 +975,123 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — Terminal addresses its own tables through a typed port
+
+**What changed:** The Terminal services no longer hold a `D1Database`. A new
+`WorkstreamTerminalStorage` inside the SubstreamAgent is the only reader and
+writer of `terminal_workspace`, `terminal_tasks`,
+`terminal_imported_resources`, `terminal_repository`,
+`terminal_publication_grants`, and `repository_publications`; the services
+reach it through `/internal/terminal` and a typed `TerminalObjectPort` whose
+operation list is derived from the storage class. WorkstreamDO schema
+migration 12 promotes the nine fields that lived in `lifecycle_json` to real
+columns and drops the 32 `_runtime_terminal_*` compatibility view and trigger
+statements. The dead pre-cutover branches in `workspace-scheduler.ts` and
+`connection-service.ts` — which queried tables migration `0090` dropped — go
+with them.
+
+**Why:** The vocabulary the code used stopped describing what it did. A
+statement reading `UPDATE workstream_sandboxes` named a table that had not
+existed in D1 since the legacy product schema was retired; it was rewritten
+onto a compatibility view whose INSTEAD OF triggers converted ISO-8601 to unix
+milliseconds and packed nine fields into a JSON blob. That layer existed so one
+body of code could run against both D1 and the object during the cutover, and
+the cutover is over. Its remaining cost was real: `archive_due_at` — a deadline
+the workspace scheduler sorts alarms by — had no type, no CHECK, and no index,
+because it was a JSON key. Worse, a load-then-claim sequence crossed the Worker
+boundary between its two statements, so the operation lease could be decided on
+state that had already moved; the same sequence now runs inside one
+synchronous object call.
+
+**Considered and rejected:** Keeping the SQL and renaming only the handle. That
+removes the misleading signature and nothing else — the blob, the timestamp
+conversion, and the split transactions all survive. Also rejected: converting
+the whole runtime compatibility vocabulary at once. `tool_invocations`,
+`harness_runs`, `resources`, and `notes` are shared by every subsystem, so
+retiring them is a change per subsystem rather than a wider version of this
+one; `runtime.ts` still reaches `tool_invocations` through the routed handle
+and says so.
+
+**Consequences:** Two invariants the blob could not express are now enforced by
+the table: a lease or a claim without its deadline is rejected, because an
+unreleasable lease holds the workspace forever. `authority_epoch` is gone — the
+compatibility triggers set it equal to `version` on every write and nothing
+read it back. Terminal state is now reachable only with the agent binding, so
+three helpers in `repository.ts` that took `Pick<Env, "DB">` take a full `Env`.
+The Node suite keeps its real-SQL coverage through a local-storage seam on the
+port; what the runtime decides belongs in `test-workers/`.
+
+### 2026-08-21 — Two workspace tables retired with no reader or writer
+
+**What changed:** WorkspaceDO schema migration 3 drops
+`external_delivery_attempts` and `slack_agent_channel_allowlist`, and both
+names leave `WORKSPACE_LOCAL_TABLES` so no statement routes to a table that is
+gone.
+
+**Why:** `external_delivery_attempts` declared a unified outbound pipeline —
+idempotency key, lease, attempt count, five states — covering automation,
+digest, mention, and note-privacy sends. Nothing ever wrote it; real delivery
+runs through `workstream_notification_intents` and the per-channel services.
+`slack_agent_channel_allowlist` was superseded before first use by
+`slack_agent_policies.public_channel_mode` and `private_channel_mode`. An empty
+table beside a working one is not neutral: it reads as a second authority and
+invites the next change to extend the side that has never run.
+
+**Considered and rejected:** Pruning `external_delivery_attempts` from
+`WORKSPACE_FENCED_TABLES` as well. That list feeds version 1's identity-fence
+triggers, so editing it changes v1's implementation hash and strands every
+deployed object on a hash mismatch. The table's drop takes its fences and index
+with it; the list keeps the name because version 1 is frozen, not because the
+table still exists.
+
+**Consequences:** Reviving either name means writing a fresh migration whose
+entry says why the current path is not enough — a unified delivery pipeline now
+has to argue against `workstream_notification_intents`, and channel admission
+against the policy modes.
+
+### 2026-08-21 — Retire four object tables that no code reads or writes
+
+**What changed:** Schema migration 11 drops `terminal_commands`,
+`compaction_jobs`, `_data_migrations`, and `_migration_command_receipts` from
+the SubstreamAgent database. The v1 statements still create them — they are
+hashed into every deployed object's `_sql_schema_migrations` receipt and cannot
+be edited — so a new object now creates and drops them inside one bootstrap
+transaction.
+
+**Why:** Each survived the work it was built for. `terminal_commands` was
+provisioned for per-command receipts during the D1 retirement, but the Terminal
+runtime settles commands through `terminal_tasks`, which already carries the
+command hash, deadline, exit, termination reason, byte counts, and head/tail.
+`compaction_jobs` modelled compaction as a claimable job row before the agent
+settled on the `active_agent_compaction` singleton plus immutable
+`compaction_checkpoints`. The two `_`-prefixed tables are bookkeeping for the
+one-time authority cutover campaign whose driver was deleted in "Retire the
+authority cutover campaign machinery" — the tables outlived it. An empty table
+with plausible columns is worse than no table: it invites a future writer to
+adopt a shape nothing has ever exercised, and it makes the schema read as
+though a second compaction or command authority exists.
+
+**Considered and rejected:** Deleting the `CREATE TABLE` statements from v1.
+That changes v1's implementation hash, and `applyDurableObjectSqliteMigrations`
+throws `workstream_schema_hash_mismatch:1` on any object whose receipt records
+the original — which is every deployed object. Append-only history is the
+constraint; the redundant create-then-drop is its price. Also rejected:
+dropping `content_refs` in the same migration. It has no reader either, but
+`parts.content_ref_id` carries a foreign key, two CHECK constraints, and a
+partial index pointing at it, so retiring it means rebuilding the transcript's
+hottest table under a maintenance window. That is its own change.
+
+**Consequences:** `terminal_commands` and `compaction_jobs` never had a writer
+in this repository's history, so their drop cannot lose a row. The two
+`_`-prefixed tables did, and a deployed object may still hold the completed
+campaign's receipts; the drop discards them deliberately, because the campaign
+finished, its D1 source tables were retired in migration `0090`, and nothing
+can replay from them. A future migration must not reuse these four names for a
+different shape — a re-`CREATE` under an old name would land beside the drop in
+version order and read as a revival. Anything that genuinely needs per-command
+receipts or a claimable compaction job should model it fresh, and say in its
+own entry why `terminal_tasks` or `compaction_checkpoints` is not enough.
 
 ### 2026-08-21 — Stopped runs remain stopped through every projection
 
