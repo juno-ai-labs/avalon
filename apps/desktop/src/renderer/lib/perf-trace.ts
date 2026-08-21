@@ -49,6 +49,69 @@ function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * How long the main thread was unavailable during a flow.
+ *
+ * A phase duration measured in the renderer is wall clock, and wall clock
+ * cannot tell "the server was slow" apart from "we were not in a position to
+ * ask". A promise continuation does not run while a long task holds the thread,
+ * so a phase that reads three seconds is the same number whether the socket was
+ * connecting or the transcript was rendering — and those have opposite fixes.
+ * `longtask` entries are what separate them: the browser reports every task
+ * over 50 ms, so a slow phase with no long tasks under it is genuinely waiting
+ * on something else.
+ *
+ * One observer for the process rather than one per trace: several work streams
+ * hold open traces at once — background subscribers included — and the entries
+ * are identical for all of them. The buffer is bounded and keeps only a start
+ * and an end. The entry's `attribution` is deliberately dropped: it carries
+ * frame and script URLs, and nothing else in this module records anything but
+ * counts and ids.
+ */
+const MAX_RETAINED_LONG_TASKS = 256;
+const longTasks: Array<{ start: number; end: number }> = [];
+/** Held so the observer is not collected while the renderer is alive. */
+let longTaskObserver: PerformanceObserver | null = null;
+let longTaskObserverAttempted = false;
+
+function observeLongTasks(): void {
+  if (longTaskObserverAttempted) return;
+  longTaskObserverAttempted = true;
+  // The constructor is absent in jsdom and `observe` rejects the entry type on
+  // any runtime that has not shipped it. Both land here, and both are a gap in
+  // the diagnosis rather than a broken flow, so neither is allowed out.
+  try {
+    longTaskObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        longTasks.push({ start: entry.startTime, end: entry.startTime + entry.duration });
+        if (longTasks.length > MAX_RETAINED_LONG_TASKS) longTasks.shift();
+      }
+    });
+    longTaskObserver.observe({ entryTypes: ['longtask'] });
+  } catch {
+    longTaskObserver = null;
+  }
+}
+
+/**
+ * Milliseconds of long-task time overlapping a window, and how many tasks
+ * contributed. Overlap rather than containment: the task that matters most is
+ * usually the one straddling the boundary, and counting it whole would charge a
+ * flow for work that ran before it started.
+ */
+function blockingWithin(from: number, to: number): { blockedMs: number; longTasks: number } {
+  let blockedMs = 0;
+  let count = 0;
+  for (const task of longTasks) {
+    const overlap = Math.min(task.end, to) - Math.max(task.start, from);
+    if (overlap > 0) {
+      blockedMs += overlap;
+      count += 1;
+    }
+  }
+  return { blockedMs: round(blockedMs), longTasks: count };
+}
+
 export interface PerfTraceOptions {
   /** Correlates with the Worker: `x-request-id`, a ticket id, a message id. */
   traceId?: string;
@@ -56,6 +119,7 @@ export interface PerfTraceOptions {
 }
 
 export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): PerfTrace {
+  observeLongTasks();
   const traceId = options.traceId ?? uuidV7();
   const startedAt = now();
   const phases: Array<[string, number]> = [];
@@ -89,12 +153,17 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
     end(fields: Record<string, unknown> = {}): void {
       if (ended) return;
       ended = true;
-      const durationMs = round(now() - startedAt);
+      const endedAt = now();
+      const durationMs = round(endedAt - startedAt);
       logDebug('perf', `${flow} ${durationMs}ms`, {
         flow,
         traceId,
         durationMs,
         phases: Object.fromEntries(phases),
+        // Read against the whole flow rather than per phase: the entries are
+        // coarse, and what a reader needs first is whether this flow was slow
+        // because the thread was busy at all.
+        ...blockingWithin(startedAt, endedAt),
         ...annotations,
         ...fields,
       });

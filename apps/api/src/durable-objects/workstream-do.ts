@@ -482,6 +482,13 @@ const MIGRATION_COMPONENT = "workstream_do";
 export class WorkstreamDO extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
+  /**
+   * Whether an eager directory delivery is already running. In memory only: a
+   * hibernated object wakes with no attempt outstanding, which is the
+   * conservative direction — it costs one redundant call the receiving object
+   * deduplicates, where the opposite would silently suppress the push.
+   */
+  private eagerDirectoryDeliveryInFlight = false;
 
   constructor(
     state: DurableObjectState,
@@ -490,6 +497,13 @@ export class WorkstreamDO extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Before the migrations below, not after: the child's cold start is the
+    // expensive half and it does not depend on anything this object is about to
+    // do. A work stream and its main substream are always opened together — the
+    // control socket wakes this object while the feed socket wakes that one —
+    // so waking them in sequence pays for two cold starts a person waits
+    // through end to end.
+    this.wakeMainSubstream(env);
     this.initialized = state.blockConcurrencyWhile(async () => {
       await withMigrationReport({
         state,
@@ -507,6 +521,49 @@ export class WorkstreamDO extends DurableObject<Env> {
       if (next !== null) await state.storage.setAlarm(next);
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Start substream `0` warming, without waiting for it.
+   *
+   * Reads identity straight out of storage rather than waiting for the
+   * migrations: SQLite persists across hibernation, so on every wake but the
+   * first the row is already there. On the first there is no child to wake
+   * either, and no table to read — hence the guard rather than a check.
+   *
+   * Nothing here is awaited or retried. A child that fails to wake is woken by
+   * the request that actually needs it, exactly as before; this only ever
+   * removes latency, and must never be able to add a failure.
+   */
+  private wakeMainSubstream(env: Env): void {
+    let identity: { workspace_id: string; workstream_id: string } | null;
+    try {
+      identity = first(this.state.storage.sql.exec<{ workspace_id: string; workstream_id: string }>(
+        `SELECT workspace_id, workstream_id FROM workstream_metadata WHERE id = 1`,
+      ));
+    } catch {
+      // First wake: the schema does not exist yet, and neither does the child.
+      return;
+    }
+    if (!identity) return;
+    const { workspace_id: workspaceId, workstream_id: workstreamId } = identity;
+    this.state.waitUntil((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(
+          env,
+          env.SUBSTREAM_AGENTS,
+          workspaceId,
+          substreamAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(workspaceId),
+            asWorkstreamId(workstreamId),
+          ),
+        );
+        await stub.wake();
+      } catch {
+        // Warming is best effort by construction.
+      }
+    })());
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -576,6 +633,60 @@ export class WorkstreamDO extends DurableObject<Env> {
     await this.initialized;
     const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
     return this.ack(parsed.messageId, parsed.payloadHash);
+  }
+
+  /**
+   * Hand this commit's directory effects to WorkspaceDO now, rather than
+   * leaving them for the alarm.
+   *
+   * A harness status change reaches the open work stream immediately, over the
+   * control socket that `broadcastMetadata` writes to. It reaches every *other*
+   * surface — the sidebar row, a second window, another member watching the
+   * same workspace — only once the effect has gone outbox, alarm, Queue,
+   * consumer batch, RPC. Queues is at-least-once and unordered by design, and
+   * the alarm adds its own delay on top, so a transition a person is actively
+   * waiting on arrived seconds after the thing that caused it.
+   *
+   * This delivers but deliberately **does not acknowledge**. The outbox is
+   * untouched — no row consumed, no `not_before` moved, no attempt counted — so
+   * the alarm, the Queue, and the activation fence keep exactly the lifecycle
+   * they had, and this is purely additive. WorkspaceDO applies by `messageId`
+   * and `payloadHash`, so the Queue's later copy of the same effect finds the
+   * receipt, reports no change, and publishes nothing a second time.
+   *
+   * Acknowledging here was the first attempt and was wrong. Draining the
+   * outbox eagerly meant whoever looked next found it empty: the activation
+   * fence reported that it had flushed nothing, and the effects it was supposed
+   * to be gating on had already gone. Delivery is a thing this can usefully
+   * race the Queue at; ownership of the outbox is not.
+   */
+  private deliverDirectoryEffectsEagerly(): void {
+    if (this.eagerDirectoryDeliveryInFlight) return;
+    const effects = this.dueWorkspaceDirectoryEffects(25);
+    if (effects.length === 0) return;
+    const metadata = this.metadataRow();
+    if (!metadata) return;
+    this.eagerDirectoryDeliveryInFlight = true;
+    this.state.waitUntil((async () => {
+      try {
+        const workspace = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.WORKSPACE_DOS,
+          metadata.workspace_id,
+          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
+        );
+        await workspace.applyWorkstreamDirectoryEffects({
+          workspaceId: metadata.workspace_id,
+          envelopes: effects,
+        });
+      } catch {
+        // The outbox still holds every one of these, so the alarm and the Queue
+        // deliver them exactly as they would have. Nothing is lost by losing
+        // the race this was trying to win.
+      } finally {
+        this.eagerDirectoryDeliveryInFlight = false;
+      }
+    })());
   }
 
   /** Maintenance activation fence: do not open a route before WorkspaceDO has its directory row. */
@@ -1423,6 +1534,11 @@ export class WorkstreamDO extends DurableObject<Env> {
       }
       await this.armAlarm();
       await this.broadcastMetadata();
+      // `broadcastMetadata` has just told everyone reading *this* work stream.
+      // The same transition is what a sidebar row, a second window, and every
+      // other member of the workspace are waiting on, and their only path to it
+      // is the workspace socket — so start it here instead of at the alarm.
+      this.deliverDirectoryEffectsEagerly();
       const configuration = this.latestBlockDashboardConfiguration();
       const blockIds = configuration
         ? parseBlockDashboardBlocks(configuration.blocks_json).map((block) => block.id)
@@ -1833,8 +1949,21 @@ export class WorkstreamDO extends DurableObject<Env> {
         manualUnreadFromSequenceNumber: viewer?.manualUnreadFromOrdinal ?? null,
         manualUnreadGeneration: viewer?.manualUnreadGeneration ?? 0,
         latestMentionSequenceNumber: viewer?.latestMentionAttentionOrdinal ?? 0,
+        blockDashboardPreference: this.blockDashboardPreferenceFor(userId),
       },
     });
+  }
+
+  /** Absent means hidden, which is what a work stream opens as. */
+  private blockDashboardPreferenceFor(userId: string): { visible: boolean; updatedAt: string | null } {
+    const row = first(this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
+      `SELECT visible, updated_at FROM block_dashboard_user_preferences WHERE user_id = ?`,
+      userId,
+    ));
+    return {
+      visible: row?.visible === 1,
+      updatedAt: row ? new Date(row.updated_at).toISOString() : null,
+    };
   }
 
   private async broadcastMetadata(): Promise<void> {

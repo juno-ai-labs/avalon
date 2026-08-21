@@ -2,7 +2,6 @@ import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import {
   TerminalNetworkPolicyPreviewSchema,
   TerminalWorkspaceSettingsSchema,
-  TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
@@ -107,7 +106,7 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
 }
 
 describe("Terminal HTTP route contracts", () => {
-  it("serves workspace and work-stream state through the real route schemas", async () => {
+  it("serves workspace settings through the real route schema", async () => {
     const { app, env } = fixture();
     const settings = await app.request("/workspace/terminal", undefined, env);
     expect(settings.status).toBe(200);
@@ -117,12 +116,6 @@ describe("Terminal HTTP route contracts", () => {
     });
     expect(settingsBody).not.toHaveProperty("baselineGroups");
     expect(settingsBody).not.toHaveProperty("effectiveDomains");
-
-    const state = await app.request(`/workstreams/${S}/terminal`, undefined, env);
-    expect(state.status).toBe(200);
-    expect(TerminalWorkstreamStateSchema.parse(await state.json())).toMatchObject({
-      availability: "unsupported", state: "absent", repository: null,
-    });
   });
 
   it("previews and applies a revision-fenced network policy through HTTP", async () => {
@@ -147,20 +140,23 @@ describe("Terminal HTTP route contracts", () => {
     });
   });
 
-  it("keeps participant repository-selection endpoints absent and serves start-fresh", async () => {
+  it("exposes no per-work-stream Terminal surface at all", async () => {
+    // Terminal is how the agent executes, not something a reader is shown, so
+    // the work stream serves nothing about it. The workspace-level policy
+    // endpoints above are a different thing: an administrator sets those.
     const { app, env } = fixture();
-    const catalog = await app.request(`/workstreams/${S}/terminal/repositories`, undefined, env);
-    expect(catalog.status).toBe(404);
-    const selection = await app.request(`/workstreams/${S}/terminal/repository`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ connectionId: W, repositoryFullName: "owner/repo" }),
-    }, env);
-    expect(selection.status).toBe(404);
-
-    const fresh = await app.request(`/workstreams/${S}/terminal/start-fresh`, { method: "POST" }, env);
-    expect(fresh.status).toBe(200);
-    expect(TerminalWorkstreamStateSchema.parse(await fresh.json())).toMatchObject({ state: "absent" });
+    for (const path of [
+      `/workstreams/${S}/terminal`,
+      `/workstreams/${S}/terminal/repositories`,
+      `/workstreams/${S}/terminal/repository`,
+    ]) {
+      expect((await app.request(path, undefined, env)).status).toBe(404);
+    }
+    expect((await app.request(
+      `/workstreams/${S}/terminal/start-fresh`,
+      { method: "POST" },
+      env,
+    )).status).toBe(404);
   });
 
   it("rejects unauthenticated, non-admin, malformed, and invalid-id requests", async () => {
@@ -186,6 +182,5 @@ describe("Terminal HTTP route contracts", () => {
       }, owner.env);
       expect(response.status).toBe(400);
     }
-    expect((await owner.app.request("/workstreams/not-a-uuid/terminal", undefined, owner.env)).status).toBe(400);
   });
 });

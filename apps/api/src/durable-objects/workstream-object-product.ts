@@ -275,6 +275,17 @@ function userFromRow(row: UserRow) {
  * profiles, and other control-plane facts. Workspace-owned resources,
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
+/**
+ * How much transcript an open carries.
+ *
+ * Was 250, which is a scroll-back buffer being paid for on the frame a person
+ * waits to see. A screen shows tens of messages; scrolling past these asks the
+ * socket for the next page.
+ */
+export const BOOT_LATEST_MESSAGES = 20;
+/** Ten either side of where the reader stopped, which `around` splits for us. */
+export const BOOT_RESUME_MESSAGES = 20;
+
 export class WorkstreamObjectProductService {
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -678,10 +689,6 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  async context(auth: AuthContext): Promise<{ backgroundTasks: WorkstreamDetail["backgroundTasks"] }> {
-    await this.authorize(auth);
-    return { backgroundTasks: this.backgroundTasks() };
-  }
 
   async update(
     auth: AuthContext,
@@ -850,6 +857,45 @@ export class WorkstreamObjectProductService {
       () => [{ partitionKey: `user:${auth.userId}`, effect: this.userEffect(this.root(), auth.userId) }],
     );
     return this.summary(this.root(), auth.userId);
+  }
+
+  /**
+   * Everything needed to paint this work stream, read in one pass.
+   *
+   * The single assembler behind both the `snapshot` socket frame and
+   * `GET /workstreams/:id`, so the two cannot answer differently. Opening ends
+   * one of two ways — the reader resumes where they stopped, or goes to the
+   * latest message — and the room cannot know which, so it sends both windows
+   * and lets the client pick.
+   */
+  async boot(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<{
+    workstream: WorkstreamDetail;
+    messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
+    resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
+  }> {
+    const workstream = await this.get(auth, viewers);
+    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber) };
+  }
+
+  /**
+   * The two transcript windows alone, for a caller that already holds the
+   * detail. The snapshot path does: it loads a detail carrying presence, which
+   * `boot` has no way to know about, so re-reading it there would be a second
+   * pass for a worse answer.
+   */
+  async bootFeeds(auth: AuthContext, resumeAt: number | null): Promise<{
+    messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
+    resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
+  }> {
+    const messageFeed = await this.messages(auth, BOOT_LATEST_MESSAGES);
+    const oldestOnPage = messageFeed.items[0]?.sequenceNumber;
+    // Skipped when the reader's position is already on the newest page: a
+    // second copy of the same messages is not worth the frame.
+    const resumeFeed = resumeAt !== null
+      && (oldestOnPage === undefined || resumeAt < oldestOnPage)
+      ? await this.messages(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
+      : null;
+    return { messageFeed, resumeFeed };
   }
 
   async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {

@@ -1549,6 +1549,125 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
+    await seedOpenAuthority();
+    const outsiderId = "00000000-0000-7000-8000-000000000401";
+    // Two members of the same workspace, each with a live session, so the only
+    // thing separating them is participation in the work stream itself.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-21T20:00:00.000Z')`).bind(WORKSPACE_ID, outsiderId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`${SESSION_ID}-${USER_ID}`, USER_ID, WORKSPACE_ID),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`${SESSION_ID}-${outsiderId}`, outsiderId, WORKSPACE_ID),
+    ]);
+    const workspaceStub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspaceStub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const connect = async (userId: string, ticketId: string): Promise<WebSocket> => {
+      const response = await workspaceStub.fetch("https://workspace.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-avalon-workspace-id": WORKSPACE_ID,
+          "x-avalon-placement-affinity": "wnam",
+          "x-avalon-user-id": userId,
+          "x-avalon-session-id": `${SESSION_ID}-${userId}`,
+          "x-avalon-socket-ticket-id": ticketId,
+          "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      if (response.status !== 101) {
+        throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+      }
+      const socket = response.webSocket!;
+      socket.accept();
+      const initial = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      expect(JSON.parse(String((await initial).data))).toMatchObject({ type: "workspace_sync" });
+      return socket;
+    };
+
+    const participant = await connect(USER_ID, "00000000-0000-7000-8000-000000000402");
+    const outsider = await connect(outsiderId, "00000000-0000-7000-8000-000000000403");
+
+    const participantPush = nextMessage(participant);
+    const outsiderPush = nextMessage(outsider);
+    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const at = "2026-08-21T20:00:00.000Z";
+    // A run finishing, as the child reports it. Nothing here touches the
+    // alarm or the Queue: `alarm()` is never called in this test, so a push
+    // that arrives can only have come from the eager delivery.
+    const accepted = await fetchAndDrain(
+      workstreamStub,
+      "https://workstream.test/internal/substream-effects",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: "0",
+          envelopes: [effectEnvelope({
+            kind: "directory_common",
+            title: "Finished while the sidebar watched",
+            description: "Pushed without the Queue",
+            preview: "completed",
+            // Personal, so the outsider is not an audience for it.
+            scope: "personal",
+            state: "completed",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: at,
+            archivedAt: null,
+            originType: "ad_hoc",
+            createdByUserId: USER_ID,
+            latestAttentionOrdinal: 3,
+            unreadTrackingStartOrdinal: 0,
+            createdAt: at,
+            updatedAt: at,
+          }, "00000000-0000-7000-8000-000000000404"),
+          effectEnvelope({
+            kind: "directory_user",
+            userId: USER_ID,
+            isParticipant: true,
+            unreadCount: 1,
+            youAreMentioned: false,
+            listable: true,
+            seenAttentionOrdinal: 2,
+            manualUnreadFromOrdinal: null,
+            manualUnreadGeneration: 0,
+            latestMentionAttentionOrdinal: 0,
+          }, "00000000-0000-7000-8000-000000000405")],
+        }),
+      },
+    );
+    expect(accepted.status).toBe(200);
+
+    // The participant sees the transition itself, not an invalidation to go
+    // and fetch it with.
+    expect(JSON.parse(String((await participantPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: { harnessStatus: "completed", title: "Finished while the sidebar watched" },
+    });
+    // The outsider is subscribed to the same workspace and gets the frame, but
+    // it carries a tombstone rather than the row: a personal work stream they
+    // do not participate in must not become readable because someone else's
+    // run finished.
+    expect(JSON.parse(String((await outsiderPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: null,
+    });
+  });
+
   it("owns and pages the viewer-specific work-stream directory in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -2495,6 +2614,337 @@ describe("Durable Objects in the Workers runtime", () => {
       metadata: { title: "Renamed from another client" },
     });
     socket.close(1000, "done");
+  });
+
+  it("warms substream zero when the work stream wakes", async () => {
+    await seedOpenAuthority();
+    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    // Give the parent an identity to read: a first wake has no child, and the
+    // guard is what stops it looking for one.
+    const at = "2026-08-21T20:00:00.000Z";
+    expect((await fetchAndDrain(
+      workstreamStub,
+      "https://workstream.test/internal/substream-effects",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: "0",
+          envelopes: [effectEnvelope({
+            kind: "directory_common",
+            title: "Rides together",
+            description: "Parent and main child",
+            preview: "Preview",
+            scope: "workspace",
+            state: "idle",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: null,
+            archivedAt: null,
+            latestAttentionOrdinal: 1,
+          }, "00000000-0000-7000-8000-000000000701")],
+        }),
+      },
+    )).status).toBe(200);
+
+    // Evict the parent and touch it again, so its constructor runs with an
+    // identity in storage. Nothing in this test addresses the child.
+    const substreamStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await evictDurableObject(workstreamStub);
+    await workstreamStub.flushWorkspaceDirectoryEffects();
+
+    // Whether the child is *running* is the observable, and eviction is what
+    // asks: the harness refuses to evict an object that was never started.
+    // Asserting on its schema instead would prove nothing, because reaching in
+    // to look would construct it and run the migrations itself.
+    await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
+  });
+
+  it("shrinks the resume window too when the snapshot frame is over its cap", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000801",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // The oldest messages are the heavy ones, so the reader's resume window is
+    // what puts the frame over the cap while the newest page stays small. Only
+    // the newest page used to be reducible, which left the loop with nothing to
+    // trim and failed the open outright.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Oversized resume', next_attention_ordinal = 81, updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO member_attention
+           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+            manual_unread_from_ordinal, latest_mention_attention_ordinal, version,
+            last_seen_at, updated_at)
+         VALUES (?, 0, 20, NULL, 0, 1, ?, ?)`,
+        USER_ID,
+        Date.now(),
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 80; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8004-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          sequence <= 40 ? "z".repeat(120_000) : `short ${sequence}`,
+          4_000 + sequence,
+          4_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      code?: string;
+      resumeFeed: { items: unknown[] } | null;
+    };
+    // A snapshot, not `snapshot_unavailable`, and one that still carries the
+    // reader's window rather than dropping it wholesale.
+    expect(frame.type).toBe("snapshot");
+    expect(frame.resumeFeed).not.toBeNull();
+    expect(frame.resumeFeed!.items.length).toBeGreaterThan(0);
+  });
+
+  it("sends the newest page and the reader's own position in one snapshot", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000601",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // 60 messages, with this reader stopped a long way behind the end.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Two windows', next_attention_ordinal = 61, updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      // Stopped at 30, so the first unread is 31 — well behind the newest page.
+      state.storage.sql.exec(
+        `INSERT INTO member_attention
+           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+            manual_unread_from_ordinal, latest_mention_attention_ordinal, version,
+            last_seen_at, updated_at)
+         VALUES (?, 0, 30, NULL, 0, 1, ?, ?)`,
+        USER_ID,
+        Date.now(),
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 60; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8003-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `message ${sequence}`,
+          3_000 + sequence,
+          3_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      workstream: { firstUnreadSequenceNumber: number | null };
+      messageFeed: { items: { sequenceNumber: number }[] };
+      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+    };
+    expect(frame.type).toBe("snapshot");
+    // The newest page is bounded now: a scroll-back buffer is not worth paying
+    // for on the frame a person waits to see.
+    const newest = frame.messageFeed.items.map((item) => item.sequenceNumber);
+    expect(newest).toHaveLength(20);
+    expect(newest.at(-1)).toBe(60);
+    expect(newest[0]).toBe(41);
+
+    // And the reader's own position arrives with it, so opening on it costs no
+    // second request. `around` splits its limit either side of the sequence.
+    const resumeAt = frame.workstream.firstUnreadSequenceNumber!;
+    expect(resumeAt).toBeLessThan(41);
+    const resume = frame.resumeFeed!.items.map((item) => item.sequenceNumber);
+    expect(resume).toContain(resumeAt);
+    expect(Math.min(...resume)).toBeLessThan(resumeAt);
+    expect(Math.max(...resume)).toBeGreaterThan(resumeAt);
+  });
+
+  it("re-serves canonical state to a subscribed viewer and puts it back in the room", async () => {
+    await seedOpenAuthority();
+    // The snapshot is assembled from D1 as well as object-local SQL, and this
+    // suite starts with no schema, so a test declares what the path it exercises
+    // reads.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-substream-id": "0",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000131",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // A viewer that never subscribed has no feed to refresh, and answering one
+    // would hand out canonical state on a socket that skipped the subscribe
+    // path's authority and maintenance checks.
+    const refusal = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "request_snapshot" }));
+    expect(JSON.parse(String((await refusal).data))).toMatchObject({
+      type: "error",
+      code: "subscription_required",
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Re-served snapshot', updated_at = ? WHERE id = 1`,
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 3; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `canonical ${sequence}`,
+          2_000 + sequence,
+          2_000 + sequence,
+        );
+      }
+    });
+
+    const snapshot = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "request_snapshot" }));
+    const frame = JSON.parse(String((await snapshot).data)) as {
+      type: string;
+      workstream: { id: string };
+      messageFeed: { items: { sequenceNumber: number }[] };
+    };
+    expect(frame.type).toBe("snapshot");
+    expect(frame.workstream.id).toBe(WORKSTREAM_ID);
+    expect(frame.messageFeed.items.map((item) => item.sequenceNumber)).toEqual([1, 2, 3]);
+
+    // The request holds the socket out of broadcasts while the snapshot is
+    // assembled. Leaving it that way would silently stop every later frame, so
+    // the end state is the one thing worth pinning here.
+    await runInDurableObject(stub, (_instance, state) => {
+      const attachment = state.getWebSockets()[0]!.deserializeAttachment() as { subscribed: boolean };
+      expect(attachment.subscribed).toBe(true);
+    });
   });
 
   it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {
