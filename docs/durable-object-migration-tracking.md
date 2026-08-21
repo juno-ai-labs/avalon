@@ -392,6 +392,16 @@ a broken object that had already recovered for up to 24 hours. It also makes the
 `reported_status !== "failed"` term in the dedupe check reachable, which it never
 was.
 
+Three smaller findings from the same round: a single malformed query parameter
+dropped *every* filter on the request, so a pasted link with a bad `limit` showed
+the whole unfiltered fleet under the component heading the operator asked for —
+now only the rejected field is dropped. Each Durable Object's migration component
+is one constant used by both the runner and the report, because two literals that
+drift file an object under a component its own ledger does not use. And the
+scheduled handler's `noRetry()` now says why it is correct: the sweep is a full
+re-enumeration, so the next hour supersedes a lost one, and a throw still
+surfaces as a failed cron invocation.
+
 **What a future change has to respect:** the `await` in front of the rethrow is
 load-bearing, and so is the fact that `apply()` still runs before any `await` —
 the migration must stay in the caller's synchronous prologue. A sixth call site
