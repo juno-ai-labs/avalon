@@ -360,7 +360,10 @@ group's whole default set at the moment it joins.
 The rules, stated in full because most of them are about what does *not* happen:
 
 - The attachment carries `relationship_type = 'group_default'`, alongside the
-  existing `attachment`, `origin`, `generated`, and `inbound_email`.
+  existing `attachment`, `origin`, `generated`, `inbound_email`,
+  `suggested_activity`, and `message_attachment`. The column carries no `CHECK`
+  constraint, so adding a value needs no migration — which is also why the list
+  is worth reading off the code rather than trusting this one to stay complete.
 - Attachment is idempotent per (work stream, resource). A resource a work stream
   already has keeps the relationship type *and the attribution* it already had.
 - **Neither existing attachment path can be used to do this**, so the build adds
