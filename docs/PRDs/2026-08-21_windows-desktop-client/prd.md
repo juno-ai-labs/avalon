@@ -290,7 +290,8 @@ clauses are affected and should be read against the brief:
   user can decrypt, where macOS Keychain gates access per-application. This is
   the platform's standard posture (and the same trust level as the browser
   profiles the session ticket already transits). The Lockdown-mode envelope
-  and session-file format are unchanged. `security.md` records the
+  and session-file format are unchanged — the one `safeStorage` call site is
+  `apps/desktop/src/main/session-encryption.ts`. `security.md` records the
   per-platform difference in the same change that ships it.
 - **Signing-key custody moves to a service.** There is no Windows signing key
   to hold: Azure Artifact Signing keeps keys in its HSM and CI authenticates
