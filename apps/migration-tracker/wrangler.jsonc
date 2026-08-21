@@ -20,7 +20,6 @@
     // configured while pointing at a team that does not exist.
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_APPLICATION_AUD": "",
-    "ACCESS_ALLOWED_EMAIL_DOMAINS": "rallywith.ai",
     "CLOUDFLARE_ACCOUNT_ID": ""
   },
   "routes": [

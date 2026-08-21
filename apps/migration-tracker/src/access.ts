@@ -3,26 +3,41 @@
  *
  * Cloudflare Access — the identity-aware proxy — stands in front of the
  * hostname. It supports Google as a login method and its policies take an
- * `email_domain` rule, which is the whole of what this site needs: Avalon's
- * Google Workspace domain, and nobody else. That is why the tracker does not
- * reuse Avalon's own Google OAuth: reusing it would mean minting sessions for
- * an operator tool out of the product's user identity system, and any account
- * that can sign in to Avalon would be one authorization bug away from the
- * fleet's schema state. Access keeps the operator boundary outside the product
- * entirely, and an unauthenticated request never reaches the Worker at all.
+ * `email_domain` rule, which is the whole of what this site needs: the
+ * operators' Google Workspace domain, and nobody else. That is why the tracker
+ * does not reuse Avalon's own Google OAuth: reusing it would mean minting
+ * sessions for an operator tool out of the product's user identity system, and
+ * any account that can sign in to Avalon would be one authorization bug away
+ * from the fleet's schema state. Access keeps the operator boundary outside the
+ * product entirely, and an unauthenticated request never reaches the Worker.
  *
- * The Worker still verifies the assertion itself. Access sets
- * `Cf-Access-Jwt-Assertion` on every request it forwards, and verifying it here
- * is what makes the protection survive the two ways edge enforcement can be
- * lost: a Worker route that outlives its Access application, and any path that
- * reaches the script without traversing the hostname. Trusting the header's
- * presence would be no protection at all — anyone can set a header — so the
- * signature, the issuer, the audience, and the email domain are all checked.
+ * **Access owns who is allowed. This module only establishes that Access
+ * spoke.** It verifies the assertion's signature against the team's JWKS, its
+ * issuer, and its audience — three facts about *provenance*, not a policy. Who
+ * may read the site is one rule, and it lives in the Access application, where
+ * it can be changed without a deploy.
+ *
+ * The Worker used to re-check the signed-in email against its own domain
+ * allowlist. That was a second copy of the Access policy's include rule, in a
+ * different system, with no mechanism keeping the two in step — and the first
+ * value it shipped with was wrong, which nothing would have caught except a
+ * person failing to log in. A rule stated twice is a rule that will disagree
+ * with itself. It is stated once now.
+ *
+ * What remains is not duplication: verifying the assertion is how this Worker
+ * knows Access ran at all. Trusting the header's presence would be no
+ * protection — anyone can set a header — so provenance is still checked here,
+ * and it is what makes the boundary survive a route that outlives its Access
+ * application.
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
 
 export interface AccessPrincipal {
-  email: string;
+  /**
+   * Informational only — shown in the page header so an operator can see which
+   * account they are signed in as. Nothing is authorized on it.
+   */
+  email: string | null;
   /** Access's stable per-user identifier, useful in a log line. */
   subject: string;
   /** The Access application the assertion was minted for. */
@@ -34,16 +49,12 @@ export interface AccessConfiguration {
   teamDomain: string;
   /** The Access application's AUD tag. */
   applicationAudience: string;
-  /** Lower-cased email domains admitted after the signature checks out. */
-  allowedEmailDomains: string[];
 }
 
 export type AccessFailure =
   | "access_not_configured"
   | "access_assertion_missing"
-  | "access_assertion_invalid"
-  | "access_email_missing"
-  | "access_email_domain_forbidden";
+  | "access_assertion_invalid";
 
 export type AccessResult =
   | { ok: true; principal: AccessPrincipal }
@@ -52,7 +63,6 @@ export type AccessResult =
 export interface AccessEnvironment {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_APPLICATION_AUD?: string;
-  ACCESS_ALLOWED_EMAIL_DOMAINS?: string;
 }
 
 /**
@@ -66,16 +76,12 @@ export interface AccessEnvironment {
 export function readAccessConfiguration(env: AccessEnvironment): AccessConfiguration | null {
   const teamDomain = env.ACCESS_TEAM_DOMAIN?.trim().toLowerCase();
   const applicationAudience = env.ACCESS_APPLICATION_AUD?.trim();
-  const allowedEmailDomains = (env.ACCESS_ALLOWED_EMAIL_DOMAINS ?? "")
-    .split(",")
-    .map((domain) => domain.trim().toLowerCase())
-    .filter((domain) => domain.length > 0);
 
-  if (!teamDomain || !applicationAudience || allowedEmailDomains.length === 0) return null;
+  if (!teamDomain || !applicationAudience) return null;
   // A team domain is a hostname; anything with a scheme or a path in it is a
   // misconfiguration that would otherwise be assembled into a JWKS URL.
   if (!/^[a-z0-9][a-z0-9.-]*\.cloudflareaccess\.com$/u.test(teamDomain)) return null;
-  return { teamDomain, applicationAudience, allowedEmailDomains };
+  return { teamDomain, applicationAudience };
 }
 
 const keySets = new Map<string, JWTVerifyGetKey>();
@@ -120,21 +126,14 @@ export async function verifyAccessRequest(
     return { ok: false, reason: "access_assertion_invalid" };
   }
 
+  // Read but never judged. A token with no email — a service token, say — is
+  // still a token this application's policy admitted, so it is admitted here.
   const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-  if (email.length === 0) return { ok: false, reason: "access_email_missing" };
-
-  // Split on the last `@`: a local part may legally contain one, and taking the
-  // first would let `attacker@evil.example@` masquerade as an allowed domain.
-  const separator = email.lastIndexOf("@");
-  const domain = separator === -1 ? "" : email.slice(separator + 1);
-  if (!configuration.allowedEmailDomains.includes(domain)) {
-    return { ok: false, reason: "access_email_domain_forbidden" };
-  }
 
   return {
     ok: true,
     principal: {
-      email,
+      email: email.length > 0 ? email : null,
       subject: typeof payload.sub === "string" ? payload.sub : "unknown",
       audience: configuration.applicationAudience,
     },
@@ -162,9 +161,5 @@ export function accessFailureMessage(reason: AccessFailure): string {
       return "No Cloudflare Access assertion was presented. Reach this site through its Access application.";
     case "access_assertion_invalid":
       return "The Cloudflare Access assertion did not verify against this application.";
-    case "access_email_missing":
-      return "The Cloudflare Access assertion carries no email address.";
-    case "access_email_domain_forbidden":
-      return "That account's email domain is not permitted here.";
   }
 }
