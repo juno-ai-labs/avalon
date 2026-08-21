@@ -369,6 +369,47 @@ describe("recordSweep", () => {
     expect(overview.latestSweep?.errorMessage).toBe("ns-2: cloudflare_api_status_429");
     expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-eu");
   });
+
+  /**
+   * `objects: null` means the per-namespace listing failed, which says nothing
+   * about the namespace's size. Recording it as a count of zero, with a fresh
+   * sweep time beside it, reads on the site as "this namespace is empty" rather
+   * than "this namespace was not enumerated".
+   */
+  it("keeps the last known object count when a namespace listing failed", async () => {
+    const { enumerated, afterFailure } = await withRegistry((registry) => {
+      const namespace = {
+        namespaceId: "ns-1",
+        scriptName: "avalon-api-eu",
+        className: "SubstreamAgent",
+        usesSqlite: true,
+      };
+      registry.recordSweep(sweep({
+        namespaces: [{
+          ...namespace,
+          objects: [
+            { objectId: objectId("f"), hasStoredData: true },
+            { objectId: objectId("g"), hasStoredData: true },
+          ],
+        }],
+      }));
+      const first = registry.overview().namespaces[0];
+      registry.recordSweep(sweep({
+        startedAt: 1_700_000_100_000,
+        finishedAt: 1_700_000_101_000,
+        status: "partial",
+        namespaces: [{ ...namespace, objects: null }],
+        errorMessage: "ns-1: cloudflare_api_status_500",
+      }));
+      return { enumerated: first, afterFailure: registry.overview().namespaces[0] };
+    });
+
+    expect(enumerated?.objectCount).toBe(2);
+    // Both columns still describe the last sweep that actually listed the
+    // namespace, rather than claiming it was just seen to be empty.
+    expect(afterFailure?.objectCount).toBe(2);
+    expect(afterFailure?.lastSweptAt).toBe(enumerated?.lastSweptAt);
+  });
 });
 
 describe("staleness", () => {
