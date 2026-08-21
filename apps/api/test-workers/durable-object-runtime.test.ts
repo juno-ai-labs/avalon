@@ -214,6 +214,47 @@ type TestableWorkstreamDO = {
   deliverBlockDashboardDispatches(limit?: number): Promise<void>;
 };
 
+/**
+ * The object's own binding, so a test can make its authorization sweep slow.
+ *
+ * The race below is real but not reproducible unaided: the sweep's D1 round
+ * trip is fast enough here that a concurrent publication rarely wins it.
+ * Delaying the query is what turns "sometimes" into "every run".
+ */
+type TestableWorkspaceDO = { env: { DB: D1Database } };
+
+/** A D1 binding whose reads resolve later than the real one. */
+function slowedD1(database: D1Database, delayMs: number): D1Database {
+  const delay = <T>(run: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+    setTimeout(() => { run().then(resolve, reject); }, delayMs);
+  });
+  return new Proxy(database, {
+    get(target, property, receiver) {
+      if (property !== "prepare") return Reflect.get(target, property, receiver);
+      return (query: string): D1PreparedStatement => {
+        const statement = database.prepare(query);
+        return new Proxy(statement, {
+          get(statementTarget, statementProperty, statementReceiver) {
+            if (statementProperty !== "bind") {
+              return Reflect.get(statementTarget, statementProperty, statementReceiver);
+            }
+            return (...values: unknown[]): D1PreparedStatement => {
+              const bound = statement.bind(...values);
+              return new Proxy(bound, {
+                get(boundTarget, boundProperty, boundReceiver) {
+                  if (boundProperty === "all") return () => delay(() => bound.all());
+                  if (boundProperty === "first") return () => delay(() => bound.first());
+                  return Reflect.get(boundTarget, boundProperty, boundReceiver);
+                },
+              });
+            };
+          },
+        });
+      };
+    },
+  });
+}
+
 async function fetchAndDrain(
   stub: DurableObjectStub,
   input: RequestInfo | URL,
@@ -1830,6 +1871,54 @@ describe("Durable Objects in the Workers runtime", () => {
         reason: "change",
         topics: ["automations"],
       });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("delivers concurrent workspace syncs in the order their waterlines were allocated", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000506");
+    try {
+      // Spend the interval, so the second publication below takes the cheap
+      // path and does no I/O at all.
+      const first = nextMessage(socket);
+      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
+      await first;
+
+      let restore = (): Promise<void> => Promise.resolve();
+      await runInDurableObject(stub, (instance) => {
+        const testable = instance as unknown as TestableWorkspaceDO;
+        const real = testable.env.DB;
+        testable.env.DB = slowedD1(real, 200);
+        // The binding object outlives this test, so it goes back before
+        // anything else runs against it.
+        restore = () => runInDurableObject(stub, (later) => {
+          (later as unknown as TestableWorkspaceDO).env.DB = real;
+        });
+      });
+
+      // One publication that must sweep (`member_directory` is a retraction)
+      // and one that must not. The desktop discards any waterline at or below
+      // the last one it applied, so a publication that allocated first and then
+      // parked on the sweep would lose its payload — and every topic it named —
+      // to the cheaper one behind it.
+      const both = nextMessages(socket, 2);
+      try {
+        await Promise.all([
+          stub.publishSync(["member_directory"], WORKSPACE_ID, "wnam"),
+          stub.publishSync(["notes"], WORKSPACE_ID, "wnam"),
+        ]);
+      } finally {
+        await restore();
+      }
+      const waterlines = (await both)
+        .map((message) => Number(JSON.parse(String(message.data)).waterline));
+      expect(waterlines).toEqual([...waterlines].sort((left, right) => left - right));
+      expect(new Set(waterlines).size).toBe(2);
     } finally {
       socket.close(1000, "test complete");
     }
