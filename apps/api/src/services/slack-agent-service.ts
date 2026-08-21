@@ -18,6 +18,7 @@ import {
   ExternalActorSchema,
   SlackIngressQueueMessageSchema,
   SlackOriginContextSchema,
+  WORKSTREAM_CREATE_PARTICIPANT_LIMIT,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
   asUserId,
@@ -1819,10 +1820,18 @@ export class SlackAgentService {
           return;
         }
         // Whoever can reach this conversation in Slack can continue its work
-        // stream. Seating them comes first and is what makes that true for a
-        // *private* one: the ordinary read rule is "an active participant, and
-        // nobody else", so a member arriving in the thread would otherwise be
-        // refused by their own work stream a moment later.
+        // stream, and seating them comes first.
+        //
+        // **Unconditional on scope, deliberately.** The question this answers is
+        // "is this person in this conversation", which Slack decides; whether
+        // the work stream is `personal` or `workspace` is Avalon's separate
+        // answer about who may read it, and gating admission on it would make
+        // one stand in for the other. A private work stream needs the seat
+        // immediately — its read rule is participant-based, so a member arriving
+        // in the thread would be refused by their own work stream a moment later
+        // — and a public one needs it so its room stays the channel's as people
+        // arrive, rather than a list frozen at creation that empties the work
+        // stream if anyone narrows the scope later.
         await admitConnectorAudience(this.env, {
           workspaceId: connection.workspace_id,
           workstreamId: session.workstream_id,
@@ -1919,29 +1928,39 @@ export class SlackAgentService {
       invocationType: input.slackOrigin.invocationType,
     });
     // A work stream inherits the audience of the conversation it was summoned
-    // from, and the members of a private one are its room. Both are resolved
-    // before the create rather than added after it: a private work stream that
-    // existed for even a moment with an empty participant list is one its own
-    // channel could not read, and the roster read below is the only thing that
-    // makes the *rest* of the channel able to find it at all.
+    // from. The scope follows the conversation's own privacy, and the roster is
+    // read for *both* answers rather than only the private one: who can see this
+    // work in Slack is the connector's fact, and Avalon's scope is a separate
+    // question that must not be read as an answer to it. A public channel's
+    // thread is workspace-readable *and* its members belong in the room — they
+    // are the people the person summoning Avalon meant to include, and seating
+    // them is what makes the work stream theirs rather than merely visible to
+    // them. It also survives the scope moving later: somebody making a
+    // channel-born work stream private should narrow it to that channel, not
+    // empty it.
     const scope = connectorWorkstreamScope(
       input.source.channelType === "public" ? "public" : "private",
     );
-    const audienceUserIds = scope === "personal"
-      ? await this.slackConversationAudience(
-          input.token,
-          input.connection,
-          input.teamId,
-          input.channel,
-        )
-      : [];
+    const audienceUserIds = await this.slackConversationAudience(
+      input.token,
+      input.connection,
+      input.teamId,
+      input.channel,
+    );
+    // The create contract bounds what one request may name, and a channel's
+    // resolved audience can be several times that. The seed is what a *private*
+    // work stream needs at birth — one that existed for even a moment with an
+    // empty participant list is one its own channel could not read — and the
+    // remainder is admitted immediately after, through the same idempotent
+    // upsert that seats anyone who speaks later.
+    const seededUserIds = audienceUserIds.slice(0, WORKSTREAM_CREATE_PARTICIPANT_LIMIT);
     // Neither branch passes a title. Both derive the same provisional one from
     // the objective, and leaving it to them is what lets the naming agent
     // replace it — a title supplied here would read as a deliberate choice.
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
           objective: input.prompt.slice(0, 4_000),
-          participantUserIds: audienceUserIds.filter((id) => id !== input.identity?.auth.userId),
+          participantUserIds: seededUserIds.filter((id) => id !== input.identity?.auth.userId),
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
@@ -1957,7 +1976,7 @@ export class SlackAgentService {
           // installation resolves them to a workspace member the work stream
           // is theirs rather than ownerless.
           creatorUserId: input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
-          participantUserIds: audienceUserIds,
+          participantUserIds: seededUserIds,
           scope,
           slackOrigin: input.slackOrigin,
           ...(originResource ? { originResource } : {}),
@@ -1965,6 +1984,29 @@ export class SlackAgentService {
             ? { slackSearchAuthorization: input.slackSearchAuthorization }
             : {}),
         });
+    // Everyone the seed could not carry. Idempotent on the rows the create just
+    // wrote, so the overlap costs an upsert rather than a duplicate, and a
+    // failure here is not allowed to undo a work stream that already exists and
+    // has a run in flight: the people it drops are seated the moment they reply,
+    // by the same rule that seats anyone.
+    if (audienceUserIds.length > seededUserIds.length) {
+      try {
+        await admitConnectorAudience(this.env, {
+          workspaceId: input.connection.workspace_id,
+          workstreamId: created.workstream.id,
+          userIds: audienceUserIds,
+          addedByUserId: input.matchedWorkspaceUserId ?? null,
+        });
+      } catch (error) {
+        logWarn(this.env, "slack_audience_seating_incomplete", {
+          workspace_id: input.connection.workspace_id,
+          workstream_id: created.workstream.id,
+          seated: seededUserIds.length,
+          resolved: audienceUserIds.length,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
     const id = newId();
     const at = nowIso();
     await this.env.DB.prepare(

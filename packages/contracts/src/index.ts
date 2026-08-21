@@ -1263,10 +1263,23 @@ export const UpdateDigestScheduleRequestSchema = z.object({
   "An enabled digest needs at least one day, one time, and one destination",
 );
 
+/**
+ * How many participants one create may name.
+ *
+ * Sized for a person naming the people they are starting work with, and the
+ * connector ingresses are bounded by it rather than exempt from it: a Slack
+ * channel's resolved audience can be far larger, so it seeds the create up to
+ * this many and admits the rest immediately afterwards through
+ * `admitConnectorAudience`, which is the same idempotent upsert that seats
+ * anyone who speaks later. Exported so an ingress truncates against the real
+ * number instead of a copy that can drift out of step with this schema.
+ */
+export const WORKSTREAM_CREATE_PARTICIPANT_LIMIT = 25;
+
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(4000).optional(),
-  participantUserIds: z.array(IdSchema).max(25).default([]),
+  participantUserIds: z.array(IdSchema).max(WORKSTREAM_CREATE_PARTICIPANT_LIMIT).default([]),
   openingMessage: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),

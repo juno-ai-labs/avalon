@@ -151,17 +151,30 @@ conversation it came from.**
 
 - A conversation the provider calls public opens a public work stream by storing the existing
   `workspace` scope, readable by the workspace like any other. This is the branch that has to
-  *say* something: a work stream is born private, and a public channel's thread seats no
-  participants, so a create that lost this scope on the way through would hand the channel a
-  work stream none of its members could open.
+  *say* something: a work stream is born private, so a create that lost this scope on the way
+  through would narrow a channel's work stream to whoever happened to be resolved from it.
 - A private conversation — a private channel, a direct message, a group message — opens a
   private work stream by storing the existing `personal` scope, whose participant room starts
   with that conversation's resolved members. A conversation the connector cannot classify is
   treated as private: that is the fail-closed direction, and the two mistakes do not cost the
   same.
+- **The room is seated from the conversation whatever the scope says.** Scope and membership
+  answer different questions — Avalon's visibility rule and the provider's are not the same
+  system, and the provider's is the one that knows what the person meant. Somebody who summons
+  Avalon in a channel means the people in that channel to be in the work stream, so the roster
+  is read and seated for a public conversation exactly as for a private one. Seating people who
+  could already see it costs nothing; the alternative is a work stream that is *visible* to a
+  channel while belonging to nobody in it, which then empties itself the moment anyone narrows
+  the scope. The create seeds up to `WORKSTREAM_CREATE_PARTICIPANT_LIMIT` of that roster — a
+  private work stream must not exist for even a moment with an empty room — and the remainder
+  is admitted immediately after through the same idempotent upsert that seats later speakers.
+  A failure to seat the remainder is logged, never fatal: the work stream already exists with a
+  run in flight, and anyone it drops is seated when they reply.
 - Anybody who can reach the conversation may continue the work stream. A member who arrives
-  later is seated by their own message, which is what makes a private work stream answer them
-  rather than 404 at them. Membership is only ever admitted, never revoked — somebody who leaves
+  later is seated by their own message — **on every message, whatever the work stream's scope**,
+  because the question that admission answers is "is this person in this conversation", not
+  "is this work stream private". That is what makes a private work stream answer them rather
+  than 404 at them, and what keeps a public one's room honest as the channel's changes. Membership is only ever admitted, never revoked — somebody who leaves
   the provider conversation keeps the work stream, because removing them is a membership
   decision a person makes. Connector admission publishes the same `participant_added` event as
   the in-product participant picker, so connected clients see the durable room change immediately.
@@ -724,6 +737,42 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-21 — The room is seated from the conversation, whatever the scope says
+
+**What changed:** `createSlackWorkstreamSession` reads the conversation roster
+for every scope, where it read one only when the work stream was coming out
+`personal`. A public channel's thread now seats its resolved members as
+participants instead of being created with an empty room. The create seeds up to
+the new `WORKSTREAM_CREATE_PARTICIPANT_LIMIT` — the wire cap that was already
+there as a bare `25`, now exported so an ingress truncates against the real
+number — and `admitConnectorAudience` seats the remainder immediately after,
+best-effort.
+
+**Why:** Scope and membership answer different questions, and the change that
+made work streams private by default made it matter which. Avalon's visibility
+rule and Slack's are not the same system, and Slack's is the one that knows what
+the person meant: somebody who summons Avalon in a channel means the people in
+that channel to be in the work stream. Seating only the private branch encoded
+the opposite assumption — that Avalon's scope could stand in for the provider's
+audience — and produced a work stream *visible* to a channel while belonging to
+nobody in it, which empties itself the moment anyone narrows the scope.
+
+**Considered and rejected:** Raising the create's participant cap so the whole
+roster could be named in one request. The cap is sized for a person naming the
+people they are starting work with, and a connector roster is a different thing
+that already has its own admission path; widening the wire contract for every
+caller to avoid a truncation the ingress can handle itself was the larger
+change. Seating the whole roster only *after* the create was also rejected: a
+private work stream that exists for even a moment with an empty participant list
+is one its own channel cannot read.
+
+**Consequences:** A public-channel create now costs one `conversations.members`
+call and the identity resolution behind it. That is on Slack ingress, which
+already runs inside the acknowledgement's `waitUntil`, so nobody is waiting on a
+keystroke for it; it is bounded by `SLACK_AUDIENCE_MEMBER_LIMIT` and fails to an
+empty roster rather than an error. Membership is still only ever admitted, never
+revoked, so a channel that shrinks does not shrink the work stream.
 
 ### 2026-08-21 — A private conversation's work stream is private again
 

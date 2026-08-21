@@ -63,6 +63,28 @@ describe("who may continue a Slack work stream", () => {
       .toEqual({ count: 0 });
   });
 
+  it("reads the conversation roster for a public channel, not only a private one", async () => {
+    // Who can see this work in Slack is the connector's fact; Avalon's scope is
+    // a separate question and must not be read as an answer to it. A public
+    // channel's thread is workspace-readable *and* its members belong in the
+    // room — so the roster is read either way, where it used to be skipped
+    // whenever the channel was public and the work stream came out with an
+    // empty participant list.
+    const database = await seededDatabase();
+    insertEventJob(database, "event:public-roster", appMention("EvPublicRoster"));
+    const slack = stubSlack({ privateChannel: false, members: ["U456", "UKAT"] });
+
+    // The authority is deliberately still closed here: this asserts what the
+    // ingress resolves on the way to the create, which happens before the
+    // refusal, without standing up the whole create pipeline to do it.
+    await expect(service(database).processQueuedIngress("event:public-roster"))
+      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+
+    expect(slack.methods).toContain("conversations.members");
+    expect(slack.calls.find((call) => call.method === "conversations.members")?.body)
+      .toMatchObject({ channel: "C123" });
+  });
+
   it("admits the audience through the work stream's object once the region is open", async () => {
     // The defect this pins down: the audience upsert used to go straight to
     // regional D1, where the post-cutover fence aborts it — so every linked
