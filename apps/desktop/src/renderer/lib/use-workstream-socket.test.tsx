@@ -200,6 +200,7 @@ function snapshotFrame(input: {
   sequence: number;
   workstream?: Record<string, unknown>;
   messages?: Record<string, unknown>[];
+  resumeFeed?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   return {
     type: 'snapshot',
@@ -207,6 +208,7 @@ function snapshotFrame(input: {
     occurredAt: '2026-07-31T19:20:00.000Z',
     workstream: wireWorkstreamDetail(input.workstream),
     messageFeed: { items: input.messages ?? [], nextCursor: null, newerCursor: null },
+    resumeFeed: input.resumeFeed ?? null,
     activeStreams: [],
     activeCompaction: null,
   };
@@ -1335,6 +1337,7 @@ describe('useWorkstreamSocket', () => {
       mentions: [],
       attachments: [],
       createdAt: '2026-07-31T19:20:00.000Z',
+      attentionSequenceNumber: null,
       toolEvent: {
         id: invocationId,
         name: 'firecrawl.fetch',
@@ -1810,6 +1813,7 @@ describe('useWorkstreamSocket', () => {
       mentions: [],
       attachments: [],
       createdAt: '2026-07-31T19:20:00.000Z',
+      attentionSequenceNumber: null,
       toolEvent: {
         id: invocationId,
         name: 'avalon.ask',
@@ -1851,6 +1855,65 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
+  });
+
+  it('does not pull the reader backwards when a later snapshot carries a resume window', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000151';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    // Arriving: the reader is behind, so the resume window is what they see.
+    act(() => socket.message(snapshotFrame({
+      sequence: 5,
+      workstream: { id: workstreamId },
+      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000152', sequenceNumber: 90 })],
+      resumeFeed: {
+        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
+        nextCursor: '12',
+        newerCursor: '13',
+      },
+    })));
+    await flushPromises();
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
+      .toEqual([12]);
+
+    // Reconciling: the same frame shape, but the reader has been watching this
+    // run. Read acknowledgement stops while the window is unfocused, so their
+    // first-unread is still far behind and the room keeps sending a resume
+    // window — applying it here would throw away what they just watched arrive.
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 6,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'completed',
+    }));
+    act(() => socket.message(snapshotFrame({
+      sequence: 7,
+      workstream: { id: workstreamId },
+      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000154', sequenceNumber: 91 })],
+      resumeFeed: {
+        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
+        nextCursor: '12',
+        newerCursor: '13',
+      },
+    })));
+    await flushPromises();
+
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
+      .toEqual([91]);
+    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeNull();
   });
 
   it('does not re-ask for a snapshot as a run streams under it', async () => {

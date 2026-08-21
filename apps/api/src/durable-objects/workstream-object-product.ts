@@ -689,10 +689,6 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  async context(auth: AuthContext): Promise<{ backgroundTasks: WorkstreamDetail["backgroundTasks"] }> {
-    await this.authorize(auth);
-    return { backgroundTasks: this.backgroundTasks() };
-  }
 
   async update(
     auth: AuthContext,

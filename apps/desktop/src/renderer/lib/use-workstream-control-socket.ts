@@ -153,10 +153,17 @@ export function useWorkstreamControlSocket(
       // The boot frame is where the panel preference arrives now; it has no
       // request of its own. Written straight in rather than invalidated: this
       // frame is the answer a refetch would go and ask for.
-      queryClient.setQueryData<BlockDashboardPreference>(
-        ['block-dashboard-preference', workstreamId],
-        metadata.viewer.blockDashboardPreference,
-      );
+      // Guarded like its sibling in `workstream.tsx`: the field is optional for
+      // rollout skew, and writing `undefined` here happens to be inert only
+      // because TanStack bails on it. Two writers to one key disagreeing about
+      // an absent value is the asymmetry that survives a refactor and then does
+      // not.
+      if (metadata.viewer.blockDashboardPreference) {
+        queryClient.setQueryData<BlockDashboardPreference>(
+          ['block-dashboard-preference', workstreamId],
+          metadata.viewer.blockDashboardPreference,
+        );
+      }
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,
