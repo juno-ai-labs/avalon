@@ -33,27 +33,45 @@ describe("database primitives", () => {
     expect(sql).toContain("ELSE workstream_participants.joined_at");
   });
 
-  it("resolves the automation origin label in a separate statement from the work-stream read", async () => {
-    const rows = [
-      { id: newId(), automation_subscription_id: newId(), title: "t", harness_status: "idle" },
-      { origin_label: "Weekly digest" },
-    ];
-    const statement = {
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockImplementation(() => Promise.resolve(rows.shift() ?? null)),
-    };
+  it("returns the committed initial work-stream shape without a retired-schema read", async () => {
+    const statement = { bind: vi.fn().mockReturnThis() };
     const prepare = vi.fn().mockReturnValue(statement);
-    const db = createDatabase({ prepare, batch: vi.fn() } as never);
+    const batch = vi.fn(async (statements: unknown[]) => (
+      statements.map(() => ({ success: true }))
+    ));
+    const db = createDatabase({ prepare, batch } as never);
+    const id = newId();
+    const workspaceId = newId();
+    const creatorUserId = newId();
 
-    const workstream = await db.workstreams.get(newId(), newId());
+    const created = await db.workstreams.create({
+      id,
+      workspaceId,
+      title: "Finish the D1 retirement",
+      titleStatus: "settled",
+      objective: "Keep product state in Durable Objects",
+      emailAddress: "finish@example.com",
+      creatorUserId,
+      openingAuthor: { type: "human", userId: creatorUserId },
+      openingMessage: "Finish it",
+      clientMessageId: newId(),
+      participantUserIds: [],
+      scope: "workspace",
+    });
 
-    // One statement cannot span authorities through the runtime router, so the
-    // work-stream read must not join the workspace-authority automation tables.
-    const workstreamSql = String(prepare.mock.calls[0]?.[0]);
-    expect(workstreamSql).not.toContain("automation_subscriptions");
-    const labelSql = String(prepare.mock.calls[1]?.[0]);
-    expect(labelSql).toContain("automation_subscriptions");
-    expect(labelSql).not.toContain("workstreams");
-    expect(workstream?.originLabel).toBe("Weekly digest");
+    expect(created.workstream).toMatchObject({
+      id,
+      workspaceId,
+      title: "Finish the D1 retirement",
+      objective: "Keep product state in Durable Objects",
+      createdByUserId: creatorUserId,
+      harnessStatus: "running",
+      latestAttentionSequenceNumber: 1,
+      nextPendingWakeup: null,
+    });
+    expect(batch).toHaveBeenCalledOnce();
+    expect(prepare.mock.calls.map(([sql]) => String(sql)).join("\n"))
+      .not.toMatch(/LEFT JOIN workstream_wakeups|automation_subscriptions/u);
   });
+
 });

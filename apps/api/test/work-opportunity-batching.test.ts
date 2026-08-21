@@ -662,8 +662,10 @@ describe("suggested-work aggregation", () => {
       role: "owner",
     });
 
-    const firstResult = await service.start(opportunityId, 1, "same-attempt");
-    const secondResult = await service.start(opportunityId, 1, "same-attempt");
+    const [firstResult, secondResult] = await Promise.all([
+      service.start(opportunityId, 1, "same-attempt"),
+      service.start(opportunityId, 1, "same-attempt"),
+    ]);
 
     expect(firstResult.workstream.id).toBe(workstreamId);
     expect(secondResult.workstream.id).toBe(workstreamId);

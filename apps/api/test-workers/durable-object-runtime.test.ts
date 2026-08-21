@@ -2070,6 +2070,20 @@ describe("Durable Objects in the Workers runtime", () => {
       connectorType: "github",
       activity: { id: opportunitySourceId, providerResourceId: "juno-ai-labs/avalon#42" },
     }]);
+    const claimRequest = {
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityId,
+      now: "2026-08-18T20:01:00.000Z",
+      version: 1,
+      idempotencyKey: "same-live-start",
+    } as const;
+    const claims = await Promise.all([
+      stub.claimOpportunityStart(claimRequest),
+      stub.claimOpportunityStart(claimRequest),
+    ]);
+    expect(claims.map((claim) => claim.outcome).sort()).toEqual(["claimed", "replay"]);
+    await stub.releaseOpportunityStart(claimRequest);
     await env.DB.prepare(
       `UPDATE workspace_members SET last_seen_at = '2000-01-01T00:00:00.000Z'
         WHERE workspace_id = ? AND user_id = ?`,
