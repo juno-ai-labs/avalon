@@ -427,6 +427,16 @@ describe("the workspace template catalog", () => {
     const body = await response.json() as { items: Array<{ activitySources: unknown[] }> };
     // `generic_webhook` is synthesized for a webhook trigger, which declares no
     // connector type of its own, and the optional key is absent rather than null.
+    //
+    // The absence is deliberate slack, not an observed shape: no current write
+    // path can store an activity trigger without a suggestion. `publishTemplate`
+    // and `create` require `draft.ready`, whose `superRefine` demands
+    // `suggestedSourcePluginId` on every activity trigger; `addTemplateVersion`
+    // skips that check but `assertActivityTriggerBindings` 422s on a binding key
+    // with no suggestion; and `shareSubscription` refuses a draft outright. The
+    // read boundary describes what the projection spreads rather than what
+    // today's writers happen to produce — which is the direction that keeps a
+    // future writer from 500ing the page.
     expect(body.items[0]!.activitySources).toEqual([{
       bindingKey: "inbound_hook",
       connectorType: "generic_webhook",
