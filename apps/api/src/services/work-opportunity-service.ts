@@ -11,6 +11,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  type Scope,
   type UserId,
   type WorkOpportunity,
   type WorkspaceId,
@@ -2252,6 +2253,18 @@ export async function processClaimedOpportunityRanking(
   });
 }
 
+/**
+ * The work-stream scope a suggestion's audience maps to.
+ *
+ * Anything this cannot read is `personal`, which is the fail-closed direction
+ * and the same one `connectorWorkstreamScope` takes for a conversation it could
+ * not classify: the row reaches here through a `Record<string, unknown>` from
+ * the object, so a shape that drifts must narrow rather than publish.
+ */
+function opportunityAudienceScope(value: unknown): Scope {
+  return value === "workspace" ? "workspace" : "personal";
+}
+
 export class WorkOpportunityService {
   constructor(
     private readonly env: Env,
@@ -2492,6 +2505,9 @@ export class WorkOpportunityService {
         displayPromptHash: String(opportunity.display_prompt_hash),
         executionPromptHash: String(opportunity.execution_prompt_hash),
         idempotencyKey,
+        // The suggestion's own audience. A `workspace` one was shown to every
+        // member, and the work stream it becomes stays theirs to read.
+        audienceScope: opportunityAudienceScope(opportunity.audience_scope),
       });
     } catch (error) {
       const durable = await this.findDurableStart(id);
@@ -2706,6 +2722,9 @@ export class WorkOpportunityService {
         displayPromptHash: String(opportunity.display_prompt_hash),
         executionPromptHash: String(opportunity.execution_prompt_hash),
         idempotencyKey,
+        // The suggestion's own audience. A `workspace` one was shown to every
+        // member, and the work stream it becomes stays theirs to read.
+        audienceScope: opportunityAudienceScope(opportunity.audience_scope),
       });
     } catch (error) {
       const durable = await this.findDurableStart(id);

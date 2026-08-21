@@ -119,6 +119,7 @@ describe("a stack that never opened the durable-object authority", () => {
       service.createFromOpportunity({
         opportunityId: "00000000-0000-7000-8000-0000000000a1",
         version: 1,
+        audienceScope: "workspace",
         displayPrompt: "Prompt",
         executionPrompt: "Prompt",
         displayPromptHash: "hash",
