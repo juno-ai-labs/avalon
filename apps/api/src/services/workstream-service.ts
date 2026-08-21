@@ -75,7 +75,9 @@ type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
    * Who may read it from birth. Same reasoning as `originResource`: a request
    * on the wire cannot claim it, because it is decided by where the work stream
    * started — a private connector conversation opens a private work stream
-   * whose room is that conversation's members. Omitted means `workspace`.
+   * whose room is that conversation's members. Omitted means `personal`, which
+   * is what a work stream nobody has said anything about is; a caller says
+   * `workspace` when it *knows* the audience is wider than the room.
    */
   scope?: Scope;
 };
@@ -522,6 +524,11 @@ export class WorkstreamService {
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
     await requireOpenWorkstreamAuthority(this.env);
+    // `input.scope` travels with the rest of the input rather than being read
+    // off and re-stated: the connector ingresses decide it from the conversation
+    // they read the prompt out of, and a public channel's thread seats no
+    // participants — so a create that lost `workspace` on the way through would
+    // hand that channel a work stream none of its members could open.
     const created = await new WorkstreamObjectCreationService(this.env, this.auth, this.defer).create(input, {
       executionPrincipal: { type: "user", userId: this.auth.userId },
       ...(slackOrigin ? { slackOrigin } : {}),
@@ -551,6 +558,18 @@ export class WorkstreamService {
     return created;
   }
 
+  /**
+   * `audienceScope` is the suggestion's own audience, carried onto the work
+   * stream rather than left to the private default.
+   *
+   * A suggestion is shown before it is started, and a `workspace` one was shown
+   * to everybody: whoever presses start claims it, and every other member who
+   * was looking at it is answered `work_opportunity_already_claimed`. Landing
+   * that on `personal` would take the work away from the people Avalon had just
+   * offered it to — the same mistake as reading a public channel's thread as one
+   * person's. A `personal` suggestion was only ever shown to its owner and stays
+   * theirs.
+   */
   async createFromOpportunity(input: {
     opportunityId: string;
     version: number;
@@ -559,6 +578,7 @@ export class WorkstreamService {
     displayPromptHash: string;
     executionPromptHash: string;
     idempotencyKey: string;
+    audienceScope: Scope;
   }) {
     await requireOpenWorkstreamAuthority(this.env);
     const originResourceIds = await this.resolveDurableOpportunityOriginResources(input.opportunityId);
@@ -569,6 +589,7 @@ export class WorkstreamService {
       participantUserIds: [],
       attachmentIds: [],
       descriptionSource: "derived",
+      scope: input.audienceScope,
     }, {
       openingStructuredContent: {
         kind: "suggested_work_expansion",

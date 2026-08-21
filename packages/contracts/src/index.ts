@@ -342,9 +342,12 @@ export const WorkstreamSchema = z.object({
    * Who may read it, in the same vocabulary `notes` uses: `personal` is only the
    * people in it, `workspace` is anyone in the workspace. Declared on the row
    * and enforced from it, so "private" is a property rather than a rule a caller
-   * has to remember.
+   * has to remember. A work stream is born `personal` and is opened by somebody
+   * in it, so the default here is the fail-closed one: a payload that somehow
+   * carries no scope is read as the narrower of the two rather than announced
+   * to the workspace.
    */
-  scope: ScopeSchema.default("workspace"),
+  scope: ScopeSchema.default("personal"),
   /**
    * Non-null on a work stream that exists so a subsystem can use the agent loop
    * rather than because somebody started it. A separate question from `scope`:
@@ -1263,7 +1266,21 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(4000).optional(),
-  participantUserIds: z.array(IdSchema).max(25).default([]),
+  /**
+   * Everyone the caller means to be in the room, uncapped.
+   *
+   * There used to be a `.max(25)` here, sized for a person naming the people
+   * they are starting work with. A connector conversation is the other kind of
+   * caller and is routinely larger — a Slack channel's resolved audience can be
+   * hundreds — and a cap it exceeded did not degrade, it failed the whole
+   * create on a Zod error. Truncating instead would have been Avalon deciding
+   * that some of the people the conversation contains are not in the room,
+   * which is the provider's fact to state, not ours. Every id here is still
+   * checked against active workspace membership before a participant row is
+   * written, so the list is bounded by the workspace in the only sense that
+   * matters for access.
+   */
+  participantUserIds: z.array(IdSchema).default([]),
   openingMessage: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),

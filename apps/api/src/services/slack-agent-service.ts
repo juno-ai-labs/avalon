@@ -173,6 +173,17 @@ const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
  * seats anyone.
  */
 const SLACK_AUDIENCE_MEMBER_LIMIT = 200;
+
+/**
+ * Slack's own answer to "too many people to be a room".
+ *
+ * A conversation with more members than this opens a workspace-scoped work
+ * stream and seats nobody: see `connectorWorkstreamScope`. Slack's number, not
+ * a shared one — this is where a Slack channel stops being a group of people
+ * working together and starts being a broadcast surface, and another connector
+ * picks its own.
+ */
+const SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD = 50;
 /** Stay within the Worker fetch pool and avoid bursting Slack's profile API. */
 const SLACK_AUDIENCE_PROFILE_CONCURRENCY = 6;
 /** One shared budget, so a large private room cannot hold prompt admission indefinitely. */
@@ -1819,10 +1830,18 @@ export class SlackAgentService {
           return;
         }
         // Whoever can reach this conversation in Slack can continue its work
-        // stream. Seating them comes first and is what makes that true for a
-        // *private* one: the ordinary read rule is "an active participant, and
-        // nobody else", so a member arriving in the thread would otherwise be
-        // refused by their own work stream a moment later.
+        // stream, and seating them comes first.
+        //
+        // **Unconditional on scope, deliberately.** The question this answers is
+        // "is this person in this conversation", which Slack decides; whether
+        // the work stream is `personal` or `workspace` is Avalon's separate
+        // answer about who may read it, and gating admission on it would make
+        // one stand in for the other. A private work stream needs the seat
+        // immediately — its read rule is participant-based, so a member arriving
+        // in the thread would be refused by their own work stream a moment later
+        // — and a public one needs it so its room stays the channel's as people
+        // arrive, rather than a list frozen at creation that empties the work
+        // stream if anyone narrows the scope later.
         await admitConnectorAudience(this.env, {
           workspaceId: connection.workspace_id,
           workstreamId: session.workstream_id,
@@ -1919,29 +1938,41 @@ export class SlackAgentService {
       invocationType: input.slackOrigin.invocationType,
     });
     // A work stream inherits the audience of the conversation it was summoned
-    // from, and the members of a private one are its room. Both are resolved
-    // before the create rather than added after it: a private work stream that
-    // existed for even a moment with an empty participant list is one its own
-    // channel could not read, and the roster read below is the only thing that
-    // makes the *rest* of the channel able to find it at all.
-    const scope = connectorWorkstreamScope(
-      input.source.channelType === "public" ? "public" : "private",
+    // from. The scope follows the conversation's own privacy, and the roster is
+    // read for *both* answers rather than only the private one: who can see this
+    // work in Slack is the connector's fact, and Avalon's scope is a separate
+    // question that must not be read as an answer to it. A public channel's
+    // thread is workspace-readable *and* its members belong in the room — they
+    // are the people the person summoning Avalon meant to include, and seating
+    // them is what makes the work stream theirs rather than merely visible to
+    // them. It also survives the scope moving later: somebody making a
+    // channel-born work stream private should narrow it to that channel, not
+    // empty it.
+    const audience = await this.slackConversationAudience(
+      input.token,
+      input.connection,
+      input.teamId,
+      input.channel,
     );
-    const audienceUserIds = scope === "personal"
-      ? await this.slackConversationAudience(
-          input.token,
-          input.connection,
-          input.teamId,
-          input.channel,
-        )
-      : [];
+    const scope = connectorWorkstreamScope({
+      audience: input.source.channelType === "public" ? "public" : "private",
+      memberCount: audience.memberCount,
+      workspaceScopeThreshold: SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD,
+    });
+    // The whole roster goes into the create, not a prefix of it. Avalon puts no
+    // cap of its own on the room: the conversation's membership is the
+    // provider's fact, and truncating it would be Avalon deciding that some of
+    // the people in the channel are not in the work stream. It is also what a
+    // *private* work stream needs at birth — one that existed for even a moment
+    // with an empty or partial participant list is one its own channel could not
+    // fully read.
     // Neither branch passes a title. Both derive the same provisional one from
     // the objective, and leaving it to them is what lets the naming agent
     // replace it — a title supplied here would read as a deliberate choice.
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
           objective: input.prompt.slice(0, 4_000),
-          participantUserIds: audienceUserIds.filter((id) => id !== input.identity?.auth.userId),
+          participantUserIds: audience.userIds.filter((id) => id !== input.identity?.auth.userId),
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
@@ -1957,7 +1988,7 @@ export class SlackAgentService {
           // installation resolves them to a workspace member the work stream
           // is theirs rather than ownerless.
           creatorUserId: input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
-          participantUserIds: audienceUserIds,
+          participantUserIds: audience.userIds,
           scope,
           slackOrigin: input.slackOrigin,
           ...(originResource ? { originResource } : {}),
@@ -2471,13 +2502,22 @@ export class SlackAgentService {
    * an import: a 2,000-person private channel is not a work stream's audience in
    * any useful sense. Known identities resolve in one D1 read; the remaining
    * `users.info` calls run with bounded concurrency and one shared deadline.
+   *
+   * Returns the member *count* alongside the resolved ids, because the count is
+   * what decides the scope and the two answers come from one listing. Past
+   * {@link SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD} the identity resolution
+   * is skipped outright: that conversation opens a workspace-scoped work stream,
+   * so there is no room to seat, and the `users.info` fan-out behind it is the
+   * expensive half of this method. A count of zero means the listing itself
+   * failed, which leaves the scope to the conversation's privacy rather than
+   * letting a Slack outage publish a private channel's work stream.
    */
   private async slackConversationAudience(
     token: string,
     connection: SlackConnectionRow,
     teamId: string,
     channelId: string,
-  ): Promise<string[]> {
+  ): Promise<{ userIds: string[]; memberCount: number }> {
     const workspaceId = connection.workspace_id;
     try {
       const listed = await slackApi(token, "conversations.members", {
@@ -2485,6 +2525,9 @@ export class SlackAgentService {
         limit: SLACK_AUDIENCE_MEMBER_LIMIT,
       }, AbortSignal.timeout(10_000));
       const members = listed.members.slice(0, SLACK_AUDIENCE_MEMBER_LIMIT);
+      if (members.length > SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD) {
+        return { userIds: [], memberCount: members.length };
+      }
       // Account links, stored identities, and personal connections need only
       // the provider ids Slack already returned. Resolve those in one D1 read
       // before spending a provider call on anybody.
@@ -2540,7 +2583,10 @@ export class SlackAgentService {
         described.push(...page.filter((member): member is ConnectorConversationMember => member !== null));
       }
       const describedAudience = await resolveConnectorAudience(this.env, workspaceId, described);
-      return [...new Set([...knownAudience.userIds, ...describedAudience.userIds])];
+      return {
+        userIds: [...new Set([...knownAudience.userIds, ...describedAudience.userIds])],
+        memberCount: members.length,
+      };
     } catch (error) {
       if (slackReconnectRequired(error)) {
         await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
@@ -2550,7 +2596,11 @@ export class SlackAgentService {
         team_id: teamId,
         reason: error instanceof Error ? error.message : "unknown",
       });
-      return [];
+      // Zero, not a guess: a failed listing must not read as a small
+      // conversation and must not read as a large one either. The scope falls
+      // back to the conversation's own privacy, which is where it sat before
+      // any of this existed.
+      return { userIds: [], memberCount: 0 };
     }
   }
 

@@ -478,6 +478,13 @@ function insertIdentity(
       throw new Error("workstream_object_identity_mismatch");
     }
   } else {
+    // The placeholder scope is `personal`, and it is load-bearing rather than
+    // cosmetic: the runtime compat insert writes `COALESCE(NEW.scope, scope)`,
+    // so a caller that names no scope keeps whatever this row was born with.
+    // Born private, a path that forgot to say is readable by its participants
+    // and nobody else; born `workspace`, the same omission publishes it to the
+    // whole workspace. The paths whose audience really is the workspace — the
+    // automation inserts — say so in their own SQL.
     storage.sql.exec(
       `INSERT INTO workstream
          (id, workstream_key, parent_workspace_key, parent_do_id, parent_generation,
@@ -486,7 +493,7 @@ function insertIdentity(
           authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
           deletion_epoch, run_revision, created_at, last_people_activity_at,
           state_changed_at, completed_at, updated_at)
-       VALUES (1, ?, ?, NULL, 0, ?, 'preparing', '', '', '', 'workspace', 'restoring',
+       VALUES (1, ?, ?, NULL, 0, ?, 'preparing', '', '', '', 'personal', 'restoring',
                'awaiting_authoritative_import', 1, 1, 0, 0, 0, 0, 0, 0, ?, ?, ?, NULL, ?)`,
       identity.workstreamId,
       identity.workspaceId,
