@@ -116,6 +116,13 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
   it("ends the step that threw and lets the rejection through", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Pinned, because `step_order` below is asserted exactly. On the real clock
+    // this test failed roughly one run in five: `closeGap` charges anything
+    // measurable before the first step to `unattributed`, and whether a
+    // millisecond elapses between the flow opening and the step starting is a
+    // question about the machine, not about the code. The step is still
+    // recorded at a duration of zero, so the assertion is unchanged.
+    clock();
 
     await expect(inFlowSpan(envAt("info"), "workstream.message.send", {
       flow: "workstream_message_send",
