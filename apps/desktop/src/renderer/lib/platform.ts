@@ -265,6 +265,13 @@ const browserBridge: AvalonDesktopBridge = {
   onApplicationIconChanged() {
     return () => undefined;
   },
+  async setWindowTheme() {
+    // There is no native window to colour outside the desktop app.
+  },
+  onThemeChanged() {
+    // And no second window to keep in step with this one.
+    return () => undefined;
+  },
   async getSession() {
     return browserSession;
   },

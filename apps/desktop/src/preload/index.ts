@@ -15,6 +15,7 @@ import type { ApplicationIconId, DesktopApplicationIconState } from '../common/a
 import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import type { ThemeChoice } from '../common/themes';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -102,6 +103,12 @@ const bridge: AvalonDesktopBridge = {
     const handler = (_event: Electron.IpcRendererEvent, state: DesktopApplicationIconState): void => listener(state);
     ipcRenderer.on('application-icon:changed', handler);
     return () => ipcRenderer.removeListener('application-icon:changed', handler);
+  },
+  setWindowTheme: (choice: ThemeChoice) => ipcRenderer.invoke('theme:set-window', choice) as Promise<void>,
+  onThemeChanged: (listener) => {
+    const handler = (_event: unknown, choice: ThemeChoice): void => listener(choice);
+    ipcRenderer.on('theme:changed', handler);
+    return () => ipcRenderer.removeListener('theme:changed', handler);
   },
   getSession: () => ipcRenderer.invoke('session:get') as Promise<DesktopSession | null>,
   createDesktopAuthAttempt: (input) => ipcRenderer.invoke('auth:create-desktop-attempt', input) as Promise<DesktopAuthAttempt>,
