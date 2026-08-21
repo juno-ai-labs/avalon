@@ -4,7 +4,10 @@
  * Every Terminal row a work stream owns — the sandbox generation, its command
  * tasks, imported-resource provenance, the selected repository, publication
  * grants and their receipts — lives in this object's SQLite database. This
- * module is the only thing that reads or writes those tables.
+ * module is the only thing that writes them, and the only thing outside the
+ * object that reads them. `WorkstreamObjectProductService` reads
+ * `terminal_workspace` directly for the directory projection's next-action
+ * deadline; that read is in-object and deliberately not routed through here.
  *
  * It exists because the Terminal services previously reached the same rows by
  * preparing D1-shaped SQL against a routed handle: statements naming
@@ -28,14 +31,16 @@ export type TerminalLifecycleState =
   | "archived" | "restoring" | "expiring" | "expired" | "failed";
 
 /**
- * Run statuses that still hold a Terminal operation lease.
+ * The run statuses that are finished — used as `NOT IN` to find a live holder.
  *
- * The compatibility view projected `admitted` as `scheduled` and both
- * `waiting` and `steering` as `running`, so the lease's liveness test read
- * `status IN ('scheduled', 'running', 'needs_input')`. Against the real
- * column that is every status which is not terminal, which is what this says.
+ * Named for what it contains rather than what it decides: the compatibility
+ * view projected `admitted` as `scheduled` and both `waiting` and `steering`
+ * as `running`, so the lease's liveness test read
+ * `status IN ('scheduled', 'running', 'needs_input')`. Against the real column
+ * that is every status which is not terminal. Someone reading a name like
+ * `LIVE_RUN_STATUSES` here and adding `'running'` would invert the test.
  */
-const LIVE_RUN_STATUSES = "('completed', 'failed', 'cancelled')";
+const TERMINAL_RUN_STATUSES = "('completed', 'failed', 'cancelled')";
 
 export interface TerminalSandboxRecord {
   lifecycleState: TerminalLifecycleState;
@@ -346,7 +351,7 @@ export class WorkstreamTerminalStorage {
               OR NOT EXISTS (
                 SELECT 1 FROM runs holder
                  WHERE holder.run_id = terminal_workspace.operation_run_id
-                   AND holder.status NOT IN ${LIVE_RUN_STATUSES}
+                   AND holder.status NOT IN ${TERMINAL_RUN_STATUSES}
               )
             )
           RETURNING operation_run_id`,
@@ -359,16 +364,6 @@ export class WorkstreamTerminalStorage {
       ));
       return claimed ? this.sandbox() : null;
     });
-  }
-
-  /** Release the operation lease without changing the lifecycle state. */
-  releaseOperation(now: number): void {
-    this.sql.exec(
-      `UPDATE terminal_workspace
-          SET operation_run_id = NULL, operation_lease_expires_at = NULL, updated_at = ?
-        WHERE id = 1`,
-      now,
-    );
   }
 
   /**
@@ -541,14 +536,6 @@ export class WorkstreamTerminalStorage {
     });
   }
 
-  /** Drop the sandbox row entirely, used when a repository change resets Terminal. */
-  deleteSandbox(generation: number): void {
-    this.storage.transactionSync(() => {
-      this.sql.exec(`DELETE FROM terminal_imported_resources`);
-      this.sql.exec(`DELETE FROM terminal_workspace WHERE id = 1 AND generation = ?`, generation);
-    });
-  }
-
   /**
    * Discard the current sandbox and the repository bootstrap that belonged to
    * it, returning whether a sandbox row was actually removed.
@@ -707,6 +694,16 @@ export class WorkstreamTerminalStorage {
     lifecycleState: TerminalLifecycleState;
     failureCode: string | null;
     clearSandboxId: boolean;
+    /**
+     * Whether this transition also drops the mutation lease.
+     *
+     * Per call site, not uniform, because the five statements this replaces
+     * were not uniform: the stop and the two failure paths that lose the
+     * sandbox released the lease, while the rollback and the settle that only
+     * records the applied revision left it with its holder. Clearing it
+     * everywhere would be an unremarked change to a mutual-exclusion guard.
+     */
+    clearOperationLease: boolean;
     appliedNetworkRevision: number | null;
     generation: number;
     sandboxId: string;
@@ -719,13 +716,18 @@ export class WorkstreamTerminalStorage {
               sandbox_id = CASE WHEN ? = 1 THEN NULL ELSE sandbox_id END,
               applied_network_revision =
                 COALESCE(?, applied_network_revision),
-              operation_run_id = NULL, operation_lease_expires_at = NULL,
+              operation_run_id =
+                CASE WHEN ? = 1 THEN NULL ELSE operation_run_id END,
+              operation_lease_expires_at =
+                CASE WHEN ? = 1 THEN NULL ELSE operation_lease_expires_at END,
               version = version + 1, updated_at = ?
         WHERE id = 1 AND generation = ? AND sandbox_id = ?`,
       input.lifecycleState,
       input.failureCode,
       input.clearSandboxId ? 1 : 0,
       input.appliedNetworkRevision,
+      input.clearOperationLease ? 1 : 0,
+      input.clearOperationLease ? 1 : 0,
       input.now,
       input.generation,
       input.sandboxId,
@@ -781,10 +783,15 @@ export class WorkstreamTerminalStorage {
   /**
    * Record a submitted command.
    *
-   * `INSERT OR IGNORE` preserves the pre-cutover behavior exactly: the unique
-   * effect intent makes a replayed submission a no-op, and a task whose effect
-   * row is missing is dropped rather than aborting the run — the tool result
-   * is reconstructed from the provider in that case.
+   * `INSERT OR IGNORE` is for the replay: the unique effect intent makes a
+   * second submission of the same command a no-op, which is what lets a
+   * Worker interrupted mid-command re-enter its own receipt.
+   *
+   * It does not soften the foreign key. SQLite's ON CONFLICT algorithms do not
+   * apply to FOREIGN KEY constraints, so an effect intent with no row in
+   * `tool_effects` aborts rather than being skipped. That is unreachable
+   * today — the id comes from the caller's own `tool_invocations` lookup, so
+   * the parent is known to exist — but it is a constraint, not a fallback.
    */
   insertTask(input: {
     taskId: string;
@@ -960,7 +967,7 @@ export class WorkstreamTerminalStorage {
    * sandbox bootstrapped against a repository nobody chose. The caller resets
    * the sandbox first.
    */
-  selectRepository(input: {
+  #selectRepositoryUnfenced(input: {
     connectionId: string;
     repositoryId: number;
     repositoryFullName: string;
@@ -1030,7 +1037,7 @@ export class WorkstreamTerminalStorage {
       ).toArray().length;
       if (removed !== 1) return false;
       this.sql.exec(`DELETE FROM terminal_imported_resources`);
-      return this.selectRepository(input);
+      return this.#selectRepositoryUnfenced(input);
     });
   }
 
@@ -1054,20 +1061,6 @@ export class WorkstreamTerminalStorage {
       input.repositoryFullName,
       input.baseSha,
     );
-  }
-
-  /** Forget the bootstrap once the sandbox it was performed in is gone. */
-  clearRepositoryBootstrap(now: number): void {
-    this.storage.transactionSync(() => {
-      if (this.sandbox()) return;
-      this.sql.exec(
-        `UPDATE terminal_repository
-            SET bootstrapped_sandbox_generation = NULL, read_token_expires_at = NULL,
-                updated_at = ?
-          WHERE id = 1`,
-        now,
-      );
-    });
   }
 
   // ----------------------------------------------------------- publications

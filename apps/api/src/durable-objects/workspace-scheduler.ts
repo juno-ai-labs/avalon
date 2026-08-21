@@ -639,7 +639,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
             });
           }
           if (result.transition === "expired") {
-            const repository = await createTerminalPortFactory(this.env)(
+            const repository = await createTerminalPortFactory(executionEnv)(
               workspaceId,
               sandbox.workstream_id,
             ).selectedRepository();

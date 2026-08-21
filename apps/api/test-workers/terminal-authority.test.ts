@@ -255,6 +255,101 @@ describe("Terminal authority on real workerd", () => {
     });
   });
 
+  describe("the workspace scheduler's input", () => {
+    it("publishes a terminal deadline to the directory when a sandbox starts", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-1",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_500,
+      });
+
+      // `workspace_workstream_directory.next_terminal_action_at` is the only
+      // input `WorkspaceScheduler` has for Terminal work, and this effect is
+      // its only writer. A sandbox holding three durable deadlines that
+      // enqueues nothing leaves the sweep with no reason to ever run.
+      await runInDurableObject(stub, (_instance, state) => {
+        const effects = state.storage.sql.exec<{ payload_json: string | null }>(
+          `SELECT payload_json FROM durable_outbox
+            WHERE channel = 'regional_effect_v1' AND partition_key = 'common'`,
+        ).toArray();
+        expect(effects.length).toBeGreaterThan(0);
+        const published = effects
+          .map((row) => JSON.parse(row.payload_json ?? "{}") as {
+            effect?: { nextTerminalActionAt?: string | null };
+          })
+          .map((body) => body.effect?.nextTerminalActionAt)
+          .filter((value) => value !== undefined);
+        expect(published.at(-1)).toBe(new Date(2_000_000).toISOString());
+      });
+    });
+
+    it("clears the published deadline when the sandbox expires", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-1",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_500,
+      });
+      const before = (await terminal(stub, "sandbox")).value as { version: number };
+      await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "expiring",
+        claimId: "claim-expire",
+        claimExpiresAt: 9_000_000,
+        generation: 1,
+        version: before.version,
+        now: 2_000,
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      });
+
+      await terminal(stub, "settleLifecycleTransition", {
+        lifecycleState: "expired",
+        claimId: "claim-expire",
+        now: 3_000,
+      });
+
+      // Nothing sweeps this column, so a settle that publishes no effect
+      // leaves a past timestamp in the directory forever and the scheduler
+      // keeps re-arming its alarm on it.
+      await runInDurableObject(stub, (_instance, state) => {
+        const published = state.storage.sql.exec<{ payload_json: string | null }>(
+          `SELECT payload_json FROM durable_outbox
+            WHERE channel = 'regional_effect_v1' AND partition_key = 'common'`,
+        ).toArray()
+          .map((row) => JSON.parse(row.payload_json ?? "{}") as {
+            effect?: { nextTerminalActionAt?: string | null };
+          })
+          .map((body) => body.effect?.nextTerminalActionAt)
+          .filter((value) => value !== undefined);
+        expect(published.length).toBeGreaterThan(0);
+        expect(published.at(-1)).toBeNull();
+      });
+    });
+  });
+
   describe("the table's own invariants", () => {
     it("refuses a lease with no deadline to expire it", async () => {
       const stub = agent();
@@ -453,7 +548,9 @@ describe("Terminal authority on real workerd", () => {
         seedWorkstreamRoot(state);
         seedRunRow(state, RUN_A, "running");
       });
-      await terminal(stub, "selectRepository", {
+      await reserve(stub, RUN_A);
+      await terminal(stub, "replaceRepository", {
+        generation: 1,
         connectionId: "00000000-0000-7000-8000-0000000000c1",
         repositoryId: 42,
         repositoryFullName: "owner/repo",
@@ -464,6 +561,8 @@ describe("Terminal authority on real workerd", () => {
         selectedByUserId: "00000000-0000-7000-8000-0000000000u1",
         now: 1_000,
       });
+      // The replace consumed the sandbox it was fenced on; the bootstrap
+      // belongs to the generation reserved after it.
       await reserve(stub, RUN_A);
       await terminal(stub, "recordRepositoryBootstrap", {
         generation: 1,
@@ -528,34 +627,6 @@ describe("Terminal authority on real workerd", () => {
       // revoked resource would go unnoticed and its files be reused.
       expect((await terminal(stub, "importedResources", 2)).value).toHaveLength(1);
       expect((await terminal(stub, "sandbox")).value).toMatchObject({ generation: 2 });
-    });
-
-    it("refuses to select a repository while a sandbox still exists", async () => {
-      const stub = agent();
-      await boot(stub);
-      await runInDurableObject(stub, (_instance, state) => {
-        seedWorkstreamRoot(state);
-        seedRunRow(state, RUN_A, "running");
-      });
-      await reserve(stub, RUN_A);
-
-      const selected = await terminal(stub, "selectRepository", {
-        connectionId: "00000000-0000-7000-8000-0000000000c1",
-        repositoryId: 42,
-        repositoryFullName: "owner/repo",
-        baseRef: "main",
-        baseSha: "b".repeat(40),
-        headRef: "avalon/work",
-        remoteAccess: "full_access",
-        selectedByUserId: "00000000-0000-7000-8000-0000000000u1",
-        now: 2_000,
-      });
-
-      // The selection feeds the authority fingerprint. Changing it under a
-      // live generation would leave a running sandbox bootstrapped against a
-      // repository nobody chose.
-      expect(selected.value).toBe(false);
-      expect((await terminal(stub, "repository")).value).toBeNull();
     });
 
     it("fences the repository replacement on the generation it read", async () => {
