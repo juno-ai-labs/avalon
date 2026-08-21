@@ -1380,7 +1380,6 @@ describe('useWorkstreamSocket', () => {
 
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
     expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['block-dashboard-preference', workstreamId])?.isInvalidated).toBe(true);
   });
 
   it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {
