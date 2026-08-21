@@ -37,7 +37,8 @@ these categories.
 
 | Identifier | Where |
 | --- | --- |
-| HTTP headers `avalon-workspace-id`, `avalon-user-id`, `avalon-session-id`, `avalon-workstream-id`, `avalon-substream-id`, `avalon-operation-id`, `avalon-socket-ticket-id`, `avalon-socket-ticket-expires-at` | Renderer ↔ regional APIs; governed by [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md) |
+| HTTP headers `x-avalon-workspace-id`, `x-avalon-user-id`, `x-avalon-session-id`, `x-avalon-workstream-id`, `x-avalon-substream-id`, `x-avalon-operation-id`, `x-avalon-socket-ticket-id`, `x-avalon-socket-ticket-expires-at`, `x-avalon-region`, and the rest of the `x-avalon-*` family | Renderer ↔ regional APIs; governed by [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md) |
+| Renderer origin `app://avalon` | The origin every shipped renderer presents; enforced exactly against `ALLOWED_ORIGINS` by API CORS (`apps/api/src/middleware/request-context.ts`) and every socket admission path (`apps/api/src/services/socket-service.ts`) |
 | WebSocket subprotocol sentinel `avalon.ticket.v1` | Offered in `Sec-WebSocket-Protocol` alongside the ticket by every shipped build (`SOCKET_TICKET_SUBPROTOCOL` in `packages/contracts/src/socket-tickets.ts`; [`realtime-sockets.md`](../../realtime-sockets.md)). The deprecated `ticket` query parameter carries no branding |
 | Model-visible tool namespace `avalon_core.<tool>` | Bind runtime tool naming (`packages/agent-harness/src/bind-runtime.ts`); regenerated per run, but present in stored transcripts |
 
@@ -79,7 +80,7 @@ resources behind the automated reviewers).
 
 | Kind | Names | Renameable in place? |
 | --- | --- | --- |
-| Workers | `avalon-api-global`, `avalon-api-eu`, `avalon-site`, `avalon-migration-tracker`, `avalon-global-crash-symbolicator`, `avalon-eu-crash-symbolicator` | Yes (dashboard rename; routes unaffected) |
+| Workers | `avalon-api-global`, `avalon-api-eu`, `avalon-site`, `avalon-migration-tracker`, `avalon-global-crash-symbolicator`, `avalon-eu-crash-symbolicator` | Only `avalon-site` safely: every other script owns Durable Object namespaces or containers whose identity and stored objects are bound to the script, and a Wrangler `name` change deploys a different script |
 | D1 databases | `avalon-global`, `avalon-eu` | No — recreate + copy only |
 | Queues | `avalon-global-activities`, `avalon-eu-activities`, `avalon-migration-reports` | No — recreate + drain only |
 | R2 buckets | `avalon-desktop-releases`, `avalon-desktop-releases-archive` | No — recreate + copy only |

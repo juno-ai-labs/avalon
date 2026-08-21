@@ -64,9 +64,10 @@ to the pile this PRD has to move.
    deep links keep opening the app, and an installed Avalon build auto-updates
    into Rally with its login, drafts, and settings intact.
 4. Shipped desktop builds never break against the servers: every wire-level
-   identifier that carries the old name (`avalon-*` headers, the
-   `avalon.ticket.v1` socket-ticket sentinel) is accepted alongside its
-   Rally replacement until the update fleet has moved.
+   identifier that carries the old name (the `x-avalon-*` headers, the
+   `avalon.ticket.v1` socket-ticket sentinel, the `app://avalon` renderer
+   origin) is accepted alongside its Rally replacement until the update
+   fleet has moved.
 5. The contributor surface is renamed: the repository becomes
    `juno-ai-labs/rally`, packages become `@rally/*`, environment variables
    become `RALLY_*`, code symbols and docs say Rally, and CI, release
@@ -102,11 +103,14 @@ to the pile this PRD has to move.
 5. **Retiring `with-avalon.com`.** The old domain is kept registered, serving
    redirects and accepting email, for as long as any artifact references it —
    which is indefinitely. Goal 3 depends on this non-goal.
-6. **Recreating Cloudflare resources that cannot be renamed in place.** D1
-   databases, Queues, R2 buckets, and Analytics Engine datasets keep their
-   `avalon-*` names; the runbook records the name mapping. Deferred: any such
-   resource that is re-provisioned later for its own reasons takes the Rally
-   name then. Workers, which rename in place, are in scope (goal 5).
+6. **Recreating Cloudflare resources that cannot be safely renamed in
+   place.** D1 databases, Queues, R2 buckets, Analytics Engine datasets, and
+   Worker scripts that own Durable Object state keep their `avalon-*` names;
+   the runbook records the name mapping. Deferred: any such resource that is
+   re-provisioned later for its own reasons takes the Rally name then, and a
+   DO-owning script renames if a control-plane procedure is proven to
+   preserve its namespaces (decision 4). The stateless site Worker renames
+   in scope (goal 5).
 7. **Renaming the company or its external accounts.** Juno AI Labs, the
    `avalon.slack.com` workspace, and the Azure OpenAI resource names are
    organizational assets outside this repository's scope. Deferred to the
@@ -136,9 +140,18 @@ regions, from the flip onward.
 **Email.** New work streams and automations are announced with addresses
 under the Rally automation domain. The local part derivation is unchanged, and
 inbound accepts **both** domains for the same local part, so an old address
-and its Rally-domain twin reach the same work stream. Outbound mail — digests,
-invitations, agent replies — sends from the Rally domain with Rally naming.
-Surfaces that display an address show the Rally form.
+and its Rally-domain twin reach the same work stream. Dual acceptance is a
+contract on the *routing*, not just the ingress edge: today regional
+ingestion reconstructs one configured full address and requires it to equal
+the stored `email_address` row
+(`apps/api/src/services/resend-inbound-email-service.ts`), which can only
+match one domain. The route identity becomes the immutable local part plus
+the target work stream or automation: ingress accepts an allowlisted set of
+domains, and regional validation compares the local part of the stored
+address rather than one canonical full string — stored rows are not
+rewritten (non-goal 3), whichever domain they carry. Outbound mail —
+digests, invitations, agent replies — sends from the Rally domain with Rally
+naming, and surfaces that display an address show the Rally form.
 
 **The agent.** Prompts, tool catalogs, and skills say Rally; the agent
 introduces and refers to itself as Rally. The standing-contract line "Avalon
@@ -150,12 +163,15 @@ registry.
 **Public site.** Copy, metadata, OpenGraph, and download links say Rally and
 point at `withrally.ai`. The old apex serves redirects, not content.
 
-**Wire protocol.** The renderer sends `rally-*` headers and offers the
-`rally.ticket.v1` sentinel in the socket handshake once its build ships; the
-Workers negotiate whichever sentinel a client offers and accept both
-generations for every renamed header and scheme (goal 4). The scheme itself
-is unchanged — only the sentinel token moves — and the deprecated `ticket`
-query parameter is untouched. Each addition follows
+**Wire protocol.** The renderer sends `x-rally-*` headers, offers the
+`rally.ticket.v1` sentinel in the socket handshake, and serves itself from
+the `app://rally` origin once its build ships; the Workers negotiate
+whichever sentinel a client offers, and `ALLOWED_ORIGINS` — enforced exactly
+by CORS and by every socket admission path — carries both renderer origins
+and both site domains, so both generations succeed for every renamed header,
+origin, and scheme (goal 4). The ticket scheme itself is unchanged — only
+the sentinel token moves — and the deprecated `ticket` query parameter is
+untouched. Each addition follows
 [`when-adding-a-new-http-header.md`](../../when-adding-a-new-http-header.md).
 The compatibility set is removed only after the release-retention tooling
 shows no supported build sending the old forms.
@@ -221,13 +237,22 @@ None yet.
    full identity migration with keychain re-consent — all cost, no user
    value. The one carried cost, first-run migration of the
    `productName`-derived userData path, is small and testable.
-4. **Everything renameable in place is renamed; nothing is recreated just for
-   its name.** Workers rename in place and keep their routes. D1, Queues, R2,
-   and Analytics Engine datasets only rename by recreate-and-copy, so they
-   keep their names (non-goal 6) and the runbook carries the mapping.
-   Alternative rejected: recreate-and-migrate — a data cutover risked against
-   production for cosmetics, exactly the trade the
-   [rule sheet](../../../AGENTS.md) says to refuse.
+4. **Only provably-safe renames happen; nothing is recreated just for its
+   name.** D1, Queues, R2, and Analytics Engine datasets only rename by
+   recreate-and-copy, so they keep their names (non-goal 6) and the runbook
+   carries the mapping. A Worker script that owns Durable Object namespaces
+   or containers — both API Workers, the migration tracker, the crash
+   symbolicators — is treated the same way: the script name is bound up with
+   the namespaces, their append-only migration histories, and any service
+   bindings that address it, and a change through Wrangler's `name` deploys a
+   *different* script rather than renaming this one. Those names stay unless
+   a Cloudflare-supported control-plane rename is demonstrated, against a
+   non-production Worker, to preserve every namespace's stored objects — with
+   a pre-cutover check that known object IDs still hold their data.
+   `avalon-site`, which owns no state, renames in place. Alternative
+   rejected: recreate-and-migrate — a data cutover risked against production
+   for cosmetics, exactly the trade the [rule sheet](../../../AGENTS.md)
+   says to refuse.
 5. **One flip release, not a trickle.** Every user-visible surface — site,
    desktop, emails, links, prompts — changes in one coordinated desktop
    release plus Worker deploy (phase 2), after the acceptance groundwork of
@@ -275,7 +300,8 @@ nothing old is removed until release retention and webhook logs show it idle.
 
 - **Cloudflare** — `withrally.ai` zone: custom domains for both API Workers,
   the site, `downloads.`, and provider ingress hosts; redirect rules on the
-  `with-avalon.com` zone; Workers renamed in place (decision 4).
+  `with-avalon.com` zone; the site Worker renamed, DO-owning Workers kept by
+  name (decision 4).
 - **Resend** — verify the Rally automation domain for sending; keep the old
   domain verified and receiving indefinitely (decision 2).
 - **Slack, GitHub, Linear** (`config/provider-apps/*.json`) — display names,
@@ -326,7 +352,10 @@ predecessor, and sequenced so every state the fleet can observe is valid.
 
 - A pre-flip work-stream link, pasted from a real Slack message, opens the
   right work stream through the redirect; its email address still reaches it;
-  the Rally-domain twin of that address reaches it too.
+  the Rally-domain twin of that address reaches it too. Both domains are
+  proved against both row generations — a pre-flip row storing the old-domain
+  address and a post-flip row storing the Rally one, for a work stream and
+  for an automation.
 - An installed Avalon build auto-updates to the Rally build and comes back
   signed in, with drafts, pins, and theme intact, app named Rally in Dock and
   menu bar; an `avalon://` auth link completes against the updated app.
@@ -334,9 +363,12 @@ predecessor, and sequenced so every state the fleet can observe is valid.
   agent's messages, digest emails, and exported cards say Rally; screenshots
   of every renamed screen captured per
   [`dev-environment.md`](../../dev-environment.md#driving-and-screenshotting-it).
-- Old-generation headers and subprotocol succeed against phase-1 Workers
-  (proved in `apps/api/test-workers/`); the rename guard fails a seeded
-  user-visible "Avalon" string and passes the allowlist.
+- Old-generation headers, the old socket sentinel, and the `app://avalon`
+  origin succeed against phase-1 Workers, as do their Rally counterparts —
+  CORS preflight and every socket role from both exact origins, with
+  suffix-lookalike origins still refused (proved in
+  `apps/api/test-workers/`); the rename guard fails a seeded user-visible
+  "Avalon" string and passes the allowlist.
 - Post phase 3: fresh clone of `juno-ai-labs/rally` passes `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, both Wrangler dry-run
   builds, and the desktop release invariants.
