@@ -132,11 +132,18 @@ that should have reported and has not. `REPORTING_CLASSES` in
 `apps/migration-tracker/src/registry.ts` is the list, and it has to stay in step
 with the call sites of `withMigrationReport`.
 
-A component is shown as **retired** when its class no longer has any namespace
-in the account. That is deliberately not the same test as "all of its objects
-are absent": a class whose instances are created on demand can legitimately have
+A component is shown as **retired** when the namespaces its objects live in are
+all retired. That is deliberately not the same test as "all of its objects are
+absent": a class whose instances are created on demand can legitimately have
 none alive, and only the namespace evidence separates a component that is idle
-from one that has been deleted. A retired component and a retired namespace both
+from one that has been deleted.
+
+The link runs through the objects, which is the only place the tracker's two
+halves meet — a sweep gives an object its namespace, a report gives it its
+component and region — and that is what makes the marker per region. The same
+classes are deployed in both Workers, so asking whether any namespace for
+`SubstreamAgent` is still live would leave a component looking live in the
+region it was deleted from because the other region still runs it. A retired component and a retired namespace both
 stay in their tables, dimmed and sorted last — what used to be deployed is
 exactly what somebody wants to see when a class disappeared and its objects went
 absent on the same sweep.
@@ -440,10 +447,17 @@ were proved to fail without them.
 `retired` on a component is deliberately decided by the namespaces, not by the
 object counts. Every object being absent means only that no instance is alive
 right now, which is ordinary for a class whose instances are created on demand;
-the class having no namespace left means it is gone. Deriving it from the counts
-instead is a one-line change that passes every test but one, and that test —
-"does not call a component retired merely because its objects are gone" — is
-there to catch exactly it.
+the namespaces behind it all being retired means it is gone. Deriving it from
+the counts instead is a one-line change that passes every test but one, and that
+test — "does not call a component retired merely because its objects are gone" —
+is there to catch exactly it.
+
+The namespaces reach the component *through its objects*, on `namespace_id` from
+the sweep and `component`/`region` from the report. Grouping them by class
+instead reads correctly and is wrong: the same classes run in both regions, so a
+class deleted from one Worker would go on looking live because the other Worker
+still has it. Review caught that in the first version of this change; "retires
+only the region whose namespace is gone" is the test that holds it.
 
 The rename is UI-only. `worker_version_id` keeps its name in the schema, the
 report contract, and the JSON API; only the four labels changed. `Build`
