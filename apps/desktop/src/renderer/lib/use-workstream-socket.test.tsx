@@ -1971,6 +1971,39 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('separates the wait for a socket into scheduling and handshake', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000141';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId } })));
+    await flushPromises();
+
+    const line = debug.mock.calls
+      .filter((call) => String(call[0]).startsWith('[perf]'))
+      .map((call) => call[1] as { phases: Record<string, number>; sinceEffectMs: number })
+      .at(-1)!;
+    // `dial` closes on the line that constructs the WebSocket and `handshake`
+    // on its open event. Collapsing them back into one number is what made a
+    // blocked renderer indistinguishable from a slow connection.
+    expect(Object.keys(line.phases)).toEqual(['socket_ticket', 'dial', 'handshake', 'first_frame']);
+    // Dead time before the first request, which the trace cannot cover: it does
+    // not exist until `connect` runs.
+    expect(line.sinceEffectMs).toEqual(expect.any(Number));
+  });
+
   it('resets the replay sequence when the selected workstream changes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async (workstreamId: string) => ({
