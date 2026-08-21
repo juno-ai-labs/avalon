@@ -51,7 +51,7 @@ function developerEnv(): Env {
 
 async function get(path: string, environment: Env = developerEnv()): Promise<Response> {
   return app.fetch(
-    new Request(`https://migrations.internal.with-avalon.com${path}`),
+    new Request(`https://migrations.rallywith.ai${path}`),
     environment,
   );
 }

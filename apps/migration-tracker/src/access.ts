@@ -30,7 +30,7 @@ export interface AccessPrincipal {
 }
 
 export interface AccessConfiguration {
-  /** The Zero Trust team domain, e.g. `avalon.cloudflareaccess.com`. */
+  /** The Zero Trust team domain, e.g. `rally.cloudflareaccess.com`. */
   teamDomain: string;
   /** The Access application's AUD tag. */
   applicationAudience: string;

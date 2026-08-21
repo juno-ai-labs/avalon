@@ -14,9 +14,9 @@
  * already knows what it would be told.
  *
  * The report goes onto a Queue rather than a service-binding RPC. Every object
- * in the fleet converges on one registry object, and an operator-driven fan-out
- * — the authority cutover walking every workspace, the scheduler's due-work
- * sweep — wakes hundreds of them at once. A Durable Object is single-threaded
+ * in the fleet converges on one registry object, and a fan-out — the
+ * `WorkspaceScheduler` sweeping every workspace's due work, a seed or migration
+ * pass walking the fleet — wakes hundreds of them at once. A Durable Object is single-threaded
  * with a soft ceiling near a thousand requests a second, so a synchronous hop
  * would make each reporter wait behind every other one, on a monitor nobody is
  * waiting for. `docs/choosing-queues-or-rpc.md` has the full reasoning.
