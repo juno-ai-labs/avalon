@@ -1,7 +1,7 @@
 import { classifyAttachmentKind } from "@avalon/contracts";
 import { unzipSync } from "fflate";
 
-export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v1";
+export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v2";
 
 // Local conversion is an isolate-safe fast path. Provider-backed PDF OCR and
 // the document summarizer remain separate calls; no single conversion is
@@ -71,6 +71,7 @@ export interface AuthorizedDerivativeResource {
   modelContentCharacterCount: number | null;
   modelContentClaimedAt: string | null;
   modelContentClaimId: string | null;
+  modelContentErrorCode?: string | null;
 }
 
 export type MaterializedAttachmentDerivative =
@@ -90,6 +91,15 @@ export interface MaterializeAttachmentDerivativeOptions {
   ocr?: BuildAttachmentDerivativeInput["ocr"];
   signal?: AbortSignal;
   now?: () => Date;
+  /** Content-free phase telemetry; callback failures never affect conversion. */
+  onPhase?: (event: AttachmentDerivativePhaseEvent) => void;
+}
+
+export interface AttachmentDerivativePhaseEvent {
+  phase: "source_read" | "claim" | "convert" | "publish";
+  outcome: "ready" | "failed" | "unsupported" | "processing";
+  durationMs: number;
+  errorCode?: string;
 }
 
 interface ConvertedText {
@@ -162,6 +172,15 @@ export async function materializeAttachmentDerivative(
       totalCharacters: resource.modelContentCharacterCount!,
     };
   }
+  if ((resource.modelContentStatus === "failed" || resource.modelContentStatus === "unsupported")
+    && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION) {
+    return {
+      status: resource.modelContentStatus,
+      errorCode: resource.modelContentErrorCode ?? (resource.modelContentStatus === "unsupported"
+        ? "resource_format_unsupported"
+        : "conversion_failed"),
+    };
+  }
   if (resource.modelContentStatus === "processing"
     && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
     && resource.modelContentClaimedAt !== null
@@ -170,9 +189,14 @@ export async function materializeAttachmentDerivative(
     return { status: "processing", retryAfterMs: 1_000 };
   }
 
+  const sourceReadStartedAt = Date.now();
   const object = await payloads.get(resource.contentRef);
-  if (!object) return updateTerminalState(database, resource, "failed", "source_unavailable", options);
+  if (!object) {
+    emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_unavailable");
+    return updateTerminalState(database, resource, "failed", "source_unavailable", options);
+  }
   if (object.size > MAX_SOURCE_BYTES) {
+    emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_too_large");
     return updateTerminalState(database, resource, "failed", "source_too_large", options);
   }
   const bytes = new Uint8Array(await object.arrayBuffer());
@@ -182,9 +206,14 @@ export async function materializeAttachmentDerivative(
       `UPDATE resources SET content_sha256 = ?, updated_at = ?
        WHERE workspace_id = ? AND id = ? AND content_ref = ? AND content_sha256 IS NULL`,
     ).bind(sourceSha256, at, resource.workspaceId, resource.id, resource.contentRef).run();
-    if ((hashUpdate.meta.changes ?? 0) === 0) return { status: "processing", retryAfterMs: 250 };
+    if ((hashUpdate.meta.changes ?? 0) === 0) {
+      emitDerivativePhase(options, sourceReadStartedAt, "source_read", "processing");
+      return { status: "processing", retryAfterMs: 250 };
+    }
   }
+  emitDerivativePhase(options, sourceReadStartedAt, "source_read", "ready");
 
+  const claimStartedAt = Date.now();
   const claim = await database.prepare(
     `UPDATE resources
         SET model_content_status = 'processing', model_content_extractor_version = ?,
@@ -200,8 +229,13 @@ export async function materializeAttachmentDerivative(
     ATTACHMENT_TEXT_EXTRACTOR_VERSION, at, claimId, at, resource.workspaceId, resource.id, resource.contentRef,
     sourceSha256, ATTACHMENT_TEXT_EXTRACTOR_VERSION, staleBefore,
   ).run();
-  if ((claim.meta.changes ?? 0) === 0) return { status: "processing", retryAfterMs: 1_000 };
+  if ((claim.meta.changes ?? 0) === 0) {
+    emitDerivativePhase(options, claimStartedAt, "claim", "processing");
+    return { status: "processing", retryAfterMs: 1_000 };
+  }
+  emitDerivativePhase(options, claimStartedAt, "claim", "ready");
 
+  const convertStartedAt = Date.now();
   const converted = await buildAttachmentDerivative({
     bytes,
     fileName: resource.fileName,
@@ -210,6 +244,13 @@ export async function materializeAttachmentDerivative(
     ...(options.ocr ? { ocr: options.ocr } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
+  emitDerivativePhase(
+    options,
+    convertStartedAt,
+    "convert",
+    converted.status,
+    converted.status === "ready" ? undefined : converted.errorCode,
+  );
   if (converted.status !== "ready") {
     if (converted.status === "failed" && converted.errorCode === "conversion_aborted") {
       await releaseDerivativeClaim(database, resource, options, claimId);
@@ -229,6 +270,7 @@ export async function materializeAttachmentDerivative(
   const contentRef = `${prefix}/content.${converted.modelMimeType === "text/markdown" ? "md" : "txt"}`;
   const contentBytes = new TextEncoder().encode(converted.text);
   const derivativeSha256 = await sha256Hex(contentBytes);
+  const publishStartedAt = Date.now();
   // Register the unique generation key before the R2 write. A failed
   // write, stale publisher, or failed WorkspaceDO publication remains
   // recoverable by the regional cleanup worker; a successful active pointer
@@ -261,17 +303,39 @@ export async function materializeAttachmentDerivative(
     ).run();
     if ((result.meta.changes ?? 0) === 0) {
       await payloads.delete(contentRef).catch(() => undefined);
+      emitDerivativePhase(options, publishStartedAt, "publish", "processing");
       return { status: "processing", retryAfterMs: 250 };
     }
   } catch (error) {
     await payloads.delete(contentRef).catch(() => undefined);
+    emitDerivativePhase(options, publishStartedAt, "publish", "failed", "publication_failed");
     throw error;
   }
+  emitDerivativePhase(options, publishStartedAt, "publish", "ready");
   return {
     status: "ready", contentRef, modelMimeType: converted.modelMimeType,
     sha256: derivativeSha256, extractorVersion: converted.extractorVersion,
     totalCharacters: converted.text.length,
   };
+}
+
+function emitDerivativePhase(
+  options: MaterializeAttachmentDerivativeOptions,
+  startedAt: number,
+  phase: AttachmentDerivativePhaseEvent["phase"],
+  outcome: AttachmentDerivativePhaseEvent["outcome"],
+  errorCode?: string,
+): void {
+  try {
+    options.onPhase?.({
+      phase,
+      outcome,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      ...(errorCode ? { errorCode } : {}),
+    });
+  } catch {
+    // Observability is intentionally outside the materialization outcome.
+  }
 }
 
 async function releaseDerivativeClaim(
@@ -336,7 +400,6 @@ async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise
   if (kind === "document" && isDocx(mime, input.fileName)) return convertDocx(input.bytes);
   if (kind === "presentation" && isPptx(mime, input.fileName)) return convertPptx(input.bytes);
   if (kind === "spreadsheet" && isXlsx(mime, input.fileName)) return convertXlsx(input.bytes);
-  if (kind !== "text" && kind !== "markdown") return null;
   if (isPlainText(mime, input.fileName)) {
     let text: string;
     try {
@@ -350,6 +413,7 @@ async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise
       metadata: { extractionMethod: "utf8", omissions: [] },
     };
   }
+  if (kind !== "text" && kind !== "markdown") return null;
   return null;
 }
 

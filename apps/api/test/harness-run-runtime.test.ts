@@ -770,7 +770,26 @@ describe("durable harness attempt runtime", () => {
       attemptId: "attempt-stale",
       owner: "owner-stale",
     });
-    expect(claim.state).toBe("claimed");
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-parent",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-parent",
+      toolName: "terminal.execute",
+      inputHash: "input-stale-parent",
+      input: { command: "sleep 300" },
+      plan: { pluginId: "terminal", canonicalToolName: "terminal.execute", mode: "write" },
+      mode: "write",
+    });
+    expect(sqlite.object.prepare(
+      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+    ).get("invocation-stale-parent")).toEqual({
+      status: "started",
+      completed_at: null,
+      error_json: null,
+    });
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(RUN_ONE);
@@ -781,6 +800,15 @@ describe("durable harness attempt runtime", () => {
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare("SELECT status, lease_owner FROM harness_runs WHERE id = ?").get(RUN_ONE))
       .toEqual({ status: "failed", lease_owner: null });
+    expect(sqlite.object.prepare(
+      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+    ).get("invocation-stale-parent")).toMatchObject({
+      status: "failed",
+      error_json: JSON.stringify({
+        code: "parent_run_terminated",
+        message: "The parent run lost its durable lease",
+      }),
+    });
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-stale'",
     ).get()).toMatchObject({

@@ -236,6 +236,58 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("projects the generic runtime's stopped settlement as stopped", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at)
+         VALUES (1, ?, ?, 'global', 'authoritative', 1, '', '', 'workspace', 'running',
+                 'test', 1, 1, 1, 0, 0, 1, 0, 1, 1000, 1000, 1000, 1000)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      database.prepare(
+        `INSERT INTO substreams
+           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
+            depth, return_mode, origin_part_id, owner_user_id, audience,
+            tool_policy, status, created_at, closed_at)
+         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
+                 'workspace', 'full', 'open', 1000, NULL)`,
+      ).run();
+      database.prepare(
+        `INSERT INTO _runtime_harness_runs
+           (id, workspace_id, workstream_id, origin, execution_principal_json,
+            status, started_at, created_at)
+         VALUES (?, ?, ?, 'message', '{}', 'running',
+                 '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z')`,
+      ).run(RUN_ID, WORKSPACE_ID, WORKSTREAM_ID);
+      database.prepare(
+        `UPDATE _runtime_harness_runs
+            SET status = 'stopped', completed_at = '2026-08-21T00:00:03.000Z',
+                terminalized_at = '2026-08-21T00:00:03.000Z'
+          WHERE id = ?`,
+      ).run(RUN_ID);
+      database.prepare(
+        `UPDATE _runtime_workstreams
+            SET harness_status = 'idle', updated_at = '2026-08-21T00:00:03.000Z'
+          WHERE id = ?`,
+      ).run(WORKSTREAM_ID);
+
+      expect(database.prepare("SELECT exact_state FROM workstream WHERE id = 1").get())
+        .toEqual({ exact_state: "cancelled" });
+      expect(database.prepare("SELECT harness_status FROM _runtime_workstreams").get())
+        .toEqual({ harness_status: "stopped" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("refuses a changed implementation under an already-applied schema version", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);

@@ -15,6 +15,7 @@ import {
   mergeTranscriptPage,
   preservedPrependScrollTop,
   RunFailureNotice,
+  RunStoppedNotice,
   shouldLoadEarlierFromScroll,
   transcriptPageCursor,
   WorkstreamErrorState,
@@ -31,6 +32,7 @@ function transcriptMessage(
     id: `message-${sequenceNumber}-${messageType}`,
     workstreamId: 'workstream-pagination',
     sequenceNumber,
+    attentionSequenceNumber: messageType === 'tool_event' ? null : sequenceNumber,
     authorType: 'agent',
     messageType,
     text: `Message ${sequenceNumber}`,
@@ -607,6 +609,7 @@ const transcript: Message[] = [
     id: 'message-one',
     workstreamId: 'workstream-one',
     sequenceNumber: 1,
+    attentionSequenceNumber: 1,
     authorType: 'human',
     messageType: 'text',
     text: 'Start',
@@ -616,6 +619,7 @@ const transcript: Message[] = [
     id: 'message-two',
     workstreamId: 'workstream-one',
     sequenceNumber: 2,
+    attentionSequenceNumber: null,
     authorType: 'agent',
     messageType: 'tool_event',
     createdAt: '2026-08-01T00:00:01.000Z',
@@ -624,6 +628,7 @@ const transcript: Message[] = [
     id: 'message-three',
     workstreamId: 'workstream-one',
     sequenceNumber: 3,
+    attentionSequenceNumber: 2,
     authorType: 'agent',
     messageType: 'text',
     text: 'Done',
@@ -644,18 +649,18 @@ describe('right sidebar occupancy', () => {
 
 describe('transcript read positioning', () => {
   it('opens one message before the first unread sequence to preserve context', () => {
-    expect(initialTranscriptAnchorIndex(transcript, 3)).toBe(1);
+    expect(initialTranscriptAnchorIndex(transcript, 2)).toBe(1);
     expect(initialTranscriptAnchorIndex(transcript, 1)).toBe(0);
     expect(initialTranscriptAnchorIndex(transcript, null)).toBeNull();
   });
 
   it('acknowledges visible attention messages but ignores tool and transient rows', () => {
-    expect(highestVisibleAttentionSequence(transcript, [0, 1], 3)).toBe(1);
-    expect(highestVisibleAttentionSequence(transcript, [1, 2], 3)).toBe(3);
+    expect(highestVisibleAttentionSequence(transcript, [0, 1], 2)).toBe(1);
+    expect(highestVisibleAttentionSequence(transcript, [1, 2], 2)).toBe(2);
     expect(highestVisibleAttentionSequence([
       ...transcript,
-      { ...transcript[2]!, id: 'transient', sequenceNumber: 4 },
-    ], [3], 3)).toBe(0);
+      { ...transcript[2]!, id: 'transient', sequenceNumber: 4, attentionSequenceNumber: null },
+    ], [3], 2)).toBe(0);
   });
 });
 
@@ -802,6 +807,18 @@ describe('RunFailureNotice', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+  });
+});
+
+describe('RunStoppedNotice', () => {
+  it('makes a terminal member stop explicit and offers a fresh retry', () => {
+    const onRetry = vi.fn();
+    render(<RunStoppedNotice onRetry={onRetry} retrying={false} />);
+
+    expect(screen.getByRole('status', { name: 'Run stopped' }))
+      .toHaveTextContent('Its partial tool activity is no longer running.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });
 
