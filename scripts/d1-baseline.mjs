@@ -199,15 +199,36 @@ export function detectVolatileColumns(firstRows, secondRows) {
   const volatileColumns = {};
   for (const [table, firstTableRows] of Object.entries(firstRows)) {
     const secondTableRows = secondRows[table] ?? [];
-    const names = new Set();
+    const movedIn = new Map();
+    let compared = 0;
     for (const [index, firstRow] of firstTableRows.entries()) {
       const secondRow = secondTableRows[index];
       if (!secondRow) continue;
+      compared += 1;
       for (const column of Object.keys(firstRow)) {
-        if (firstRow[column] !== secondRow[column]) names.add(column);
+        if (firstRow[column] !== secondRow[column]) movedIn.set(column, (movedIn.get(column) ?? 0) + 1);
       }
     }
-    if (names.size > 0) volatileColumns[table] = [...names].sort();
+
+    const names = [];
+    for (const [column, moved] of movedIn) {
+      // Volatility is recorded per column, but a table can seed several rows and
+      // compute the column in only some of them. The renderer would then rewrite
+      // every row's value as `datetime('now')`, replacing the stable ones — and
+      // no test would notice, because the equivalence suite strips volatile
+      // columns from both sides before comparing. Refusing keeps the per-column
+      // shape honest; teaching the renderer per-row volatility is the fix if a
+      // migration ever genuinely needs it.
+      if (moved !== compared) {
+        throw new Error(
+          `${table}.${column} moved in ${moved} of ${compared} seeded rows. A column that is `
+          + "computed in some rows and hardcoded in others cannot be re-derived per table without "
+          + "overwriting the hardcoded ones; renderBaselineSql needs per-row volatility first.",
+        );
+      }
+      names.push(column);
+    }
+    if (names.length > 0) volatileColumns[table] = names.sort();
   }
   return volatileColumns;
 }
