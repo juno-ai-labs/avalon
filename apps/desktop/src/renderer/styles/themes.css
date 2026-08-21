@@ -150,6 +150,13 @@
   --av-sys-color-danger-wash: #3a2422;
   --av-sys-color-danger-edge: #5b302d;
   --av-sys-color-danger-on: #17100f;
+
+  /* A run a person deliberately halted. It is not a failure and not a warning
+   * — nothing went wrong — so it takes neither of those hues; a dimmed ember
+   * reads as "stood down" beside the live states. */
+  --av-sys-color-stopped-base: #a78668;
+
+  /* Failure and destructive action. */
   --av-sys-color-danger-tint: rgba(216, 117, 111, 0.13);
   --av-sys-color-danger-tint-strong: rgba(216, 117, 111, 0.28);
 
@@ -514,6 +521,9 @@
   --av-sys-color-danger-wash: #fdeeed;
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
+
+  --av-sys-color-stopped-base: #8a6a4d;
+
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
   --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
 
@@ -797,6 +807,9 @@
   --av-sys-color-danger-wash: #1d100c;
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
+
+  --av-sys-color-stopped-base: #ab8a6d;
+
   --av-sys-color-danger-tint: rgba(204, 122, 106, 0.14);
   --av-sys-color-danger-tint-strong: rgba(204, 122, 106, 0.3);
 
@@ -1080,6 +1093,9 @@
   --av-sys-color-danger-wash: #fdeeed;
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
+
+  --av-sys-color-stopped-base: #8a6a4d;
+
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
   --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
 
