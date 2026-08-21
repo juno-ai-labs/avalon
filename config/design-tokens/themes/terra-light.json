@@ -1,7 +1,7 @@
 {
   "$schema": "../theme.schema.json",
-  "id": "neu-light",
-  "name": "Neu Light",
+  "id": "terra-light",
+  "name": "Terra Light",
   "appearance": "light",
   "description": "A warm near-white page with hairline rules.",
   "fonts": [

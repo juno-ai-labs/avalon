@@ -350,7 +350,7 @@ offers them as two rows rather than one list.
 
 | Family | Light | Dark |
 | --- | --- | --- |
-| **Neu** — Avalon's original palette | `neu-light` | `neu` |
+| **Terra** — Avalon's original palette | `terra-light` | `terra` |
 | **Air** — amber light on a moving field | `air` | `air-dark` |
 
 `familyAppearances` in `common/themes.ts` is the whole coupling: adding a family
@@ -361,14 +361,14 @@ cannot switch.
 
 **The mode never changes the family.** `system` consults the Mac about the
 *lighting* only, so someone on Air who is following the room crosses between
-`air` and `air-dark` and is never handed Neu.
+`air` and `air-dark` and is never handed Terra.
 
 ### One design at two brightnesses
 
 Air's two appearances share more than a name: a test asserts that every token
 which is not a colour is identical between them. Prose at 1.85 leading, roughly
 double the vertical spacing, uppercase letterspaced micro-labels, a person's
-turn with no bubble, a 2px line where Neu puts a dot, and a composer that is a
+turn with no bubble, a 2px line where Terra puts a dot, and a composer that is a
 rule rather than a card.
 
 What differs is the palette and, in one place that matters, the *blending*:
@@ -562,7 +562,39 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
-### 2026-08-20 — A theme choice has two axes, and the appearances are named
+### 2026-08-20 — The System swatch shows both halves, and the preview shows who speaks where
+
+**What changed:** three things in the Settings preview, and one name.
+
+*The System swatch is split.* Under a pinned mode a family has one appearance to
+show; under `system` it has two, and which one you get depends on the Mac.
+Picking one to display would be quietly wrong for half the day, so the swatch
+draws both, divided by a line 30° off vertical through the centre.
+
+**Why a mask and not a clip path.** A gradient angle in `deg` is a true angle
+whatever the box's aspect ratio is; a `polygon()`'s percentages are only 30° at
+one particular size, and the swatch is 92×58. `linear-gradient(120deg, …)` puts
+the edge 30° off vertical because a gradient runs perpendicular to its own
+bands — the edge angle is the direction minus a right angle. Both halves draw
+the same miniature, so the content lines up across the seam and it reads as one
+picture lit two ways rather than two half-pictures.
+
+*The miniature shows which side each actor speaks from.* It reads
+`--av-cmp-turn-align`, the same token the feed uses, so the preview cannot say
+left while the feed says right: Terra puts a person's own turn on the right in a
+bubble, Air runs it left as plain text. The leading mark uses the real
+`--av-cmp-marker-*` tokens too, and at swatch scale the same two values still
+produce the two shapes — `calc(50% - 3px)` a centred dot, a flat inset a line.
+
+**One trap worth keeping.** The turn's line rendered at 0×0 for a while: the
+other two lines are flex items and so are blockified, but this one sits inside
+the bubble and was still an inline span, where `height` and `width` do nothing.
+
+*The original design is named Terra*, not Neu — a name it held for one commit. A
+stored choice naming the old family is migrated rather than dropped, the same way
+a flat pre-axes choice is.
+
+8-20 — A theme choice has two axes, and the appearances are named
 
 **What changed:** the picker was one flat list — System, Light, Dark, Airy, Airy
 Dark. It is now two: a lighting row (System / Light / Dark) above a row of
