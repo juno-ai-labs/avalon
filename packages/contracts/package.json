@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
+    "./durable-object-migrations": "./src/durable-object-migrations.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
     "./telemetry": "./src/telemetry.ts",
     "./workstream-links": "./src/workstream-links.ts",

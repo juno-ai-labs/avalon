@@ -4,6 +4,31 @@ This is the project-wide rule sheet for AI coding agents, exposed as `CLAUDE.md`
 through a symlink. Keep it short: it is read in full at the start of every
 session, so detail belongs in `docs/` behind a pointer.
 
+## Where we are
+
+**Avalon is a seed-stage startup iterating quickly, and the right engineering
+decision here is often not the one that would be right at scale.** There is no
+load history, no metrics stack, and no capacity model. Treat that as a constraint
+on how a decision is made, not as something to engineer around:
+
+- **Build for the product that exists.** No sharding, caching layer, priority
+  queue, or abstraction for a second implementation nobody has asked for.
+- **Never gate a decision on measurement nobody here can produce.** Reason from
+  the platform's published limits and arithmetic, prefer the option that is
+  cheapest to reverse, and let the platform's own failures — a non-empty
+  dead-letter queue, an overloaded error — be the monitoring.
+  [`docs/choosing-queues-or-rpc.md`](docs/choosing-queues-or-rpc.md#deciding-without-measurement)
+  works this through in full.
+- **Prefer the failure you will notice** over the one that needs tooling we do
+  not have in order to find.
+
+**None of this is licence to skip the rules below.** Speed at this size comes
+from not paying for the same thing twice: the quality gates take minutes, a flaky
+test left alone costs somebody a day, and a change whose *why* was never written
+down gets relitigated by whoever touches it next — which, on a team this small,
+is soon, and is probably you. Move fast on *what* gets built. Do not move fast on
+whether it works, or on whether the next person can follow it.
+
 ## Environment
 
 **Read [`docs/dev-environment.md`](docs/dev-environment.md) at the start of every
