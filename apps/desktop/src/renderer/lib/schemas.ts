@@ -2,7 +2,7 @@ import { AutomationPluginActivitySchema } from '@avalon/contracts';
 import { z } from 'zod';
 
 const scopeSchema = z.enum(['you', 'workspace']);
-const harnessStatusSchema = z.enum(['scheduled', 'running', 'needs_input', 'completed', 'failed']);
+const harnessStatusSchema = z.enum(['scheduled', 'running', 'needs_input', 'completed', 'failed', 'stopped']);
 
 export const workspaceMemberSchema = z
   .object({
@@ -103,6 +103,7 @@ export const messageSchema = z
     id: z.string(),
     workstreamId: z.string(),
     sequenceNumber: z.number(),
+    attentionSequenceNumber: z.number().int().positive().nullable().optional(),
     authorType: z.enum(['human', 'external', 'agent', 'system']),
     author: workspaceMemberSchema.optional(),
     externalActor: z.object({

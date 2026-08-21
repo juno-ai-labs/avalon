@@ -3,6 +3,55 @@ import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 
 describe("Bind host durability boundaries", () => {
+  it("replaces unverified attachment claims with a content-free provenance boundary", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-csv",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceId: "00000000-0000-7000-8000-000000000777" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-csv",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      error: "The resource could not be converted",
+      data: { code: "resource_format_unsupported" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    expect(guard.nudge()).toContain("resource 00000000-0000-7000-8000-000000000777");
+    expect(guard.nudge()).toBeNull();
+    const boundary = guard.boundary();
+    expect(boundary).toContain("Attachment content unverified");
+    expect(boundary).toContain("resource_format_unsupported");
+    expect(boundary).toContain("tool-read-csv");
+    expect(boundary).not.toMatch(/July|42|forecast total/iu);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: { resourceId: "00000000-0000-7000-8000-000000000777" },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-retry",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      result: { output: {}, summary: "verified" },
+    } as never);
+    expect(guard.boundary()).toBeNull();
+  });
   it("returns preload candidates to Bind only after their activation is persisted", async () => {
     const order: string[] = [];
     const persisted = new Set<string>();

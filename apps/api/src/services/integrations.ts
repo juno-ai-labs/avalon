@@ -481,6 +481,118 @@ function workstreamHarnessTerminalResult(input: {
   };
 }
 
+interface FailedAttachmentAccess {
+  resourceIds: string[];
+  toolCallId: string;
+  toolName: string;
+  errorCode: string;
+}
+
+class AttachmentGroundingGuard {
+  private readonly started = new Map<string, { resourceIds: string[]; toolName: string }>();
+  private readonly unresolved = new Map<string, FailedAttachmentAccess>();
+  private nudgeSent = false;
+
+  onStarted(event: Extract<HarnessEvent, { type: "tool_started" }>): void {
+    if (!isAttachmentContentCapability(event.policy.capability)) return;
+    this.started.set(event.toolCallId, {
+      resourceIds: attachmentResourceIds(event.input),
+      toolName: event.toolName,
+    });
+  }
+
+  onCompleted(event: Extract<HarnessEvent, { type: "tool_completed" }>): void {
+    if (!isAttachmentContentCapability(event.policy.capability)) return;
+    const access = this.started.get(event.toolCallId);
+    this.started.delete(event.toolCallId);
+    for (const resourceId of access?.resourceIds ?? []) this.unresolved.delete(`resource:${resourceId}`);
+  }
+
+  onFailed(event: Extract<HarnessEvent, { type: "tool_failed" }>): void {
+    if (!isAttachmentContentCapability(event.policy.capability)) return;
+    const access = this.started.get(event.toolCallId);
+    this.started.delete(event.toolCallId);
+    if (!access && event.phase === "validation") return;
+    const failure: FailedAttachmentAccess = {
+      resourceIds: access?.resourceIds ?? [],
+      toolCallId: event.toolCallId,
+      toolName: access?.toolName ?? event.toolName,
+      errorCode: structuredAttachmentFailureCode(event),
+    };
+    const keys = failure.resourceIds.length > 0
+      ? failure.resourceIds.map((resourceId) => `resource:${resourceId}`)
+      : [`tool_call:${event.toolCallId}`];
+    for (const key of keys) this.unresolved.set(key, failure);
+  }
+
+  nudge(): string | null {
+    if (this.unresolved.size === 0 || this.nudgeSent) return null;
+    this.nudgeSent = true;
+    const identities = this.identities().join(", ");
+    return [
+      `Attachment content could not be verified for ${identities}.`,
+      "Do not state, estimate, or reconstruct any value from those attachments. Use another authorized attachment tool if one can verify the evidence; otherwise finish with an explicit unverified-attachment notice that names the affected resource or tool-call identities and contains no claimed attachment facts.",
+    ].join("\n\n");
+  }
+
+  boundary(): string | null {
+    if (this.unresolved.size === 0) return null;
+    const failures = [...new Set(this.unresolved.values())]
+      .sort((left, right) => left.toolCallId.localeCompare(right.toolCallId));
+    return [
+      "## Attachment content unverified",
+      "Avalon could not verify the attachment content needed for this answer. No values from the affected attachments are included or inferred.",
+      ...failures.map((failure) => failure.resourceIds.length > 0
+        ? `- Resource ${failure.resourceIds.join(", ")} via ${failure.toolName} failed (${failure.errorCode}; tool call ${failure.toolCallId}).`
+        : `- Attachment tool call ${failure.toolCallId} via ${failure.toolName} failed (${failure.errorCode}); its resource identity could not be recovered.`),
+      "Retry the attachment operation or provide the evidence in a supported readable format.",
+    ].join("\n\n");
+  }
+
+  diagnostic(): { count: number; errorCodes: string[]; toolNames: string[] } {
+    const failures = [...new Set(this.unresolved.values())];
+    return {
+      count: failures.length,
+      errorCodes: [...new Set(failures.map((failure) => failure.errorCode))].sort(),
+      toolNames: [...new Set(failures.map((failure) => failure.toolName))].sort(),
+    };
+  }
+
+  private identities(): string[] {
+    return [...this.unresolved.keys()].sort().map((key) => key.replace("resource:", "resource ").replace("tool_call:", "tool call "));
+  }
+}
+
+function isAttachmentContentCapability(capability: string): boolean {
+  return [
+    "workstream.resources.read",
+    "workstream.resources.search",
+    "workstream.resources.view",
+    "workstream.resources.summarize",
+  ].includes(capability);
+}
+
+function attachmentResourceIds(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  const ids = [
+    ...(typeof record["resourceId"] === "string" ? [record["resourceId"]] : []),
+    ...(Array.isArray(record["resourceIds"])
+      ? record["resourceIds"].filter((entry): entry is string => typeof entry === "string")
+      : []),
+  ];
+  return [...new Set(ids)].sort();
+}
+
+function structuredAttachmentFailureCode(event: Extract<HarnessEvent, { type: "tool_failed" }>): string {
+  const data = event.data as Record<string, unknown> | undefined;
+  if (typeof data?.["code"] === "string") return data["code"];
+  if (event.outcome === "timed_out") return "tool_timeout";
+  if (event.outcome === "aborted") return "tool_aborted";
+  if (event.outcome === "ambiguous_external_write") return "ambiguous_external_write";
+  return event.phase === "validation" ? "tool_validation_failed" : "tool_failed";
+}
+
 /**
  * What the **parent model** reads when a sub-agent fails.
  *
@@ -1174,6 +1286,7 @@ async function loadModelAttachmentSources(
     model_content_sha256: string | null;
     model_metadata_json: string | null;
     model_content_status: Exclude<ModelAttachmentSource["modelContentStatus"], undefined>;
+    model_content_extractor_version: string | null;
     model_content_error_code: string | null;
   };
   const attachmentRows: AttachmentRow[] = [];
@@ -1181,7 +1294,8 @@ async function loadModelAttachmentSources(
     const placeholders = idBatch.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
       `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json, model_content_ref, model_mime_type,
-              model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
+              model_content_sha256, model_metadata_json, model_content_status,
+              model_content_extractor_version, model_content_error_code
          FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
     ).bind(workspaceId, ...idBatch).all<AttachmentRow>();
@@ -1200,6 +1314,7 @@ async function loadModelAttachmentSources(
     modelContentSha256: row.model_content_sha256,
     modelMetadataJson: row.model_metadata_json,
     modelContentStatus: row.model_content_status,
+    modelContentExtractorVersion: row.model_content_extractor_version,
     modelContentErrorCode: row.model_content_error_code,
   }]));
 }
@@ -1993,6 +2108,7 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
+  const attachmentGrounding = new AttachmentGroundingGuard();
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
@@ -2282,8 +2398,10 @@ export async function runWorkstreamHarness(
         stream_seq: event.streamSeq,
       });
     },
-    ...(blockDashboardRun ? {
-      onTurnWouldEnd: () => {
+    onTurnWouldEnd: () => {
+      const attachmentNudge = attachmentGrounding.nudge();
+      if (attachmentNudge) return attachmentNudge;
+      if (blockDashboardRun) {
         if (blockDashboardBlock.markdown !== null || blockDashboardSubmissionAsked) return null;
         // Once. A block that will not submit twice running is a failed block,
         // and nagging it further only burns the run's ceilings.
@@ -2292,8 +2410,9 @@ export async function runWorkstreamHarness(
           `You ended the turn without calling ${BLOCK_DASHBOARD_SUBMIT_WIRE_NAME}, so this block has nothing to render.`,
           "Call it now with the finished Markdown as its argument. Assistant text is discarded — the block is exactly what you pass to the tool.",
         ].join("\n\n");
-      },
-    } : {}),
+      }
+      return null;
+    },
     beforeToolCall: composeBeforeToolCallHooks(
       blockDashboardRun
         ? rejectToolModesBeforeCall(["write"], "Writes are not currently allowed", "block_dashboard_writes_disabled")
@@ -2645,6 +2764,7 @@ export async function runWorkstreamHarness(
           await streamDeltaBatcher.push(event);
           break;
         case "tool_started": {
+          attachmentGrounding.onStarted(event);
           const inputHash = await canonicalToolInputHash(event.input);
           const receiptPolicy = resolveHarnessToolReceiptPolicy({
             pluginId: event.pluginId,
@@ -2783,6 +2903,7 @@ export async function runWorkstreamHarness(
               invocationId: invocation.id,
             }).catch(() => undefined);
           }
+          attachmentGrounding.onCompleted(event);
           break;
         }
         case "tool_failed": {
@@ -2854,6 +2975,7 @@ export async function runWorkstreamHarness(
               invocationId: invocation.id,
             }).catch(() => undefined);
           }
+          attachmentGrounding.onFailed(event);
           break;
         }
         case "needs_input":
@@ -2870,6 +2992,20 @@ export async function runWorkstreamHarness(
   }
 
   await streamDeltaBatcher.flush();
+
+  const attachmentBoundary = attachmentGrounding.boundary();
+  if (attachmentBoundary) {
+    const diagnostic = attachmentGrounding.diagnostic();
+    logStructuredEvent(env, "warn", "attachment_grounding_guard_triggered", {
+      request_id: input.harnessRunId,
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      unresolved_count: diagnostic.count,
+      error_codes: diagnostic.errorCodes,
+      tool_names: diagnostic.toolNames,
+    });
+    streamedText = attachmentBoundary;
+  }
 
   const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
   if (outcome.status !== "completed" && !stoppedByUser) {
@@ -2898,7 +3034,7 @@ export async function runWorkstreamHarness(
   // so `blockDashboardBlock` can be empty on an attempt that nonetheless has a
   // block — reading it back is what stops that becoming a lost block.
   const submitted = blockDashboardRun
-    ? blockDashboardBlock.markdown ?? await readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.id)
+    ? attachmentBoundary ?? blockDashboardBlock.markdown ?? await readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.id)
     : null;
   const finalTerminalResult = blockDashboardRun
     ? blockDashboardBlockOutcome(terminalResult, submitted)
@@ -7182,4 +7318,5 @@ export const __integrationTesting = {
   persistInitialPluginActivations,
   publishRuntimeEventBestEffort,
   workstreamHarnessTerminalResult,
+  AttachmentGroundingGuard,
 };

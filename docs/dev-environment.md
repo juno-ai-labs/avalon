@@ -69,6 +69,11 @@ After the Workers are running (§3), open the authority:
 pnpm db:open-authority
 ```
 
+The bootstrap's workspace-route upsert deliberately keeps a no-op `WHERE`
+between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
+parses the `ON` as a possible join clause and rejects the fresh post-retirement
+seed before product fixtures reach the Durable Objects.
+
 This walks the **Global** authority to `durable_object_open`, so the local
 stack serves the same post-cutover Durable-Object model production runs, and
 seeds the product fixtures from `packages/db/seed-product.json` into their

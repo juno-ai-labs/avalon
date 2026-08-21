@@ -29,6 +29,37 @@ describe("attachment derivative conversion", () => {
     expect(result.extractorVersion).toBe(ATTACHMENT_TEXT_EXTRACTOR_VERSION);
   });
 
+  it("reads CSV and generic TSV sources through the plain-text converter", async () => {
+    const csvSource = "month,total\nJuly,42\nAugust,57";
+    const tsvSource = "owner\tstatus\nAdam\tready";
+
+    const [csv, applicationCsv, genericTsv] = await Promise.all([
+      buildAttachmentDerivative({
+        bytes: encoder.encode(csvSource),
+        fileName: "forecast.csv",
+        mimeType: "text/csv",
+      }),
+      buildAttachmentDerivative({
+        bytes: encoder.encode(csvSource),
+        fileName: "forecast.csv",
+        mimeType: "application/csv",
+      }),
+      buildAttachmentDerivative({
+        bytes: encoder.encode(tsvSource),
+        fileName: "owners.tsv",
+        mimeType: "application/octet-stream",
+      }),
+    ]);
+
+    for (const [result, expected] of [[csv, csvSource], [applicationCsv, csvSource], [genericTsv, tsvSource]] as const) {
+      expect(result.status).toBe("ready");
+      if (result.status !== "ready") continue;
+      expect(result.text).toBe(expected);
+      expect(result.modelMimeType).toBe("text/plain");
+      expect(result.metadata.extractionMethod).toBe("utf8");
+    }
+  });
+
   it("preserves semantic Word structures, linked text, headers, footnotes, and endnotes", async () => {
     const docx = zipSync({
       "word/document.xml": strToU8(`
@@ -390,13 +421,54 @@ describe("attachment derivative conversion", () => {
     })).resolves.toEqual({ status: "processing", retryAfterMs: 1_000 });
     expect(gets).not.toHaveBeenCalled();
 
+    const phases: Array<{ phase: string; outcome: string }> = [];
     const recovered = await materializeAttachmentDerivative(database, bucket, common, {
       now: () => new Date("2026-08-12T10:05:01.000Z"),
+      onPhase: (event) => phases.push({ phase: event.phase, outcome: event.outcome }),
     });
     expect(recovered.status).toBe("ready");
+    expect(phases).toEqual([
+      { phase: "source_read", outcome: "ready" },
+      { phase: "claim", outcome: "ready" },
+      { phase: "convert", outcome: "ready" },
+      { phase: "publish", outcome: "ready" },
+    ]);
     expect(gets).toHaveBeenCalledOnce();
     expect(sql.some((statement) => statement.includes("model_content_claimed_at <= ?"))).toBe(true);
     expect(sql.some((statement) => statement.includes("AND model_content_claim_id = ?"))).toBe(true);
+  });
+
+  it("reuses a terminal result from the current extractor without reading R2 again", async () => {
+    const database = createTestD1Database({
+      prepare() {
+        throw new Error("terminal derivatives must not touch D1");
+      },
+    });
+    const get = vi.fn();
+    const bucket = createCloudflareTestBinding<R2Bucket>({ get });
+    const terminal: AuthorizedDerivativeResource = {
+      id: "resource-terminal",
+      workspaceId: "workspace-1",
+      fileName: "archive.bin",
+      mimeType: "application/octet-stream",
+      contentRef: "original/archive.bin",
+      contentSha256: "a".repeat(64),
+      modelContentRef: null,
+      modelMimeType: null,
+      modelContentSha256: null,
+      modelContentStatus: "unsupported",
+      modelContentExtractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
+      modelContentCharacterCount: null,
+      modelContentClaimedAt: null,
+      modelContentClaimId: null,
+      modelContentErrorCode: "resource_format_unsupported",
+    };
+
+    await expect(materializeAttachmentDerivative(database, bucket, terminal)).resolves.toEqual({
+      status: "unsupported",
+      errorCode: "resource_format_unsupported",
+    });
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("prevents an expired publisher from replacing or deleting the reclaimed generation", async () => {

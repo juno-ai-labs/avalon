@@ -148,7 +148,16 @@ interface RunRow extends Record<string, SqlStorageValue> {
 
 /** Polls the object until the run settles; a run that never settles fails here. */
 async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRow> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // Invoke the public object alarm while holding the object-local test fence.
+  // This joins an automatically consumed alarm instead of racing a wall-clock
+  // poll against it, and proves the same production callback deterministically.
+  await runInDurableObject(stub, async (instance) => {
+    await (instance as unknown as { alarm(): Promise<void> }).alarm();
+  });
+  let lastRow: RunRow | null = null;
+  let lastDispatches = "[]";
+  let lastAlarm: number | null = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
     const row = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<RunRow>(
         `SELECT run_id, status, error_json, terminalized_at, final_part_id
@@ -156,9 +165,22 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
         runId,
       ).toArray()[0] ?? null);
     if (row && row.terminalized_at !== null) return row;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    lastRow = row;
+    const diagnostics = await runInDurableObject(stub, async (_instance, state) => ({
+      alarm: await state.storage.getAlarm(),
+      dispatches: state.storage.sql.exec(
+        `SELECT run_id, state, attempt, available_at, lease_expires_at, last_error_code
+           FROM agent_run_dispatches ORDER BY created_at, run_id`,
+      ).toArray(),
+    }));
+    lastAlarm = diagnostics.alarm;
+    lastDispatches = JSON.stringify(diagnostics.dispatches);
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`run ${runId} never reached a terminal state — the pipeline hung`);
+  throw new Error(
+    `run ${runId} never reached a terminal state — row=${JSON.stringify(lastRow)} `
+    + `alarm=${String(lastAlarm)} dispatches=${lastDispatches}`,
+  );
 }
 
 function failureCode(row: RunRow): string {
@@ -311,12 +333,63 @@ describe("a member's message travels the whole pipeline", () => {
     const opened = await initializeWorkstream(stub, "the opening message");
     await settledRun(stub, opened.body.harnessRunId as string);
 
+    await runInDurableObject(stub, (_instance, state) => {
+      const counters = state.storage.sql.exec<{
+        next_sequence_number: number;
+        next_attention_ordinal: number;
+      }>(
+        `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
+      ).one();
+      state.storage.sql.exec(
+        `INSERT INTO parts
+           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+            content, effect_intent_id, tool_name, tool_mode, tool_status, visibility,
+            pinned, created_at, updated_at)
+         VALUES ('00000000-0000-7000-8000-0000000005b1', '0', ?, NULL, 'assistant', 'tool_call', 'agent', '',
+                 '00000000-0000-7000-8000-0000000005b3', 'attachment_read', 'read', 'completed', 'people',
+                 0, ?, ?)`,
+        counters.next_sequence_number,
+        Date.now(),
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO parts
+           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+            content, visibility, pinned, created_at, updated_at)
+         VALUES ('00000000-0000-7000-8000-0000000005b2', '0', ?, ?, 'assistant', 'text', 'agent',
+                 'answer after tool', 'both', 0, ?, ?)`,
+        counters.next_sequence_number + 1,
+        counters.next_attention_ordinal,
+        Date.now(),
+        Date.now(),
+      );
+      state.storage.sql.exec(
+        `UPDATE workstream
+            SET next_sequence_number = ?, next_attention_ordinal = ?, updated_at = ?
+          WHERE id = 1`,
+        counters.next_sequence_number + 2,
+        counters.next_attention_ordinal + 1,
+        Date.now(),
+      );
+    });
+
     const listed = await product(stub, { operation: "messages", auth: AUTH, limit: 50 });
 
     expect(listed.status).toBe(200);
-    const items = listed.body.items as { sequenceNumber: number; content?: string }[];
+    const items = listed.body.items as {
+      id: string;
+      sequenceNumber: number;
+      attentionSequenceNumber?: number | null;
+      content?: string;
+    }[];
     expect(items.length).toBeGreaterThan(0);
     const sequences = items.map((item) => item.sequenceNumber);
     expect([...sequences].sort((a, b) => a - b)).toEqual(sequences);
+    expect(items.some((item) => item.attentionSequenceNumber === 1)).toBe(true);
+    expect(items.filter((item) => [
+      "00000000-0000-7000-8000-0000000005b1",
+      "00000000-0000-7000-8000-0000000005b2",
+    ].includes(item.id)).map((item) => item.attentionSequenceNumber ?? null))
+      .toEqual([null, 2]);
   });
 });

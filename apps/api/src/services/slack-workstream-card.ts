@@ -99,6 +99,7 @@ const SLACK_UNFURL_STATUS_BADGES: Record<string, { emoji: string; label: string 
   needs_input: { emoji: ":warning:", label: "Needs input" },
   running: { emoji: ":large_green_circle:", label: "Running" },
   failed: { emoji: ":red_circle:", label: "Failed" },
+  stopped: { emoji: ":white_circle:", label: "Stopped" },
 };
 
 function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {

@@ -98,6 +98,7 @@ function directoryHarnessStatus(state: string): string {
   if (state === "needs_input") return "needs_input";
   if (state === "completed") return "completed";
   if (["failed", "budget_exhausted"].includes(state)) return "failed";
+  if (state === "cancelled") return "stopped";
   return "idle";
 }
 

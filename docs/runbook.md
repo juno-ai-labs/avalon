@@ -738,7 +738,7 @@ and the beta caveats on its names and prices are in
 OpenTelemetry package is installed, and adding one is the mistake both documents
 exist to prevent.
 
-Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:observability` idempotently creates these account-level saved views in Workers & Pages → Observability → Query Builder; each view is scoped to both regional API service names:
+Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:observability` idempotently creates these account-level saved views in Workers & Pages → Observability → Query Builder; each view is scoped to both regional API service names. The read-only `pnpm cloudflare:observability:check` evaluates every definition before failing and prints the complete missing, stale, and duplicate set in one report. The mutating command creates every missing definition in one pass but still fails closed on stale or duplicate names, which require operator review:
 
 | View | Filters |
 | --- | --- |
@@ -946,7 +946,7 @@ the query string is the only fix that removes them from the capture.
 
 Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The response body is not retained either, for the same reason. Rejections are logged for every workspace; the `log_agent_inference` preference gates only the R2 payload ledger, not this. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
-Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. Use `pnpm cloudflare:observability:check` for a read-only release check.
+Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
 
 Connector polls have a 20-second adapter cancellation deadline inside a 25-second Workflow step. The step uses three exponentially backed-off retries. A terminal timeout or provider failure moves the connection into a deterministic degraded/error state and emits only structured, redacted metadata; it must never leave the workflow waiting indefinitely.
 
