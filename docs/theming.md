@@ -423,15 +423,21 @@ changing it back.
 **Every open window follows.** A theme is a preference of the device, not of the
 window it was chosen in: choosing one in the Settings window and having the work
 stream behind it stay as it was is not a preview, it is a bug. The renderer
-reports the appearance it is drawing over `theme:set-window`, and the main
-process relays `theme:changed` to every *other* window, which re-reads the
-stored choice and re-applies. Relaying only on a change is what stops it
-echoing — a window told to follow reports back, and that report matches what
-main already holds and stops there.
+reports the choice it is drawing over `theme:set-window`, and the main process
+relays `theme:changed` to every *other* window, which applies it. Relaying only
+on a change is what stops it echoing — a window told to follow reports back, and
+that report matches what main already holds and stops there.
 
-The payload names the appearance, but a listener deliberately ignores it and
-re-reads the store instead. The store holds both axes, so re-resolving locally
-keeps a window that is following `system` still following it.
+The payload carries the **choice**, both axes, and the listener applies it rather
+than re-reading the store. Applying it still re-resolves `system` against *that*
+window's own `matchMedia`, which is the property re-reading the store was there
+to get — but each window is a separate renderer process, and a `localStorage`
+write in the window that made the choice is not ordered against an IPC round
+trip through main. A window that re-read a store the write had not reached yet
+would re-apply the old choice and report *that* back; main would see a
+difference and broadcast again, and the guard that stops the echo would instead
+be driving one. It settles once storage propagates; in the meantime it is a
+flicker across windows.
 
 It is stored as `{ family, mode }`. A record written by an earlier build holds a
 flat name instead — `airy`, `dark` — and `parseThemeChoice` migrates it, because
@@ -626,6 +632,34 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-21 — A following window applies the message, not the store
+
+**What changed:** `watchThemeBroadcast` applies the `ThemeChoice` the
+`theme:changed` payload carries, falling back to the store only for a payload it
+cannot read.
+
+**Why:** re-reading the store was chosen so that a window following `system`
+re-resolves against its own Mac. That reasoning was right and the payload now
+satisfies it anyway — it carries both axes, so applying it re-resolves locally
+just the same. What re-reading also did was reach `localStorage` from a *second
+renderer process*, and a write in the window that made the choice is not ordered
+against an IPC round trip through main. Lose that race and the receiving window
+applies the old choice and reports it; main sees a difference and broadcasts
+again. The comment claiming "relaying only on a change is what stops this
+echoing" holds only while every window reads the same value — a stale reader
+turns the guard into an oscillator.
+
+**Raised as plausible rather than reproduced,** and left that way: the race is
+between a storage write and an IPC hop, and rigging it in a test would prove the
+rig rather than the code. What the test does pin is the behaviour that makes the
+race harmless — a window with a deliberately stale store still draws what the
+message said, and reports that back, so main's comparison matches and stops.
+
+**What a future change has to respect:** `localStorage` is shared between
+Avalon's windows but not synchronously coherent across them. Anything that has
+to agree *now* across windows travels in the message; the store is for what has
+to survive a relaunch.
 
 ### 2026-08-21 — Highlighted code survives being exported
 
