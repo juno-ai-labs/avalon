@@ -108,6 +108,20 @@ export function identityAttributes(identity: TraceIdentity): SpanAttributes {
     // already looking at.
     "avalon.analytics.person_id": identity.analyticsPersonId,
     "avalon.analytics.workspace_id": identity.analyticsWorkspaceId,
+    // The one vendor-specific name in this file, and it is deliberate.
+    //
+    // `performance-tracing.md` gives two ways to settle identity before an
+    // export: map through the analytics ids at the exporter, or keep the
+    // attributes opaque and never promote them to identity. What is not allowed
+    // is letting the destination's default decide — and a destination that
+    // started reading `user.id` as its person key would split one human into
+    // two, since the product pipeline keys the same person on the surrogate.
+    //
+    // Setting PostHog's own key explicitly takes the first way out and closes
+    // the question: identity is the surrogate, chosen here, not inferred there.
+    // It is absent when the surrogate is — a person with no PostHog identity
+    // yet has nothing to be keyed on.
+    "posthog.distinct_id": identity.analyticsPersonId,
   };
 }
 
