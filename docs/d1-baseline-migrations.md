@@ -136,14 +136,24 @@ for one.
   real local database.
 - **A hosted database returns DDL with its comments stripped.** Comparing raw
   text reports `telemetry_eu_events` as different on every run; all comparison
-  normalizes comments and whitespace away first. That normalization **lexes**
-  rather than running regular expressions over the statement, because a regex
-  cannot tell a comment from the characters `--` inside a string literal: it
-  would collapse `DEFAULT '--a'` and `DEFAULT '--b'` to the same text and hash
-  them equal. Quoted tokens — string literals and `"`, `` ` ``, `[` identifiers
-  — are compared byte for byte. Nothing in the schema relies on that today; a
-  CHECK enumerating a value containing `--`, or a default with a doubled space,
-  would.
+  normalizes comments and whitespace away first.
+- **That normalization does not protect quoted literals, knowingly.** It runs
+  regular expressions over the whole statement, so it cannot tell a comment from
+  the characters `--` inside a string literal, nor significant whitespace inside
+  one from trivia between tokens: `DEFAULT '--a'` and `DEFAULT '--b'`
+  fingerprint identically, as do `'a  b'` and `'a b'`. When it bites,
+  `pnpm db:baseline:verify` reports `match` on a drifted database and `--record`
+  writes that drift in as the new truth — and there is no second comparator
+  behind this one, since the PRAGMA suite covers baseline-versus-chain rather
+  than baseline-versus-production. It is accepted because reaching it needs
+  production to have drifted from the migrations at all, *and* for that drift to
+  sit exclusively inside a quoted literal; anything else is still caught. A
+  lexer that copies quoted tokens verbatim is the fix, written and reverted as
+  more machinery than that residue of risk warranted. Nothing in the schema
+  triggers it today — a CHECK enumerating a value containing `--`, or a default
+  with a doubled space, would be the first, and is the point to reconsider.
+  `packages/db` pins the collision in a test named for it, so the limitation
+  fails loudly if someone silently fixes it.
 - **`pnpm db:baseline:verify` needs Cloudflare credentials** and is not a CI
   gate. The recorded fingerprint is what keeps its result enforced.
 - **Regenerating is not free of judgement.** The generator will happily produce a
@@ -261,17 +271,17 @@ of 95.
   it with `SQLITE_AUTH`. The leftover is instead excluded from every emptiness
   check by name.
 
-**Consequences:** The generator refuses rather than guesses in two places, and
+**Consequences:** Schema comparison knowingly does not protect quoted literals —
+see **Failure modes and limits**, and reconsider it the first time a migration
+puts `--` or a doubled space inside one. The generator refuses rather than
+guesses in two places, and
 both are load-bearing: an object type it cannot render (a view) would otherwise
 vanish from the baseline with nothing offline to catch it, and a volatile column
 `datetime('now')` could not have produced would be silently retyped, since every
 downstream check either strips volatile columns before comparing or reads schema
 without rows. A new object type or a control row seeded with another expression
 is a generator that stops and a person who teaches it, not a baseline that is
-quietly wrong. Schema comparison must keep lexing rather than pattern-matching
-SQL: two different schemas hashing equal is the one failure the fingerprint
-exists to detect, and it is worse than no check because `db:baseline:verify` is
-trusted. `packages/db/baselines/` is generated output — regenerate it,
+quietly wrong. `packages/db/baselines/` is generated output — regenerate it,
 never edit it, and never regenerate it to make a failing test pass. Anything that
 decides whether a database is "empty" must use `internalTableExclusionSql()`
 rather than writing its own predicate, or the wrapper and the guard will
