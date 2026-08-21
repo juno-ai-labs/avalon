@@ -24,6 +24,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isEntryPoint } from './entry-point.mjs';
+
 /**
  * A line that begins with something date-like and then an em dash, but is not a
  * heading. Every changelog entry in `docs/` is `### <ISO date> — <title>`, so a
@@ -75,7 +77,7 @@ export async function check(directory) {
   return problems;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isEntryPoint(import.meta.url)) {
   const problems = await check('docs');
   for (const problem of problems) {
     process.stderr.write(
