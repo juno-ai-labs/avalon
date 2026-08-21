@@ -417,6 +417,13 @@ export function fingerprintsMatch(comparison) {
  *
  * Candidates are therefore filtered to brackets that can actually open a JSON
  * array, and each is tried until one parses.
+ *
+ * A banner line containing a bare `[]` passes that filter, but cannot win: each
+ * candidate is parsed from its bracket **to the end of the output**, and
+ * `JSON.parse` rejects trailing non-whitespace. So a candidate only succeeds if
+ * it is the last thing wrangler printed, which the payload always is. Anything
+ * that changes this to parse a bounded slice loses that property and has to
+ * replace it with something else.
  */
 export function parseWranglerJson(stdout, context) {
   for (let index = stdout.indexOf("["); index !== -1; index = stdout.indexOf("[", index + 1)) {
