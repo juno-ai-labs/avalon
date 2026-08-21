@@ -1444,6 +1444,13 @@ const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
+  // Re-send the canonical `snapshot` frame on a socket that is already
+  // subscribed. It carries no cursor on purpose: a viewer asking for canonical
+  // state is saying its own state may be wrong, so a cursor it supplied is the
+  // one input that cannot be trusted to bound the answer. The room replies with
+  // the same sequenced snapshot an initial subscription receives, which is what
+  // lets the client's ordinary ordering guard decide whether to apply it.
+  z.object({ type: z.literal("request_snapshot") }).strict(),
   z.object({
     type: z.literal("load_message_page"),
     requestId: IdSchema,

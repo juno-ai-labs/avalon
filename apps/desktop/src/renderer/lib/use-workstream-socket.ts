@@ -441,23 +441,6 @@ export function replaceWithCanonicalTranscript(previous: Message[] | undefined, 
   return orderTranscript([...olderPersistedMessages, ...canonical, ...newerPersistedMessages, ...pendingHumanMessages]);
 }
 
-/**
- * A canonical request can race a newer socket frame. In that case the cached
- * version wins for duplicate identities and every unmatched realtime row
- * survives until the immediately-following canonical retry completes. The
- * shared upsert makes one monotonic exception: a cached open elicitation cannot
- * replace an answered canonical elicitation.
- */
-export function mergeCanonicalTranscriptAfterConcurrentEvent(
-  previous: Message[] | undefined,
-  canonical: Message[],
-): Message[] {
-  return (previous ?? []).reduce(
-    (merged, message) => insertMessage(merged, message),
-    orderTranscript(canonical),
-  );
-}
-
 export function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
   return status === 'running' || status === 'scheduled';
 }
@@ -588,7 +571,13 @@ export function useWorkstreamSocket(
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
-    let canonicalReconcileGeneration = 0;
+    /**
+     * One outstanding snapshot request at a time. The room answers with a
+     * sequenced frame that supersedes whatever prompted the request, so a
+     * second request issued while one is in flight can only ask for state the
+     * first will already carry.
+     */
+    let snapshotRequestInFlight = false;
     const pendingMessagePages = new Map<string, {
       timeout: number;
       resolve: (page: MessagePage) => void;
@@ -698,47 +687,32 @@ export function useWorkstreamSocket(
       queryClient.invalidateQueries({ queryKey: ['block-dashboard-preference', workstreamId], exact: true }),
     ]);
 
-    const reconcileCanonicalState = async (): Promise<void> => {
-      const generation = ++canonicalReconcileGeneration;
-      const sequenceAtStart = resumeState.lastSequence;
+    /**
+     * Ask the room to re-send canonical state down the socket already open.
+     *
+     * The room is the authority for both halves a reconciliation needs, and it
+     * assembles them at one sequence: the snapshot frame carries the work
+     * stream, the newest transcript page, both cursors, and the active-stream
+     * checkpoints together. Two REST reads could not do that — they are
+     * separately authorized, separately timed, and can straddle a write, so
+     * detail and transcript could disagree with each other.
+     *
+     * Nothing here waits, and nothing retries. A snapshot is ordered against
+     * every other frame, so the reply either supersedes what the client holds
+     * or is dropped by the same guard that orders the rest of the feed; there
+     * is no "did state move while I was asking?" question to answer, and so no
+     * condition under which this can re-arm itself.
+     */
+    const requestCanonicalSnapshot = (): void => {
+      if (closedByEffect || accessRevoked || canonicalResyncTarget !== null) return;
+      if (snapshotRequestInFlight) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      snapshotRequestInFlight = true;
       try {
-        const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
-          api.getWorkstream(workstreamId),
-          api.getMessages(workstreamId),
-        ]);
-        const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
-        if (closedByEffect || generation !== canonicalReconcileGeneration) return;
-        if (resumeState.lastSequence > sequenceAtStart) {
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            mergeCanonicalTranscriptAfterConcurrentEvent(current, canonicalMessages));
-          // The detail and list snapshots may be stale too. Keep the socket's
-          // newer cache state, then reconcile all three resources again from a
-          // sequence boundary that includes the frame which just landed.
-          void reconcileCanonicalState();
-          return;
-        }
-        const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-        setActiveCompaction((current) => mayStillEmitRealtime
-          && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
-          ? current
-          : null);
-        queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          mayStillEmitRealtime
-            ? mergeCanonicalTranscript(current, canonicalMessages)
-            : replaceWithCanonicalTranscript(current, canonicalMessages));
-        void Promise.all([
-          // The WorkspaceDO-backed list query owns cross-workstream serving.
-          // Reconciliation invalidates it instead of making a parallel REST
-          // list request and merging a second snapshot into the socket cache.
-          queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-          queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-          syncBlockDashboardQueries(),
-        ]);
-        if (!mayStillEmitRealtime) streamCursors.clear();
+        socket.send(JSON.stringify({ type: 'request_snapshot' }));
       } catch {
-        // The socket replay remains usable. A later terminal frame, reconnect,
-        // or ordinary query refresh will retry the authoritative reconciliation.
+        // The runtime delivers the close separately, and reconnecting resubscribes.
+        snapshotRequestInFlight = false;
       }
     };
 
@@ -772,6 +746,15 @@ export function useWorkstreamSocket(
       // applied on top of stale state. Reconnect only after the direct REST
       // snapshot succeeds, retaining the old cursor across failed attempts.
       if (canonicalResyncTarget !== null) return;
+      // Both answers the room can give a snapshot request release the slot, and
+      // both are read before the ordering guard below. A snapshot it drops is
+      // still an answer — one a newer frame has already superseded — and an
+      // error frame carries the room's current sequence, so the guard would
+      // discard it whenever nothing else has moved. Either one left holding the
+      // slot would suppress every later reconciliation on this socket.
+      const answersSnapshotRequest = snapshotRequestInFlight
+        && (event.type === 'snapshot' || event.type === 'error');
+      if (answersSnapshotRequest) snapshotRequestInFlight = false;
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
       if (event.type === 'snapshot') {
@@ -795,6 +778,14 @@ export function useWorkstreamSocket(
         // now used only to page older history or recover after resync_required.
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         void syncBlockDashboardQueries();
+        // Only when this snapshot answers a reconciliation. The context query
+        // is not part of a snapshot, so refreshing it is a side effect of
+        // repairing drift rather than of receiving canonical state — and doing
+        // it on the initial subscription would put a second context read on the
+        // open path, which already makes one.
+        if (answersSnapshotRequest) {
+          void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
+        }
       } else if (event.type === 'presence_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
@@ -867,7 +858,7 @@ export function useWorkstreamSocket(
           || event.status === 'stopped'
           || event.status === 'idle'
         ) {
-          void reconcileCanonicalState();
+          requestCanonicalSnapshot();
         }
       } else if (event.type === 'compaction_started') {
         setActiveCompaction(event.compaction);
@@ -1149,11 +1140,16 @@ export function useWorkstreamSocket(
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
-          const isReconnect = attempts.current > 0 || resumeState.lastSequence > 0;
           setState('connected');
           trace.mark('handshake');
+          // A reconnect needs no separate reconciliation. The cursor makes the
+          // subscription itself the reconciliation: the room replays what was
+          // missed, sends a snapshot when it cannot, and asks for a resync when
+          // it can prove neither. Fetching canonical state alongside it raced
+          // that answer and paid two REST round trips to arrive at the same
+          // place.
+          snapshotRequestInFlight = false;
           nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: resumeState.lastSequence }));
-          if (isReconnect) void reconcileCanonicalState();
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
