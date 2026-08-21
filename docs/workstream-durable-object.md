@@ -718,7 +718,8 @@ compaction recovery, HyperSight checkpoint recovery/revocation, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
 Node tests cover migration
-rollback/hash drift/ahead versions, normalized product SQL, authorization,
+rollback/hash drift/ahead versions, normalized product SQL, compatibility-view
+replay deduplication and same-row tool settlement, authorization,
 effect idempotency, streaming checkpoints, and renderer socket switching.
 Desktop tests cover page merging, reconnect queueing, direction-neutral page
 errors, scroll threshold/anchor preservation, compaction reconciliation, and
@@ -856,7 +857,7 @@ join crosses an object boundary.
 | `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Schema/data/import versions and resumable maintenance receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
+| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
@@ -995,6 +996,39 @@ to intervention UI.
 **Consequences:** Consumers must treat `stopped` as terminal and non-running.
 Any new work-stream status surface must preserve it rather than collapsing it
 into `idle`, `completed`, or `failed`.
+
+### 2026-08-20 — Same-row tool settlement outranks client-id replay deduplication
+
+**What changed:** Object schema v11 rebuilds `_runtime_messages_insert` so a
+`client_message_id` conflict updates the row only when it is the same tool id.
+A fresh id under the same client id remains an ignored replay, while the stable
+tool row can now advance from `started` to `completed`, `failed`, or
+`ambiguous`. The migration also repairs already-stranded transcript rows from
+their same-id terminal `tool_effects` receipt, including settlement time,
+member-safe output/error, and terminal status. Because the status-specific
+activity prose is not reconstructible in SQL, repaired rows clear the stale
+started-tense label and use the renderer's neutral tool-name fallback.
+
+**Why:** The v5 replay repair put `ON CONFLICT(client_message_id) DO NOTHING`
+before its existing `ON CONFLICT(id) DO UPDATE`. A tool's start and terminal
+writes intentionally share both identifiers, so SQLite selected the first arm
+and discarded every terminal write. The tool executed successfully and its
+answer reached the transcript, but every released UI continued to show it as
+started.
+
+**Considered and rejected:** Giving terminal writes a new client id would turn
+one invocation into two transcript rows and weaken replay identity. Moving the
+id arm first would let a different id under the same client id fall through to
+the table constraint instead of preserving the v5 replay guarantee.
+
+**Consequences:** Conflict-arm order is part of the compatibility contract. The
+first arm must distinguish same-row lifecycle updates from different-row
+replays, and historical migration v5 remains unchanged; deployed objects
+receive the repair only through append-only v11. The terminal effect receipt is
+the only accepted backfill authority; a started part without one remains
+started rather than being guessed complete from the surrounding run. Historical
+repair must not leave status-derived presentation fields claiming that a
+terminal invocation is still active.
 
 ### 2026-08-20 — Transcript order is separated from unread attention
 
