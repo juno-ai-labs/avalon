@@ -293,7 +293,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       (drain) => this.state.waitUntil(drain),
     );
     this.initialized = state.blockConcurrencyWhile(async () => {
-      withMigrationReport({
+      await withMigrationReport({
         state,
         env,
         component: "block_dashboard_block_agent",

@@ -777,7 +777,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
-      withMigrationReport({
+      await withMigrationReport({
         state,
         env,
         component: "workspace_do",

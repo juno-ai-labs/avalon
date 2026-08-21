@@ -324,6 +324,15 @@ export class MigrationRegistry extends DurableObject<Env> {
       ).toArray()[0]?.id ?? 0;
 
       for (const namespace of sweep.namespaces) {
+        // A namespace whose object listing failed arrives with `objects: null`,
+        // which says nothing about how many objects it has. Writing a count and
+        // a sweep time for it would say something — that it is empty and was
+        // just enumerated — so the identity columns are refreshed and the two
+        // columns that describe the listing are left at whatever the last
+        // successful sweep put there. Everything else in this method already
+        // treats `null` as "says nothing"; this is the one place that used to
+        // read it as "says zero".
+        const listed = namespace.objects !== null;
         sql.exec(
           `INSERT INTO durable_object_namespaces
              (namespace_id, script_name, class_name, uses_sqlite, object_count,
@@ -333,8 +342,10 @@ export class MigrationRegistry extends DurableObject<Env> {
              script_name = excluded.script_name,
              class_name = excluded.class_name,
              uses_sqlite = excluded.uses_sqlite,
-             object_count = excluded.object_count,
-             last_swept_at = excluded.last_swept_at`,
+             object_count = CASE WHEN ?8 THEN excluded.object_count
+                                 ELSE durable_object_namespaces.object_count END,
+             last_swept_at = CASE WHEN ?8 THEN excluded.last_swept_at
+                                  ELSE durable_object_namespaces.last_swept_at END`,
           namespace.namespaceId,
           namespace.scriptName,
           namespace.className,
@@ -342,6 +353,7 @@ export class MigrationRegistry extends DurableObject<Env> {
           namespace.objects?.length ?? 0,
           now,
           now,
+          listed ? 1 : 0,
         );
 
         if (!namespace.objects) continue;
