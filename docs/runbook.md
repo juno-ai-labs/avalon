@@ -480,12 +480,17 @@ The `internal.` label buys naming, not security — the site is protected by
 Cloudflare Access, not by being hard to guess. It is the one Avalon hostname
 that is not single-level, and it is the reason this zone carries ACM at all.
 
-**2. Cloudflare Access.** Access is **not enabled on the account yet**, so this
-starts one step earlier than it otherwise would: enable it from the Zero Trust
-dashboard and choose a team name. That name becomes the team domain
-(`<team>.cloudflareaccess.com`) and is an account setting — it is not derived
-from the web domain and does not follow a rebrand of the site. Put it in
-`ACCESS_TEAM_DOMAIN`, which ships empty for exactly that reason.
+**2. Cloudflare Access.** Zero Trust is enabled on the account with the team
+name **`juno-labs`**, so the team domain is `juno-labs.cloudflareaccess.com` and
+that is what `ACCESS_TEAM_DOMAIN` carries. It is an account setting, not derived
+from the web domain, and it does not follow a rebrand of the site — the site
+moved from `with-avalon.com` to `rallywith.ai` and the team domain would not
+have moved with it.
+
+Renaming the team later is not free: the name is the JWKS URL the Worker fetches
+keys from, the `iss` claim on every assertion, and the URL people log in at, so a
+rename invalidates outstanding sessions and needs the identity providers updated
+as well as a redeploy.
 
 Then add **Google** as a login method and create a self-hosted application for
 the hostname, with an Allow policy whose include rule is `Emails ending in

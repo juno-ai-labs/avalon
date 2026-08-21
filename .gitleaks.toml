@@ -23,4 +23,18 @@ paths = [
 # digits, `+`, `/`, and `=` — still fails the gate.
 regexes = [
   '''-----BEGIN [A-Z ]*PRIVATE KEY-----\\{1,2}n[A-Za-z][A-Za-z-]{0,38}\\{1,2}n-----END [A-Z ]*PRIVATE KEY-{4,5}''',
+  # The migration tracker's Cloudflare Access Application Audience tag. The
+  # default `generic-api-key` rule flags it because the variable name contains
+  # `access` and the value is 64 high-entropy characters, but an AUD tag is an
+  # identifier, not a credential: it is the `aud` claim of every assertion Access
+  # mints for that application, and holding it grants nothing. Minting an
+  # assertion this Worker would accept needs the team's signing key, which is
+  # what the Worker actually verifies against.
+  #
+  # Pinned to the one literal value rather than to its shape. An allowlist for
+  # `[0-9a-f]{64}` would admit any hex-encoded key anywhere in the repository;
+  # this admits exactly the identifier that was reviewed. If the Access
+  # application is ever recreated the tag changes, the gate fires again, and
+  # somebody looks at it — which is the outcome worth keeping.
+  '''^3be03aa107462e6a4f7dce1320cd32d15acabfb7e9ad3d64926965a81fab07e4$''',
 ]
