@@ -247,7 +247,10 @@ confirms the canonical account preference. A disable is fsynced locally before
 the network mutation, invalidates the live Crashpad generation without opening its
 database, stops upload immediately, and purges queued nonessential rows. Enable
 does not become effective until the compare-and-set regional/canonical update is
-acknowledged. Session changes force a fresh fail-closed read.
+acknowledged. Session changes force a fresh fail-closed read. That read has a
+15-second deadline: it remains bounded, but includes cold DNS, TLS, regional
+Worker activation, and the canonical D1 lookup instead of treating a normal
+cold request as an outage after one second.
 
 Main validates and writes complete envelopes to an owner-only file spool. Each row
 has a separate deadline file, so corrupt JSON still has an enforceable ceiling.
@@ -424,6 +427,9 @@ WorkstreamDO for work-stream product data.
 
 - The pre-renderer route request times out after two seconds and falls back to
   Global; an affirmative EU result creates no pre-region dump.
+- The authenticated Product analytics preference read times out after 15
+  seconds. Until it succeeds, nonessential collection remains disabled for the
+  launch; the timeout never falls back to the device's cached opt-in.
 - Local event rows expire after 14 days, with a 2,000-row/8 MiB spool. Corrupt
   rows are quarantined only when their independent deadline is valid; otherwise
   they are deleted immediately.
@@ -655,6 +661,29 @@ would flag it as a logging change. If Cloudflare ships attribute filtering, this
 is the first thing that should use it.
 
 Shipped in #207.
+
+### 2026-08-20 — Account preference verification receives a cold-network deadline
+
+**What changed:** The desktop's authenticated Product analytics preference GET
+now uses the same 15-second bounded network budget as its preference mutation,
+instead of aborting after one second. The launch still fails closed until the
+canonical regional response is validated.
+
+**Why:** Every tested production launch aborted the verification at exactly one
+second. A signed-in cold request can include DNS, TLS, Worker activation, and a
+regional D1 lookup; one second was shorter than that normal path, so a healthy
+service looked unavailable and Product analytics remained unverified for the
+entire launch.
+
+**Considered and rejected:** Trusting the locally cached opt-in on timeout would
+weaken the account-scoped privacy boundary. Removing the timeout would let a
+hung connection block startup indefinitely. Fifteen seconds matches the
+already-shipped PATCH path and keeps the request bounded.
+
+**Consequences:** A genuinely unavailable preference service can delay startup
+for up to 15 seconds, after which the privacy-safe disabled state remains. New
+startup preference reads must budget for cold network activation without
+falling back to cached enablement.
 
 ### 2026-08-20 — The analytics surrogates gain a second reader
 

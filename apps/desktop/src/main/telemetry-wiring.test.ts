@@ -31,6 +31,20 @@ describe('Electron telemetry wiring', () => {
     expect(productAnalyticsController).toContain('new TelemetryBreadcrumbRing');
   });
 
+  it('gives regional Product analytics preference verification a cold-network deadline', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const request = source.match(
+      /async function requestProductAnalyticsPreference\(\)[\s\S]*?\n\}\n\nasync function syncProductAnalyticsPreference/u,
+    )?.[0];
+
+    expect(source).toContain('const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;');
+    expect(request).toBeDefined();
+    expect(request).toContain(
+      'signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS)',
+    );
+    expect(request).not.toContain('AbortSignal.timeout(1_000)');
+  });
+
   it('observes real Electron application focus transitions', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
 
