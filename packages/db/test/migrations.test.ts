@@ -116,7 +116,12 @@ describe("database migrations", () => {
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'messages'",
     ).get()).toEqual({ name: "messages" });
     database.close();
-  });
+    // Walks all 89 migrations before it can apply the one under test, which is
+    // the longest setup in this file and lands within a few hundred
+    // milliseconds of the 5s default. It passed alone and timed out inside a
+    // full `pnpm test`, where the suites share the machine. The bound is stated
+    // rather than inherited, at the same 15s the other long walk here uses.
+  }, 15_000);
 
   it("keeps the deployed HyperSight filename and renames its tables forward", () => {
     const migrationFiles = readdirSync(migrationsDirectory)
@@ -2367,18 +2372,27 @@ describe("database migrations", () => {
         (id, workspace_id, do_identity_anchor)
       VALUES ('workstream-email', 'workspace-email', 1);
       INSERT INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
+        (local_part, region, workspace_id, workstream_id, created_at, updated_at)
       VALUES ('bright-steady-clear-otter', 'global', 'workspace-email', 'workstream-email',
-              'active', '2026-01-01', '2026-01-01');
+              '2026-01-01', '2026-01-01');
     `);
 
+    // Global records the claim and nothing else. A lifecycle column here would
+    // be a second copy of a decision each region already makes from its own
+    // row when a message arrives.
+    // One assertion per column: `arrayContaining` with two entries would pass
+    // while either survived.
+    const routeColumns = (database.prepare("PRAGMA table_info(workstream_email_routes)")
+      .all() as { name: string }[]).map((column) => column.name);
+    expect(routeColumns).not.toContain("status");
+    expect(routeColumns).not.toContain("disabled_at");
     expect(database.prepare("PRAGMA table_info(workstreams)").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "email_address" })]));
     expect(() => database.exec(`
       INSERT INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
+        (local_part, region, workspace_id, workstream_id, created_at, updated_at)
       VALUES ('bright-steady-clear-otter', 'global', 'workspace-other', 'workstream-other',
-              'active', '2026-01-01', '2026-01-01');
+              '2026-01-01', '2026-01-01');
     `)).toThrow();
     expect(() => database.exec(
       "UPDATE workstream_email_routes SET local_part = 'different-route' WHERE workstream_id = 'workstream-email'",

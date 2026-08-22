@@ -826,6 +826,14 @@ describe("Durable Objects in the Workers runtime", () => {
             "waterline",
             "source_event_id",
           ]));
+          // Global records only that an address is claimed, so there is no
+          // route lifecycle for this object to mirror. A fresh chain must not
+          // recreate the column the drop migration removed.
+          const subscriptionColumns = state.storage.sql.exec<{ name: string }>(
+            `PRAGMA table_info(automation_subscriptions)`,
+          ).toArray().map((column) => column.name);
+          expect(subscriptionColumns).toContain("email_address");
+          expect(subscriptionColumns).not.toContain("email_route_status");
         }
       });
     }
@@ -2214,6 +2222,324 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT COUNT(*) AS count FROM workspace_workstream_viewers`,
       ).one().count).toBe(1);
     });
+  });
+
+  it("answers subscribe with the whole sidebar, unasked", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const common: WorkstreamRegionalEffect = {
+      kind: "directory_common",
+      title: "Opened in one round trip",
+      description: "One answer, three lists",
+      preview: "One answer, three lists",
+      scope: "workspace",
+      state: "running",
+      systemKind: null,
+      lastActivityAt: "2026-08-21T20:00:00.000Z",
+      completedAt: null,
+      archivedAt: null,
+      originType: "ad_hoc",
+      createdByUserId: USER_ID,
+      latestAttentionOrdinal: 1,
+      unreadTrackingStartOrdinal: 0,
+      createdAt: "2026-08-21T19:00:00.000Z",
+      updatedAt: "2026-08-21T20:00:00.000Z",
+      resourceLinks: [],
+    };
+    await expect(stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [effectEnvelope(common, "00000000-0000-7000-8000-000000000701")],
+    })).resolves.toMatchObject({ directoryChanged: true });
+
+    // The automations and the notes are this object's own tables, which is the
+    // whole reason one message can answer for all three.
+    const templateId = "00000000-0000-7000-8000-000000000702";
+    const versionId = "00000000-0000-7000-8000-000000000703";
+    const subscriptionId = "00000000-0000-7000-8000-000000000704";
+    const resourceId = "00000000-0000-7000-8000-000000000705";
+    const noteId = "00000000-0000-7000-8000-000000000706";
+    await expect(stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000707",
+      statements: [
+        {
+          sql: `INSERT INTO automation_templates
+            (id, workspace_id, owner_user_id, name, description, sharing_state,
+             latest_version_number, created_at, updated_at)
+            VALUES (?, ?, ?, 'Monday brief', 'Every Monday', 'workspace', 1,
+                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:00:00.000Z')`,
+          params: [templateId, WORKSPACE_ID, USER_ID],
+        },
+        {
+          sql: `INSERT INTO automation_template_versions
+            (id, template_id, version_number, instructions, trigger_definitions_json,
+             created_by_user_id, created_at)
+            VALUES (?, ?, 1, 'Summarise the week', '[]', ?, '2026-08-21T19:00:00.000Z')`,
+          params: [versionId, templateId, USER_ID],
+        },
+        {
+          sql: `INSERT INTO automation_subscriptions
+            (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+             execution_principal_json, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'workspace', NULL, '{}', 'active',
+                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:30:00.000Z')`,
+          params: [subscriptionId, WORKSPACE_ID, templateId, versionId],
+        },
+        {
+          sql: `INSERT INTO resources
+            (id, workspace_id, resource_type, provider, title, created_at, updated_at)
+            VALUES (?, ?, 'note', 'avalon', 'Standup', '2026-08-21T19:00:00.000Z',
+                    '2026-08-21T19:00:00.000Z')`,
+          params: [resourceId, WORKSPACE_ID],
+        },
+        {
+          sql: `INSERT INTO notes
+            (id, workspace_id, owner_user_id, resource_id, scope, title,
+             last_activity_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'workspace', 'Standup', '2026-08-21T20:30:00.000Z',
+                    '2026-08-21T19:00:00.000Z', '2026-08-21T20:30:00.000Z')`,
+          params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
+        },
+      ],
+    })).resolves.toMatchObject({ status: 200 });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-placement-affinity": "wnam",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000708",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    expect(socket).toBeDefined();
+    socket!.accept();
+
+    try {
+      // The only thing the client says is where it got to. Everything the
+      // sidebar paints comes back on the answer, without being named.
+      const answer = nextMessage(socket!);
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as {
+        type: string;
+        reason: string;
+        sidebar: {
+          workstreams: { items: Array<{ id: string; title: string }>; nextCursor: string | null };
+          automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
+          notes: { waterline: number; items: Array<{ id: string; title: string }> };
+        };
+      };
+
+      expect(event.type).toBe("workspace_sync");
+      expect(event.reason).toBe("initial");
+      const page = event.sidebar;
+      expect(page).toBeDefined();
+      expect(page.workstreams.items).toHaveLength(1);
+      expect(page.workstreams.items[0]).toMatchObject({
+        id: WORKSTREAM_ID,
+        title: "Opened in one round trip",
+      });
+      expect(page.workstreams.nextCursor).toBeNull();
+      expect(page.automations.items).toHaveLength(1);
+      expect(page.automations.items[0]).toMatchObject({ id: subscriptionId, name: "Monday brief" });
+      // Served as stored: reconciling a route is a Global-registry call, and
+      // this handler runs on the object's single thread beside the directory
+      // read. The REST refresh is what fills it in.
+      expect(page.automations.items[0]?.emailAddress).toBeNull();
+      expect(page.notes.items).toHaveLength(1);
+      expect(page.notes.items[0]).toMatchObject({ id: noteId, title: "Standup" });
+      // The batch carries the same counters the pushes carry, so the client
+      // can order the opening list against everything that follows it.
+      expect(page.automations.waterline).toBeGreaterThan(0);
+      expect(page.notes.waterline).toBeGreaterThan(0);
+    } finally {
+      socket!.close(1000, "test complete");
+    }
+  });
+
+  it("pushes the automation list when a write lands, including the scheduler's", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const templateId = "00000000-0000-7000-8000-000000000801";
+    const versionId = "00000000-0000-7000-8000-000000000802";
+    const subscriptionId = "00000000-0000-7000-8000-000000000803";
+    await expect(stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000804",
+      statements: [
+        {
+          sql: `INSERT INTO automation_templates
+            (id, workspace_id, owner_user_id, name, description, sharing_state,
+             latest_version_number, created_at, updated_at)
+            VALUES (?, ?, ?, 'Weekly changelog', 'Every Monday', 'workspace', 1,
+                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:00:00.000Z')`,
+          params: [templateId, WORKSPACE_ID, USER_ID],
+        },
+        {
+          sql: `INSERT INTO automation_template_versions
+            (id, template_id, version_number, instructions, trigger_definitions_json,
+             created_by_user_id, created_at)
+            VALUES (?, ?, 1, 'Summarise', '[]', ?, '2026-08-21T19:00:00.000Z')`,
+          params: [versionId, templateId, USER_ID],
+        },
+        {
+          sql: `INSERT INTO automation_subscriptions
+            (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+             execution_principal_json, status, next_run_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'workspace', NULL, '{}', 'active',
+                    '2026-08-28T09:00:00.000Z', '2026-08-21T19:00:00.000Z',
+                    '2026-08-21T19:00:00.000Z')`,
+          params: [subscriptionId, WORKSPACE_ID, templateId, versionId],
+        },
+      ],
+    })).resolves.toMatchObject({ status: 200 });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-placement-affinity": "wnam",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000805",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    socket!.accept();
+
+    try {
+      const subscribed = nextMessage(socket!);
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
+
+      // Exactly the statement WorkspaceScheduler runs after a scheduled run.
+      // It carries no HTTP request, so the REST mutation middleware never sees
+      // it — before the push this left the sidebar's next-run time stale.
+      const pushed = nextMessage(socket!);
+      await expect(stub.executeRuntimeSql({
+        workspaceId: WORKSPACE_ID,
+        requestId: "00000000-0000-7000-8000-000000000806",
+        statements: [{
+          sql: `UPDATE automation_subscriptions
+                   SET last_run_at = ?1, next_run_at = ?2, updated_at = ?1
+                 WHERE id = ?3 AND workspace_id = ?4`,
+          params: [
+            "2026-08-21T21:00:00.000Z",
+            "2026-09-04T09:00:00.000Z",
+            subscriptionId,
+            WORKSPACE_ID,
+          ],
+        }],
+      })).resolves.toMatchObject({ status: 200 });
+
+      const event = JSON.parse(String((await pushed).data)) as {
+        type: string;
+        list: string;
+        waterline: number;
+        items: Array<{ id: string; nextRunAt: string | null; lastRunAt: string | null }>;
+      };
+      expect(event.type).toBe("workspace_sidebar_list");
+      expect(event.list).toBe("automations");
+      expect(event.items).toHaveLength(1);
+      expect(event.items[0]).toMatchObject({
+        id: subscriptionId,
+        nextRunAt: "2026-09-04T09:00:00.000Z",
+        lastRunAt: "2026-08-21T21:00:00.000Z",
+      });
+
+      // A second write moves the counter again, and a write to the other list
+      // leaves this one alone: two lists that change independently keep
+      // independent counters, or a note write would hide an automation update.
+      const secondPush = nextMessage(socket!);
+      await expect(stub.executeRuntimeSql({
+        workspaceId: WORKSPACE_ID,
+        requestId: "00000000-0000-7000-8000-000000000807",
+        statements: [{
+          sql: `UPDATE automation_subscriptions SET status = 'paused', updated_at = ?1
+                 WHERE id = ?2 AND workspace_id = ?3`,
+          params: ["2026-08-21T22:00:00.000Z", subscriptionId, WORKSPACE_ID],
+        }],
+      })).resolves.toMatchObject({ status: 200 });
+      const second = JSON.parse(String((await secondPush).data)) as {
+        waterline: number;
+        items: Array<{ status: string }>;
+      };
+      expect(second.waterline).toBeGreaterThan(event.waterline);
+      expect(second.items[0]?.status).toBe("paused");
+    } finally {
+      socket!.close(1000, "test complete");
+    }
+  });
+
+  it("does not push a sidebar list to a socket that has not subscribed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const resourceId = "00000000-0000-7000-8000-000000000811";
+    const noteId = "00000000-0000-7000-8000-000000000812";
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-placement-affinity": "wnam",
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000813",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    socket!.accept();
+
+    try {
+      const frames: string[] = [];
+      socket!.addEventListener("message", (event) => frames.push(String(event.data)));
+      await expect(stub.executeRuntimeSql({
+        workspaceId: WORKSPACE_ID,
+        requestId: "00000000-0000-7000-8000-000000000814",
+        statements: [
+          {
+            sql: `INSERT INTO resources
+              (id, workspace_id, resource_type, provider, title, created_at, updated_at)
+              VALUES (?, ?, 'note', 'avalon', 'Retro', '2026-08-21T19:00:00.000Z',
+                      '2026-08-21T19:00:00.000Z')`,
+            params: [resourceId, WORKSPACE_ID],
+          },
+          {
+            sql: `INSERT INTO notes
+              (id, workspace_id, owner_user_id, resource_id, scope, title,
+               last_activity_at, created_at, updated_at)
+              VALUES (?, ?, ?, ?, 'workspace', 'Retro', '2026-08-21T20:00:00.000Z',
+                      '2026-08-21T19:00:00.000Z', '2026-08-21T20:00:00.000Z')`,
+            params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
+          },
+        ],
+      })).resolves.toMatchObject({ status: 200 });
+
+      // A socket that never subscribed is mid-handshake as far as the room is
+      // concerned; it asks for the whole sidebar when it is ready.
+      expect(frames).toEqual([]);
+    } finally {
+      socket!.close(1000, "test complete");
+    }
   });
 
   it("owns per-user pin ordering in WorkspaceDO SQL", async () => {

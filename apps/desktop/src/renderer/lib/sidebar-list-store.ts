@@ -1,0 +1,87 @@
+import type { QueryClient } from '@tanstack/react-query';
+import type { AutomationSummary, NoteSummary } from './types';
+
+/**
+ * The one receiver for the sidebar's two pushed lists.
+ *
+ * Both producers write through here — the `workspace_sidebar` connect payload
+ * and every later `workspace_sidebar_list` push — because they are two senders of
+ * one field family, and `docs/choosing-sockets-or-rest.md` asks for a single
+ * receiver owning the ledger rather than a comparison at each call site. Two
+ * handlers each deciding for themselves is how a batch that was read before a
+ * write ends up overwriting the push that carried it.
+ *
+ * WorkspaceDO stamps a waterline per list, inside the transaction of the write
+ * that earned it, so a strictly-greater test is a total order here. Equal is
+ * not newer: a resumed automation writes its subscription and then its email
+ * route, and only the second of those two pushes carries a higher number.
+ *
+ * "Both producers" means both *versioned* ones. An optimistic local patch —
+ * `onChangeNoteScope` in the app shell is the only one — writes its list entry
+ * directly, because it has no waterline to be ordered by and inventing one
+ * would corrupt this ledger. Such a patch is not an authority: the push the
+ * same write earns arrives behind it and replaces what it wrote.
+ */
+
+export type SidebarList = 'automations' | 'notes';
+
+/** The cache entries the shell reads these lists under. */
+export const SIDEBAR_LIST_QUERY_KEYS = {
+  automations: ['automations'],
+  notes: ['notes'],
+} as const satisfies Record<SidebarList, readonly unknown[]>;
+
+const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
+
+/**
+ * Keep the ledger for as long as the lists it orders.
+ *
+ * Nothing renders the waterlines, so no `useQuery` observes them and React
+ * Query counts the entry as inactive the moment it is written — collectable
+ * after `gcTime`, five minutes by default. The two lists survive because
+ * `useSocketOwnedList` observes them; the ledger would quietly vanish under
+ * them and reset the guard to -1, at which point the next list to arrive is
+ * applied whatever its version. The lists still look right, so the only visible
+ * symptom is the total order silently no longer holding — the one property this
+ * module exists for.
+ *
+ * Pinned here rather than at provider setup, and before the first write, for
+ * two reasons: a default only applies to a query built after it is set, and the
+ * invariant belongs beside the code that depends on it instead of somewhere a
+ * later provider can forget it.
+ */
+function pinWaterlineLedger(queryClient: QueryClient): void {
+  queryClient.setQueryDefaults(SIDEBAR_LIST_WATERLINES_KEY, { gcTime: Number.POSITIVE_INFINITY });
+}
+
+interface SidebarListItems {
+  automations: AutomationSummary[];
+  notes: NoteSummary[];
+}
+
+/**
+ * Replace one list if this version is newer than the one already applied.
+ *
+ * Returns whether it was applied, which is what the tests assert on: a dropped
+ * duplicate and an applied update are otherwise indistinguishable from outside.
+ */
+export function applyVersionedSidebarList<K extends SidebarList>(
+  queryClient: QueryClient,
+  list: K,
+  waterline: number,
+  items: SidebarListItems[K],
+): boolean {
+  pinWaterlineLedger(queryClient);
+  const waterlines = queryClient.getQueryData<Partial<Record<SidebarList, number>>>(
+    SIDEBAR_LIST_WATERLINES_KEY,
+  ) ?? {};
+  // Seeded at -1 rather than 0: a workspace that has never written either table
+  // is served waterline 0, and that first list still has to apply.
+  if (waterline <= (waterlines[list] ?? -1)) return false;
+  queryClient.setQueryData<Partial<Record<SidebarList, number>>>(
+    SIDEBAR_LIST_WATERLINES_KEY,
+    (current = {}) => ({ ...current, [list]: waterline }),
+  );
+  queryClient.setQueryData<SidebarListItems[K]>(SIDEBAR_LIST_QUERY_KEYS[list], items);
+  return true;
+}

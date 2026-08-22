@@ -1582,15 +1582,6 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
 
 const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
-export const WorkspaceSocketSyncEventSchema = z.object({
-  type: z.literal("workspace_sync"),
-  eventId: WorkstreamStateEventIdSchema,
-  waterline: z.number().int().nonnegative(),
-  occurredAt: TimestampSchema,
-  topics: z.array(WorkspaceSyncTopicSchema).min(1),
-  reason: z.enum(["initial", "change", "history_unavailable"]),
-}).strict();
-
 /**
  * Coordinates one complete work-stream UI snapshot across its two authorities.
  *
@@ -1621,15 +1612,24 @@ export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchem
   workstreamId: IdSchema,
 }).strict();
 
-/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
-export const WorkspaceWorkstreamPageEventSchema = z.object({
-  type: z.literal("workspace_workstream_page"),
-  requestId: IdSchema,
+/**
+ * The body of one cursor-paged directory answer, shared by both events that
+ * carry it: the page a scroll asks for, and the page inside the opening
+ * sidebar batch. Held as fields plus a refinement rather than a schema so both
+ * can spread it into their own strict object — `superRefine` returns a
+ * `ZodEffects`, which cannot be extended.
+ */
+const workspaceWorkstreamPageFields = {
   directoryWaterline: z.number().int().nonnegative(),
   items: z.array(WorkstreamSchema).max(1_250),
   stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-}).strict().superRefine((page, context) => {
+} as const;
+
+function refineWorkstreamPagePairing(
+  page: { items: Array<{ id: string }>; stateVersions: Array<{ workstreamId: string }> },
+  context: z.RefinementCtx,
+): void {
   const itemIds = new Set(page.items.map((item) => item.id));
   const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
   if (itemIds.size !== page.items.length
@@ -1642,7 +1642,128 @@ export const WorkspaceWorkstreamPageEventSchema = z.object({
       message: "must contain exactly one state version for every work stream item",
     });
   }
+}
+
+/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
+export const WorkspaceWorkstreamPageEventSchema = z.object({
+  type: z.literal("workspace_workstream_page"),
+  requestId: IdSchema,
+  ...workspaceWorkstreamPageFields,
+}).strict().superRefine(refineWorkstreamPagePairing);
+
+/**
+ * Everything the sidebar paints, sent unprompted when a workspace socket
+ * subscribes.
+ *
+ * It answers no request and carries no correlation id: the ticket already
+ * proved who connected and which workspace they opened, and all three lists are
+ * WorkspaceDO's own SQLite — the directory, `automation_subscriptions` and
+ * `notes`. There is nothing left for the client to tell the server before the
+ * first paint, so it is not asked to.
+ *
+ * Deliberately serves the p95 and not the debug case: the directory page here
+ * excludes system work streams. Turning Debug enabled on is rare, engineers
+ * only, and re-draws the sidebar from a `list_workstreams` request carrying
+ * `includeSystem` — a follow-up that a person's own action asked for. Loading
+ * the common case unasked and paying a round trip for the rare one is the right
+ * way round; the reverse would put a debug preference in everyone's connect.
+ *
+ * The automation and note arrays are bounded rather than paged: neither has a
+ * cursor, and a workspace past the bound is served its first rows and
+ * reconciled by the next push. A bound that truncates keeps a very large
+ * sidebar painting; a bound that rejects would fail the whole connect.
+ *
+ * Sent on every subscribe, cold or resuming, so a client that missed pushes
+ * while it was away is correct again without replaying the gap. A resume where
+ * nothing moved costs the bytes and applies nothing: every list carries the
+ * waterline its pushes carry, so the client's ordinary comparison drops it.
+ */
+export const WorkspaceSidebarSchema = z.object({
+  workstreams: z.object(workspaceWorkstreamPageFields).strict()
+    .superRefine(refineWorkstreamPagePairing),
+  automations: z.object({
+    waterline: z.number().int().nonnegative(),
+    items: z.array(AutomationSummarySchema).max(250),
+  }).strict(),
+  notes: z.object({
+    waterline: z.number().int().nonnegative(),
+    items: z.array(NoteSummarySchema).max(250),
+  }).strict(),
+}).strict();
+
+/**
+ * The workspace socket's synchronization event, and the sidebar it carries.
+ *
+ * `sidebar` is present on exactly one kind of event: the answer to `subscribe`.
+ * A change broadcast never carries it — those go to every socket at once, and
+ * the sidebar is read per viewer.
+ *
+ * `topics` may be empty only when the sidebar is there, which is the resume
+ * where nothing else moved: the event exists to hand over current state, not to
+ * report news. Everywhere else an event with no topics would be a broadcast
+ * saying nothing, so the refinement keeps that impossible.
+ */
+export const WorkspaceSocketSyncEventSchema = z.object({
+  type: z.literal("workspace_sync"),
+  eventId: WorkstreamStateEventIdSchema,
+  waterline: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema,
+  topics: z.array(WorkspaceSyncTopicSchema),
+  reason: z.enum(["initial", "change", "history_unavailable", "resume"]),
+  sidebar: WorkspaceSidebarSchema.optional(),
+}).strict().superRefine((event, context) => {
+  if (event.topics.length === 0 && event.sidebar === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["topics"],
+      message: "must name at least one topic unless the event carries the sidebar",
+    });
+  }
+  if (event.reason === "resume" && event.sidebar === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["sidebar"],
+      message: "a resume exists to carry the sidebar",
+    });
+  }
 });
+
+/**
+ * One sidebar list and the version WorkspaceDO stamped on it.
+ *
+ * Sent whole rather than as a patch: a row the viewer can no longer see is
+ * expressed by its absence, so archive and delete need no tombstone, and at
+ * most 250 summaries there is nothing a diff would buy but a way to be wrong.
+ *
+ * `waterline` is per list, monotonic within WorkspaceDO, and advanced inside
+ * the transaction of the write that earned it. Two counters rather than one
+ * because the lists change independently, and one counter would let a note
+ * write hide an automation update. It is the same number the opening
+ * `workspace_sidebar` connect payload carries for that list, which is what lets
+ * the payload and the pushes be ordered against each other instead of racing:
+ * both land in one receiver that applies only a strictly greater version.
+ *
+ * The rows carry no per-row version of their own — unlike a work-stream row,
+ * which is assembled from child objects over an unordered Queue and needs one
+ * per field. Here the list is the unit, one authority produces it, and the
+ * whole list is replaced or ignored together.
+ */
+export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
+  z.object({
+    type: z.literal("workspace_sidebar_list"),
+    occurredAt: TimestampSchema,
+    list: z.literal("automations"),
+    waterline: z.number().int().positive(),
+    items: z.array(AutomationSummarySchema).max(250),
+  }).strict(),
+  z.object({
+    type: z.literal("workspace_sidebar_list"),
+    occurredAt: TimestampSchema,
+    list: z.literal("notes"),
+    waterline: z.number().int().positive(),
+    items: z.array(NoteSummarySchema).max(250),
+  }).strict(),
+]);
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.object({
@@ -1751,6 +1872,8 @@ export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
+export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
+export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

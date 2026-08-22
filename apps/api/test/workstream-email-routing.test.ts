@@ -21,17 +21,15 @@ interface RouteRow {
   workspace_id: string;
   workstream_id: string | null;
   automation_subscription_id: string | null;
-  status: "reserved" | "active" | "disabled";
   created_at: string;
   updated_at: string;
-  disabled_at: string | null;
 }
 
 interface LocalWorkstreamRow {
   id: string;
   workspace_id: string;
   email_address: string | null;
-  email_route_status: RouteRow["status"];
+  email_route_status: "reserved" | "active" | "disabled";
   archived_at: string | null;
   updated_at: string;
 }
@@ -40,7 +38,6 @@ interface LocalAutomationRow {
   id: string;
   workspace_id: string;
   email_address: string | null;
-  email_route_status: RouteRow["status"];
   status: "active" | "paused";
   lifecycle_state: "visible" | "archived" | "deleted";
   updated_at: string;
@@ -98,8 +95,7 @@ class FakeDatabase {
     }
     if (sql.includes("FROM workstream_email_routes") && sql.includes("WHERE local_part = ?")) {
       const localPart = String(values[0]).toLowerCase();
-      return this.routes.find((row) =>
-        row.local_part.toLowerCase() === localPart && row.status === "active") ?? null;
+      return this.routes.find((row) => row.local_part.toLowerCase() === localPart) ?? null;
     }
     if (sql.includes("FROM workstream_email_routes") && sql.includes("WHERE region = ?")) {
       if (sql.includes("automation_subscription_id = ?")) {
@@ -140,48 +136,9 @@ class FakeDatabase {
         workspace_id: workspaceId!,
         workstream_id: workstreamId!,
         automation_subscription_id: automationSubscriptionId,
-        status: "reserved",
         created_at: createdAt!,
         updated_at: updatedAt!,
-        disabled_at: null,
       });
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstream_email_routes")) {
-      if (sql.includes("SET status = 'active'")) {
-        const [updatedAt, region, workspaceId, workstreamId] = values;
-        const route = this.routes.find((row) =>
-          row.region === region
-          && row.workspace_id === workspaceId
-          && row.workstream_id === workstreamId);
-        if (!route) return result(0);
-        route.status = "active";
-        route.updated_at = String(updatedAt);
-        route.disabled_at = null;
-        return result(1);
-      }
-      if (sql.includes("workstream_id IS NULL") && sql.includes("automation_subscription_id = ?")) {
-        const [status, updatedAt, , disabledAt, region, workspaceId, automationSubscriptionId] = values;
-        const route = this.routes.find((row) =>
-          row.region === region
-          && row.workspace_id === workspaceId
-          && row.workstream_id === null
-          && row.automation_subscription_id === automationSubscriptionId);
-        if (!route) return result(0);
-        route.status = String(status) as RouteRow["status"];
-        route.updated_at = String(updatedAt);
-        route.disabled_at = status === "disabled" ? String(disabledAt) : null;
-        return result(1);
-      }
-      const [status, updatedAt, , disabledAt, region, workspaceId, workstreamId] = values;
-      const route = this.routes.find((row) =>
-        row.region === region
-        && row.workspace_id === workspaceId
-        && row.workstream_id === workstreamId);
-      if (!route) return result(0);
-      route.status = String(status) as RouteRow["status"];
-      route.updated_at = String(updatedAt);
-      route.disabled_at = status === "disabled" ? String(disabledAt) : null;
       return result(1);
     }
     if (sql.includes("UPDATE workstreams") && sql.includes("SET email_address = ?")) {
@@ -200,30 +157,7 @@ class FakeDatabase {
         row.id === automationId && row.workspace_id === workspaceId && row.email_address == null);
       if (!automation) return result(0);
       automation.email_address = emailAddress!;
-      automation.email_route_status = "reserved";
       automation.updated_at = updatedAt!;
-      return result(1);
-    }
-    if (sql.includes("UPDATE automation_subscriptions SET email_route_status = ?")) {
-      const [status, updatedAt, automationId, workspaceId, emailAddress] = values.map(String);
-      const automation = this.automations.find((row) =>
-        row.id === automationId
-        && row.workspace_id === workspaceId
-        && row.email_address?.toLowerCase() === emailAddress?.toLowerCase());
-      if (!automation) return result(0);
-      automation.email_route_status = status as RouteRow["status"];
-      automation.updated_at = updatedAt!;
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstreams SET email_route_status = ?")) {
-      const [status, updatedAt, workstreamId, workspaceId, emailAddress] = values.map(String);
-      const workstream = this.workstreams.find((row) =>
-        row.id === workstreamId
-        && row.workspace_id === workspaceId
-        && row.email_address?.toLowerCase() === emailAddress?.toLowerCase());
-      if (!workstream) return result(0);
-      workstream.email_route_status = status as RouteRow["status"];
-      workstream.updated_at = updatedAt!;
       return result(1);
     }
     throw new Error(`Unexpected run query: ${sql}`);
@@ -245,8 +179,17 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(first.emailAddress).toBe(`${first.localPart}@${DOMAIN}`);
     expect(first.localPart).toMatch(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u);
     expect(first.localPart.split("-")).toHaveLength(4);
-    expect(first.status).toBe("reserved");
-    await expect(service.resolveActive(first.localPart)).resolves.toBeNull();
+    // The row is the claim and nothing else. Anything resembling a lifecycle
+    // here would be a second copy of what the owner's own row already says.
+    expect(Object.keys(database.routes[0]!)).toEqual([
+      "local_part",
+      "region",
+      "workspace_id",
+      "workstream_id",
+      "automation_subscription_id",
+      "created_at",
+      "updated_at",
+    ]);
     expect(database.routes).toHaveLength(1);
     expect(database.routeInsertAttempts).toBe(1);
   });
@@ -261,21 +204,22 @@ describe("WorkstreamEmailRoutingService", () => {
       status: 404,
       code: "workstream_not_found",
     } satisfies Partial<ApiError>);
-    expect(database.routes[0]?.status).toBe("reserved");
-    await expect(service.resolveActive(reservation.localPart)).resolves.toBeNull();
 
     database.workstreams.push(localWorkstream(input, reservation.emailAddress));
     await expect(service.activateWorkstreamRoute(input)).resolves.toMatchObject({
       ...input,
       emailAddress: reservation.emailAddress,
-      status: "active",
     });
-    expect(database.routes[0]?.status).toBe("active");
-    expect(database.workstreams[0]?.email_route_status).toBe("active");
-    await expect(service.resolveActive(reservation.localPart)).resolves.toMatchObject({
-      ...input,
-      status: "active",
-    });
+
+    // Archiving the owner closes the route without Global being told: the
+    // refusal is read from the work stream itself, which is the same row the
+    // inbound path consults.
+    database.workstreams[0]!.archived_at = "2026-08-03T00:00:00.000Z";
+    await expect(service.activateWorkstreamRoute(input)).rejects.toMatchObject({
+      status: 409,
+      code: "workstream_email_owner_archived",
+    } satisfies Partial<ApiError>);
+    expect(database.routes).toHaveLength(1);
   });
 
   it("reconciles EU activation through Global only after the EU owner exists", async () => {
@@ -285,8 +229,6 @@ describe("WorkstreamEmailRoutingService", () => {
       ping: async () => success(await globalService.pingGlobalRegistry()),
       reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
       reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
-      activateMany: async (inputs) => success(await globalService.activateManyInGlobalRegistry(inputs)),
-      setStatus: async (input) => success(await globalService.setStatus(input)),
     };
     const euDatabase = new FakeDatabase();
     const euService = new WorkstreamEmailRoutingService(environment(euDatabase, {
@@ -301,13 +243,16 @@ describe("WorkstreamEmailRoutingService", () => {
       status: 404,
       code: "workstream_not_found",
     } satisfies Partial<ApiError>);
-    expect(globalDatabase.routes[0]?.status).toBe("reserved");
 
     euDatabase.workstreams.push(localWorkstream(input, reservation.emailAddress));
-    await euService.activateWorkstreamRoute(input);
+    await expect(euService.activateWorkstreamRoute(input)).resolves.toMatchObject({
+      emailAddress: reservation.emailAddress,
+    });
 
-    expect(globalDatabase.routes[0]?.status).toBe("active");
-    expect(euDatabase.workstreams[0]?.email_route_status).toBe("active");
+    // One Global row, written once, and the EU owner gate answered without a
+    // second Global call: the claim is all that crosses the boundary.
+    expect(globalDatabase.routes).toHaveLength(1);
+    expect(globalDatabase.routes[0]?.local_part).toBe(reservation.localPart);
   });
 
   it("retries the deterministic candidate sequence after a global collision", async () => {
@@ -358,8 +303,6 @@ describe("WorkstreamEmailRoutingService", () => {
       ping: async () => success(await globalService.pingGlobalRegistry()),
       reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
       reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
-      activateMany: async (inputs) => success(await globalService.activateManyInGlobalRegistry(inputs)),
-      setStatus: async (input) => success(await globalService.setStatus(input)),
     };
     const euDatabase = new FakeDatabase();
     const euService = new WorkstreamEmailRoutingService(environment(euDatabase, {
@@ -408,7 +351,6 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(route).toMatchObject({
       ...input,
       localPart: secondCandidate,
-      status: "reserved",
     });
     expect(route.localPart).not.toBe(firstCandidate);
     expect(database.routes).toHaveLength(2);
@@ -418,7 +360,7 @@ describe("WorkstreamEmailRoutingService", () => {
     });
   });
 
-  it("disables a paused automation route and reactivates the same address on resume", async () => {
+  it("keeps one address across pause and resume, and records no status for it", async () => {
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database));
     const input = {
@@ -431,110 +373,48 @@ describe("WorkstreamEmailRoutingService", () => {
       id: input.automationSubscriptionId,
       workspace_id: input.workspaceId,
       email_address: reservation.emailAddress,
-      email_route_status: "reserved",
       status: "active",
       lifecycle_state: "visible",
       updated_at: "2026-08-02T00:00:00.000Z",
     };
     database.automations.push(automation);
 
-    await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
+    await expect(service.activateAutomationRoute(input)).resolves.toMatchObject({
       emailAddress: reservation.emailAddress,
-      status: "active",
     });
-    expect(database.routes[0]).toMatchObject({ status: "active" });
 
+    // Pausing is refused at the gate and writes nothing to Global. The address
+    // is unchanged, because pausing does not release a claim.
     automation.status = "paused";
-    automation.email_route_status = "reserved";
-    await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
-      emailAddress: reservation.emailAddress,
-      status: "disabled",
-    });
-    expect(database.routes[0]).toMatchObject({
-      local_part: reservation.localPart,
-      status: "disabled",
-    });
-    expect(database.routes[0]?.disabled_at).not.toBeNull();
+    await expect(service.activateAutomationRoute(input)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_not_active",
+    } satisfies Partial<ApiError>);
+    expect(database.routes[0]).toMatchObject({ local_part: reservation.localPart });
 
     automation.status = "active";
-    automation.email_route_status = "reserved";
-    await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
+    await expect(service.activateAutomationRoute(input)).resolves.toMatchObject({
       emailAddress: reservation.emailAddress,
-      status: "active",
     });
-    expect(database.routes[0]).toMatchObject({
-      local_part: reservation.localPart,
-      status: "active",
-    });
-    expect(database.routes[0]?.disabled_at).toBeNull();
+    // One row, written once, through the whole cycle. There is no transition
+    // for an interrupted call to leave half-applied.
     expect(database.routes).toHaveLength(1);
+    expect(database.routeInsertAttempts).toBe(1);
   });
 
-  it("keeps disabled routes as tombstones and can explicitly reactivate them", async () => {
+  it("keeps a claimed address after its owner stops using it", async () => {
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database));
     const input = routeInput("workstream-tombstone");
     const reserved = await service.reserve(input);
 
-    await expect(service.setStatus({ ...input, status: "disabled" })).resolves.toEqual({ ok: true });
-    await expect(service.resolveActive(reserved.localPart)).resolves.toBeNull();
-    expect(database.routes).toHaveLength(1);
-    expect(database.routes[0]).toMatchObject({
-      local_part: reserved.localPart,
-      status: "disabled",
-    });
-    expect(database.routes[0]?.disabled_at).not.toBeNull();
-
-    // Reserving the same destination does not mint or recycle a different name.
+    // Nothing releases a claim — there is no call that could. Asking again for
+    // the same destination returns the same name rather than minting another.
     await expect(service.reserve(input)).resolves.toMatchObject({
       localPart: reserved.localPart,
       emailAddress: reserved.emailAddress,
-      status: "disabled",
     });
     expect(database.routes).toHaveLength(1);
-
-    await service.setStatus({ ...input, status: "active" });
-    await expect(service.resolveActive(reserved.localPart)).resolves.toMatchObject({
-      localPart: reserved.localPart,
-      emailAddress: reserved.emailAddress,
-      status: "active",
-    });
-    expect(database.routes[0]?.disabled_at).toBeNull();
-  });
-
-  it("reconciles archive and reactivation from the durable regional marker", async () => {
-    const database = new FakeDatabase();
-    const service = new WorkstreamEmailRoutingService(environment(database));
-    const input = routeInput("workstream-archive-lifecycle");
-    const reservation = await service.reserve(input);
-    const workstream = localWorkstream(input, reservation.emailAddress);
-    database.workstreams.push(workstream);
-    await service.activateWorkstreamRoute(input);
-
-    workstream.archived_at = "2026-08-02T12:00:00.000Z";
-    workstream.email_route_status = "reserved";
-    await expect(service.ensureWorkstreamAddress(input)).resolves.toMatchObject({ status: "disabled" });
-    expect(database.routes[0]?.status).toBe("disabled");
-    expect(workstream.email_route_status).toBe("disabled");
-    await expect(service.resolveActive(reservation.localPart)).resolves.toBeNull();
-
-    workstream.archived_at = null;
-    workstream.email_route_status = "reserved";
-    await expect(service.ensureWorkstreamAddress(input)).resolves.toMatchObject({ status: "active" });
-    expect(database.routes[0]?.status).toBe("active");
-    expect(workstream.email_route_status).toBe("active");
-  });
-
-  it("fails when asked to change the status of a missing route", async () => {
-    const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase()));
-
-    await expect(service.setStatus({
-      ...routeInput("workstream-missing-route"),
-      status: "active",
-    })).rejects.toMatchObject({
-      status: 404,
-      code: "workstream_email_route_not_found",
-    } satisfies Partial<ApiError>);
   });
 
   it("never recycles a disabled local part for a different destination", async () => {
@@ -555,7 +435,6 @@ describe("WorkstreamEmailRoutingService", () => {
       tombstonedCandidate,
       "retired-workspace",
       "retired-workstream",
-      "disabled",
     ));
     const service = new WorkstreamEmailRoutingService(environment(database));
 
@@ -565,7 +444,6 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(database.routes).toHaveLength(2);
     expect(database.routes[0]).toMatchObject({
       local_part: tombstonedCandidate,
-      status: "disabled",
       workspace_id: "retired-workspace",
       workstream_id: "retired-workstream",
     });
@@ -577,14 +455,11 @@ describe("WorkstreamEmailRoutingService", () => {
       ...input,
       localPart: "bright-steady-clear-otter",
       emailAddress: `bright-steady-clear-otter@${DOMAIN}`,
-      status: "reserved" as const,
     };
     const ping = vi.fn(async () => success({ region: "global" as const, domain: DOMAIN }));
     const reserve = vi.fn(async () => success(route));
     const reserveMany = vi.fn(async () => success([route]));
-    const setStatus = vi.fn(async () => success({ ok: true as const }));
-    const activateMany = vi.fn(async () => success({ ok: true as const }));
-    const binding: GlobalWorkstreamEmailRouterRpcBinding = { ping, reserve, reserveMany, activateMany, setStatus };
+    const binding: GlobalWorkstreamEmailRouterRpcBinding = { ping, reserve, reserveMany };
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database, {
       AVALON_REGION: "eu",
@@ -593,9 +468,7 @@ describe("WorkstreamEmailRoutingService", () => {
     }));
 
     await expect(service.reserve(input)).resolves.toEqual(route);
-    await expect(service.setStatus({ ...input, status: "disabled" })).resolves.toEqual({ ok: true });
     expect(reserve).toHaveBeenCalledExactlyOnceWith(input);
-    expect(setStatus).toHaveBeenCalledExactlyOnceWith({ ...input, status: "disabled" });
     expect(database.routeInsertAttempts).toBe(0);
   });
 
@@ -609,17 +482,13 @@ describe("WorkstreamEmailRoutingService", () => {
       ...input,
       localPart: `bright-steady-clear-animal${index}`,
       emailAddress: `bright-steady-clear-animal${index}@${DOMAIN}`,
-      status: "reserved",
     }));
     const reserve = vi.fn(async () => success(routes[0]!));
     const reserveMany = vi.fn(async () => success(routes));
-    const activateMany = vi.fn(async () => success({ ok: true as const }));
     const binding = {
       ping: vi.fn(async () => success({ region: "global" as const, domain: DOMAIN })),
       reserve,
       reserveMany,
-      activateMany,
-      setStatus: vi.fn(async () => success({ ok: true as const })),
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database, {
@@ -629,10 +498,8 @@ describe("WorkstreamEmailRoutingService", () => {
     }));
 
     await expect(service.reserveMany(inputs)).resolves.toEqual(routes);
-    await expect(service.activateMany(inputs)).resolves.toEqual({ ok: true });
 
     expect(reserveMany).toHaveBeenCalledExactlyOnceWith(inputs);
-    expect(activateMany).toHaveBeenCalledExactlyOnceWith(inputs);
     expect(reserve).not.toHaveBeenCalled();
     expect(database.routeInsertAttempts).toBe(0);
   });
@@ -643,8 +510,6 @@ describe("WorkstreamEmailRoutingService", () => {
       ping: vi.fn(async () => success({ region: "global" as const, domain: DOMAIN })),
       reserve: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
       reserveMany: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
-      activateMany: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
-      setStatus: vi.fn(async () => success({ ok: true as const })),
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
       AVALON_REGION: "eu",
@@ -670,8 +535,6 @@ describe("WorkstreamEmailRoutingService", () => {
       ping,
       reserve: vi.fn(),
       reserveMany: vi.fn(),
-      activateMany: vi.fn(),
-      setStatus: vi.fn(),
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
       AVALON_REGION: "eu",
@@ -712,19 +575,6 @@ describe("WorkstreamEmailRoutingService", () => {
       status: 503,
       code: "workstream_email_router_unavailable",
     } satisfies Partial<ApiError>);
-    await expect(service.activateMany([
-      routeInput("workstream-unrouted-activation", "eu"),
-    ])).rejects.toMatchObject({
-      status: 503,
-      code: "workstream_email_router_unavailable",
-    } satisfies Partial<ApiError>);
-    await expect(service.setStatus({
-      ...routeInput("workstream-unrouted", "eu"),
-      status: "disabled",
-    })).rejects.toMatchObject({
-      status: 503,
-      code: "workstream_email_router_unavailable",
-    } satisfies Partial<ApiError>);
     },
   );
 
@@ -741,12 +591,6 @@ describe("WorkstreamEmailRoutingService", () => {
     } satisfies Partial<ApiError>);
     await expect(service.reserveManyInGlobalRegistry([
       routeInput("workstream-regional-registry-bulk", "eu"),
-    ])).rejects.toMatchObject({
-      status: 503,
-      code: "workstream_email_registry_region_invalid",
-    } satisfies Partial<ApiError>);
-    await expect(service.activateManyInGlobalRegistry([
-      routeInput("workstream-regional-activation", "eu"),
     ])).rejects.toMatchObject({
       status: 503,
       code: "workstream_email_registry_region_invalid",
@@ -789,7 +633,6 @@ function existingRoute(
   localPart: string,
   workspaceId: string,
   workstreamId: string,
-  status: RouteRow["status"] = "active",
 ): RouteRow {
   return {
     local_part: localPart,
@@ -797,10 +640,8 @@ function existingRoute(
     workspace_id: workspaceId,
     workstream_id: workstreamId,
     automation_subscription_id: null,
-    status,
     created_at: "2026-08-02T00:00:00.000Z",
     updated_at: "2026-08-02T00:00:00.000Z",
-    disabled_at: status === "disabled" ? "2026-08-02T00:00:01.000Z" : null,
   };
 }
 

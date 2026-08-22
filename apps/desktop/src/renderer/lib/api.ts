@@ -576,7 +576,8 @@ function mapAutomationRun(run: WireAutomationRun, title: string): AutomationRunS
   };
 }
 
-function mapAutomationSummary(automation: z.infer<typeof WireAutomationSummarySchema>): AutomationSummary {
+/** Exported for the workspace socket's sidebar batch, which carries the same wire rows. */
+export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSummarySchema>): AutomationSummary {
   return {
     id: automation.id,
     name: automation.name,

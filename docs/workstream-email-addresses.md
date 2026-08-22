@@ -14,7 +14,7 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/lib/workstream-email-address.ts` | The v1 format, the frozen vocabulary, and the HMAC allocator. |
-| `apps/api/src/services/workstream-email-routing-service.ts` | The Global `workstream_email_routes` registry: reserve, activate, disable, tombstone. |
+| `apps/api/src/services/workstream-email-routing-service.ts` | The Global `workstream_email_routes` ledger: which addresses are taken, and by whom. |
 | `apps/api/src/workstream-email-routing-bridge.ts` | The named RPC binding every non-Global region reserves through. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Inbound delivery: idempotency, leases, the sender check, the hourly budget. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
@@ -74,18 +74,28 @@ and both owner kinds. The Global control plane owns the historical
 `workstream_email_routes` registry; Global work streams and automations reserve
 there directly, and every non-Global data plane reserves through the named
 `WorkstreamEmailRoutingBridge` RPC binding. The registry's case-insensitive primary
-key is the local part, so collisions, disabled routes, and tombstones are shared
-across all regions and owner kinds, and a name can never be reused by another work
-stream or automation.
+key is the local part, so a claim is shared across all regions and owner kinds,
+and a name can never be reused by another work stream or automation.
 
-Reservation and activation are separable, but on the create path they are not
-separated. The address a work stream keeps comes from the reservation, and
-activation — which decides whether inbound mail routes there yet — is awaited by
-`POST /workstreams` too. Deferring it was tried and reverted: `list` backfills
-every route that is not yet `active` through `backfillWorkstreamAddresses`, and a
-create invalidates that list immediately, so the hop was paid a moment later anyway
-with two activations of one route able to overlap. See
-[`workstream-creation.md`](workstream-creation.md).
+**The ledger records only that an address is taken and where it points.** It holds
+no lifecycle: no `reserved`/`active`/`disabled` status, no `disabled_at`. Whether
+mail is actually accepted is decided regionally, at delivery, from the owner's own
+row — a work stream must not be archived, an automation must be `status = 'active'`
+and `lifecycle_state = 'visible'`. Because a claim is never released, there is
+nothing for a pause, an archive, or a delete to write here.
+
+`activateWorkstreamRoute` and `activateAutomationRoute` therefore reserve the
+address and then read that regional row, returning the address or refusing with
+`workstream_email_owner_archived` / `automation_not_active`. They are
+a gate, not a transition.
+
+**Each gate reads through the database that owns its row.** An automation's
+`status` and `lifecycle_state` come from the workspace facade, because
+`automation_subscriptions` is a workspace-local table and the facade routes it
+into WorkspaceDO. A work stream's `archived_at` must come from
+`workstreamExecutionEnvironment` instead: `workstreams` is *not* workspace-local,
+so the facade would send the read to regional D1, where migration 0090 left only
+the identity anchor and dropped that column.
 
 ### Inbound delivery
 
@@ -99,7 +109,7 @@ provider retry uses the Resend email ID as the idempotency key, so it resolves t
 the same work stream and run. Receipt rows use reclaimable processing
 leases so an interrupted delivery can continue after the lease expires. The
 work-stream email receipt, the automation receipt, its rate window and the
-resulting product state are all WorkspaceDO rows; the Global address registry
+resulting product state are all WorkspaceDO rows; the Global address ledger
 remains only the opaque address-to-region/workspace/owner route needed before
 the regional object can be selected.
 
@@ -111,8 +121,10 @@ outbound web search and fetch tools so untrusted mail cannot use them as an
 exfiltration channel. Connector reads and Avalon's internal work-stream tools
 remain available.
 
-Pausing an automation disables its Global route. Resuming it reactivates the same
-address. An archived or deleted owner leaves a disabled permanent route tombstone.
+Pausing an automation changes nothing in Global: the claim stands and the
+resolver's `status = 'active'` test refuses the mail. Resuming makes the same
+address deliverable again. An archived or deleted owner keeps its claim forever —
+the row is the tombstone.
 
 ### Outbound automation results
 
@@ -248,15 +260,17 @@ sunbird, terrapin, waxbill
   generation version.
 - **Issued addresses are persisted and never recomputed.** The stored address is
   authoritative; re-deriving one is how a vocabulary change would rewrite history.
-- **An address is never recycled.** Deleted and disabled routes are permanent
-  tombstones, because a stale sender must never reach a different work stream or
-  automation.
+- **An address is never recycled.** A ledger row is a permanent tombstone, because
+  a stale sender must never reach a different work stream or automation.
+- **The Global ledger stores a claim, not a lifecycle.** Whether mail is accepted
+  is re-derived regionally from the owner's own row at delivery. A second copy of
+  that state in Global could only ever disagree with it.
 - **There is exactly one reservation namespace, in Global**, shared by every region
   and both owner kinds. A regional Worker never allocates from its own database and
   **fails closed** when the Global registry is unavailable — a second allocator is a
   second answer to a unique name.
-- **The registry's key is case-insensitive**, so collisions, disabled routes, and
-  tombstones are shared regardless of how a name is cased.
+- **The registry's key is case-insensitive**, so claims and tombstones are shared
+  regardless of how a name is cased.
 - **Work-stream mail never starts an agent run.** It attaches as an untrusted
   resource and transcript entry, and nothing more.
 - **An inbound address is a routing identifier, never an authenticator.** The From
@@ -336,6 +350,53 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-22 — The work-stream gate reads the object, not the anchor
+
+**What changed:** `activateWorkstreamRoute` reads `archived_at` through
+`workstreamExecutionEnvironment` rather than `workspaceDatabase`.
+
+**Why:** The entry below replaced a Global `status` filter with a read of the
+owner's own row, and took the wrong database to it. `workstreams` is not in
+`WORKSPACE_LOCAL_TABLES`, so the workspace facade passes the statement to
+regional D1 — which after migration 0090 holds only the routing columns. The
+gate would have thrown `no such column: archived_at` after the address was
+already reserved, on the automation-run and Slack work-stream create paths that
+call it. `ensureWorkstreamAddress`, two lines above, already read the same table
+through the execution environment; this brings the pair back into agreement.
+
+**Considered and rejected:** Adding `workstreams` to `WORKSPACE_LOCAL_TABLES`,
+which would claim WorkspaceDO owns a table the work-stream object owns and
+misroute every other reader of it. A future gate on work-stream state has to
+take the execution environment; the anchor answers nothing about the product.
+
+### 2026-08-22 — Global holds the claim, the region holds the lifecycle
+
+**What changed:** `workstream_email_routes` lost `status` and `disabled_at`
+(migration `0092`), and the regional mirror of the same value —
+`automation_subscriptions.email_route_status` — was dropped with it (WorkspaceDO
+migration 7). Every function that existed to move a route between `reserved`,
+`active`, and `disabled` is gone: `setStatus`, `setAutomationStatuses`,
+`activateMany`, their `…InGlobalRegistry` counterparts, `resolveActive`, and both
+backfills. `activateWorkstreamRoute` and `activateAutomationRoute` now read the
+owner's own row and either return the address or refuse.
+
+**Why:** An address is never reused, so the only fact Global needs is that a local
+part is taken. The status beside it was a second copy of state whose authority is
+regional, and every reader already had the real answer next to it: inbound mail
+resolves an automation with `status = 'active' AND lifecycle_state = 'visible'`
+and a work stream with `archived_at IS NULL`, both derived from the owner rather
+than the route. That made the Global copy unable to change any outcome, but able
+to disagree — and reconciling it needed the periodic repair the desktop ran, plus
+the backfills the list paths ran, to converge two records that could simply be
+one.
+
+**Considered and rejected:** Keeping `status` and fixing the repair, which buys a
+denormalized copy of state nobody reads and keeps a cross-region write on every
+pause; and keeping the regional mirror while dropping Global's, which leaves the
+same duplication one layer down. A future change must not reintroduce a lifecycle
+column here: if a route ever needs to be revoked independently of its owner, the
+place to record it is the owner's region, where the decision is made.
 
 ### 2026-08-18 — Regional email product state moves into WorkspaceDO
 

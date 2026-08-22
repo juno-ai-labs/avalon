@@ -42,6 +42,11 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * transcript and anything like it. That is a property of the request, not of
  * the identity of the list, which is why it stays out of the key.
  *
+ * The first page is not fetched at all. Subscribing to the workspace socket is
+ * answered with the whole sidebar unasked, and the provider writes it — so this
+ * query exists for what a person's own action asks for afterwards: scrolling
+ * past page one, turning Debug enabled on, and reloading after a pin.
+ *
  * ## Why this pages by hand rather than with `useInfiniteQuery`
  *
  * `useInfiniteQuery` stores `{ pages, pageParams }` under its key. Eight call
@@ -65,7 +70,7 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  *   re-reading everything above it.
  */
 export function useWorkstreamsQuery(): WorkstreamsQuery {
-  const { listWorkstreams } = useWorkspaceSocket();
+  const { listWorkstreams, sidebarConnect } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
   const pagesLoaded = useRef(1);
@@ -98,8 +103,27 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       setHasMore(cursor != null);
       return mergeWorkstreams([], items);
     },
+    // Not fetched on mount: the first page arrives unasked with the connect
+    // payload, and asking for it as well is the round trip that payload exists
+    // to remove. Enabled once one has landed, at which point the cache is
+    // already populated and infinitely fresh — so nothing fetches until
+    // something explicitly invalidates, which is the debug toggle or a pin.
+    enabled: sidebarConnect !== null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+
+  // Paging is the client's own position and the payload knows nothing about it.
+  // Adopted only while page one is all that is loaded: a reader who has
+  // scrolled holds a cursor further down the list, and taking the payload's
+  // would make the next scroll re-fetch a page they already have.
+  const observedConnect = useRef(0);
+  useEffect(() => {
+    if (!sidebarConnect || sidebarConnect.generation === observedConnect.current) return;
+    observedConnect.current = sidebarConnect.generation;
+    if (pagesLoaded.current !== 1) return;
+    nextCursor.current = sidebarConnect.nextCursor;
+    setHasMore(sidebarConnect.nextCursor !== null);
+  }, [sidebarConnect]);
 
   const fetchMore = useCallback(() => {
     const cursor = nextCursor.current;

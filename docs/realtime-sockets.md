@@ -34,7 +34,9 @@ is recorded.
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
-| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages and retains the last page while a reconnect retries its request. |
+| `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
@@ -150,8 +152,8 @@ complete topic catalog is:
 | `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
 | `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
-| `automations` | Automation definitions, drafts, subscriptions, pause/archive status, trigger schedules, next/last runs, and work-stream-producing changes. |
-| `notes` | Workspace/personal note directory, recording/import state, and note detail invalidation. |
+| `automations` | Automation detail and drafts. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
+| `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
 | `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
@@ -166,7 +168,72 @@ common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed wo
 and the next cursor. Pending page requests survive a transient reconnect
 and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
-REST/D1 list endpoint to reconstruct them. The renderer applies WorkspaceDO-owned
+REST/D1 list endpoint to reconstruct them.
+
+Subscribing is answered with the sidebar itself. The `workspace_sync` event that
+answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
+the viewer's automations and notes, each bounded at 250 rows and each stamped
+with its own waterline. All three come from this object's own SQLite —
+`workspace_workstream_directory`, `automation_subscriptions` and `notes` — read
+with no `await` between them, so the sidebar opens on one consistent snapshot
+and on no request at all. The client's `subscribe` frame names no collection, no
+filter and no page size; it carries a waterline, which is where that client got
+to, not what it would like.
+
+Every subscribe carries it, cold or resuming. A resume where no topic moved
+still gets one, under `reason: "resume"` with an empty topic list — the one
+event shape allowed to name no topics, because it exists to hand over state
+rather than to report news. That matters because a push can be missed while a
+socket is away and produce no topic at all: the workspace alarm advancing an
+automation's next run is exactly that. A resume that missed nothing costs the
+bytes and applies nothing, since every list carries the waterline its pushes
+carry and the client's comparison drops it. Receivers must apply the sidebar
+*before* the topic-waterline guard, or a resume repeating a waterline the client
+already holds would be discarded along with the state it was sent to deliver.
+They must also skip `workstream_directory` while handling an event that carried
+the sidebar: `initial` names every topic, so invalidating that one would send
+the client back for the page the same event just delivered — the round trip this
+payload exists to remove, reintroduced one line below it.
+
+The directory page in that payload deliberately excludes system work streams.
+Debug enabled is rare and engineers only, and the server does not hold the
+preference — it lives in the desktop's own application settings — so a viewer
+who wants those rows re-draws the sidebar from a `list_workstreams` request
+carrying `includeSystem`. Loading the common case unasked and paying a round
+trip for the rare one is the way round that suits the p95; the reverse would put
+a debug preference in everyone's connect. The automations and notes do not vary
+by it at all.
+
+Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
+affected list whole as `workspace_sidebar_list` whenever it writes one of their
+rows, so the batch is the only load and the push is the only refresh — which is
+also why *every* first page is a batch, not just the cold one: a reconnect or a
+debug toggle reloads the directory, and those two lists have nothing else to
+reload them.
+
+Change detection sits in `runWorkspaceSql`, the one entry point every write to
+these tables passes through — a desktop REST write, a Workflow, and the
+workspace alarm advancing `next_run_at` after a scheduled run. That last one is
+why the push exists rather than another topic: the alarm carries no HTTP
+request, so the mutation middleware that derives topics from a request path
+never saw it, and a sidebar row's next-run time stayed stale until something
+unrelated refetched the list. The alarm reaches its own SQL through
+`localWorkspaceEnv` rather than the RPC method, so both callers go through
+`runWorkspaceSql` — a check on the RPC method alone would miss the writer that
+motivated it.
+
+The event carries the whole list and a waterline for that list, monotonic within
+WorkspaceDO and advanced inside the transaction of the write that earned it. Two
+counters rather than one, because the lists change independently and one counter
+would let a note write hide an automation update. The opening batch carries the
+same two numbers, so the batch and every later push land in one client receiver
+that applies only a strictly greater version — `sidebar-list-store.ts` — rather
+than two handlers each trusting arrival order. What the lists do *not* carry is a
+version per row: unlike a work-stream row, which is assembled from child objects
+over an unordered Queue and needs one per field, the list is the unit here, and
+a row the viewer can no longer see is expressed by its absence, so archive and
+delete need no tombstone. Each list is read per socket, because a personal
+automation or note belongs to one viewer. The renderer applies WorkspaceDO-owned
 fields such as pin position only when that row's observed directory waterline is
 newer. Every socket reconnect also reloads a resident directory, because current
 state rows intentionally do not retain every intermediate push for replay.
@@ -397,6 +464,26 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-22 — The sidebar push does not re-ask who may listen
+
+**What changed:** Rebasing this branch onto `main` landed it on top of the
+access-revocation queue. The sweep this branch had added to `publishSidebarList`
+is gone with the mechanism it belonged to, and that publish is synchronous
+again, as are `runWorkspaceSql` and its callers.
+
+**Why:** The finding it answered was real — a revoked session kept receiving a
+viewer's whole automation and note list — but the answer is no longer the
+publisher's. `docs/access-revocation.md` closes an open socket from a queue
+message written by whoever ended the access, and names re-checking authorization
+on the way out as the mechanism it replaced. A publisher that asks again is the
+thing that is not to come back, whatever it is publishing: the bound belongs to
+the socket, not to any one payload sent over it.
+
+**Considered and rejected:** Keeping an interval-gated sweep on this one path
+because it is the widest payload the object sends. Width is not the argument —
+if the socket is still open it is authorized, and if it is not it has already
+been closed, so a second opinion here can only disagree with the queue.
+
 ### 2026-08-22 — An admitted socket is never re-authorized, only closed
 
 **What changed:** Block sockets no longer cache an authorization decision for 60
@@ -424,6 +511,159 @@ work stream no longer closes anything until reconnect — those are object-local
 facts the D1-fed queue cannot see.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
+
+### 2026-08-22 — Three review findings on the sidebar payload and its push
+
+**What changed:** Three defects the automated review on #232 found, all in code
+that PR introduced. `activateWorkstreamRoute` now reads `archived_at` through
+`workstreamExecutionEnvironment`, not `workspaceDatabase`. `publishSidebarList`
+awaits `revalidateBeforePublish(false)` before it sends, which made
+`runWorkspaceSql` async. And the connect payload no longer suppresses the
+`workstream_directory` invalidation unconditionally — only when page one
+accounts for every row already resident.
+
+**Why:** Each was a case of a new path skipping a bound the paths beside it
+hold. `workstreams` is not a workspace-local table, so the workspace facade
+sends its statements to regional D1, where migration 0090 dropped `archived_at`
+— the gate would have failed with `no such column` after reserving the address,
+on every automation run and Slack work-stream create. The push carries a
+viewer's whole automation or note list, which is exactly the payload
+`publishWorkstreamState` sweeps for, so a revoked session kept receiving product
+rows until an unrelated publication happened to sweep. And the directory
+refetch, skipped to save a round trip, was the only thing retiring a work stream
+archived while the socket was away: page one merges rather than replaces, so the
+tombstone survived.
+
+A payload with no `nextCursor` needs no refetch at all: it is the whole
+directory rather than page one, so a resident row missing from it has only one
+reading and is dropped outright. The ledger the pushed lists are ordered by is
+also pinned against garbage collection — nothing observes it, so React Query
+would have collected it after five idle minutes and reset the guard to -1,
+leaving the lists looking right while the total order they depend on quietly
+stopped holding.
+
+**Considered and rejected:** Reproducing the server's `last_activity_at DESC,
+workstream_id` ordering on the client to decide whether an unaccounted-for row
+belongs to a later page — it duplicates the cursor arithmetic in a second place
+that can drift from it, to save a request that only a reader who has scrolled,
+on a reconnect, will pay. Letting the client ask instead keeps one authority for
+the ordering. Also rejected: keeping the waterlines in a module-level `Map`
+instead of pinning the cache entry, which leaks state between workspaces and
+between tests. A future change must not restore the unconditional skip: a cold
+connect has nothing resident and still pays nothing, which is the case the
+payload exists for.
+
+### 2026-08-21 — Subscribing is answered with the sidebar
+
+**What changed:** The `workspace_sync` event that answers `subscribe` carries a
+`sidebar` field — the first directory page, the automations and the notes, each
+waterlined. `list_sidebar` and `workspace_sidebar_page` are gone; nothing
+requests the sidebar's first screen any more. Every subscribe carries it,
+including a resume where no topic moved, which is the new `reason: "resume"`
+with an empty topic list. The desktop no longer fetches page one at all.
+
+**Why:** [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks the
+connect exchange to deliver what the opened surface paints, and forbids a
+subscribe frame that names a collection, a filter or a page size.
+`list_sidebar` named two of the three. It had removed two REST reads, which was
+worth having, but it left the round trip in place and it was a new instance of a
+pattern that document marks as behaviour to replace.
+
+**Considered and rejected:** A separate unprompted `workspace_sidebar` frame,
+which was built first and works — but it makes the connect exchange two frames
+where one will do, and a resume with nothing to report has no sync event to sit
+beside. Keeping `list_sidebar` as a debug-only request was also rejected once it
+was clear `includeSystem` filters only work streams: `list_workstreams` already
+takes that flag, so the debug re-draw needs no command of its own.
+
+**Consequences:** A subscribe now costs a directory read plus two list reads on
+the object, per socket, including on every reconnect — where it previously cost
+an invalidation the client answered with its own requests, so the round trips
+went down and the object's work went up. The sidebar must be applied before the
+topic-waterline guard, since a quiet resume repeats a waterline the client
+already holds. System work streams are the one thing the payload does not
+serve; that preference lives in the desktop, and a debug viewer asks for the
+wider directory itself.
+
+### 2026-08-21 — The two sidebar lists are pushed, not invalidated
+
+**What changed:** WorkspaceDO re-sends the automations or the notes whole, per
+viewer, as `workspace_sidebar_list` whenever it writes one of their rows,
+detected at the `executeRuntimeSql` choke point every write passes through.
+Neither list has a REST fetcher on the desktop any more: the opening batch
+seeds them, the push refreshes them, and every first page is a batch so a
+reconnect or debug toggle re-seeds all three. The `automations` and `notes`
+topics keep only the detail surfaces REST still serves.
+
+**Why:** Those topics were derived from the method and path of a mutating REST
+request, so the socket's correctness depended on the REST surface existing —
+and any writer without a request was invisible to it. The workspace alarm
+updating `last_run_at`/`next_run_at` after a scheduled run is exactly that
+case: the sidebar's next-run time stayed stale until an unrelated automation
+write or an app restart. Pushing from the write itself fixes the staleness and
+removes the inverted dependency at once.
+
+**Considered and rejected:** Keeping invalidation and adding a publish call at
+every service that writes these tables — many call sites, each able to forget,
+and the alarm's writes do not pass any of them; per-row waterlines and tombstones
+mirroring the work-stream row — the list is the unit here and a removed row is
+expressed by its absence; and diffing the list to push only changed rows, which
+buys nothing at 250 summaries and adds a way to be wrong. Shipping with *no*
+version at all was also rejected, after the fact: the first cut argued that one
+authority on one thread over an ordered transport made the last send provably
+newest, which was true of the code as written and is still not enough. Two
+producers write these cache entries — the batch and the push — and
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks every pushed
+payload to carry its authority's ordering so that the guard survives a third.
+
+**Consequences:** A user action that writes the table more than once sends the
+list more than once — resuming an automation writes the subscription and then
+its email route, and a real window shows two identical `workspace_sidebar_list`
+frames. Each carries the same whole list, so the extra one is idempotent, and
+deduplicating across separate RPC calls would mean debouncing a push nobody has
+measured a cost for. Invalidating `['automations']` or `['notes']` on the desktop
+now does nothing, by design — the socket is the sole writer, and the shell
+reads them through `useSocketOwnedList`, whose fetcher throws rather than
+returning an empty list if anything ever enables it. A new writer of these
+tables gets the push for free as long as it goes through the workspace runtime
+database; one that reaches the tables another way would not, and there is no
+such writer today. `AutomationService.list` keeps its email-route
+reconciliation and keeps a caller: the pause/resume path defers a failed Global
+transition to it by name, so the desktop retains one deliberate repair query
+that feeds nothing the sidebar renders.
+
+### 2026-08-21 — The sidebar opens on one answer instead of three
+
+**What changed:** A `list_sidebar` command and its `workspace_sidebar_page`
+reply. WorkspaceDO answers the cold sidebar read with the first directory page,
+the viewer's automations and the viewer's notes together, from three local
+SQLite reads with no `await` between them. Electron sends it in place of the
+first `list_workstreams`, seeds all three caches before the query resolves, and
+holds the REST `automations`/`notes` queries disabled until it settles. The
+statement and row mapping for each list are shared with the REST services in
+`sidebar-reads.ts`.
+
+**Why:** The three lists have one authority and had three transports. Work
+streams came down this socket while automations and notes each cost a Worker
+round trip that turned straight back into RPC to this same object — so opening
+the sidebar paid for three sequential arrivals of data one object could have
+answered at once, and filled in three visible stages.
+
+**Considered and rejected:** Leaving the two on REST and only reordering their
+fetches, which does not remove a round trip; moving them onto their own socket
+commands, which is three correlated requests instead of one and still fills the
+sidebar in stages; and making the batch the refresh path too, which would let a
+directory invalidation overwrite an automations list a REST refresh had just
+written.
+
+**Consequences:** The workspace protocol now carries a second correlated
+directory shape, and a caller must match a reply's kind to the request that
+asked for it — resolving a batch into a page's shape would hand an array where
+an object is unpacked. The automation email route in the batch is whatever is
+stored, since reconciling it is a Global-registry call that cannot run on the
+object's socket thread; the REST refresh remains the only path that reconciles.
+Both lists are bounded at 250 and truncate rather than reject. A future list
+that belongs to the sidebar should join this batch rather than add a transport.
 
 ### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
 
