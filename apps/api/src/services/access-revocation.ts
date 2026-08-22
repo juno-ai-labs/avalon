@@ -100,11 +100,15 @@ export function descendantRevocation(
  * failing the request would tell the operator the opposite. The message is the
  * only path to an open socket, so a failure here is logged loudly and the
  * connection outlives the removal until it reconnects and fails admission.
+ *
+ * Returns whether the message went out, so a caller that can still retry — the
+ * expiry sweep — does not record a retraction as delivered when it was not. A
+ * caller whose request is already returning may ignore it.
  */
 export async function publishAccessRevocation(
   env: Env,
   message: Omit<AccessRevocationMessage, "kind" | "occurredAt" | "target"> & { occurredAt?: string },
-): Promise<void> {
+): Promise<boolean> {
   const parsed = AccessRevocationMessageSchema.parse({
     kind: "access_revoked",
     occurredAt: new Date().toISOString(),
@@ -113,6 +117,7 @@ export async function publishAccessRevocation(
   });
   try {
     await env.ACCESS_REVOCATION_QUEUE.send(parsed);
+    return true;
   } catch (error) {
     logWarn(env, "access_revocation_publish_failed", {
       workspace_id: parsed.workspaceId,
@@ -121,6 +126,7 @@ export async function publishAccessRevocation(
       reason: parsed.reason,
       error: error instanceof Error ? error.message : "unknown",
     });
+    return false;
   }
 }
 
@@ -139,6 +145,9 @@ export function isAccessRevocationQueue(queue: string): boolean {
 
 /** Cloudflare accepts at most 100 messages in one `sendBatch`. */
 const QUEUE_SEND_BATCH = 100;
+
+/** D1 binds at most 100 parameters per statement; the timestamp takes one. */
+const MARK_REVOKED_BATCH = 99;
 
 /**
  * Publish an object's descendants, from inside that object.
@@ -166,25 +175,29 @@ export interface RevokedSessionRow {
 }
 
 /**
- * Announce sessions that just ended.
+ * Announce sessions that just ended, and report which announcements landed.
  *
  * A session with no workspace never held a workspace socket, so there is
- * nothing to close and nothing to publish for it.
+ * nothing to close and nothing to publish for it; it counts as settled. The
+ * returned list is what a caller may treat as delivered — see
+ * {@link reapExpiredSessions}, which uses it to decide what to mark.
  */
 export async function publishSessionRevocations(
   env: Env,
   sessions: readonly RevokedSessionRow[],
   reason: AccessRevocationMessage["reason"],
-): Promise<void> {
-  await Promise.all(sessions.map(async (session) => {
-    if (!session.workspace_id) return;
-    await publishAccessRevocation(env, {
+): Promise<RevokedSessionRow[]> {
+  const announced = await Promise.all(sessions.map(async (session) => {
+    if (!session.workspace_id) return session;
+    const published = await publishAccessRevocation(env, {
       reason,
       workspaceId: WorkspaceIdSchema.parse(session.workspace_id),
       userId: IdSchema.parse(session.user_id),
       sessionId: session.id,
     });
+    return published ? session : null;
   }));
+  return announced.filter((session): session is RevokedSessionRow => session !== null);
 }
 
 /**
@@ -192,25 +205,41 @@ export async function publishSessionRevocations(
  *
  * Expiry is the one retraction nobody performs: a session simply stops being
  * valid, so no request writes it and no message would ever be published. This
- * sweep is that writer. Marking the row revoked as it goes is what makes it
- * exactly-once — an expired session is revoked by any reading of the word, and
- * a row already marked is not returned to the next run.
+ * sweep is that writer.
+ *
+ * It publishes *before* it marks. Marking first would be tidier — one statement,
+ * atomically exactly-once — but it makes a failed publish permanent: the row is
+ * excluded from every later sweep, and since nothing else re-checks an open
+ * socket, that person keeps receiving until they reconnect. Publishing first
+ * costs at most a duplicate message when the mark fails, and a duplicate
+ * revocation is a hop that finds nothing left to close. A lost one is a socket
+ * nobody closes. The mark still stops a delivered expiry being re-announced on
+ * every five-minute run, which is all it was ever for.
  *
  * Bounded per run because it is one statement on a five-minute cron: a backlog
  * drains over several runs rather than turning one invocation into a migration.
  */
 export async function reapExpiredSessions(env: Env, limit = 200): Promise<number> {
-  const result = await env.DB.prepare(
-    `UPDATE sessions SET revoked_at = ?
-      WHERE id IN (
-        SELECT id FROM sessions
-         WHERE revoked_at IS NULL AND expires_at <= ?
-         ORDER BY expires_at LIMIT ?
-      )
-      RETURNING id, user_id, workspace_id`,
-  ).bind(new Date().toISOString(), new Date().toISOString(), limit)
-    .all<RevokedSessionRow>();
-  const expired = result.results ?? [];
-  await publishSessionRevocations(env, expired, "session_expired");
-  return expired.length;
+  const now = new Date().toISOString();
+  const expired = (await env.DB.prepare(
+    `SELECT id, user_id, workspace_id FROM sessions
+      WHERE revoked_at IS NULL AND expires_at <= ?
+      ORDER BY expires_at LIMIT ?`,
+  ).bind(now, limit).all<RevokedSessionRow>()).results ?? [];
+  if (expired.length === 0) return 0;
+
+  const announced = await publishSessionRevocations(env, expired, "session_expired");
+  if (announced.length === 0) return 0;
+  // Only what was announced is marked. A session whose message did not go out
+  // stays unmarked and is picked up by the next run. Marked in batches because
+  // D1 binds at most 100 parameters per statement and one of them is the
+  // timestamp, so a full run of 200 does not fit in one.
+  for (let index = 0; index < announced.length; index += MARK_REVOKED_BATCH) {
+    const batch = announced.slice(index, index + MARK_REVOKED_BATCH);
+    await env.DB.prepare(
+      `UPDATE sessions SET revoked_at = ?
+        WHERE id IN (${batch.map(() => "?").join(",")})`,
+    ).bind(now, ...batch.map((session) => session.id)).run();
+  }
+  return announced.length;
 }

@@ -22,6 +22,7 @@ import {
 } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
+
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
 const MEMBER = asUserId("00000000-0000-7000-8000-000000000003");
@@ -122,6 +123,32 @@ describe("removing a member", () => {
     });
   });
 
+  it("keeps an owner when two owners remove each other at the same time", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+    // A second owner, so each of them passes every check the other does.
+    database.prepare(
+      `UPDATE workspace_members SET role = 'owner' WHERE workspace_id = ? AND user_id = ?`,
+    ).run(WORKSPACE, ADMIN);
+
+    // Both read the other's owner row before either delete runs — which is what
+    // the guards cannot see, and what an unconditional delete would let through
+    // on both sides, leaving a workspace with no owner at all.
+    const outcomes = await Promise.allSettled([
+      new WorkspaceService(env, auth(OWNER, "owner")).removeMember(ADMIN),
+      new WorkspaceService(env, auth(ADMIN, "owner")).removeMember(OWNER),
+    ]);
+
+    const owners = database.prepare(
+      `SELECT COUNT(*) AS count FROM workspace_members
+        WHERE workspace_id = ? AND role = 'owner' AND status = 'active'`,
+    ).get(WORKSPACE) as { count: number };
+    expect(owners.count).toBe(1);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    // The refused one announces nothing: it did not cause a revocation.
+    expect(sent).toHaveLength(1);
+  });
+
   it("refuses a member, a self-removal, and an admin reaching for an owner", async () => {
     const database = seed();
     const { env, sent } = environment(database);
@@ -185,6 +212,33 @@ describe("reaping expired sessions", () => {
     expect(await reapExpiredSessions(env)).toBe(0);
     expect(sent).toHaveLength(1);
   });
+
+  it("leaves a session unmarked when its announcement did not go out", async () => {
+    const database = seed();
+    insertSession(database, "expired", "2020-01-01T00:00:00.000Z");
+    let offline = true;
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      ACCESS_REVOCATION_QUEUE: {
+        send: async () => { if (offline) throw new Error("queue offline"); },
+      },
+    });
+
+    // Marking first would be tidier and would lose this expiry permanently: the
+    // row would never be selected again, and nothing else re-checks an open
+    // socket, so that person keeps receiving until they reconnect.
+    expect(await reapExpiredSessions(env)).toBe(0);
+    const afterFailure = database.prepare(`SELECT revoked_at FROM sessions WHERE id = 'expired'`)
+      .get() as { revoked_at: string | null };
+    expect(afterFailure.revoked_at).toBeNull();
+
+    offline = false;
+    expect(await reapExpiredSessions(env)).toBe(1);
+    const afterSuccess = database.prepare(`SELECT revoked_at FROM sessions WHERE id = 'expired'`)
+      .get() as { revoked_at: string | null };
+    expect(afterSuccess.revoked_at).not.toBeNull();
+  });
 });
 
 describe("publishing a revocation", () => {
@@ -195,13 +249,14 @@ describe("publishing a revocation", () => {
       ACCESS_REVOCATION_QUEUE: { send: async () => { throw new Error("queue offline"); } },
     });
     // The fact is already written when this runs; failing the request would
-    // tell the operator the removal did not happen when it did.
+    // tell the operator the removal did not happen when it did. It reports the
+    // failure in its return value instead, for the one caller that can retry.
     await expect(publishAccessRevocation(env, {
       reason: "workspace_membership_removed",
       workspaceId: WORKSPACE,
       userId: MEMBER,
       sessionId: null,
-    })).resolves.toBeUndefined();
+    })).resolves.toBe(false);
   });
 });
 
