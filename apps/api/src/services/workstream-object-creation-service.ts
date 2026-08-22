@@ -288,8 +288,6 @@ export class WorkstreamObjectCreationService {
     if (Number(activated.meta.changes ?? 0) !== 1) {
       throw new Error("workstream_create_route_activation_failed");
     }
-    await span.step("workstream.create.email_route.activate", () =>
-      emailRouting.setStatus({ ...routeInput, status: "active" }));
     await span.step("workstream.create.receipt.complete", () => this.env.DB.prepare(
       `UPDATE workstream_create_receipts
           SET state = 'completed', message_id = ?, harness_run_id = ?,

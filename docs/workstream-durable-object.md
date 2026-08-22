@@ -1246,21 +1246,25 @@ expect the same shape of cost.
 
 ### 2026-08-21 — A write to an automation or note pushes its list
 
-**What changed:** `executeRuntimeSql` now notes which sidebar list a statement
-writes — by the same write-target match the alarm refresh already uses — and
+**What changed:** `runWorkspaceSql` — the entry point behind both the
+`executeRuntimeSql` RPC method and the in-object `localWorkspaceEnv` the alarm
+uses — now notes which sidebar list a statement writes — by the same write-target match the alarm refresh already uses — and
 re-sends that list whole to every subscribed socket, read per viewer the way
 `publishWorkstreamState` reads its row.
 
 **Why:** These tables had no push at all; the desktop learned about a change
 from a topic the Worker derived from the mutating REST request. Writers with no
-request were therefore invisible, and `WorkspaceScheduler` advancing
-`next_run_at` after a run is one — it reaches this object through the workspace
-runtime database like every other writer, which is what makes one check here
-cover all of them.
+request were therefore invisible, and the workspace alarm advancing
+`next_run_at` after a run is one — it reaches the same tables through the
+workspace runtime database like every other writer, which is what makes one
+check here cover all of them. The check sits below the RPC method rather than
+in it because the alarm runs inside this object and takes `localWorkspaceEnv`
+straight to the SQL executor: guarding only the RPC entry point would have left
+the writer that motivated the push silent again.
 
 **Considered and rejected:** Emitting from each service that writes these
 tables, which spreads the obligation across many call sites and misses the
-scheduler in another object entirely; and pushing only the changed rows, which
+alarm's own writes entirely; and pushing only the changed rows, which
 would need this layer to understand the statement rather than just its target.
 
 **Consequences:** This object now sends product data on a write path that

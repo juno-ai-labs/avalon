@@ -294,9 +294,14 @@ export class ResendInboundEmailRoutingService {
 
     const routes = dedupeRoutes(await Promise.all(localParts.map((localPart) =>
       this.env.DB.prepare(
+        // No status filter: Global records that the address is taken and to
+        // whom, nothing about whether mail is welcome today. The region decides
+        // that from the owner's own row when the message lands, which it does
+        // regardless — filtering here only ever duplicated it, and the two
+        // could disagree.
         `SELECT local_part, region, workspace_id, workstream_id, automation_subscription_id
          FROM workstream_email_routes
-         WHERE local_part = ? COLLATE NOCASE AND status = 'active'
+         WHERE local_part = ? COLLATE NOCASE
          LIMIT 1`,
       ).bind(localPart).first<EmailRouteRow>()
     )));

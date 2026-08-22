@@ -123,7 +123,6 @@ describe('WorkspaceSocketProvider', () => {
       ['digest-schedule'],
       ['automation'],
       ['automation-draft'],
-      ['automation-email-reconciliation'],
       ['note'],
       ['resources'],
       ['workstream-context'],

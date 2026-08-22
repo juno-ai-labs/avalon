@@ -119,9 +119,7 @@ function invalidateTopic(
     digest_schedule: [['digest-schedule']],
     // The lists themselves are pushed whole by WorkspaceDO, so the topic no
     // longer names them — it carries the detail surfaces REST still serves.
-    // `automation-email-reconciliation` is the repair pass the pause/resume
-    // path depends on; see the app shell.
-    automations: [['automation'], ['automation-draft'], ['automation-email-reconciliation']],
+    automations: [['automation'], ['automation-draft']],
     notes: [['note']],
     resources: [['resources'], ['workstream-context']],
     activity: [['work-opportunities']],

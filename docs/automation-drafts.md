@@ -87,8 +87,8 @@ rather than inserting beside it: the template and version take the final draft's
 content, the subscription takes the chosen scope, principal, connector bindings,
 and model override, `status` becomes `active`, and `draft_conversation_json` is
 cleared. Schedules, memory tables, delivery targets, and resource relationships
-are inserted in the same WorkspaceDO transaction, and the global email route is
-reserved and activated after it.
+are inserted in the same WorkspaceDO transaction, and the address is claimed in
+the Global ledger after it.
 
 The id therefore survives, which is the point: the sidebar row someone watched
 appear while they described the automation is the row that becomes the
@@ -115,13 +115,12 @@ may not write through to, inserts a new automation exactly as it always did.
   subscription for a request that carried a promotable draft, the finished
   automation appears alongside the draft it came from and the draft has to be
   archived by hand.
-- **A draft holds no active email route.** `list` and `get` skip address
-  reconciliation for drafts, and deleting one skips it too — an automation with
-  no address has no route to close, and reserving one to disable it would
-  tombstone an address forever for an automation nobody created. Reserving on
-  read would also make opening the sidebar depend on the Global registry, and an
-  active route on a `draft` row would mean mail could start a run that cannot
-  legitimately begin.
+- **A draft holds no email address.** Nothing on a read path reserves one, and
+  deleting a draft does not either — reserving an address purely to record its
+  end would tombstone one forever for an automation nobody created. Reserving on
+  read would also make opening the sidebar depend on the Global registry. Mail to
+  a draft's address could not start a run in any case — the resolver requires
+  `status = 'active'` — so the address would buy nothing and cost a name.
 - **The only way out of `draft` is `create` or `archiveDraft`.** `setPaused` and
   `shareSubscription` each refuse a draft for that reason. Resuming would reach
   `active` without any of the scope, connector, and binding validation creation

@@ -135,17 +135,11 @@ export const WorkstreamEmailRouteInputSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
 });
-export const WorkstreamEmailRouteStatusInputSchema = WorkstreamEmailRouteInputSchema
-  .extend({ status: statusFlag });
-
 export const AutomationEmailRouteInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   automationSubscriptionId: IdSchema,
 });
-export const AutomationEmailRouteStatusInputSchema = AutomationEmailRouteInputSchema
-  .extend({ status: statusFlag });
-
 /**
  * The registry's batch methods take arrays. Bounding them is part of the
  * contract: an unbounded batch is a way to hold one Global invocation open on
