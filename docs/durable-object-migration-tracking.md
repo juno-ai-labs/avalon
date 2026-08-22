@@ -174,9 +174,10 @@ Three deliberate choices, in the order they matter:
   object and therefore share one queue. Same document, same test, different
   answer, because the destination differs.
 - **RPC inside the hop.** The consumer calls `forceMigration` and reads the
-  answer — the version the object ended on — so it can log an object that came
-  back still below the build's head as a warning rather than a success. A queue
-  per hop, RPC inside the hop, is the shape
+  answer — the version the object ended on, and whether its receipt was
+  accepted — so it can log an object that came back below the version *this
+  deployment* ships as a warning rather than a success. A queue per hop, RPC
+  inside the hop, is the shape
   [`access-revocation.md`](access-revocation.md) already uses.
 
 `forceMigration` lives on `MigratableDurableObject`, the base every migrated
@@ -786,7 +787,16 @@ by the sweep, region resolvable like any other — into a run every message of
 which was going to dead-letter, with the run row recording it as dispatched. The
 through-line is worth keeping: **a list rendered in a form is not a constraint on
 the endpoint behind it**, and the page's own vocabulary was mistaken for the
-schema's. A third finding, that the capped selection never advanced, was the
+schema's. A further finding was the same mistake in the consumer: it decided
+"this object came back behind" by comparing the two version fields the outcome
+carries, which are both read inside the object's isolate after a successful
+migration pass and are therefore equal by construction. The branch could never
+fire, and the case its own comment named — a stale isolate on the previous
+build — was precisely the one it stayed silent on, because that object's head
+is the old build's head too. It now compares against the consumer's own head,
+which the reviewer thought unavailable and is not: the consumer runs in the same
+Worker as the classes and can read their migration lists directly. A third
+finding, that the capped selection never advanced, was the
 same shape of error one layer down — the documentation promised a retry would
 continue and the `ORDER BY` made that impossible.
 
@@ -799,6 +809,12 @@ continue and the `ORDER BY` made that impossible.
 - The target ordering is load-bearing, not cosmetic. `ORDER BY object_id` is the
   obvious deterministic choice and it silently strands the tail of any class
   larger than the cap.
+- The shortfall check must compare against the *consumer's* head, never the two
+  version fields the outcome carries. Those are both read inside the object's
+  isolate after a successful pass, so they are equal by construction and a
+  comparison between them is dead code that looks like a check. The first
+  version of this shipped exactly that, and it was silent on the one case it
+  named in its own comment.
 - The two guards inside `forceMigration` — the class and the object ID — are not
   defence against a hostile caller; a queue has no public address. They catch a
   wiring mistake in the consumer's dispatcher map, where a class name paired

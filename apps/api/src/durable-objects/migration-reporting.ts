@@ -219,8 +219,15 @@ function reportMigrationSuccess(
  * operator picks a class on the tracker, the tracker sends one message per
  * object, and the region's Worker calls `forceMigration` on each. This is the
  * value that call returns, and it is the reason that leg is RPC rather than a
- * second queue — the consumer branches on it, logging an object that came back
- * still behind the build's head as a warning rather than a success.
+ * second queue — the consumer branches on it.
+ *
+ * Note what the two version fields can and cannot say together. Both are read
+ * inside the object's own isolate, and this value is only produced once that
+ * object's migration pass has succeeded, so `schemaVersion` and `latestVersion`
+ * are equal by construction. Comparing them to each other answers nothing;
+ * comparing `schemaVersion` against the *consumer's* head is what reveals an
+ * object still awake on an older build. See `migrationShortfall` in
+ * `queues/migration-command-consumer.ts`.
  */
 export interface ForcedMigrationOutcome {
   objectId: string;

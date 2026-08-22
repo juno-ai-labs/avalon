@@ -16,9 +16,9 @@
  * bindings to this region's objects.
  *
  * The hop from here into the object is RPC because this consumer reads the
- * answer: `forceMigration` returns the version the object ended on, and an
- * object that comes back below the build's head is logged as a warning rather
- * than a success. That is the split `docs/choosing-queues-or-rpc.md` describes —
+ * answer: `forceMigration` returns the version the object ended on and whether
+ * its receipt was accepted, and an object that comes back below the version
+ * *this deployment* ships is logged as a warning rather than a success. That is the split `docs/choosing-queues-or-rpc.md` describes —
  * a queue per hop, RPC inside the hop — and the same one `access-revocation.md`
  * already uses.
  *
@@ -31,7 +31,11 @@ import {
   type DurableObjectMigrationCommand,
 } from "@avalon/contracts/durable-object-migrations";
 
-import type { ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
+import { BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS } from "../durable-objects/block-dashboard-agent";
+import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
+import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
 import { durableObjectStubById } from "../lib/durable-object-namespace";
 import { logStructuredEvent, logWarn } from "../observability/logger";
@@ -71,6 +75,46 @@ export function migrationCommandDispatchers(env: Env): Record<
     WorkspaceDO: (command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, command.objectId).forceMigration(command),
   };
+}
+
+/**
+ * The highest schema version *this deployment* ships for each class.
+ *
+ * Read from the same migration lists the objects run, in the Worker that is
+ * consuming the command rather than in the object that answered it. That
+ * distinction is the entire point, and it is what makes the shortfall check
+ * below able to fire at all.
+ */
+export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
+  SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
+  BlockDashboardAgent: latestMigrationVersion(BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS),
+  WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+  WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
+};
+
+/**
+ * Whether a forced object came back below the schema this deployment ships.
+ *
+ * Comparing the outcome's own two numbers cannot answer this. Both come out of
+ * the object's isolate — `schemaVersion` from its ledger, `latestVersion` from
+ * the build it is running — and `forceMigration` only returns once the
+ * constructor's migration pass has succeeded, so they are equal by
+ * construction. A pass that left them unequal would have thrown and been
+ * retried. The comparison was therefore dead, and dead in the worst way: the
+ * one case worth flagging is an object still awake on a *previous* build, whose
+ * `latestVersion` is that older build's head too, so it read as a clean apply.
+ *
+ * The consumer's own head is the number that makes the case visible, because
+ * the consumer is running the new deployment and the stale isolate is not.
+ * `null` for a class this Worker has no head for, which cannot happen for a
+ * command that reached a dispatcher but keeps the caller from inventing a zero.
+ */
+export function migrationShortfall(
+  outcome: Pick<ForcedMigrationOutcome, "className" | "schemaVersion">,
+): number | null {
+  const head = MIGRATION_COMMAND_HEADS[outcome.className];
+  if (head === undefined) return null;
+  return outcome.schemaVersion < head ? head : null;
 }
 
 /** Carry one forced migration to one object and read back where it landed. */
@@ -130,10 +174,14 @@ export async function consumeMigrationCommandQueue(
 
     try {
       const outcome = await applyMigrationCommand(env, command);
-      const behind = outcome.schemaVersion < outcome.latestVersion;
-      logStructuredEvent(env, behind ? "warn" : "info", "migration_command_applied", {
+      // Against this deployment's head, not the object's own — see
+      // `migrationShortfall`. An object that answered from an isolate still
+      // running an older build is the case this exists to surface, and it is
+      // the one that used to read as a clean apply.
+      const shortfall = migrationShortfall(outcome);
+      logStructuredEvent(env, shortfall === null ? "info" : "warn", "migration_command_applied", {
         message: `migration_command_applied ${outcome.className} v${outcome.schemaVersion}`
-          + `${behind ? ` still behind v${outcome.latestVersion}` : ""}`,
+          + `${shortfall === null ? "" : ` still behind this build's v${shortfall}`}`,
         run_id: command.runId,
         command_id: command.commandId,
         object_id: outcome.objectId,
@@ -141,7 +189,10 @@ export async function consumeMigrationCommandQueue(
         class_name: outcome.className,
         component: outcome.component,
         schema_version: outcome.schemaVersion,
+        // The head the object's own isolate is running, which is below
+        // `expected_version` exactly when that isolate is on an older build.
         latest_version: outcome.latestVersion,
+        expected_version: MIGRATION_COMMAND_HEADS[outcome.className] ?? null,
         // False means the object woke and ran its schema but its receipt was
         // not accepted by the report queue, so the tracker will not show this
         // pass until the object's next wake. The migration still happened.
