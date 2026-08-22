@@ -41,6 +41,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { resolveAgentModelRouting } from "../services/agent-model-flags";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import {
@@ -1185,6 +1186,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     );
     const input = await this.initializeRuntimeRun(executionEnv, dispatch);
     await reapStaleHarnessRuns(executionEnv.DB, {
+      receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       limit: 25,

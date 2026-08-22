@@ -2,6 +2,7 @@ import { asHarnessRunId, asWorkspaceId, asWorkstreamId, type HarnessRunId, type 
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import type { ToolReceiptPortFactory } from "./tool-receipt-port";
 import type {
   ToolReceiptAdmission,
   ToolReceiptSettlement,
@@ -2241,7 +2242,14 @@ export async function reapStaleHarnessRuns(
     limit?: number;
     /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
     automationDatabase?: D1Database | null;
-  } = {},
+    /**
+     * How to reach a run's receipt authority. Required rather than defaulted:
+     * a sweep that terminalizes a run and silently leaves its receipts
+     * `executing` is worse than one that fails to start, and a default would
+     * make that the quiet outcome of forgetting to wire it.
+     */
+    receipts: ToolReceiptPortFactory;
+  },
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
   // Ordinary attempts are the only runs whose expired lease is itself a
@@ -2335,31 +2343,23 @@ export async function reapStaleHarnessRuns(
                  AND parent.parent_tool_call_id IS NULL
             )`,
       ).bind(now, row.id),
-      db.prepare(
-        `UPDATE tool_invocations
-            SET status = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN 'ambiguous'
-                  ELSE 'failed'
-                END,
-                completed_at = ?1,
-                error_json = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}'
-                  ELSE '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}'
-                END
-          WHERE harness_run_id = ?2 AND status IN ('pending', 'started')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs parent
-               WHERE parent.id = ?2 AND parent.terminalized_at = ?1
-                 AND parent.parent_tool_call_id IS NULL
-            )`,
-      ).bind(now, row.id),
     ]);
     if (d1Changes(results[1]) > 0) {
       reaped.push(row.id);
+      // The receipts this run left in flight, settled through the object rather
+      // than as a seventh statement in this batch.
+      //
+      // It cannot be `finalizeToolInvocationFailure` with different arguments:
+      // every fenced receipt operation requires a live lease, and this run's
+      // lease is precisely what expired. `abandonRunReceipts` is guarded on the
+      // run's `terminalized_at` instead, re-read inside its own transaction —
+      // which is what makes it correct here, outside the batch that set it. The
+      // statement it replaces carried the same `EXISTS … terminalized_at = ?1`
+      // guard for the same reason, so leaving the batch costs the single
+      // transaction and nothing else; slice 6 folds the whole sweep into the
+      // object and takes that back.
+      await options.receipts(row.workspace_id, row.workstream_id)
+        .abandonRunReceipts({ runId: row.id, terminalizedAt: Date.parse(now) });
       const automationDatabase = options.automationDatabase === undefined
         ? db
         : options.automationDatabase;
