@@ -4,7 +4,9 @@ import { substreamAgentName } from "../../durable-objects/names";
 import { rpcResultBody } from "../../durable-objects/rpc-result";
 import {
   TERMINAL_OPERATIONS,
+  TerminalOperationFailureSchema,
   type TerminalObjectPort,
+  type TerminalOperationFailure,
   type TerminalOperation,
 } from "../../durable-objects/workstream-terminal-protocol";
 import type { Env } from "../../env";
@@ -16,6 +18,27 @@ export type TerminalPortFactory = (
   workspaceId: string,
   workstreamId: string,
 ) => TerminalObjectPort;
+
+/** A typed failure from the object-local Terminal authority with explicit retry safety. */
+export class TerminalObjectPortError extends Error {
+  readonly code: TerminalOperationFailure["code"];
+  readonly details: {
+    operation: TerminalOperation;
+    outcome: TerminalOperationFailure["outcome"];
+    retryable: TerminalOperationFailure["retryable"];
+  };
+
+  constructor(operation: TerminalOperation, failure: TerminalOperationFailure) {
+    super(failure.message);
+    this.name = "TerminalObjectPortError";
+    this.code = failure.code;
+    this.details = {
+      operation,
+      outcome: failure.outcome,
+      retryable: failure.retryable,
+    };
+  }
+}
 
 /**
  * Bind a factory to an environment, optionally to in-isolate storage.
@@ -85,8 +108,41 @@ export function createTerminalObjectPort(
       operation,
       args,
     });
-    const body = rpcResultBody(result) as { ok?: boolean; value?: unknown; error?: string } | null;
-    if (!body?.ok) throw new Error(body?.error ?? "terminal_operation_failed");
+    const body = rpcResultBody(result) as {
+      ok?: boolean;
+      value?: unknown;
+      error?: string;
+      failure?: TerminalOperationFailure;
+    } | null;
+    if (!body?.ok) {
+      const parsedFailure = TerminalOperationFailureSchema.safeParse(body?.failure);
+      const failure: TerminalOperationFailure = parsedFailure.success
+        ? parsedFailure.data
+        : body?.error === "invalid_terminal_operation"
+          ? {
+              code: "invalid_terminal_operation",
+              message: "Avalon's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
+              outcome: "rejected",
+              retryable: false,
+            }
+          : body?.error === "workstream_terminal_identity_mismatch"
+            ? {
+                code: "workstream_terminal_identity_mismatch",
+                message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+                outcome: "rejected",
+                retryable: false,
+              }
+            : {
+                // A missing/malformed failure on a nominal commit rejection is
+                // protocol skew, not proof of rollback. Never manufacture the
+                // retryable write-safety contract from an untyped envelope.
+                code: "terminal_operation_protocol_error",
+                message: "Avalon's Terminal authority returned an invalid internal response. The operation outcome is unknown; stop and let the run reconcile before attempting more Terminal work.",
+                outcome: "unknown",
+                retryable: false,
+              };
+      throw new TerminalObjectPortError(operation, failure);
+    }
     return body.value ?? null;
   };
 

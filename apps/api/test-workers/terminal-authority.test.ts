@@ -26,6 +26,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@avalon/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
+import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -139,6 +140,197 @@ async function reserve(
 }
 
 describe("Terminal authority on real workerd", () => {
+  it("returns typed non-retryable protocol and routing rejections", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    const invalid = await post(stub, "/internal/terminal", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "operation-from-a-newer-worker",
+      args: [],
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toMatchObject({
+      error: "invalid_terminal_operation",
+      failure: {
+        code: "invalid_terminal_operation",
+        outcome: "rejected",
+        retryable: false,
+      },
+    });
+
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    const misrouted = await post(stub, "/internal/terminal", {
+      workspaceId: "00000000-0000-7000-8000-00000000ffff",
+      workstreamId: WORKSTREAM_ID,
+      operation: "sandbox",
+      args: [],
+    });
+    expect(misrouted.status).toBe(409);
+    expect(misrouted.body).toMatchObject({
+      error: "workstream_terminal_identity_mismatch",
+      failure: {
+        code: "workstream_terminal_identity_mismatch",
+        outcome: "rejected",
+        retryable: false,
+      },
+    });
+  });
+
+  it("returns a typed retry contract without exposing a pre-commit storage cause", async () => {
+    const stub = agent();
+    await boot(stub);
+    const result = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running");
+      const terminal = (instance as unknown as {
+        terminal: { reserveFirstGeneration(input: unknown): unknown };
+      }).terminal;
+      Object.defineProperty(terminal, "reserveFirstGeneration", {
+        configurable: true,
+        value: () => { throw new Error("raw sqlite constraint and private detail"); },
+      });
+      return (instance as unknown as {
+        executeTerminalOperation(input: Record<string, unknown>): Promise<{
+          status: number;
+          bodyJson: string;
+        }>;
+      }).executeTerminalOperation({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "reserveFirstGeneration",
+        args: [{
+          stableName: "avalon-precommit-proof",
+          authorityFingerprint: "authority",
+          networkRevision: 1,
+          runId: RUN_A,
+          operationLeaseExpiresAt: 1_000_000,
+          idleExpiresAt: 2_000_000,
+          archiveDueAt: 3_000_000,
+          expireDueAt: 4_000_000,
+          now: 1_000,
+        }],
+      });
+    });
+
+    expect(result.status).toBe(409);
+    expect(rpcResultBody(result)).toMatchObject({
+      ok: false,
+      error: "terminal_operation_not_committed",
+      failure: {
+        code: "terminal_operation_not_committed",
+        outcome: "not_committed",
+        retryable: true,
+      },
+    });
+    expect(JSON.stringify(rpcResultBody(result))).not.toContain("sqlite");
+    expect(JSON.stringify(rpcResultBody(result))).not.toContain("private detail");
+  });
+
+  it("returns a committed mutation even when its follow-up alarm cannot be scheduled", async () => {
+    const stub = agent();
+    await boot(stub);
+    const result = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running");
+      Object.defineProperty(instance, "scheduleNextAlarm", {
+        configurable: true,
+        value: async () => { throw new Error("injected_alarm_failure"); },
+      });
+      try {
+        return await (instance as unknown as {
+          executeTerminalOperation(input: Record<string, unknown>): Promise<{
+            status: number;
+            bodyJson: string;
+          }>;
+        }).executeTerminalOperation({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          operation: "reserveFirstGeneration",
+          args: [{
+            stableName: "avalon-alarm-proof",
+            authorityFingerprint: "authority",
+            networkRevision: 1,
+            runId: RUN_A,
+            operationLeaseExpiresAt: 1_000_000,
+            idleExpiresAt: 2_000_000,
+            archiveDueAt: 3_000_000,
+            expireDueAt: 4_000_000,
+            now: 1_000,
+          }],
+        });
+      } finally {
+        delete (instance as unknown as Record<string, unknown>).scheduleNextAlarm;
+      }
+    });
+
+    // The SQLite transaction is already committed before alarm scheduling.
+    // Reporting failure here would invite a caller to repeat a write that did
+    // happen; the durable directory effect and scheduler sweep own recovery.
+    expect(result.status).toBe(200);
+    expect(rpcResultBody(result)).toMatchObject({ ok: true });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ stable_name: string }>(
+        `SELECT stable_name FROM terminal_workspace WHERE id = 1`,
+      ).one().stable_name).toBe("avalon-alarm-proof");
+    });
+  });
+
+  it("returns a committed tool receipt when runtime-SQL alarm scheduling fails afterward", async () => {
+    const stub = agent();
+    await boot(stub);
+    const effectId = "00000000-0000-7000-8000-00000000ae01";
+    const result = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running");
+      seedEffect(state, effectId, RUN_A);
+      Object.defineProperty(instance, "scheduleNextAlarm", {
+        configurable: true,
+        value: async () => { throw new Error("injected_runtime_alarm_failure"); },
+      });
+      try {
+        return await (instance as unknown as {
+          executeRuntimeSql(input: Record<string, unknown>): Promise<{
+            status: number;
+            bodyJson: string;
+          }>;
+        }).executeRuntimeSql({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          requestId: "00000000-0000-7000-8000-00000000ae02",
+          statements: [{
+            sql: "UPDATE tool_invocations SET status = ?, started_at = ? WHERE id = ?",
+            params: ["started", "2026-08-21T22:00:00.000Z", effectId],
+          }, {
+            // This legacy statement rewrites directly to the normalized table,
+            // not a compatibility view, so its native count must remain live.
+            sql: `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1, updated_at = ?
+              WHERE id = ? AND workspace_id = ?
+              RETURNING next_sequence_number - 1 AS sequence_number`,
+            params: ["2026-08-21T22:00:00.000Z", WORKSTREAM_ID, WORKSPACE_ID],
+          }],
+        });
+      } finally {
+        delete (instance as unknown as Record<string, unknown>).scheduleNextAlarm;
+      }
+    });
+
+    expect(result.status).toBe(200);
+    expect(rpcResultBody(result)).toMatchObject({
+      results: [
+        { changes: 1 },
+        { changes: 1, rows: [{ sequence_number: expect.any(Number) }] },
+      ],
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM tool_effects WHERE effect_intent_id = ?`,
+        effectId,
+      ).one().status).toBe("executing");
+    });
+  });
+
   describe("the operation lease", () => {
     it("admits one run and refuses a second while the holder is still live", async () => {
       const stub = agent();

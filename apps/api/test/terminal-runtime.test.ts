@@ -180,13 +180,18 @@ describe("Daytona Terminal runtime", () => {
 
   it("records one durable command task and terminalizes nonzero exit normally", async () => {
     const { objectStore, provider, runtime } = fixture();
-    await expect(runtime.runCommand(context, { command: "false", timeoutMs: 3_000 })).resolves.toMatchObject({
+    const result = await runtime.runCommand(context, { command: "false", timeoutMs: 3_000 });
+    expect(result).toMatchObject({
       state: "failed",
       terminationReason: "exited",
       exitCode: 1,
       stdout: "ok\n",
       stderr: "bad\n",
+      acquisitionDurationMs: expect.any(Number),
+      totalDurationMs: expect.any(Number),
     });
+    expect(result.acquisitionDurationMs).toBeGreaterThanOrEqual(0);
+    expect(result.totalDurationMs).toBeGreaterThanOrEqual(result.acquisitionDurationMs);
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       taskName: `avalon-task-${I}`,
       command: "false",
@@ -273,6 +278,30 @@ describe("Daytona Terminal runtime", () => {
       "SELECT state, started_at FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "completed", started_at: Date.parse("2026-08-13T12:00:00.000Z") });
+  });
+
+  it("fails closed when a terminal task lacks complete replay timestamps", async () => {
+    const { objectStore, provider, runtime } = fixture();
+    await runtime.readFile(context, "src/file.txt");
+    vi.mocked(provider.runCommand).mockClear();
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+       (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+        state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+        stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
+        completed_at, created_at, updated_at)
+       VALUES ('task-incomplete', ?, ?, 1, ?, 'completed', ?, ?, 'done', '', '', '',
+               4, 0, NULL, NULL, ?, ?)`,
+      R, I, `avalon-task-${I}`, "a".repeat(64),
+      Date.parse("2026-08-13T12:02:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+    );
+
+    await expect(runtime.runCommand(context, { command: "printf done", timeoutMs: 120_000 }))
+      .rejects.toMatchObject({ code: "command_recovery_unavailable" });
+    expect(provider.runCommand).not.toHaveBeenCalled();
   });
 
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {

@@ -12,6 +12,7 @@ const RuntimeStatementSchema = z.object({
 export const WorkstreamRuntimeSqlRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
+  harnessRunId: z.string().uuid().nullable().optional(),
   requestId: z.string().uuid(),
   statements: z.array(RuntimeStatementSchema).min(1).max(100),
 }).strict();
@@ -56,6 +57,18 @@ function insertTarget(sql: string): string | null {
   return /^\s*INSERT(?:\s+OR\s+\w+)?\s+INTO\s+["`[]?([\w]+)["`\]]?/iu.exec(sql)?.[1]?.toLowerCase() ?? null;
 }
 
+function mutationTarget(sql: string): string | null {
+  return insertTarget(sql)
+    ?? /^\s*UPDATE\s+["`[]?([\w]+)["`\]]?/iu.exec(sql)?.[1]?.toLowerCase()
+    ?? /^\s*DELETE\s+FROM\s+["`[]?([\w]+)["`\]]?/iu.exec(sql)?.[1]?.toLowerCase()
+    ?? null;
+}
+
+function targetsRuntimeCompatibilityView(sql: string): boolean {
+  const target = mutationTarget(sql);
+  return TABLE_REWRITES.some(([, view]) => view === target);
+}
+
 function stripViewUpsert(sql: string): string {
   const conflictAt = sql.search(/\s+ON\s+CONFLICT(?:\s*\([^)]*\))?\s+DO\s+(?:NOTHING|UPDATE\s+SET)/iu);
   if (conflictAt < 0) return sql;
@@ -82,15 +95,15 @@ export function rewriteWorkstreamRuntimeSql(input: string): string {
              WHERE workstream_key = ? AND parent_workspace_key = ?
              RETURNING next_sequence_number - 1 AS sequence_number`;
   }
-  const target = insertTarget(input);
-  const targetsCompatibilityView = TABLE_REWRITES.some(([legacy]) => legacy === target);
+  const insert = insertTarget(input);
+  const insertsIntoCompatibilityView = TABLE_REWRITES.some(([legacy]) => legacy === insert);
   let sql = input;
   for (const [legacy, view] of TABLE_REWRITES) {
     sql = sql.replace(new RegExp(`\\b${legacy}\\b`, "giu"), view);
   }
   // SQLite does not implement UPSERT syntax on a view. Each compatibility
   // trigger applies the equivalent conflict policy to its normalized table.
-  return targetsCompatibilityView ? stripViewUpsert(sql) : sql;
+  return insertsIntoCompatibilityView ? stripViewUpsert(sql) : sql;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(
@@ -137,10 +150,11 @@ export async function executeWorkstreamRuntimeSql(
       const results: WorkstreamRuntimeSqlResult[] = [];
       for (const statement of request.statements) {
         sql.exec(`UPDATE _runtime_statement_changes SET changes = 0 WHERE id = 1`);
+        const rewrittenSql = rewriteWorkstreamRuntimeSql(statement.sql);
         let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
         try {
           cursor = sql.exec<Record<string, SqlStorageValue>>(
-            rewriteWorkstreamRuntimeSql(statement.sql),
+            rewrittenSql,
             ...statement.params,
           );
         } catch (error) {
@@ -157,10 +171,19 @@ export async function executeWorkstreamRuntimeSql(
         const counted = first(sql.exec<{ changes: number }>(
           `SELECT changes FROM _runtime_statement_changes WHERE id = 1`,
         ))?.changes ?? 0;
+        // workerd's cursor counts every row an INSTEAD OF trigger touched,
+        // including the bookkeeping row and projections. The compatibility
+        // trigger's explicit counter records the legacy statement's semantic
+        // effect and is therefore authoritative for view mutations. Direct
+        // normalized-table statements have no such counter and keep the native
+        // row count.
+        const changes = targetsRuntimeCompatibilityView(rewrittenSql)
+          ? counted
+          : Math.max(cursor.rowsWritten, counted);
         results.push({
           columns: rows.length === 0 ? [] : Object.keys(rows[0]!),
           rows,
-          changes: Math.max(cursor.rowsWritten, counted),
+          changes,
         });
       }
       return results;
