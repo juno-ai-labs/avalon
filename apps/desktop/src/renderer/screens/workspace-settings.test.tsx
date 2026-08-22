@@ -379,7 +379,10 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Workspace');
     expect(await screen.findByText('Terminal network access')).toBeVisible();
-    const fullInternet = screen.getByRole('radio', { name: /^Full internet/ });
+    // The heading and the radio group settle on different ticks, so the sync
+    // query raced the render and failed under full-suite load. The same query
+    // is already awaited below.
+    const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ });
     fireEvent.click(fullInternet);
     await waitFor(() => expect(fullInternet).toBeChecked());
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
