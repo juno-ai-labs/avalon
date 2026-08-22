@@ -11,6 +11,7 @@ import {
   type TerminalRepositoryCatalogGateway,
 } from "../src/services/terminal/workstream-state";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import type { WorkstreamRuntimeResourceAttachment } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
@@ -37,7 +38,12 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-async function fixture(input?: { backupResult?: string; baseSha?: string; emailAddress?: string | null }) {
+async function fixture(input?: {
+  backupResult?: string;
+  baseSha?: string;
+  emailAddress?: string | null;
+  residentResourceAttacher?: boolean;
+}) {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   const emailAddressSql = input?.emailAddress === null
@@ -83,6 +89,24 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  const recordRuntimeResourceAttachment = (request: WorkstreamRuntimeResourceAttachment): void => {
+    objectStore.prepare(
+      `INSERT OR IGNORE INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+    ).run(
+      request.resourceId,
+      request.attachedByUserId,
+      request.relationshipType ?? "generated",
+      JSON.stringify({ id: request.resourceId }),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+    );
+  };
+  const residentResourceAttacher = vi.fn(async (request: WorkstreamRuntimeResourceAttachment) => {
+    recordRuntimeResourceAttachment(request);
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO workstreams
@@ -171,24 +195,8 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
     // the stub records the link the way the SubstreamAgent's product does.
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {
-        attachRuntimeResource: vi.fn((request: {
-          resourceId: string;
-          attachedByUserId: string | null;
-          relationshipType?: string;
-        }) => {
-          objectStore.prepare(
-            `INSERT OR IGNORE INTO workstream_resource_links
-               (resource_id, attached_by_user_id, watch_enabled, relationship_type,
-                resource_json, attached_at, updated_at)
-             VALUES (?, ?, 0, ?, ?, ?, ?)`,
-          ).run(
-            request.resourceId,
-            request.attachedByUserId,
-            request.relationshipType ?? "generated",
-            JSON.stringify({ id: request.resourceId }),
-            Date.parse("2026-08-13T12:00:00.000Z"),
-            Date.parse("2026-08-13T12:00:00.000Z"),
-          );
+        attachRuntimeResource: vi.fn((request: WorkstreamRuntimeResourceAttachment) => {
+          recordRuntimeResourceAttachment(request);
           return { status: 200, bodyJson: JSON.stringify({ ok: true }) };
         }),
       },
@@ -217,18 +225,28 @@ async function fixture(input?: { backupResult?: string; baseSha?: string; emailA
     payloadPut,
     context,
     catalog,
+    residentResourceAttacher,
     selector: createTerminalRepositorySelector(
       env,
       provider,
       catalog,
       new TerminalSandboxCoordinator(env.DB, testTerminalPortFactory(objectStore), provider),
+      testTerminalPortFactory(objectStore),
+      input?.residentResourceAttacher ? residentResourceAttacher : undefined,
     ),
   };
 }
 
 describe("Terminal model repository selection", () => {
   it("prefers read-only remote authority while keeping local edits available and backs up before replacement", async () => {
-    const { objectStore, provider, payloadPut, context, selector } = await fixture();
+    const {
+      objectStore,
+      provider,
+      payloadPut,
+      context,
+      selector,
+      residentResourceAttacher,
+    } = await fixture({ residentResourceAttacher: true });
     workstreamObjectRun(
       objectStore,
       `INSERT INTO terminal_workspace
@@ -253,6 +271,7 @@ describe("Terminal model repository selection", () => {
       backup: { title: "Terminal backup before acme/widget", sizeBytes: 12 },
     });
     expect(payloadPut).toHaveBeenCalledOnce();
+    expect(residentResourceAttacher).toHaveBeenCalledOnce();
     const archiveCommand = vi.mocked(provider.runCommand).mock.calls.find(([, command]) => (
       command.taskName.includes("workspace-backup") && !command.taskName.includes("cleanup")
     ))?.[1].command;

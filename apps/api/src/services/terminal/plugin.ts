@@ -21,7 +21,11 @@ import {
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher as createRepositoryPublisher,
 } from "./repository";
-import { createTerminalPortFactory, TerminalObjectPortError } from "./object-port";
+import {
+  createTerminalPortFactory,
+  TerminalObjectPortError,
+  type TerminalPortFactory,
+} from "./object-port";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
 import { createTerminalRepositorySelector } from "./repository-selection";
@@ -33,14 +37,22 @@ import {
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
+import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
+  inObjectTerminalPort?: TerminalPortFactory,
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<HarnessPlugin | null> {
+  if ((inObjectTerminalPort === undefined) !== (inObjectResourceAttacher === undefined)) {
+    throw new Error("terminal_resident_runtime_incomplete");
+  }
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
+
+  const terminalPort = inObjectTerminalPort ?? createTerminalPortFactory(env);
 
   await admitTerminalPublicationGrant(env, {
     workspaceId: input.workspaceId,
@@ -48,9 +60,8 @@ export async function createAvalonTerminalPlugin(
     harnessRunId: input.harnessRunId,
     triggerMessageId: input.triggerMessageId,
     executionPrincipal: input.executionPrincipal,
-  });
+  }, new Date(), terminalPort);
 
-  const terminalPort = createTerminalPortFactory(env);
   const provider = createDaytonaTerminalProvider(configuration, undefined, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
   });
@@ -84,17 +95,26 @@ export async function createAvalonTerminalPlugin(
     env.DB,
     coordinator,
     provider,
-    createTerminalResourceBridge(env, terminalPort),
-    createRepositoryPublisher(env, createGitHubRestPublicationGateway(env)),
+    createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher),
+    createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
     createTerminalRepositorySelector(
       env,
       provider,
       createGitHubTerminalCatalogGateway(env),
       coordinator,
+      terminalPort,
+      inObjectResourceAttacher,
     ),
     async (context, sandbox, sandboxProvider) => {
       try {
-        await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);
+        await bootstrapTerminalRepository(
+          env,
+          context,
+          sandbox,
+          sandboxProvider,
+          readGateway,
+          terminalPort,
+        );
       } catch (error) {
         if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
         throw error;

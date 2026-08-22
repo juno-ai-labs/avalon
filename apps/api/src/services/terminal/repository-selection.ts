@@ -1,5 +1,5 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
-import { createTerminalPortFactory } from "./object-port";
+import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
 import { asWorkspaceId } from "@avalon/contracts";
 import {
   githubRepositoryAuthorization,
@@ -11,6 +11,7 @@ import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../../lib/workstream-email-address";
 import { logWarn } from "../../observability/logger";
+import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 import {
   emitProductUsageTelemetry,
   telemetryJourneyDuration,
@@ -103,6 +104,8 @@ export function createTerminalRepositorySelector(
   provider: TerminalSandboxProvider,
   catalog: TerminalRepositoryCatalogGateway,
   coordinator: TerminalSandboxCoordinator,
+  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): TerminalRepositorySelector {
   return {
     async checkout(context, input) {
@@ -186,7 +189,7 @@ export function createTerminalRepositorySelector(
         Number(left.policyAccess === "full_access") - Number(right.policyAccess === "full_access")
       ));
       const selected = candidates[0]!;
-      const terminal = createTerminalPortFactory(env)(context.workspaceId, context.workstreamId);
+      const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
       const current = await terminal.repository();
       const sameRepositoryIdentity = (
         current?.state === "selected"
@@ -250,7 +253,7 @@ export function createTerminalRepositorySelector(
             providerSandboxId: sandbox.providerSandboxId,
             generation: sandbox.generation,
             signal: context.signal,
-          });
+          }, inObjectResourceAttacher);
           try {
             await provider.clearGitHubReadAccess(sandbox.providerSandboxId);
           } catch (error) {
@@ -307,7 +310,7 @@ export function createTerminalRepositorySelector(
         harnessRunId: context.harnessRunId,
         triggerMessageId: run?.trigger_message_id ?? null,
         executionPrincipal: context.executionPrincipal,
-      });
+      }, new Date(), terminalPortFactory);
       await emitProductUsageTelemetry(env, {
         workspaceId: asWorkspaceId(context.workspaceId),
         userId: context.executionPrincipal.userId,

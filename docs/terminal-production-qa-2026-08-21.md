@@ -8,9 +8,48 @@ The highest-confidence fault boundary is between the harness's durable tool rece
 
 No code or production configuration was changed during this QA. Tests were confined to private QA workstreams, scratch sandboxes, and an authorized read-only checkout.
 
+## 2026-08-22 post-deploy verification correction
+
+PR #224 merged as `19ecb3555a9902a388bc5b57eddfac233eae5b67`; deployment run
+`32580512573` succeeded for that exact merge in EU and Global, including the
+remote migration ledger and two-region health check. A signed-in production
+window then reran the two-command control in private workstream
+`01a02a06-79b0-7328-abe4-b75bf747ab24`. The first command completed; the
+second failed in one second with the newly deployed
+`tool_receipt_persistence_failed` guidance. A single safe retry reproduced the
+same sequence under harness run `01a02a08-f154-77b4-b0ab-b04cefdc8341`.
+
+That result corrects the earlier claim that the heartbeat join was the complete
+root cause. The fresh run's `SubstreamAgent` alarm owned the drain from its first
+instruction through its 25.2-second terminal outcome; no later heartbeat joined
+it. The successful first command instead issued a chain of same-object
+`executeTerminalOperation` RPCs from inside that alarm. The second tool failed
+before `terminal_tool_finished`, after returning control to the alarm's receipt
+and regional-I/O path. The remaining request-context violation was therefore
+the resident agent RPCing back into its own object, not the inverse heartbeat
+ordering fixed by #224.
+
+The follow-up repair gives the resident Bind loop an in-object Terminal port
+that shares the RPC endpoint's identity, transaction, directory-effect, typed
+failure, and post-commit alarm semantics. It also keeps generated-resource link
+attachment—including oversized command output and repository-replacement
+backups—inside that same event instead of preserving a second self-RPC path.
+External Worker callers continue to use RPC. Production verification remains
+failed until that follow-up is merged and the same real-window sequence
+completes.
+
 ## Follow-up remediation status
 
-All four findings have been remediated on branch `codex/fix-production-terminal-qa`; the fixes have not been deployed or production-retested. The post-QA real-workerd reproduction identified the exact multi-step root cause: a keep-alive alarm fired while the run request was draining and awaited that other request context's active drain promise. This held the alarm across the model/tool loop and could make later Durable Object I/O belong to the wrong event. The fix makes that separate alarm defer without joining, arms a bounded follow-up heartbeat, and leaves recovery to the durable dispatch row and harness attempt lease. A healthy long run retains its unexpired attempt lease; a promise with no progress for five minutes and no live lease can be replaced inside the same isolate.
+The first remediation merged and deployed through PR #224, but the signed-in
+production retest above proved that it fixed only one ordering of the
+request-context race. The post-QA real-workerd reproduction correctly showed
+that a keep-alive alarm must not await another event's active drain promise.
+The follow-up correction now also removes the resident alarm's same-object
+Terminal-operation and generated-resource-link RPCs; it has not yet been
+deployed or production-retested. Recovery continues to belong to the durable
+dispatch row and harness attempt lease. A healthy long run retains its unexpired
+attempt lease; a promise with no progress for five minutes and no live lease can
+be replaced inside the same isolate.
 
 The remediation and review hardening also:
 

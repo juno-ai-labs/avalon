@@ -27,6 +27,7 @@ import { asSubstreamId } from "@avalon/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
+import type { TerminalPortFactory } from "../src/services/terminal/object-port";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -51,6 +52,13 @@ function agent(): DurableObjectStub {
       WORKSTREAM_ID,
       asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`),
     ),
+  ));
+}
+
+/** The one main-child object whose Terminal tables are work-stream authority. */
+function mainAgent(): DurableObjectStub {
+  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
   ));
 }
 
@@ -329,6 +337,199 @@ describe("Terminal authority on real workerd", () => {
         effectId,
       ).one().status).toBe("executing");
     });
+  });
+
+  it("keeps sequential resident-agent Terminal operations in the owning event", async () => {
+    const stub = mainAgent();
+    await boot(stub);
+    const result = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running", Date.now());
+      const terminalPortFactory = (instance as unknown as {
+        localTerminalPortFactory(): TerminalPortFactory;
+      }).localTerminalPortFactory();
+      const terminal = terminalPortFactory(WORKSPACE_ID, WORKSTREAM_ID);
+      const now = Date.now();
+      // If this port regresses to namespace routing, its first call re-enters
+      // this object's public RPC method and the test fails at the exact
+      // request-context boundary production crossed.
+      Object.defineProperty(instance, "executeTerminalOperation", {
+        configurable: true,
+        value: () => { throw new Error("resident_terminal_self_rpc"); },
+      });
+      try {
+        await terminal.reserveFirstGeneration({
+          stableName: "avalon-resident-agent",
+          authorityFingerprint: "authority",
+          networkRevision: 1,
+          runId: RUN_A,
+          operationLeaseExpiresAt: now + 60_000,
+          idleExpiresAt: now + 120_000,
+          archiveDueAt: now + 180_000,
+          expireDueAt: now + 240_000,
+          now,
+        });
+        await terminal.attachProviderSandbox({
+          generation: 1,
+          sandboxId: "sandbox-resident-agent",
+          lifecycleState: "running",
+          idleExpiresAt: now + 120_000,
+          archiveDueAt: now + 180_000,
+          expireDueAt: now + 240_000,
+          now: now + 1,
+        });
+        const first = await terminal.claimOperation({
+          runId: RUN_A,
+          generation: 1,
+          leaseExpiresAt: now + 60_000,
+          now: now + 2,
+        });
+        const second = await terminal.claimOperation({
+          runId: RUN_A,
+          generation: 1,
+          leaseExpiresAt: now + 90_000,
+          now: now + 3,
+        });
+        return { first, second, sandbox: await terminal.sandbox() };
+      } finally {
+        delete (instance as unknown as Record<string, unknown>).executeTerminalOperation;
+      }
+    });
+
+    expect(result.first).toMatchObject({
+      sandboxId: "sandbox-resident-agent",
+      operationRunId: RUN_A,
+    });
+    expect(result.second).toMatchObject({
+      sandboxId: "sandbox-resident-agent",
+      operationRunId: RUN_A,
+      operationLeaseExpiresAt: expect.any(Number),
+    });
+    expect(result.sandbox).toMatchObject({
+      sandboxId: "sandbox-resident-agent",
+      operationRunId: RUN_A,
+    });
+  });
+
+  it("rejects a mismatched identity at the resident Terminal factory boundary", async () => {
+    const stub = mainAgent();
+    await boot(stub);
+    const failure = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      const terminalPortFactory = (instance as unknown as {
+        localTerminalPortFactory(): TerminalPortFactory;
+      }).localTerminalPortFactory();
+      try {
+        await terminalPortFactory(
+          "00000000-0000-7000-8000-00000000ffff",
+          WORKSTREAM_ID,
+        ).sandbox();
+        return null;
+      } catch (error) {
+        return error instanceof Error && "code" in error
+          ? { name: error.name, code: error.code }
+          : { name: "unknown", code: null };
+      }
+    });
+
+    expect(failure).toEqual({
+      name: "TerminalObjectPortError",
+      code: "workstream_terminal_identity_mismatch",
+    });
+  });
+
+  it("keeps resident-agent resource attachments in the owning event", async () => {
+    const stub = mainAgent();
+    await boot(stub);
+    const resourceId = "00000000-0000-7000-8000-00000000aa03";
+    const calls = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      const recorded: unknown[][] = [];
+      const product = (instance as unknown as {
+        product: { attachRuntimeResource(...args: unknown[]): Promise<void> };
+      }).product;
+      const attacher = (instance as unknown as {
+        localRuntimeResourceAttacher(
+          workspaceId: string,
+          workstreamId: string,
+        ): (input: Record<string, unknown>) => Promise<void>;
+      }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
+      Object.defineProperty(instance, "attachRuntimeResource", {
+        configurable: true,
+        value: () => { throw new Error("resident_resource_self_rpc"); },
+      });
+      Object.defineProperty(product, "attachRuntimeResource", {
+        configurable: true,
+        value: async (...args: unknown[]) => { recorded.push(args); },
+      });
+      try {
+        await attacher({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          resourceId,
+          attachedByUserId: null,
+          relationshipType: "generated",
+        });
+        return recorded;
+      } finally {
+        delete (instance as unknown as Record<string, unknown>).attachRuntimeResource;
+        delete (product as unknown as Record<string, unknown>).attachRuntimeResource;
+      }
+    });
+
+    expect(calls).toEqual([[
+      WORKSPACE_ID,
+      resourceId,
+      null,
+      "generated",
+    ]]);
+  });
+
+  it("refuses local Terminal and resource authority in a non-main child", async () => {
+    const stub = agent();
+    await boot(stub);
+    const failures = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      state.storage.sql.exec(
+        `UPDATE substream_agent_identity
+            SET external_substream_id = '00000000-0000-7000-8000-000000000001'
+          WHERE id = 1`,
+      );
+      const terminalPortFactory = (instance as unknown as {
+        localTerminalPortFactory(): TerminalPortFactory;
+      }).localTerminalPortFactory();
+      const resourceAttacher = (instance as unknown as {
+        localRuntimeResourceAttacher(
+          workspaceId: string,
+          workstreamId: string,
+        ): (input: Record<string, unknown>) => Promise<void>;
+      }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
+      const observed: string[] = [];
+      try {
+        await terminalPortFactory(WORKSPACE_ID, WORKSTREAM_ID).sandbox();
+      } catch (error) {
+        observed.push(error instanceof Error && "code" in error
+          ? String(error.code)
+          : "unknown_terminal_error");
+      }
+      try {
+        await resourceAttacher({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          resourceId: "00000000-0000-7000-8000-00000000aa04",
+          attachedByUserId: null,
+          relationshipType: "generated",
+        });
+      } catch (error) {
+        observed.push(error instanceof Error ? error.message : "unknown_resource_error");
+      }
+      return observed;
+    });
+
+    expect(failures).toEqual([
+      "workstream_terminal_identity_mismatch",
+      "workstream_runtime_identity_mismatch",
+    ]);
   });
 
   describe("the operation lease", () => {

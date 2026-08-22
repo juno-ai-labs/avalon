@@ -1,5 +1,5 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
-import { createTerminalPortFactory } from "./object-port";
+import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
 import {
   createGitHubAppJwt,
   githubRepositoryAuthorization,
@@ -99,8 +99,9 @@ async function loadSelection(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  terminalPortFactory: TerminalPortFactory,
 ): Promise<TerminalRepositorySelection | null> {
-  const row = await createTerminalPortFactory(env)(workspaceId, workstreamId)
+  const row = await terminalPortFactory(workspaceId, workstreamId)
     .selectedRepository();
   return row
     ? {
@@ -177,6 +178,7 @@ export async function bootstrapTerminalRepository(
   sandbox: AcquiredTerminalSandbox,
   provider: TerminalSandboxProvider,
   gateway: TerminalGitHubReadGateway,
+  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
 ): Promise<{
   repositoryFullName: string;
   baseRef: string;
@@ -184,7 +186,12 @@ export async function bootstrapTerminalRepository(
   headRef: string;
   outcome: "cloned" | "refreshed";
 }> {
-  const selection = await loadSelection(env, context.workspaceId, context.workstreamId);
+  const selection = await loadSelection(
+    env,
+    context.workspaceId,
+    context.workstreamId,
+    terminalPortFactory,
+  );
   if (!selection) {
     throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with terminal_checkout_repository, then retry the repository operation.");
   }
@@ -281,7 +288,7 @@ export async function bootstrapTerminalRepository(
     );
   }
   if (token || !alreadyBootstrapped) {
-    await createTerminalPortFactory(env)(context.workspaceId, context.workstreamId)
+    await terminalPortFactory(context.workspaceId, context.workstreamId)
       .recordRepositoryBootstrap({
         generation: sandbox.generation,
         readTokenExpiresAt: token?.expiresAt ? Date.parse(token.expiresAt) : null,
@@ -309,11 +316,17 @@ export async function admitTerminalPublicationGrant(
     executionPrincipal: ExecutionPrincipal;
   },
   now = new Date(),
+  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
 ): Promise<{ admitted: true; grantId: string } | { admitted: false; reason: string }> {
   if (!input.triggerMessageId || input.executionPrincipal.type !== "user") {
     return { admitted: false, reason: "participant_message_required" };
   }
-  const selection = await loadSelection(env, input.workspaceId, input.workstreamId);
+  const selection = await loadSelection(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+    terminalPortFactory,
+  );
   if (!selection) return { admitted: false, reason: "repository_not_configured" };
   const message = await env.DB.prepare(
     `SELECT message.text_content
@@ -331,7 +344,7 @@ export async function admitTerminalPublicationGrant(
     input.executionPrincipal.userId,
   ).first<{ text_content: string }>();
   if (!message) return { admitted: false, reason: "participant_message_required" };
-  const terminal = createTerminalPortFactory(env)(input.workspaceId, input.workstreamId);
+  const terminal = terminalPortFactory(input.workspaceId, input.workstreamId);
   await terminal.admitPublicationGrant({
     grantId: newId(now.getTime()),
     runId: input.harnessRunId,
@@ -387,10 +400,16 @@ function publishedOutput(row: CompletedPublicationRow): TerminalPublishedBranchA
 export function createTerminalRepositoryPublisher(
   env: Env,
   gateway: TerminalGitHubPublicationGateway,
+  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
 ): TerminalRepositoryPublisher {
   return {
     async publishBranchAndPr(context, input, sandbox, provider) {
-      const selection = await loadSelection(env, context.workspaceId, context.workstreamId);
+      const selection = await loadSelection(
+        env,
+        context.workspaceId,
+        context.workstreamId,
+        terminalPortFactory,
+      );
       if (!selection) {
         throw new TerminalToolError(
           "repository_not_configured",
@@ -403,7 +422,7 @@ export function createTerminalRepositoryPublisher(
           WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
       ).bind(context.workspaceId, context.workstreamId, context.harnessRunId, context.toolCallId).first<InvocationRow>();
       if (!invocation) throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable publication receipt. Retry publication.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
-      const terminal = createTerminalPortFactory(env)(context.workspaceId, context.workstreamId);
+      const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
       const completed = await terminal.completedPublication(invocation.id);
       // A row in `completed` always carries these three; the columns are
       // nullable because the row exists from `publishing` onward. Replaying a
