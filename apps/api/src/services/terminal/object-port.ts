@@ -5,6 +5,7 @@ import { rpcResultBody } from "../../durable-objects/rpc-result";
 import {
   TERMINAL_OPERATIONS,
   type TerminalObjectPort,
+  type TerminalOperationFailure,
   type TerminalOperation,
 } from "../../durable-objects/workstream-terminal-protocol";
 import type { Env } from "../../env";
@@ -16,6 +17,27 @@ export type TerminalPortFactory = (
   workspaceId: string,
   workstreamId: string,
 ) => TerminalObjectPort;
+
+/** A typed, safely retryable failure from the object-local Terminal authority. */
+export class TerminalObjectPortError extends Error {
+  readonly code: TerminalOperationFailure["code"];
+  readonly details: {
+    operation: TerminalOperation;
+    outcome: TerminalOperationFailure["outcome"];
+    retryable: TerminalOperationFailure["retryable"];
+  };
+
+  constructor(operation: TerminalOperation, failure: TerminalOperationFailure) {
+    super(failure.message);
+    this.name = "TerminalObjectPortError";
+    this.code = failure.code;
+    this.details = {
+      operation,
+      outcome: failure.outcome,
+      retryable: failure.retryable,
+    };
+  }
+}
 
 /**
  * Bind a factory to an environment, optionally to in-isolate storage.
@@ -85,8 +107,21 @@ export function createTerminalObjectPort(
       operation,
       args,
     });
-    const body = rpcResultBody(result) as { ok?: boolean; value?: unknown; error?: string } | null;
-    if (!body?.ok) throw new Error(body?.error ?? "terminal_operation_failed");
+    const body = rpcResultBody(result) as {
+      ok?: boolean;
+      value?: unknown;
+      error?: string;
+      failure?: TerminalOperationFailure;
+    } | null;
+    if (!body?.ok) {
+      const failure = body?.failure ?? {
+        code: "terminal_operation_not_committed",
+        message: "Avalon could not commit an internal Terminal state change. Resume the run so the durable tool receipt can reconcile it; do not manually repeat a write.",
+        outcome: "not_committed",
+        retryable: true,
+      } satisfies TerminalOperationFailure;
+      throw new TerminalObjectPortError(operation, failure);
+    }
     return body.value ?? null;
   };
 

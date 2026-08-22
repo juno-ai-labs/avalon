@@ -180,13 +180,18 @@ describe("Daytona Terminal runtime", () => {
 
   it("records one durable command task and terminalizes nonzero exit normally", async () => {
     const { objectStore, provider, runtime } = fixture();
-    await expect(runtime.runCommand(context, { command: "false", timeoutMs: 3_000 })).resolves.toMatchObject({
+    const result = await runtime.runCommand(context, { command: "false", timeoutMs: 3_000 });
+    expect(result).toMatchObject({
       state: "failed",
       terminationReason: "exited",
       exitCode: 1,
       stdout: "ok\n",
       stderr: "bad\n",
+      acquisitionDurationMs: expect.any(Number),
+      totalDurationMs: expect.any(Number),
     });
+    expect(result.acquisitionDurationMs).toBeGreaterThanOrEqual(0);
+    expect(result.totalDurationMs).toBeGreaterThanOrEqual(result.acquisitionDurationMs);
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       taskName: `avalon-task-${I}`,
       command: "false",

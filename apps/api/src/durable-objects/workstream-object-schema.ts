@@ -15,7 +15,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 13;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 14;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1265,6 +1265,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "give the Terminal lifecycle real columns and retire its compatibility views",
     statements: terminalAuthorityPromotion(),
   },
+  {
+    version: 14,
+    description: "project receipt-only tool settlement into the visible transcript row",
+    statements: [
+      ...repairStrandedToolTranscriptParts(),
+      ...rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(),
+    ],
+  },
 ];
 
 /**
@@ -1630,6 +1638,56 @@ function rebuiltToolInvocationsUpdateTrigger(): string[] {
          execution_plan_hash = NEW.execution_plan_hash,
          execution_plan_json = NEW.execution_plan_json,
          provider_idempotency_key = NEW.provider_idempotency_key,`);
+  return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_update", patched];
+}
+
+/**
+ * Keep an already-rendered tool card aligned when a recovery path settles only
+ * the durable receipt.
+ *
+ * Normal execution writes the transcript row again after settling the receipt,
+ * but stale-run reaping cannot: it has only the generic runtime database and no
+ * live event publisher. Its UPDATE therefore used to leave `tool_effects`
+ * terminal while `parts.structured_content_json` stayed `started` forever.
+ * The receipt is the execution authority, so the compatibility trigger now
+ * projects a terminal receipt into the same-id tool part inside the transaction
+ * that settled it. A later normal transcript write remains an idempotent
+ * overwrite through the v11 trigger.
+ *
+ * Derived from v8 rather than editing it because deployed migration hashes are
+ * immutable.
+ */
+function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] {
+  const source = rebuiltToolInvocationsUpdateTrigger()[1];
+  if (!source) throw new Error("rebuilt tool invocations update trigger not found");
+  const anchor = `        WHERE effect_intent_id = OLD.id;
+       UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;`;
+  if (!source.includes(anchor)) throw new Error("tool invocations update trigger tail changed");
+  const patched = source.replace(anchor, `        WHERE effect_intent_id = OLD.id;
+       UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+       UPDATE parts SET
+         structured_content_json = json_set(
+           parts.structured_content_json,
+           '$.invocation.status', NEW.status,
+           '$.invocation.activityName', json('null'),
+           '$.invocation.outputSummary', NEW.output_summary,
+           '$.invocation.completedAt', NEW.completed_at,
+           '$.invocation.error', json(COALESCE(NEW.error_json, 'null'))
+         ),
+         tool_status = NEW.status,
+         edited_at = COALESCE(
+           CASE WHEN NEW.completed_at IS NULL THEN NULL
+             ELSE CAST((julianday(NEW.completed_at) - 2440587.5) * 86400000 + 0.5 AS INTEGER) END,
+           parts.edited_at,
+           parts.updated_at
+         ),
+         updated_at = MAX(parts.updated_at, COALESCE(
+           CASE WHEN NEW.completed_at IS NULL THEN NULL
+             ELSE CAST((julianday(NEW.completed_at) - 2440587.5) * 86400000 + 0.5 AS INTEGER) END,
+           parts.updated_at
+         ))
+        WHERE parts.id = OLD.id AND parts.message_type = 'tool'
+          AND NEW.status IN ('completed', 'failed', 'ambiguous');`);
   return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_update", patched];
 }
 

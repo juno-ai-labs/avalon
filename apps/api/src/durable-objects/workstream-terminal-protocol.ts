@@ -33,6 +33,14 @@ export type TerminalObjectPort = {
   ) => Promise<StorageMethods[K]["result"]>;
 };
 
+/** Stable, participant-safe failure returned when the object transaction did not commit. */
+export interface TerminalOperationFailure {
+  code: "terminal_operation_not_committed";
+  message: string;
+  outcome: "not_committed";
+  retryable: true;
+}
+
 /**
  * Demands that a list of operation names covers the whole key set.
  *
