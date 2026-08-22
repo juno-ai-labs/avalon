@@ -1056,6 +1056,40 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — `tool_position` is a high-water mark, not a row count
+
+**What changed:** Object schema migration 16 rebuilds
+`_runtime_tool_invocations_insert` so `tool_effects.tool_position` is allocated
+as `COALESCE(MAX(tool_position) + 1, 0)` over the run instead of
+`COUNT(*)`.
+
+**Why:** The table's uniqueness is `UNIQUE (run_id, attempt_epoch,
+tool_position)`, and a count allocates injectively only while nothing is ever
+removed. `attachment-tool-receipts.ts` deletes receipts from two paths, and the
+compat delete trigger turns each into a `DELETE FROM tool_effects`. One hole in
+a run's positions and the next admission computed a number another row already
+held; `INSERT OR IGNORE` dropped it, and `persistToolExecutionPlan` — which
+believes it conflicted on `(harness_run_id, tool_call_id)`, a constraint that
+does not exist on this table — looked up its own coordinates, found nothing, and
+threw `RunOwnershipLostError`. The run ended on a lease failure that never
+happened.
+
+**Considered and rejected:** Waiting for the tool-receipt slice of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md),
+which deletes this trigger outright and allocates the position in a typed
+operation. That slice is several changes away and the defect is live, so the
+allocation is repaired in place first and the typed operation inherits it. Also
+rejected: scoping the high-water mark to `(run_id, attempt_epoch)`. It would
+restart numbering at a new attempt, which is defensible on its own but is a
+behavior change this repair has no reason to make.
+
+**Consequences:** Migration 14's precedent — rebuilding a compat trigger in a
+later migration rather than editing the frozen v1 source — now has a second
+user, and the helper reapplies migration 15's epoch rounding because it derives
+its text from v1 and would otherwise reinstate the truncation that fixed.
+Positions are no longer dense: a run that has had a receipt deleted has a gap,
+which nothing reads and the constraint does not mind.
+
 ### 2026-08-22 — Every object in the hierarchy shares one migration base
 
 **What changed:** `MigratableDurableObject` is a new base that

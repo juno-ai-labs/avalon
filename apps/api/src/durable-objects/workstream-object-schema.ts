@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 15;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 16;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1295,6 +1295,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         WHERE status = 'pending'`,
     ],
   },
+  {
+    version: 16,
+    description: "allocate tool_position from a high-water mark so a deleted receipt cannot wedge a run",
+    statements: rebuiltToolInvocationsInsertTriggerForPositionAllocation(),
+  },
 ];
 
 /**
@@ -1733,6 +1738,49 @@ function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] 
  * already frozen by its own migration hash — any edit to it breaks v1 before
  * it could silently change what this migration builds.
  */
+/**
+ * Allocates `tool_effects.tool_position` from the run's high-water mark rather
+ * than its row count.
+ *
+ * The insert trigger wrote `(SELECT COUNT(*) FROM tool_effects WHERE run_id =
+ * ...)`, and the table's uniqueness is `UNIQUE (run_id, attempt_epoch,
+ * tool_position)`. A count allocates injectively only while nothing is ever
+ * removed — but `attachment-tool-receipts.ts` deletes receipts from two paths,
+ * and `_runtime_tool_invocations_delete` turns each into a
+ * `DELETE FROM tool_effects`. One hole in a run's positions and the next
+ * admission computes a number another row already holds; `INSERT OR IGNORE`
+ * drops it, and `persistToolExecutionPlan` — which believes it conflicted on
+ * `(harness_run_id, tool_call_id)`, a constraint that does not exist — looks up
+ * its own coordinates, finds nothing, and throws `RunOwnershipLostError`. The
+ * run ends on a lease failure that never happened.
+ *
+ * `MAX(tool_position) + 1` stays injective across deletes. It is scoped to the
+ * run rather than to `(run_id, attempt_epoch)` so that positions keep advancing
+ * across attempts exactly as the count did: narrowing the scope would restart
+ * numbering at a new epoch, which is defensible but is a behavior change this
+ * repair has no reason to make.
+ *
+ * Derived from the compat source with the rounding of migration 15 reapplied,
+ * because that migration rebuilt every epoch-converting trigger and this text
+ * must continue from it — starting at v1's would silently reinstate the
+ * truncation it fixed.
+ */
+function rebuiltToolInvocationsInsertTriggerForPositionAllocation(): string[] {
+  const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_tool_invocations_insert"));
+  if (!source) throw new Error("tool invocations insert trigger not found in compat schema");
+  const rounded = source.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+  const anchor = "(SELECT COUNT(*) FROM tool_effects WHERE run_id = NEW.harness_run_id),";
+  if (!rounded.includes(anchor)) {
+    throw new Error("tool invocations insert trigger position allocation shape changed");
+  }
+  const patched = rounded.replace(
+    anchor,
+    "(SELECT COALESCE(MAX(tool_position) + 1, 0) FROM tool_effects WHERE run_id = NEW.harness_run_id),",
+  );
+  return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_insert", patched];
+}
+
 function roundedCompatTriggerRebuilds(): string[] {
   return WORKSTREAM_RUNTIME_COMPAT_SCHEMA
     .filter((statement) =>
