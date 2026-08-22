@@ -147,6 +147,12 @@ export interface Env {
   /** Per-region operator credentials for the restricted telemetry operations
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
+  /** Optional in every region, as a pair: the bot token of the internal Slack
+   * app operator notifications are posted with, and the channel they go to.
+   * Either absent, `notifyOps` answers `skipped` and the log row beside each
+   * notice is the only record. */
+  OPS_SLACK_BOT_TOKEN?: string;
+  OPS_SLACK_CHANNEL_ID?: string;
   SESSION_SIGNING_KEY: string;
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;

@@ -64,6 +64,7 @@ import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
   type ScheduledAlarm,
+  type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
 import {
   recordWorkspaceScheduleFailure,
@@ -74,6 +75,7 @@ import {
 } from "../services/workspace-schedule-execution";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { workspaceDOName } from "./names";
+import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceDirectoryExistsRequestSchema,
@@ -1263,7 +1265,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (workspaceId) await this.refreshSchedule(workspaceId);
   }
 
-  protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
+  protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
     if (alarm.kind === PRODUCT_ALARM_KIND) {
@@ -1280,7 +1282,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
       throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
     }
-    await runWorkspaceScheduleTarget(
+    return runWorkspaceScheduleTarget(
       this.scheduleContext(workspaceId),
       { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
       new Date(),
@@ -1293,12 +1295,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     attempt: number,
   ): void {
     const workspaceId = this.workspaceId();
-    logWarn(this.env, "workspace_scheduled_alarm_failed", {
-      workspace_id: workspaceId,
-      alarm_kind: alarm.kind,
-      alarm_key: alarm.key,
+    reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
+      event: "workspace_scheduled_alarm_failed",
+      summary: "A workspace alarm target keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the target.",
       attempt,
-      code: error instanceof Error ? error.message : "unknown_error",
+      fields: {
+        workspace_id: workspaceId,
+        alarm_kind: alarm.kind,
+        alarm_key: alarm.key,
+      },
+      error,
     });
     if (!workspaceId || !isWorkspaceScheduleAlarmKind(alarm.kind)) return;
     // The audit row is a regional D1 write and this hook cannot await; the
@@ -1309,6 +1315,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
       error,
     ).catch(() => undefined));
+  }
+
+  protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
+    reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
+      event: "workspace_scheduled_alarm_stalled",
+      summary: "A workspace alarm target keeps coming back due at the same instant after running: the reap or reconcile named by `alarm_kind` and `alarm_key` is not removing what its due-time query counts. Find the row it counts and why the pass does not move it.",
+      attempt,
+      fields: {
+        workspace_id: this.workspaceId(),
+        alarm_kind: alarm.kind,
+        alarm_key: alarm.key,
+        due_at: new Date(alarm.dueAt).toISOString(),
+      },
+    });
   }
 
   /**

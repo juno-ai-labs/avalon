@@ -18,6 +18,7 @@ sockets, and effects — belong to
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | How a gated entry is reported, whichever object holds it: the attempt that warns, the one that logs an error, the one that notifies an operator, and what of a thrown error may leave. |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
@@ -82,7 +83,7 @@ before a full re-arm.
    alarm started**, up to `SCHEDULED_ALARM_DRAIN_LIMIT` (100), each through
    `runScheduledAlarm(entry)`. The instant is snapshotted rather than re-read
    per entry, so a slow handler cannot extend its own pass indefinitely; what
-   comes due during it is caught by step 6.
+   comes due during it is caught by step 7.
 5. Run `runDueAlarmWork(now)` — whatever the object derives rather than stores,
    **including re-deriving the whole index**. A handler that just ran has
    usually advanced its own canonical row, and it writes that row through the
@@ -90,7 +91,9 @@ before a full re-arm.
    `executeRuntimeSql`. Without a reconcile here, the drain settles the entry it
    just ran and nothing arms the occurrence that replaced it: a recurring
    automation fires exactly once.
-6. Re-arm through `armAlarmAfterDueWork()`.
+6. Gate whatever ran and **came back due at the same instant** — the stall
+   check described below the settle rules.
+7. Re-arm through `armAlarmAfterDueWork()`.
 
 Both arms default to the exact re-derivation and are hooks for one case: an
 object whose alarm *is* the worker for a reason it derives. `SubstreamAgent` is
@@ -111,6 +114,31 @@ entry keeps the wake-up it asked for.
 An entry that throws is deferred: its attempt count goes up and its `retry_at`
 moves out by an equal-jitter exponential backoff, from one minute to a
 thirty-minute ceiling. Its siblings in the same drain are unaffected.
+
+An entry that returns but is found, after the re-derive, under the same key at
+the identical `dueAt` with that instant already past has made no progress: its
+handler ran and whatever the index is derived from did not move. It is deferred
+exactly as a throw is, and the attempt it arrived with is carried forward — the
+settle deleted the row and the reconcile re-inserted it at zero, so without the
+carry the backoff would restart at its first step on every wake and never reach
+the ceiling. The object's `onScheduledAlarmStalled` hook reports it. The test is
+narrow on purpose: an entry that advanced its row re-derives a later instant,
+one that rescheduled itself wrote a different one, and an entry the drain never
+reached, or that came due during it, is not in the drained set and keeps its
+immediate wake.
+
+A handler can also answer for itself, through what `runScheduledAlarm` returns
+(`ScheduledAlarmOutcome`). `{ progressed: true }` says the source moved and the
+identical instant is transient — a bounded reap that cleared a hundred rows of
+one second and has more behind them — and the entry keeps its immediate wake.
+`{ waitMs }` says the work is legitimately not possible yet — a sandbox a live
+run holds, a directory row the Queue has not caught up to — and the entry is
+held that long through `hold`, which writes `retry_at` and leaves `attempt`
+alone: a wait is not an attempt. Returning nothing leaves the decision to the
+base. A handler must not claim progress against a source it does not move: the
+Slack sweeps say nothing for exactly that reason, because the unfurl pass
+advances every unchanged card and the ingress pass re-enqueues without touching
+the row, and either would claim progress forever.
 
 ### Reconciling an index
 
@@ -173,7 +201,29 @@ derived source has no way to carry that distinction.
   ever read.
 - **The alarm is exact, and floored at `now + 1`.** An alarm set to a past
   instant fires immediately and re-derives the same past instant: that is the
-  shape every hot-alarm loop in this codebase has had.
+  shape every hot-alarm loop in this codebase has had. The floor is not a
+  backoff and must not become one — the overflow and slow-handler cases under
+  *Failure modes* depend on the immediate re-wake. What stops the loop is the
+  stall gate: **an entry that ran and is due again at the identical instant is
+  a failed attempt**, held behind the same gate a throw earns, unless its
+  handler reported progress or asked to wait. A handler that wants to run again
+  at once reschedules its entry to a *different* instant.
+- **A due-time expression counts only rows its pass will act on, at the instant
+  it will act on them.** The `slack_ingress` arm counts a spent link challenge
+  a day after it was spent, which is when the reap removes it; the
+  `expired_drafts` arm excludes the linked drafts the reap keeps; every derived
+  instant is rounded up to the next whole second, because `strftime` drops the
+  milliseconds the pass's own cutoff keeps and an alarm that fires early finds
+  nothing due; the `slack_unfurls` arm counts only links on a connection the
+  sweep would load. An arm that counts what its pass leaves behind is the stall
+  gate's steady customer — a drip and a report rather than a loop, but a
+  defect all the same.
+- **A bounded pass reports the rows it retired.** Every maintenance reap
+  answers the stall check with its count, because a backlog sharing one second
+  re-derives the same instant until it is gone; the two Slack sweeps answer
+  nothing, because neither moves the rows its query counts and either would
+  claim progress forever. A wait that is not a positive finite number is not a
+  wait; the entry takes the stall rule.
 - **Entries sharing an instant are totally ordered.** The due query and
   `nextDueAt` order by `MAX(due_at, retry_at)` and then by the primary key, so a
   tie larger than `SCHEDULED_ALARM_DRAIN_LIMIT` is sliced into consecutive wakes
@@ -221,6 +271,25 @@ time moved, go reconcile" entry points.
   delay randomized so a whole region does not retry a shared dependency in the
   same millisecond. It keeps its due time, so a target that recovers runs at the
   next drain rather than being rescheduled from scratch.
+- **A handler returns without moving its source.** The entry is back at the
+  same past instant after the re-derive, and the base holds it behind the retry
+  gate as if it had thrown, carrying the attempt forward so the delay grows to
+  the thirty-minute ceiling. Every object reports it through
+  `reportScheduledAlarmAttempt`, the same policy a throw gets: a warning on the
+  first two attempts, an error from the third, and one operator notification
+  at exactly the third ([`ops-alerting.md`](ops-alerting.md)). The counter is
+  shared, so an episode that alternates throws and stalls is still reported
+  once. This is the failure that used to be a hot loop. On 2026-08-22 the
+  `slack_ingress` maintenance pass reaped expired link challenges at the 30-day
+  retention cutoff while the schedule counted them due at their 15-minute
+  expiry, and one workspace's alarm fired about 1.5 times a second for hours.
+  The gate bounds the damage; the fix is always in the source — a reap must
+  remove everything the due-time expression counts.
+- **A handler legitimately cannot act yet.** It answers `{ waitMs }` and the
+  entry is held that long with no attempt counted; the first reconcile after
+  its source moves clears the hold. A Terminal deadline does this while a live
+  run holds the sandbox (one minute) and after a transition whose directory
+  effect is still on the Queue (thirty seconds).
 - **A workspace target fails.** In addition to the gate, `schedule` and `watch`
   failures write a `schedule.failed` / `resource_watch.failed` audit event. That
   write is fire-and-forget: the gate is already durable, and losing the audit
@@ -256,7 +325,7 @@ time moved, go reconcile" entry points.
 | `due_at` | When the entry is meant to run, owned by whoever scheduled it. |
 | `repeat_every_ms` | `NULL` for a one-shot; otherwise the interval it re-arms on. |
 | `retry_at` | Backoff gate owned by the drain, `0` until the entry first fails. |
-| `attempt` | Consecutive failures, reset on success and on a reschedule. |
+| `attempt` | Consecutive attempts without progress — throws and stalls alike — reset when the entry moves: a settle that advanced it, or a reschedule. |
 | `payload_json` | Opaque to the store; free for a handler that needs more than a key. |
 
 The *effective* instant is `MAX(due_at, retry_at)`, which is what the index,
@@ -273,7 +342,18 @@ a failing target a free immediate attempt.
   when an earlier entry is scheduled, pushing it back out and deleting it when
   entries are cancelled, per-entry backoff isolation, repeat advancement,
   draining a tie wider than one wake allows, re-waking for an entry a slow
-  handler overran, and the agent-timer index.
+  handler overran, the agent-timer index, and the stall gate — an entry that
+  ran and came back due at the same instant is deferred with its attempt
+  carried across the settle-and-reinsert, while one that moved itself,
+  reported progress, or asked to wait is not.
+- `apps/api/test/workspace-alarm-stall-alert.test.ts` drives `WorkspaceDO`'s
+  failure and stall hooks in the Node suite: which attempt warns, which logs at
+  `error`, that exactly one operator notification is posted, and that an
+  episode mixing throws and stalls posts once.
+- `apps/api/test/workspace-schedule-targets.test.ts` runs the due-time queries
+  against the object's own ledger, for the arms the Node snapshots cannot
+  exercise: the draft arm's exclusion of linked drafts, and the rounding of a
+  derived instant up to the next second.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
 - `apps/api/test/workspace-do-schema.test.ts` applies the WorkspaceDO ledger one
@@ -302,6 +382,69 @@ a failing target a free immediate attempt.
   is how `agent-run-lifecycle.test.ts` became intermittent.
 
 ## Changelog
+
+### 2026-08-22 — An entry that runs and comes back due at the same instant is a failed attempt
+
+**What changed:** After the re-derive in `alarm()`, the base compares every
+entry the drain ran against the index. One that is back under the same key at
+the identical `dueAt`, with that instant already past, is deferred through the
+existing retry gate with its attempt carried forward, and reported through a new
+`onScheduledAlarmStalled` hook. A handler can answer for itself through
+`ScheduledAlarmOutcome`: `{ progressed: true }` keeps the immediate wake,
+`{ waitMs }` holds the entry without an attempt (`ScheduledAlarmStore.hold`).
+`drainDueScheduledAlarms` returns the runs rather than a count. Every object's
+failure and stall hooks report through `reportScheduledAlarmAttempt`
+(`scheduled-alarm-report.ts`): a warning on attempts one and two, an error from
+three, one operator notification at three ([`ops-alerting.md`](ops-alerting.md)).
+Every bounded maintenance pass reports the rows it retired as progress; the two
+Slack sweeps report nothing; a Terminal deadline waits while a run holds its
+sandbox or its directory effect is on the Queue. Every derived due time is
+rounded up to the next second; the `expired_drafts` arm excludes linked drafts,
+the `slack_unfurls` arm excludes a disabled connection's links, and the
+`slack_ingress` arm counts a link challenge at the same grace horizon the reap
+binds, from one constant.
+
+**Why:** The gate only ever caught a handler that threw. One that returned
+without moving its source re-derived the same past instant, the re-arm floored
+it at `now + 1`, and the object re-entered immediately — one wake per handler
+duration, with nothing logged. On 2026-08-22 the `slack_ingress` maintenance
+pass reaped link challenges at the 30-day retention cutoff while the schedule
+counted them due at their 15-minute expiry; one workspace's alarm fired about
+1.5 times a second from 17:41 UTC, writing some fifty thousand error rows an
+hour, and was found by accident while chasing an unrelated Slack failure. Five
+other sources could leave a past instant behind after a pass that returns — an
+R2 failure in the resource and note reaps, a linked draft older than a day, an
+archived work stream's unfurl, a Terminal deadline deferred behind a live run —
+and each was the same loop waiting for its first row. The outcomes exist
+because the identical-instant test alone misreads two honest cases: a bounded
+reap clearing a burst that shares one second, and a source another actor moves
+after the handler returns. Read as stalls, the first would page an operator
+for a large delete and the second for every Terminal warm stop.
+
+**Considered and rejected:** A minimum re-arm delay in `armNextAlarm`. It would
+apply to every object and every arming path, delay the legitimate immediate
+re-wakes the overflow and slow-handler cases depend on, be undone by
+`SubstreamAgent`'s own `now + 1` arming, and still say nothing about *which*
+entry was looping. Clamping `due_at` on reconcile was rejected because a moving
+`due_at` resets the gate on every pass. Gating only in `WorkspaceDO` was
+rejected because the shape belongs to the base. Letting every handler report
+progress was rejected after tracing the Slack sweeps: the unfurl pass advances
+every unchanged card and the ingress pass re-enqueues without touching its row,
+so both would claim progress forever against a pinned row — the loop again,
+with a clear conscience. Deleting a spent link challenge at once, the first
+draft of the reap fix, was rejected because it made `slack_link_expired` and
+`slack_link_consumed` unreachable in practice; a day of grace keeps the reason
+and costs nothing.
+
+**Consequences:** A source table whose due expression counts rows its reap does
+not remove now costs one wake per backoff step, up to thirty minutes, with a log
+row on each and one notice — a drip that is noticed rather than a loop that is
+not. The identical-instant test is the invariant: a handler that wants an
+immediate re-run reschedules to a different instant or reports progress, and
+one that reports progress against a source it does not move has reopened the
+loop. `attempt` on a surviving entry means consecutive attempts without
+progress, throws and stalls alike; `retry_at` may now be set by a hold with
+`attempt` at zero.
 
 ### 2026-08-21 — One alarm list per object, and the workspace scheduler is deleted
 
