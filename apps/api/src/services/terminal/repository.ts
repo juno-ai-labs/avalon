@@ -14,7 +14,7 @@ import { executionPrincipalKey } from "../workstream-resource-visibility";
 import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./daytona-provider";
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
-import { TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
+import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
 
 const MAX_BUNDLE_BYTES = 50 * 1_048_576;
 const MAX_CHANGED_PATHS = 500;
@@ -415,8 +415,7 @@ export function createTerminalRepositoryPublisher(
         );
       }
       await assertRepositoryRemoteAccess(env.DB, selection, "full_access");
-      const effectIntentId = context.effectIntentId;
-      if (!effectIntentId) throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable publication receipt. Retry publication.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
+      const effectIntentId = requireTerminalEffectIntent(context, "repositoryPublication");
       const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
       const completed = await terminal.completedPublication(effectIntentId);
       // A row in `completed` always carries these three; the columns are

@@ -185,18 +185,29 @@ describe("Daytona Terminal runtime", () => {
     }));
   });
 
-  it("refuses to start provider work when the harness supplied no receipt identity", async () => {
+  it("refuses every write path before it touches the provider at all", async () => {
     const { objectStore, provider, runtime } = fixture();
     const unreceipted: HarnessToolContext = { ...context };
     delete unreceipted.effectIntentId;
 
     await expect(runtime.runCommand(unreceipted, { command: "true", timeoutMs: 3_000 }))
       .rejects.toMatchObject({ code: "tool_receipt_missing" });
-    // Nothing provider-side may start: an unkeyed task is one a resumed run
-    // could never recognize, so it would run the command twice.
-    expect(provider.runCommand).not.toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
-      taskName: expect.stringContaining("avalon-task-"),
-    }));
+    await expect(runtime.publishResource(unreceipted, { filePath: "report.md" }))
+      .rejects.toMatchObject({ code: "tool_receipt_missing" });
+    await expect(runtime.publishBranchAndPr(unreceipted, { title: "Ship", body: "Why" }))
+      .rejects.toMatchObject({ code: "tool_receipt_missing" });
+
+    // Not one provider call, and no sandbox. The guard used to run after
+    // `acquire`, so a doomed call could still create or start a Daytona
+    // sandbox, take the mutation lease, and burn a generation before being
+    // rejected — side effects for a call that never ran.
+    expect(provider.createSandbox).not.toHaveBeenCalled();
+    expect(provider.getSandbox).not.toHaveBeenCalled();
+    expect(provider.startSandbox).not.toHaveBeenCalled();
+    expect(provider.runCommand).not.toHaveBeenCalled();
+    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace"))
+      .toEqual({ count: 0 });
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks"))
       .toEqual({ count: 0 });
   });

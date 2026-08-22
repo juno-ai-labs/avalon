@@ -938,8 +938,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
         });
         // After `tool_started`, never before: that event is where a host writes
-        // the receipt this names, and asking earlier would read the identity of
-        // whatever the previous attempt left behind.
+        // the receipt this names, so before it there is simply no answer to
+        // give. (Not because an earlier read would return a stale identity —
+        // it would not. A resumed attempt's receipt row is the one that
+        // survived `ON CONFLICT … DO NOTHING`, so a host that queried instead
+        // of remembering would return the same id either way.)
         const effectIntentId = await requiredPort(
           "tool_receipt_persistence_failed",
           "Tool effect intent lookup failed",

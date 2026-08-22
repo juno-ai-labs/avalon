@@ -460,6 +460,23 @@ references the receipt, so a command still cannot record a task the harness
 never planned; that check moved from a query Terminal ran to a foreign key the
 object enforces.
 
+The guard also moved earlier. While the identity came from a query, each path
+acquired its sandbox first and checked afterwards, so a call that was always
+going to be rejected could still create or start a Daytona sandbox, take the
+mutation lease, and burn a generation on the way out. `requireTerminalEffectIntent`
+now runs as the first statement of `runCommand`, `publishResource`, and
+`publishBranchAndPr` — it is a field read, so there is no longer a reason for it
+to run late.
+
+**Still keyed to the call, not the receipt:** `createTerminalWorkspaceBackup`
+derives `terminal-workspace-backup:${toolCallId}`, its archive path, and its
+provider task name from `context.toolCallId`. It is the one Terminal effect this
+change did not convert, and converting it is a resource-identity migration
+rather than a rename: existing backups are addressed by the old identity, so a
+resumed checkout would publish a second one instead of finding the first. "No
+Terminal source names `tool_invocations`" is true; "every Terminal effect is
+receipt-keyed" is not yet.
+
 ### 2026-08-22 — Resident agents keep Terminal authority in their owning event
 
 **What changed:** A Bind loop already running inside the main `SubstreamAgent`

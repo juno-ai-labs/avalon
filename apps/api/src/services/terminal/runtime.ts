@@ -12,7 +12,7 @@ import type {
   TerminalPublishedResourceOutput,
   TerminalRuntime,
 } from "./tools";
-import { sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
@@ -340,14 +340,13 @@ export function createDaytonaTerminalRuntime(
     },
 
     async runCommand(context, input) {
+      // Before `acquire`: rejecting after it would leave a sandbox created,
+      // started, and a generation burned for a call that never ran.
+      const effectIntentId = requireTerminalEffectIntent(context, "command");
       const totalStartedAt = Date.now();
       const sandbox = await acquire(context);
       const acquisitionDurationMs = Date.now() - totalStartedAt;
       const cwd = input.cwd ? await resolveInsideRoot(context, sandbox, input.cwd) : ROOT;
-      const effectIntentId = context.effectIntentId;
-      if (!effectIntentId) {
-        throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable tool receipt. Retry the command so it can be recorded safely.", { reason: "Retry the same command call so Avalon can create its durable receipt first." });
-      }
       const taskName = `avalon-task-${effectIntentId}`;
       const commandHash = await sha256Hex(JSON.stringify({ command: input.command, cwd, timeoutMs: input.timeoutMs }));
       const terminal = terminalPort(context.workspaceId, context.workstreamId);
@@ -501,6 +500,9 @@ export function createDaytonaTerminalRuntime(
     },
 
     async publishResource(context, input) {
+      // The bridge checks this too, for a direct caller; this one is what keeps
+      // the four provider commands below from running for a doomed call.
+      requireTerminalEffectIntent(context, "publication");
       const sandbox = await acquire(context);
       const path = await resolveInsideRoot(context, sandbox, `${OUTPUT_ROOT}/${input.filePath}`);
       const before = await inspectGeneratedFile(context, sandbox, path, "before");
@@ -546,6 +548,8 @@ export function createDaytonaTerminalRuntime(
     },
 
     async publishBranchAndPr(context, input) {
+      // The publisher checks this too; its guard sits behind this `acquire`.
+      requireTerminalEffectIntent(context, "repositoryPublication");
       const sandbox = await acquire(context);
       return publisher.publishBranchAndPr(context, input, sandbox, provider);
     },
