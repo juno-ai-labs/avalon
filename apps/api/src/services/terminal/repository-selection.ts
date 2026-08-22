@@ -11,6 +11,7 @@ import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../../lib/workstream-email-address";
 import { logWarn } from "../../observability/logger";
+import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 import {
   emitProductUsageTelemetry,
   telemetryJourneyDuration,
@@ -104,6 +105,7 @@ export function createTerminalRepositorySelector(
   catalog: TerminalRepositoryCatalogGateway,
   coordinator: TerminalSandboxCoordinator,
   terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): TerminalRepositorySelector {
   return {
     async checkout(context, input) {
@@ -251,7 +253,7 @@ export function createTerminalRepositorySelector(
             providerSandboxId: sandbox.providerSandboxId,
             generation: sandbox.generation,
             signal: context.signal,
-          });
+          }, inObjectResourceAttacher);
           try {
             await provider.clearGitHubReadAccess(sandbox.providerSandboxId);
           } catch (error) {

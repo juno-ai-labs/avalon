@@ -74,12 +74,13 @@ import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
-  createTerminalPortFactory,
+  createTerminalObjectPort,
   TerminalObjectPortError,
   type TerminalPortFactory,
 } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
+import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -869,7 +870,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           outcome: error.details.outcome,
           retryable: error.details.retryable,
         },
-      }, error.code === "invalid_terminal_operation" ? 400 : 409);
+      }, 409);
     }
   }
 
@@ -885,7 +886,8 @@ export class SubstreamAgent extends DurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== input.workspaceId
-      || identity.workstreamId !== input.workstreamId) {
+      || identity.workstreamId !== input.workstreamId
+      || this.externalSubstreamId() !== "0") {
       throw new TerminalObjectPortError(input.operation, {
         code: "workstream_terminal_identity_mismatch",
         message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
@@ -967,36 +969,61 @@ export class SubstreamAgent extends DurableObject<Env> {
   }
 
   /** Terminal port for a harness already executing in this object. */
-  private localTerminalPortFactory(
+  private localTerminalPortFactory(): TerminalPortFactory {
+    return (workspaceId, workstreamId) => createTerminalObjectPort(
+      this.env,
+      workspaceId,
+      workstreamId,
+      (operation, args) => this.runTerminalOperation({
+        workspaceId,
+        workstreamId,
+        operation,
+        args,
+      }),
+    );
+  }
+
+  /** Resource-link writer for a harness already executing in this object. */
+  private localRuntimeResourceAttacher(
     workspaceId: string,
     workstreamId: string,
-  ): TerminalPortFactory {
-    return createTerminalPortFactory(this.env, (operation, args) =>
-      this.runTerminalOperation({ workspaceId, workstreamId, operation, args }));
+  ): WorkstreamRuntimeResourceAttacher {
+    return (input) => {
+      if (input.workspaceId !== workspaceId || input.workstreamId !== workstreamId) {
+        throw new Error("workstream_runtime_identity_mismatch");
+      }
+      return this.runRuntimeResourceAttachment(input);
+    };
   }
 
   private async acceptRuntimeResource(request: Request): Promise<Response> {
     const parsed = RuntimeResourceRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_runtime_resource" }, 400);
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId) {
-      return jsonResponse({ error: "workstream_runtime_identity_mismatch" }, 409);
-    }
     try {
-      await this.product.attachRuntimeResource(
-        parsed.data.workspaceId,
-        parsed.data.resourceId,
-        parsed.data.attachedByUserId,
-        parsed.data.relationshipType,
-      );
+      await this.runRuntimeResourceAttachment(parsed.data);
       return jsonResponse({ ok: true });
     } catch (error) {
       return jsonResponse({
         error: error instanceof Error ? error.message : "runtime_resource_attach_failed",
       }, 409);
     }
+  }
+
+  /** Attach a generated resource without re-entering the resident object. */
+  private async runRuntimeResourceAttachment(input: SubstreamRuntimeResourceRequest): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== input.workspaceId
+      || identity.workstreamId !== input.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      throw new Error("workstream_runtime_identity_mismatch");
+    }
+    await this.product.attachRuntimeResource(
+      input.workspaceId,
+      input.resourceId,
+      input.attachedByUserId,
+      input.relationshipType,
+    );
   }
 
   private async acceptRuntimeSuggestion(request: Request): Promise<Response> {
@@ -1675,7 +1702,8 @@ export class SubstreamAgent extends DurableObject<Env> {
           // non-main substream still routes to that object; only the resident
           // main loop may replace the RPC with direct in-event dispatch.
           ...(this.externalSubstreamId() === "0" ? {
-            terminalPortFactory: this.localTerminalPortFactory(
+            terminalPortFactory: this.localTerminalPortFactory(),
+            runtimeResourceAttacher: this.localRuntimeResourceAttacher(
               input.workspaceId,
               input.workstreamId,
             ),

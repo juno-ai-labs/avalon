@@ -1038,12 +1038,19 @@ directory write at all.
 ### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
 
 **What changed:** The main `SubstreamAgent` exposes its resident Bind execution
-to the Terminal stack through an in-object typed port. The port dispatches into the
-same identity-fenced `runTerminalOperation` used by `/internal/terminal`, so
-transaction rollback, directory outbox publication, stable failures, and alarm
-scheduling remain identical while the executing alarm stays the sole request
-context. Repository helpers receive that same port rather than quietly
-constructing a new remote one.
+to the Terminal stack through an in-object Terminal port and resource-link
+attacher. The Terminal port dispatches into the same identity-fenced
+`runTerminalOperation` used by `/internal/terminal`, so transaction rollback,
+directory outbox publication, stable failures, and alarm scheduling remain
+identical while the executing alarm stays the sole request context. Generated
+resource publication and repository backup dispatch into the same
+`WorkstreamObjectProductService.attachRuntimeResource` body used by the resource
+RPC. Repository helpers receive both resident boundaries rather than quietly
+constructing new remote ones.
+The factory forwards its caller-supplied workspace/work-stream identity, and
+both direct mutation bodies independently fence on external substream ID `0`.
+Terminal plugin construction rejects a partial resident boundary rather than
+falling one of the two paths back to same-object RPC.
 
 **Why:** Post-deploy verification of #224 proved the active alarm was the
 original drain owner for the whole 25-second failed run. It never encountered
@@ -1061,9 +1068,10 @@ pre-/post-commit retry contract.
 
 **Consequences:** Worker-originated and non-main-substream calls still cross the
 RPC boundary to the main child, but a run executing inside that authority never
-leaves and re-enters it for Terminal state. The operation authority stays
-single-writer without transferring later D1/provider work between Durable
-Object events.
+leaves and re-enters it for Terminal state or generated-resource links. The
+operation authority stays single-writer without transferring later D1/provider
+work between Durable Object events, and an accidental local port on another
+child fails closed instead of creating split product state.
 
 ### 2026-08-21 — Heartbeats never join a live run's request context
 

@@ -31,9 +31,12 @@ ordering fixed by #224.
 
 The follow-up repair gives the resident Bind loop an in-object Terminal port
 that shares the RPC endpoint's identity, transaction, directory-effect, typed
-failure, and post-commit alarm semantics. External Worker callers continue to
-use RPC. Production verification remains failed until that follow-up is merged
-and the same real-window sequence completes.
+failure, and post-commit alarm semantics. It also keeps generated-resource link
+attachment—including oversized command output and repository-replacement
+backups—inside that same event instead of preserving a second self-RPC path.
+External Worker callers continue to use RPC. Production verification remains
+failed until that follow-up is merged and the same real-window sequence
+completes.
 
 ## Follow-up remediation status
 
@@ -42,10 +45,11 @@ production retest above proved that it fixed only one ordering of the
 request-context race. The post-QA real-workerd reproduction correctly showed
 that a keep-alive alarm must not await another event's active drain promise.
 The follow-up correction now also removes the resident alarm's same-object
-Terminal RPCs; it has not yet been deployed or production-retested. Recovery
-continues to belong to the durable dispatch row and harness attempt lease. A
-healthy long run retains its unexpired attempt lease; a promise with no progress
-for five minutes and no live lease can be replaced inside the same isolate.
+Terminal-operation and generated-resource-link RPCs; it has not yet been
+deployed or production-retested. Recovery continues to belong to the durable
+dispatch row and harness attempt lease. A healthy long run retains its unexpired
+attempt lease; a promise with no progress for five minutes and no live lease can
+be replaced inside the same isolate.
 
 The remediation and review hardening also:
 
