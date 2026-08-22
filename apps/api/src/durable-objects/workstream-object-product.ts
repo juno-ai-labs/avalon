@@ -1308,9 +1308,23 @@ export class WorkstreamObjectProductService {
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
+    // Both names are read before the commit because the effects that carry
+    // them are built inside it: an effect callback runs against object SQL and
+    // cannot await a regional round trip.
+    const names = await this.messageUsers([auth.userId, userId]);
+    const actorName = names.get(auth.userId)?.name ?? "A workspace member";
+    const recipientName = names.get(userId)?.name ?? "a workspace member";
     const now = Date.now();
-    await this.objectStore.commitWithRegionalEffects(
-      (sql) => sql.exec(
+    await this.objectStore.commitWithRegionalEffects<{ alreadyActive: boolean }>(
+      (sql) => {
+        // Read before the upsert, because the upsert erases the difference:
+        // adding somebody who is already in the room is a no-op, and the
+        // effects below turn on which of the two just happened.
+        const alreadyActive = first(sql.exec<{ one: number }>(
+          `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active'`,
+          userId,
+        )) !== null;
+        sql.exec(
         `INSERT INTO participants
            (user_id, participation_reason, added_by_user_id, status, participant_epoch,
             added_at, removed_at, updated_at)
@@ -1326,9 +1340,88 @@ export class WorkstreamObjectProductService {
            added_at = CASE WHEN participants.status = 'removed'
              THEN excluded.added_at ELSE participants.added_at END,
            updated_at = excluded.updated_at`,
-        userId, auth.userId, now, now,
-      ),
-      () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
+          userId, auth.userId, now, now,
+        );
+        return { alreadyActive };
+      },
+      (sql, write) => {
+        const current = this.root();
+        const viewer = {
+          partitionKey: `user:${userId}`,
+          effect: this.userEffect(current, userId),
+        };
+        // Adding yourself is not news. `update` takes exactly this path when a
+        // work stream is narrowed to personal by somebody not already in it.
+        //
+        // Neither is adding somebody who is already here. Beyond being noise,
+        // re-announcing a participation would re-enqueue an effect this object
+        // has already had acknowledged, under the same identity but against a
+        // newer projection version — which the parent refuses as a hash
+        // conflict and then cannot drain. Somebody is told once per
+        // participation, not once per click.
+        if (userId === auth.userId || write.alreadyActive) return [viewer];
+        // The epoch is what separates one add from the next: re-adding
+        // somebody who was removed notifies them again, while a redelivery of
+        // this add converges on the same intent and the same activity row.
+        const epoch = first(sql.exec<{ participant_epoch: number }>(
+          `SELECT participant_epoch FROM participants WHERE user_id = ?`,
+          userId,
+        ))?.participant_epoch ?? 0;
+        const sourceId = `participant:${userId}:${epoch}`;
+        const intentId = `participant_added:${userId}:${epoch}`;
+        const occurredAt = new Date(now).toISOString();
+        return [
+          viewer,
+          {
+            partitionKey: `activity:${sourceId}`,
+            sourceVersion: 1,
+            dedupeKey: sourceId,
+            effect: {
+              kind: "activity_event" as const,
+              eventId: uuidV7(now),
+              eventType: "workstream_participant_added",
+              // Nothing in the transcript ordered this: a person joined the
+              // room, which sits outside the message sequence.
+              subjectSequenceNumber: null,
+              actorType: "user" as const,
+              actorUserId: auth.userId,
+              actorLabel: actorName,
+              title: truncateUtf16Safe(current.title, 500),
+              body: `${actorName} added ${recipientName} to this work stream.`,
+              canonicalUrl: null,
+              digestible: true,
+              occurredAt,
+              sourceKind: "workstream_participant",
+              sourceId,
+              dedupeKey: sourceId,
+              metadata: { participantUserId: userId, addedByUserId: auth.userId },
+              targets: [{ userId, relation: "added" }],
+            },
+          },
+          // Ordered after the viewer effect deliberately. Its
+          // `requiredProjectionVersion` is read from the projection key that
+          // effect has just advanced, so nobody is told about a work stream
+          // before their own directory row has reached the workspace — the
+          // notification and the sidebar row arrive in that order or not at all.
+          {
+            partitionKey: `notification:${intentId}`,
+            sourceVersion: 1,
+            dedupeKey: intentId,
+            dependsOnProjectionKey: `user:${userId}`,
+            effect: {
+              kind: "participant_notification" as const,
+              intentId,
+              sourceId,
+              recipientUserId: userId,
+              actorUserId: auth.userId,
+              actorNameSnapshot: actorName,
+              workstreamTitleSnapshot: truncateUtf16Safe(current.title, 500),
+              workstreamObjectiveSnapshot: truncateUtf16Safe(current.description, 500),
+              occurredAt,
+            },
+          },
+        ];
+      },
     );
     const participant = (await this.participants()).find((entry) => entry.user.id === userId);
     if (!participant) {

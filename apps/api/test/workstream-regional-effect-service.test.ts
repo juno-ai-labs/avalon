@@ -3,6 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  isPersonNotificationEffect,
   workstreamRegionalEffectWakeMessage,
   workstreamRegionalEffectHash,
   type WorkstreamRegionalEffect,
@@ -74,7 +75,7 @@ function message(
     requiredProjectionVersion?: number;
   },
 ): WorkstreamRegionalEffectEnvelope {
-  const requiredProjectionVersion = effect.kind === "mention_notification"
+  const requiredProjectionVersion = isPersonNotificationEffect(effect)
     ? input.requiredProjectionVersion ?? 1
     : null;
   return {
@@ -517,6 +518,94 @@ describe("the WorkstreamDO regional effect inbox", () => {
           WHERE intent_id = ?`,
       ).get(mention.intentId)).toEqual({ state: "delivered", payload_json: null, attempts: 1 });
       expect(workspace.refreshSchedule).toHaveBeenCalledWith(WORKSPACE_ID);
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("stores a participant-added intent under its own kind and delivers it", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+      PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    });
+    try {
+      const added: WorkstreamRegionalEffect = {
+        kind: "participant_notification",
+        intentId: `participant_added:${USER_ID}:0`,
+        sourceId: `participant:${USER_ID}:0`,
+        recipientUserId: USER_ID,
+        actorUserId: AUTHOR_ID,
+        actorNameSnapshot: "Author",
+        workstreamTitleSnapshot: "Regional effects",
+        workstreamObjectiveSnapshot: "Prove the second notification kind lands",
+        occurredAt: AT,
+      };
+      const applied = await applyWorkstreamRegionalEffect(env, message(added, {
+        messageId: `notification:${added.intentId}`,
+        partitionKey: `notification:${added.intentId}`,
+        sourceVersion: 1,
+      }));
+      expect(applied.notificationIntentId).toBe(added.intentId);
+      // The kind is what the delivery path branches on, and what the widened
+      // CHECK in schema version 8 exists to admit: before it, this insert
+      // failed the constraint rather than storing a row.
+      expect(workspace.database.prepare(
+        `SELECT notification_kind, source_message_id, state FROM workstream_notification_intents
+          WHERE intent_id = ?`,
+      ).get(added.intentId)).toEqual({
+        notification_kind: "participant_added",
+        source_message_id: added.sourceId,
+        state: "pending",
+      });
+
+      await expect(
+        processWorkstreamNotificationIntent(env, WORKSPACE_ID, added.intentId),
+      ).resolves.toBe("delivered");
+      expect(workspace.database.prepare(
+        `SELECT state, payload_json FROM workstream_notification_intents WHERE intent_id = ?`,
+      ).get(added.intentId)).toEqual({ state: "delivered", payload_json: null });
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("skips telling somebody they added themselves", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+      PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    });
+    try {
+      const added: WorkstreamRegionalEffect = {
+        kind: "participant_notification",
+        intentId: `participant_added:${USER_ID}:1`,
+        sourceId: `participant:${USER_ID}:1`,
+        recipientUserId: USER_ID,
+        actorUserId: USER_ID,
+        actorNameSnapshot: "Recipient",
+        workstreamTitleSnapshot: "Regional effects",
+        workstreamObjectiveSnapshot: "",
+        occurredAt: AT,
+      };
+      await applyWorkstreamRegionalEffect(env, message(added, {
+        messageId: `notification:${added.intentId}`,
+        partitionKey: `notification:${added.intentId}`,
+        sourceVersion: 1,
+      }));
+      await expect(
+        processWorkstreamNotificationIntent(env, WORKSPACE_ID, added.intentId),
+      ).resolves.toBe("skipped");
     } finally {
       database.close();
       workspace.database.close();
