@@ -23,7 +23,7 @@ once and passes on a rerun.
 | --- | --- | --- |
 | `apps/api/test-workers/**/*.test.ts` | `pnpm --filter @avalon/api test:workers` | **Real workerd**, through `@cloudflare/vitest-pool-workers`. Durable Objects, their SQLite storage, alarms, hibernation, eviction, `WebSocketPair`, D1, and queue producers are the real implementations. |
 | `apps/api/test/**/*.test.ts` | `pnpm --filter @avalon/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
-| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | jsdom. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
+| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | Two projects. `renderer` runs on jsdom; `main` and `common` run on node, because a main-process module that reaches for `document` should fail rather than find a window Electron's main process does not have. A main or common test that genuinely needs a DOM opts back in with a `// @vitest-environment jsdom` docblock. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @avalon/<pkg> test` | Node. Pure contract, harness, and connector logic. |
 | `packages/db/test/**/*.test.ts` | `pnpm --filter @avalon/db test` | Node. The migration sequence itself, the [local baseline](d1-baseline-migrations.md) derived from it, and the work-stream queries over it — where a migration's own test goes, rather than beside the package's source. |
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @avalon/site test`, `pnpm --filter @avalon/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
@@ -287,6 +287,36 @@ one. Several schemas refine on the version nibble (`value[14] === "7"` in
 `packages/contracts/src/index.ts` and `telemetry.ts`), so a `test-id` placeholder
 fails validation for a reason that has nothing to do with the behavior under
 test.
+
+### The migrated database fixtures
+
+`apps/api/test/helpers/sqlite-d1.ts` hands out a migrated regional database in
+one of three shapes: `migratedSqliteDatabase()` for the current schema,
+`legacyProductSqliteDatabase()` for the product tables as they stood before
+`0090` dropped them, and `preRetirementProductSqliteDatabase()` for that same
+shape with the work-stream foreign keys the object import has to detach. Use one
+of them rather than replaying the migration directory in your own file — sixteen
+tests used to, and that is where most of the suite's runtime sat.
+
+They do not replay the migrations per call. The sequence runs once for the whole
+run, in `test/global-setup.ts`, and each call rebuilds the shape it ended in
+against an empty database: ~7ms rather than ~800ms. The schema is still derived
+from the checked-in migrations on every run, so it cannot drift from them — but
+the rebuild is a second implementation of *what the migrations produce*, and
+`test/sqlite-d1-snapshot.test.ts` is what keeps the two honest. It holds a
+rebuilt database next to a freshly replayed one and diffs every `sqlite_master`
+entry, column, foreign key, index and row count. **If you teach the rebuild a new
+trick — another kind of schema object, another pragma — assert it there**, or the
+next person gets a database that is subtly not the one the migrations describe.
+It has already caught one: FTS5 index triggers share a name prefix with the
+shadow tables a virtual table creates for itself, and the first shadow-table
+filter took the triggers with them, leaving every memory-search test green
+against an index nothing wrote to.
+
+One thing the fixtures make explicit that the old copies left implicit: seven
+migrations set `PRAGMA foreign_keys = ON` themselves, so a replay ends with
+enforcement on however the connection was opened. Ten of the sixteen private
+copies never wrote that pragma and were relying on it anyway.
 
 ## Advisements, to-dos, and traps from Cloudflare's own docs
 
