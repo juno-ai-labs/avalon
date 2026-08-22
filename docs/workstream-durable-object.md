@@ -1035,6 +1035,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
+
+**What changed:** The main `SubstreamAgent` exposes its resident Bind execution
+to the Terminal stack through an in-object typed port. The port dispatches into the
+same identity-fenced `runTerminalOperation` used by `/internal/terminal`, so
+transaction rollback, directory outbox publication, stable failures, and alarm
+scheduling remain identical while the executing alarm stays the sole request
+context. Repository helpers receive that same port rather than quietly
+constructing a new remote one.
+
+**Why:** Post-deploy verification of #224 proved the active alarm was the
+original drain owner for the whole 25-second failed run. It never encountered
+the inverse heartbeat ordering covered by the earlier fix. The trace instead
+showed repeated same-object Terminal RPC events during the successful first
+command, followed by a second tool failing before its executor log. The
+resident loop already had an in-object runtime-SQL executor for this reason;
+Terminal authority was the remaining self-call path.
+
+**Considered and rejected:** Treating self-RPC as harmless because Durable
+Objects serialize storage, or bypassing `commitRuntimeMutation` with direct
+storage calls. Serialization does not make promises and I/O portable between
+events, while a raw call would strand directory deadlines and blur the
+pre-/post-commit retry contract.
+
+**Consequences:** Worker-originated and non-main-substream calls still cross the
+RPC boundary to the main child, but a run executing inside that authority never
+leaves and re-enters it for Terminal state. The operation authority stays
+single-writer without transferring later D1/provider work between Durable
+Object events.
+
 ### 2026-08-21 — Heartbeats never join a live run's request context
 
 **What changed:** Both agent objects defer an alarm drain request when their

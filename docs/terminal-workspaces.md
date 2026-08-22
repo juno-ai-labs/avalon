@@ -421,6 +421,39 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-22 — Resident agents keep Terminal authority in their owning event
+
+**What changed:** A Bind loop already running inside the main `SubstreamAgent`
+receives an in-object `TerminalPortFactory`. Terminal coordination, task receipts,
+repository selection/bootstrap, resource publication, and publication grants
+therefore call the same `runTerminalOperation` transaction used by the RPC
+endpoint without RPCing back into the object that is currently executing them.
+Worker and scheduler callers still use the typed RPC port. Both paths retain
+the same identity check, `commitRuntimeMutation` directory effect, typed
+not-committed failure, and post-commit alarm scheduling boundary.
+
+**Why:** The production check after #224 deployed still completed the first
+command and failed the second before `terminal_tool_finished`. The live trace
+showed the alarm owned the complete run from its first instruction, so no
+heartbeat ever joined it; instead, the first command generated a chain of
+nested `executeTerminalOperation` events against the same object. Returning
+from those self-RPC events and then resuming receipt, D1, and provider work in
+the outer alarm recreated the request-context violation that the heartbeat fix
+had removed in the opposite event ordering.
+
+**Considered and rejected:** Another retry, extending leases, suppressing the
+receipt failure, or moving Terminal state back to D1. Those respectively repeat
+an unsafe write workflow, leave request ownership unchanged, hide the safety
+fence, or undo the object-authority cutover. Calling raw storage directly was
+also rejected because it would skip directory effects and post-commit alarm
+semantics; the local port uses the same operation boundary as RPC.
+
+**Consequences:** A resident main-child run performs sequential Terminal
+operations in one Durable Object event and no longer pays or crosses a self-RPC
+per storage call. Non-main substreams and external callers keep the serialized typed port, and real-workerd plus plugin
+integration tests pin both the local authority path and its propagation through
+Terminal setup.
+
 ### 2026-08-21 — Production recovery distinguishes execution, persistence, and commit state
 
 **What changed:** Keep-alive alarms no longer join an already active agent

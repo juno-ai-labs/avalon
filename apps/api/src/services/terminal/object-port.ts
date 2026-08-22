@@ -19,6 +19,12 @@ export type TerminalPortFactory = (
   workstreamId: string,
 ) => TerminalObjectPort;
 
+/** Execute one operation without crossing a Durable Object request boundary. */
+export type TerminalOperationExecutor = (
+  operation: TerminalOperation,
+  args: unknown[],
+) => Promise<unknown>;
+
 /** A typed failure from the object-local Terminal authority with explicit retry safety. */
 export class TerminalObjectPortError extends Error {
   readonly code: TerminalOperationFailure["code"];
@@ -41,7 +47,7 @@ export class TerminalObjectPortError extends Error {
 }
 
 /**
- * Bind a factory to an environment, optionally to in-isolate storage.
+ * Bind a factory to an environment, optionally to in-isolate authority.
  *
  * Services take the factory rather than an `Env` so the Node suite can hand
  * them a port over `node:sqlite` running the real object schema, and the
@@ -50,10 +56,10 @@ export class TerminalObjectPortError extends Error {
  */
 export function createTerminalPortFactory(
   env: Env,
-  localStorage?: WorkstreamTerminalStorage,
+  local?: WorkstreamTerminalStorage | TerminalOperationExecutor,
 ): TerminalPortFactory {
   return (workspaceId, workstreamId) =>
-    createTerminalObjectPort(env, workspaceId, workstreamId, localStorage);
+    createTerminalObjectPort(env, workspaceId, workstreamId, local);
 }
 
 /**
@@ -74,8 +80,8 @@ export function createTerminalObjectPort(
   workspaceId: string,
   workstreamId: string,
   /**
-   * Run operations against a storage instance in this isolate instead of
-   * dispatching to the object.
+   * Run operations against storage or a complete authority executor in this
+   * isolate instead of dispatching to the object.
    *
    * The same seam `workstreamRuntimeDatabase` takes for its local executor,
    * and for the same reason: the Node suite runs the real schema and the real
@@ -83,14 +89,18 @@ export function createTerminalObjectPort(
    * except the runtime itself. What the runtime decides — that the operation
    * is serialized against concurrent callers, that a transaction rolls back,
    * that an alarm sees the committed row — is proved in `test-workers/`
-   * against real workerd, where this override is not used.
+   * against real workerd. The resident main agent supplies the executor form
+   * so it can keep those semantics without RPCing back into its own event.
    */
-  localStorage?: WorkstreamTerminalStorage,
+  local?: WorkstreamTerminalStorage | TerminalOperationExecutor,
 ): TerminalObjectPort {
   const call = async (operation: TerminalOperation, args: unknown[]): Promise<unknown> => {
-    if (localStorage) {
-      const method = localStorage[operation] as (...rest: unknown[]) => unknown;
-      return method.apply(localStorage, args) ?? null;
+    if (typeof local === "function") {
+      return await local(operation, args) ?? null;
+    }
+    if (local) {
+      const method = local[operation] as (...rest: unknown[]) => unknown;
+      return method.apply(local, args) ?? null;
     }
     const stub = await durableObjectStubForWorkspace(
       env,
