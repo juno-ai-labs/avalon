@@ -15,6 +15,16 @@
 -- expiry time, not the migration time, so the row still records when access
 -- actually ended. After this, the sweep only ever sees sessions that expired
 -- since its last run.
+-- Seven days back, not "now". Marking a row here suppresses its revocation
+-- announcement forever, because the sweep only ever selects `revoked_at IS
+-- NULL`. Migrations are applied before the new Worker deploys, so "now" would
+-- also swallow a session that expired seconds earlier — one that can still be
+-- holding open sockets, which are exactly what the sweep exists to close. A
+-- week is well past any backlog worth seeding (the rows this migration is for
+-- are months and years old) and leaves the recent tail to the sweep, which
+-- announces it properly. The tail is bounded by a week of ordinary expiries,
+-- far inside the 200-per-five-minutes the sweep drains.
+--
 -- `strftime`, not `CURRENT_TIMESTAMP`: these columns hold what
 -- `new Date().toISOString()` writes, and CURRENT_TIMESTAMP renders
 -- `YYYY-MM-DD HH:MM:SS`. Compared as text a space sorts before `T`, so
@@ -23,7 +33,7 @@
 UPDATE sessions
    SET revoked_at = expires_at
  WHERE revoked_at IS NULL
-   AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+   AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days');
 
 -- The sweep's own query. `sessions_user_idx(user_id, expires_at)` cannot serve
 -- `WHERE revoked_at IS NULL AND expires_at <= ? ORDER BY expires_at`, so

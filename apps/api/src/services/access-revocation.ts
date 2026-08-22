@@ -175,8 +175,8 @@ export function isAccessRevocationQueue(queue: string): boolean {
 /** Cloudflare accepts at most 100 messages in one `sendBatch`. */
 const QUEUE_SEND_BATCH = 100;
 
-/** D1 binds at most 100 parameters per statement; the timestamp takes one. */
-const MARK_REVOKED_BATCH = 99;
+/** D1 binds at most 100 parameters per statement; two timestamps take two. */
+const MARK_REVOKED_BATCH = 98;
 
 /**
  * Publish an object's descendants, from inside that object.
@@ -279,10 +279,21 @@ export async function reapExpiredSessions(env: Env, limit = 200): Promise<number
   // timestamp, so a full run of 200 does not fit in one.
   for (let index = 0; index < announced.length; index += MARK_REVOKED_BATCH) {
     const batch = announced.slice(index, index + MARK_REVOKED_BATCH);
+    // The predicate is repeated, not just the ids. D1 auto-commits each
+    // statement, so the rows were selected in an earlier round trip: a logout
+    // landing in between has already written its own `revoked_at`, and marking
+    // by id alone would overwrite that with this sweep's later timestamp,
+    // moving the recorded moment access ended. `expires_at <= ?` is defensive —
+    // nothing in this Worker moves that column after the insert, and refresh
+    // rotates hashes while *requiring* `expires_at > ?` — but it costs one bound
+    // parameter and makes the statement true on its own terms rather than on
+    // that reading remaining true.
     await env.DB.prepare(
       `UPDATE sessions SET revoked_at = ?
-        WHERE id IN (${batch.map(() => "?").join(",")})`,
-    ).bind(now, ...batch.map((session) => session.id)).run();
+        WHERE id IN (${batch.map(() => "?").join(",")})
+          AND revoked_at IS NULL
+          AND expires_at <= ?`,
+    ).bind(now, ...batch.map((session) => session.id), now).run();
   }
   return announced.length;
 }
