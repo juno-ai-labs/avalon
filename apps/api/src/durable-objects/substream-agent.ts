@@ -777,19 +777,50 @@ export class SubstreamAgent extends DurableObject<Env> {
       await request.json().catch(() => null),
     );
     if (!parsed.success) return jsonResponse({ error: "invalid_workstream_runtime_sql" }, 400);
+    let result: Awaited<ReturnType<typeof executeWorkstreamRuntimeSql>>;
     try {
-      const result = await executeWorkstreamRuntimeSql(
+      result = await executeWorkstreamRuntimeSql(
         this.state.storage,
         this.product,
         parsed.data,
       );
-      await this.scheduleNextAlarm();
-      return jsonResponse(result);
     } catch (error) {
+      const cause = error instanceof Error && error.cause instanceof Error
+        ? error.cause
+        : error;
+      logError(this.env, "workstream_runtime_sql_commit_failed", {
+        workspace_id: parsed.data.workspaceId,
+        workstream_id: parsed.data.workstreamId,
+        request_id: parsed.data.requestId,
+        statement_count: parsed.data.statements.length,
+        code: "workstream_runtime_sql_not_committed",
+        // `executeWorkstreamRuntimeSql` wraps a failed statement with its SQL
+        // for the internal caller. Logs retain only the underlying SQLite
+        // reason: statement text can contain tool input or participant data.
+        reason: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
+      });
       return jsonResponse({
-        error: error instanceof Error ? error.message : "workstream_runtime_sql_failed",
+        error: "workstream_runtime_sql_not_committed",
       }, 409);
     }
+    // The SQL transaction is already durable. Returning an alarm failure would
+    // tell the harness to repeat a receipt write that did commit. The active
+    // run's dispatch sweep, a later request, and any committed directory effect
+    // are the recovery paths for re-deriving the object's next alarm.
+    try {
+      await this.scheduleNextAlarm();
+    } catch (error) {
+      logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
+        workspace_id: parsed.data.workspaceId,
+        workstream_id: parsed.data.workstreamId,
+        request_id: parsed.data.requestId,
+        statement_count: parsed.data.statements.length,
+        code: "workstream_runtime_sql_alarm_failed_after_commit",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return jsonResponse(result);
   }
 
   /**
@@ -810,8 +841,15 @@ export class SubstreamAgent extends DurableObject<Env> {
       || identity.workstreamId !== parsed.data.workstreamId) {
       return jsonResponse({ error: "workstream_terminal_identity_mismatch" }, 409);
     }
+    const operation = parsed.data.operation;
+    const method = this.terminal[operation] as (...args: unknown[]) => unknown;
+    const operationInput = parsed.data.args[0];
+    const operationRunId = operationInput && typeof operationInput === "object"
+      && "runId" in operationInput && typeof operationInput.runId === "string"
+      ? operationInput.runId
+      : this.terminal.sandbox()?.operationRunId ?? null;
+    let value: unknown;
     try {
-      const method = this.terminal[parsed.data.operation] as (...args: unknown[]) => unknown;
       // Through `commitRuntimeMutation`, not directly, for the same reason
       // `acceptRuntimeSql` does: a write that moves a Terminal deadline has to
       // enqueue the `directory_common` effect, because
@@ -819,19 +857,53 @@ export class SubstreamAgent extends DurableObject<Env> {
       // thing `WorkspaceScheduler` reads to decide a sandbox is due, and that
       // effect is its only writer. Calling the storage method on its own
       // committed the row and told nobody.
-      const value = await this.product.commitRuntimeMutation(
+      value = await this.product.commitRuntimeMutation(
         () => method.apply(this.terminal, parsed.data.args),
-        terminalOperationAffectsDirectory(parsed.data.operation),
+        terminalOperationAffectsDirectory(operation),
       );
-      // The deadline this operation just wrote is also this object's own next
-      // alarm, so re-derive it here rather than waiting for the next request.
-      await this.scheduleNextAlarm();
-      return jsonResponse({ ok: true, value: value ?? null });
     } catch (error) {
+      // `commitRuntimeMutation` is one synchronous SQLite transaction. If it
+      // throws, no Terminal row or regional effect committed, so retrying the
+      // exact operation is safe. Keep the raw reason only in operator logs;
+      // the RPC carries a stable category and participant-safe instruction.
+      logError(this.env, "terminal_operation_commit_failed", {
+        workspace_id: parsed.data.workspaceId,
+        workstream_id: parsed.data.workstreamId,
+        harness_run_id: operationRunId,
+        operation,
+        code: "terminal_operation_not_committed",
+        reason: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
+      });
       return jsonResponse({
-        error: error instanceof Error ? error.message : "terminal_operation_failed",
+        ok: false,
+        error: "terminal_operation_not_committed",
+        failure: {
+          code: "terminal_operation_not_committed",
+          message: "Avalon could not commit an internal Terminal state change. Resume the run so the durable tool receipt can reconcile it; do not manually repeat a write.",
+          outcome: "not_committed",
+          retryable: true,
+        },
       }, 409);
     }
+    // Alarm scheduling happens after the transaction. A failure here cannot be
+    // returned as an operation failure: the mutation already committed, and a
+    // retry could duplicate it. Directory-affecting operations committed their
+    // regional effect with the row; otherwise the active dispatch sweep or a
+    // later request re-derives the local alarm.
+    try {
+      await this.scheduleNextAlarm();
+    } catch (error) {
+      logError(this.env, "terminal_operation_alarm_schedule_failed", {
+        workspace_id: parsed.data.workspaceId,
+        workstream_id: parsed.data.workstreamId,
+        harness_run_id: operationRunId,
+        operation,
+        code: "terminal_alarm_schedule_failed_after_commit",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return jsonResponse({ ok: true, value: value ?? null });
   }
 
   private async acceptRuntimeResource(request: Request): Promise<Response> {
@@ -1195,6 +1267,14 @@ export class SubstreamAgent extends DurableObject<Env> {
    * is not a thrown error, it did so silently, with no failure logged anywhere.
    */
   private async drainRunsToCompletion(): Promise<void> {
+    // A keep-alive heartbeat is a separate Durable Object event. If it fires
+    // while this isolate is already draining, joining `activeDrain` would make
+    // the heartbeat await a promise created by the run's request context.
+    // Besides holding the alarm open for the whole model/tool loop, workerd
+    // can then reject later I/O as belonging to a different request. The
+    // dispatch row and the alarm re-armed at entry are the continuation; this
+    // invocation has no work to join.
+    if (this.agentDrain.active) return;
     await this.agentDrain.resume(
       () => this.drainRunQueue()
       .catch((error: unknown) => {

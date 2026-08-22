@@ -35,6 +35,8 @@ function runtime(initial: Record<string, string> = {}) {
         stderr: input.command === "false" ? "failed\n" : "",
         startedAt: "2026-08-13T00:00:00.000Z",
         completedAt: "2026-08-13T00:00:00.010Z",
+        acquisitionDurationMs: 7,
+        totalDurationMs: 17,
       };
     },
     async checkoutRepository(_context, input) {
@@ -108,6 +110,7 @@ describe("Terminal file and command tools", () => {
         output: {
           state: "completed", terminationReason: "exited", exitCode: 0, stdout: "ok\n", stderr: "",
           startedAt: "2026-08-13T00:00:00.000Z", completedAt: "2026-08-13T00:00:00.010Z",
+          acquisitionDurationMs: 7, totalDurationMs: 17,
           stdoutTruncated: false, stderrTruncated: false, durationMs: 10,
         },
         summary: "Completed printf ok",

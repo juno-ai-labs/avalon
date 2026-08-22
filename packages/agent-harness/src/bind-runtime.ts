@@ -208,7 +208,7 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -261,7 +261,11 @@ class ProviderCircuitOpenError extends Error {
 }
 
 class FatalHarnessPortError extends Error {
-  constructor(message: string, readonly causeValue?: unknown) {
+  constructor(
+    readonly code: "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed",
+    message: string,
+    readonly causeValue?: unknown,
+  ) {
     super(message);
     this.name = "FatalHarnessPortError";
   }
@@ -449,7 +453,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         });
         return;
       }
-      throw new FatalHarnessPortError("A required host persistence port failed", error);
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "A required host persistence port failed",
+        error,
+      );
     }
   };
 
@@ -847,7 +855,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal,
           });
         } catch (error) {
-          throw new FatalHarnessPortError("Tool authorization revalidation failed", error);
+          throw new FatalHarnessPortError("harness_execution_failed", "Tool authorization revalidation failed", error);
         }
         if (beforeToolCallDecision?.allowed === false) {
           await emit({
@@ -906,7 +914,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           });
           await input.checkpointToolInvocation?.({ toolCallId: receiptId, state: "executing" });
         } catch (error) {
-          throw new FatalHarnessPortError("Tool execution plan persistence failed", error);
+          throw new FatalHarnessPortError(
+            "tool_receipt_persistence_failed",
+            "Tool execution plan persistence failed",
+            error,
+          );
         }
         await emit({
           type: "tool_started",
@@ -1127,7 +1139,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     if (input.signal?.aborted && !timedOut && !(error instanceof AmbiguousExternalWriteError)) {
       return outcome("stopped", content || streamedContent, model, state, routedAttempts);
     }
-    // `timedOut` outranks the two provider arms but not an explicit limit error:
+    // `timedOut` outranks the two provider arms but not an explicit limit or
+    // durable-host persistence error:
     // a run that hit its iteration ceiling names that ceiling even if the clock
     // then expired, while a provider fault that ran out the clock is reported as
     // the deadline, because the wall clock is the thing the member can act on.
@@ -1145,6 +1158,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ? error.code
       : error instanceof AmbiguousExternalWriteError
         ? "ambiguous_external_write"
+      : error instanceof FatalHarnessPortError
+        ? error.code
       : timedOut
         ? "run_wall_time_limit_exceeded"
       : providerCode ?? "harness_execution_failed";
@@ -2441,7 +2456,12 @@ async function requiredPort<T>(label: string, operation: () => T | Promise<T>): 
     return await operation();
   } catch (error) {
     if (error instanceof FatalHarnessPortError) throw error;
-    throw new FatalHarnessPortError(label, error);
+    const code = /authorization revalidation/iu.test(label)
+      ? "harness_execution_failed"
+      : /^(Tool|Ambiguous write)/.test(label)
+        ? "tool_receipt_persistence_failed"
+        : "run_state_persistence_failed";
+    throw new FatalHarnessPortError(code, label, error);
   }
 }
 
