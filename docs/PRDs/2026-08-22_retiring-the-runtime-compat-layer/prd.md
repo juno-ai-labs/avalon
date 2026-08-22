@@ -473,6 +473,58 @@ strings elsewhere.
 and a typed `completeToolInvocation` that tries to *set* it has misread the
 schema. It belongs on the read operation that projects a receipt.
 
+**What the write triggers fabricate, and the bug in it.** The read view
+translates; the `INSTEAD OF INSERT` trigger *invents*. `tool_effects` has five
+`NOT NULL` columns the compat vocabulary never carried, and the trigger fills
+each with a literal or a derivation:
+
+| Real column | What the trigger writes |
+| --- | --- |
+| `attempt_epoch` | `(SELECT attempt_epoch FROM runs WHERE run_id = NEW.harness_run_id)` |
+| `tool_position` | `(SELECT COUNT(*) FROM tool_effects WHERE run_id = NEW.harness_run_id)` |
+| `occurrence_key` | the literal `'runtime:' || NEW.id` |
+| `authority_revision` | `COALESCE(NEW.execution_plan_hash, 'runtime')` |
+| `mode` | `json_extract(NEW.execution_plan_json, '$.mode')`, defaulting to `read` |
+| `result_hash` | `COALESCE(NEW.output_ref, NEW.output_summary)` — a ref or a human sentence, in a column named for a hash |
+
+`tool_position` as a row count is a live bug, not merely an inelegance. The real
+table's uniqueness is `UNIQUE (run_id, attempt_epoch, tool_position)`; there is
+**no** unique index on `(run_id, tool_call_id)`, so
+`persistToolExecutionPlan`'s `ON CONFLICT(harness_run_id, tool_call_id) DO
+NOTHING` is not the constraint it names — the trigger's `INSERT OR IGNORE`
+resolves against the primary key and that triple instead.
+
+A count is only a safe allocator while nothing is ever removed, and receipts
+*are* removed: `attachment-tool-receipts.ts` runs
+`DELETE FROM tool_invocations WHERE workspace_id = ? AND id = ?` from two paths,
+and `_runtime_tool_invocations_delete` turns that into
+`DELETE FROM tool_effects`. Deleting a receipt from the middle of a run leaves a
+hole, `COUNT(*)` then under-counts by one, and the next admission in that run
+computes a position another row already holds. `INSERT OR IGNORE` drops it
+silently; the caller sees zero changes, falls through to the existing-row lookup
+keyed on `(harness_run_id, tool_call_id)`, finds nothing — its row was never
+written — and throws `RunOwnershipLostError`, ending the run with a lease
+failure that never happened.
+
+(An earlier draft of this section called it a concurrency bug — two admissions
+racing to the same count. That is wrong: the routed statements arrive as
+separate requests and the object serializes them, so each `COUNT(*)` sees the
+previous insert. The deletion path is the real one, and it is worth the
+correction because "two writers race" and "an allocator is not injective after a
+delete" want different fixes.)
+
+The fix is a high-water mark rather than a count —
+`COALESCE(MAX(tool_position) + 1, 0)` over the run — which stays injective
+across deletes. That does not need to wait for slice 1: migration 14 already
+rebuilt this view's *update* trigger in place, so the same technique repairs the
+insert trigger now, ahead of the slice that deletes it entirely. The typed
+operation inherits the corrected allocation. It also has to decide what
+`occurrence_key`, `authority_revision`, and `result_hash` actually mean, rather
+than inheriting three placeholders. Slice 1 should fix the position allocation
+and say so; the other three can keep their current values under an explicit
+comment if nothing reads them, but "nothing reads them" is a claim to verify,
+not assume.
+
 **What the migration drops.** `_runtime_tool_invocations` with its insert,
 update, and delete triggers, and `_runtime_tool_checkpoints` with its insert
 trigger — six objects, triggers before views. `legacy_attempt_id` does not go
