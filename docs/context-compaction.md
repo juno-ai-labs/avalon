@@ -237,8 +237,7 @@ history tables and durable active-indicator lifecycle. The real-workerd Durable
 Object suite covers persistence through eviction and terminal suppression.
 Contract and desktop socket tests cover lifecycle validation, stale-attempt
 finish rejection, canonical reconciliation, reconnect state, and the accessible
-label. `packages/db/test/migrations.test.ts` asserts the pre-cutover source
-table's columns.
+label.
 `apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
 rendering, bounded metadata, principal-and-visibility-scoped persistence, and
 fail-closed replay after visibility changes. API protocol tests cover the

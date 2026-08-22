@@ -740,10 +740,16 @@ the thing to write when adding a migration. It is not: a new migration is
 covered by the baseline equivalence check and by the service test for the
 behaviour it enables.
 
-**What a future change has to respect:** this holds *because* the boundary
-subsumes everything. If a migration is ever added above the baseline boundary
-and left there, nothing replays it step by step and no digest covers it — move
-the boundary, or test it where its behaviour is used. And `seed.sql` and
+**What a future change has to respect:** a migration above the baseline boundary
+is still *replayed* — `baseline-migration.test.ts` builds one database from the
+whole chain and another from the baseline plus everything above it, then diffs
+their tables, columns, foreign keys, indexes, triggers and seeded rows. `0091` is
+the first such migration and is covered that way today. What it does not get is
+the digest: the manifest pins only what the baseline subsumes, so an edit to a
+migration above the boundary is not caught the way an edit below it is. That
+makes the boundary worth moving when the chain above it grows, and it means a
+migration whose point is a *data backfill* — which an empty-database replay never
+exercises — still needs a test where its behaviour is used. And `seed.sql` and
 `seed-product.json` are not migrations: they stay editable, so `dev-seed.test.ts`
 keeps asserting that the D1 seed never recreates a product table 0090 dropped.
 
