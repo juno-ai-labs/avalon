@@ -1053,12 +1053,15 @@ object's failures now read `substream_agent_do_schema_hash_mismatch:<version>`
 and the like.
 
 **Why:** the key is what the migration tracker files this object's reports
-under, and it was the one key in the fleet that named neither its class nor
-anything else on the site, sitting next to `workstream_do` — a genuinely
-different object — under a name that read like its parent. It said `workstream`
-because the history began under `WorkstreamRoom` and the class rename was
-deliberately storage-preserving, which kept the receipts and left the label
-behind.
+under, and it was the only one not derived from the class that reports it,
+sitting next to `workstream_do` — a genuinely different object — under a name
+that read like its parent. It said `workstream` because the history began under
+`WorkstreamRoom` and the class rename was deliberately storage-preserving, which
+kept the receipts and left the label behind. The other keys are their class,
+snake-cased, with `_do` where the class ends in `DO`; `substream_agent_do` takes
+that suffix from its siblings rather than from `SubstreamAgent`, and
+`block_dashboard_block_agent` carries a `block` its class does not — derivation
+is the rule, not equality.
 
 **Considered and rejected:** renaming the constant along with its value. It
 still names *which* schema this module owns, which is what a reader here needs;
