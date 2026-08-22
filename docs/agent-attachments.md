@@ -378,8 +378,7 @@ generic tool execution/receipt loop is owned by
   ephemeral image parts reach only the next model request and never its durable
   completion event. `apps/api/test/workstream-read-state.test.ts` proves the
   sidebar uses the same visibility boundary.
-- `packages/db/test/migrations.test.ts`,
-  `apps/api/test/resource-upload.test.ts`,
+- `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and
   `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
   exact-byte hashing, legacy interpretation, derivative-change and deletion
