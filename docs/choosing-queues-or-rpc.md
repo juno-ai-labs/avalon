@@ -303,6 +303,16 @@ schema version, and an error describing code, all converging on one account-wide
 registry object by design. A second queue would have doubled the resources and
 isolated nothing, so there is one.
 
+The forced-migration commands travelling the other way are the same subsystem
+answering the same test the other way round, which is why they are worth reading
+side by side. Their payload is just as opaque, and the volume is just as far from
+any ceiling — but the destination is not shared. A Durable Object can only be
+addressed from a Worker that binds its namespace, and a queue has exactly one
+consumer, so the Global commands must be consumed by the Global Worker and the
+EU commands by the EU one. **The destination decides the split, not the
+payload**, and the two halves of one subsystem landing on opposite answers is the
+clearest available demonstration of that.
+
 ### Best practices when you do split
 
 - **Name by region, consistently**: `avalon-<region>-<purpose>`, plus a
@@ -349,6 +359,74 @@ through a small number of named bridges that parse their argument at the hop
 against `apps/api/src/lib/rpc-contracts.ts`. Adding a cross-region RPC is a
 change to that boundary and belongs in
 [`regionalization.md`](regionalization.md), not here.
+
+## Which Wrangler file each half goes in
+
+Provisioning a queue is not a step any more — declare it and the deployment
+preflight creates it, per [the section above](#what-a-queue-makes-you-handle).
+What is still a decision is *where* the declaration goes, and that is not a
+detail: a queue declared on the wrong Worker is valid JSON, deploys, and fails
+in a way the preflight was never asked about.
+
+- **The producer binding goes in the Worker that sends.** It is a binding, so it
+  belongs to the sender's config and nowhere else.
+- **The consumer goes in the Worker that has to do the work** — the one holding
+  the D1, R2, or Durable Object namespaces the messages are about.
+- **Exactly one Worker may consume a queue.** A platform limit, not a
+  convention, and it is what forces a split when the work has to happen in a
+  particular region.
+- **A dead-letter queue on every consumer**, named after that consumer's queue.
+  A shared dead-letter queue behind split queues defeats the split at exactly
+  the moment it matters.
+- **Naming**: `avalon-<region>-<purpose>` when split. A shared queue breaks that
+  convention, so it has to say why in a comment next to the resource, or the
+  next reader will "fix" it.
+
+The forced-migration hop is the worked example, because it uses all of these at
+once. Its two producer bindings sit in `apps/migration-tracker/wrangler.jsonc`,
+because the tracker is what sends; its consumers sit one each in
+`apps/api/wrangler.global.jsonc` and `apps/api/wrangler.eu.jsonc`, because only
+that region's Worker binds that region's Durable Object namespaces. The report
+queue going the other way is the mirror image — one consumer on the tracker, and
+a producer binding in each regional API file pointing at the same name.
+
+### Verifying it landed in the right file
+
+Two of the three placement errors are refused by
+`scripts/ensure-cloudflare-queues.mjs` before it creates anything, so they fail
+`pnpm test:scripts` and the deploy rather than a review:
+
+- **A name only one side declares** — `assertPairedQueues`. A misspelled
+  producer would otherwise be created and attached, the deploy would go green,
+  and messages would land in a queue nothing drains.
+- **A queue two Workers consume** — `assertSingleConsumerPerQueue`. Cloudflare
+  allows one, and nothing local refuses a second: the *second* deployment fails,
+  after the first has shipped and attached itself.
+
+The third has no automatic check, because it is a judgement rather than a
+contradiction: **a consumer on the wrong Worker, where that Worker can still do
+the work.** For that, read the inventory. `pnpm test:scripts` pins every
+surface, role, and queue name in `ensure-cloudflare-queues.test.mjs`, so a queue
+that moves between files fails the suite and adding one is a deliberate edit to
+that list — which is where to look first. For what a deploy would actually
+carry, the dry-run builds print the resolved bindings per surface:
+
+```text
+pnpm --filter @avalon/api build      # global
+pnpm --filter @avalon/api build:eu
+pnpm --filter @avalon/migration-tracker build
+```
+
+### What none of that checks
+
+**A consumer that is declared but not routed.** A Worker gets one `queue`
+handler for every queue it consumes, so `apps/api/src/index.ts` dispatches on
+`batch.queue` by name. A new queue added to a Wrangler file with no matching
+branch there is still consumed — its messages fall through to whichever handler
+the chain ends in. Nothing fails; the wrong consumer runs. Add the branch in the
+same change as the declaration, and prefer a predicate exported beside the
+contract over a string literal in the `if`, so the queue's name and the test for
+it cannot drift.
 
 ## Trust the primitives
 
@@ -439,6 +517,7 @@ it.
 | --- | --- | --- | --- |
 | Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue | Split | Fan-in from webhooks and polls; nothing waits on the outcome. Split because the payload is workspace content and the consumer must be the region's own Worker. |
 | Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for both regions and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| Forced migrations into the objects that must apply them (`avalon-<region>-migration-commands`) | Queue | Split | An operator picks a class on the migration tracker and every live object of it is woken, which is hundreds of cold starts no single invocation should hold open. Split because a queue has exactly one consumer and only the region's own Worker binds its namespaces — the constraint below decides it outright. The consumer's call into each object is RPC because it reads back the version the object landed on. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | Access revocation into the socket-holding objects (`ACCESS_REVOCATION_QUEUE`) | Queue | Split | The Worker that ends a membership or a session walks away; nothing it returns depends on the sockets closing. Each object is one hop, so a hop that fails retries alone rather than restarting the walk, and the consumer's calls into the objects are RPC because it reads back the children each one names. Split because the objects, the sessions, and the memberships never cross the boundary. See [`access-revocation.md`](access-revocation.md). |
 | Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | Crosses, by design | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
 | Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Same region | Reads and writes whose results the request returns to the desktop. |
