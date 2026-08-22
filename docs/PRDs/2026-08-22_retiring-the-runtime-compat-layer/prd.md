@@ -415,7 +415,8 @@ at all.** Here, five of seven did not.
 
 ### Slices
 
-Fifteen, covering all 81 routed tables. Statement counts are distinct SQL
+**Slice 1 has landed.** The other fourteen are plans. Fifteen in all, covering
+all 81 routed tables. Statement counts are distinct SQL
 literals in `apps/api/src` naming at least one of the slice's tables, counted
 once per slice they touch, and they include dead legacy arms — separating those
 reliably needs the per-file read that is the slice's own first step, so the
@@ -709,9 +710,12 @@ load-bearing and neither is obvious:
   cannot execute. Deleting the dead arm without rebuilding that test on the
   harness-shaped fixture leaves the live register path with no coverage at all.
 
-**What is left of slice 1, per object rather than per file.** The five writers
-are converted; the readers are not. Decomposed by trigger, the remaining surface
-is much smaller than a file list suggests:
+**Slice 1 is complete.** What follows is the inventory as it stood when the
+readers had not yet moved, kept because the decomposition is the template for
+the next six slices: read the remaining surface per *object*, not per file, and
+the work shrinks.
+
+Decomposed by trigger, the surface was:
 
 | Object | Remaining users |
 | --- | --- |
@@ -750,6 +754,30 @@ inside the same object. The telemetry pair should be retargeted at `tool_effects
 in place rather than given port methods — their primary table is `harness_runs`,
 so slice 6 owns them; retargeting stops them naming a slice-1 table, which is all
 the view drop requires.
+
+**What slice 1 actually cost, and what the next six should expect.** Nine
+commits, and the estimate that mattered least was the statement count. What the
+work was really made of:
+
+- **Dead arms outnumbered live ones.** Of the seven statements this PRD
+  inventoried as compat-view readers, five were unreachable. Every one was
+  written in compat vocabulary, which is why a static count finds them first.
+  Step 1 of a slice is not a warm-up.
+- **Two objects had to be rescued from the compat file**, and neither announced
+  itself. Expect every slice to ask, per object rather than per file: is this a
+  translation, or a real thing that happens to live here?
+- **Two behaviors were hiding inside triggers.** Migration 14's transcript
+  settlement and the replay-dedup index were both real product behavior added
+  *after* the cutover, inside compatibility objects. A slice that reads its
+  triggers as pure translation will drop working behavior.
+- **Tests certified the dead arm.** `attachment-tool-receipts.test.ts` covered
+  only the unreachable implementation, against a schema D1 has not had since
+  0090. Deleting dead code without checking what covers it leaves the live path
+  bare. Two other assertions turned out to be reading their own fixtures.
+- **The vocabulary does not vanish, it relocates.** `ToolInvocationSchema` is a
+  published wire contract in the compat spellings, so the translation moved into
+  the Worker-side port rather than disappearing. Every slice with a contract
+  behind it will pay this.
 
 ### The shape of a slice
 
