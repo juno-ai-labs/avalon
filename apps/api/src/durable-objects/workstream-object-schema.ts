@@ -7,6 +7,7 @@
  * workspace authorization; WorkspaceDO owns cross-work-stream serving state.
  */
 
+import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
 import {
   applyDurableObjectSqliteMigrations,
@@ -15,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 14;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 15;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1271,6 +1272,26 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       ...repairStrandedToolTranscriptParts(),
       ...rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(),
+    ],
+  },
+  {
+    version: 15,
+    description: "index this object's wake-ups in the shared multi-alarm table",
+    statements: [
+      ...SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+      // Every pending wake-up already in this object becomes an entry in the
+      // same transaction that creates the table. Without the backfill, a timer
+      // scheduled before this deploy is reachable only by whatever next writes
+      // `workstream_wakeups` and re-syncs the index — for a work stream whose
+      // last run ended, nothing ever does, and the wake-up the run promised a
+      // person is silently lost.
+      `INSERT INTO _internal_durable_alarms
+         (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+          created_at, updated_at)
+       SELECT 'agent_timer', wakeup_id, due_at, NULL, 0, 0, NULL,
+              unixepoch() * 1000, unixepoch() * 1000
+         FROM workstream_wakeups
+        WHERE status = 'pending'`,
     ],
   },
 ];

@@ -17,7 +17,6 @@ import {
 } from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import { z } from "zod";
-import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -45,6 +44,19 @@ import {
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
 import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
+import {
+  SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+  ScheduledDurableObject,
+  type ScheduledAlarm,
+} from "./scheduled-alarms";
+import {
+  recordWorkspaceScheduleFailure,
+  runWorkspaceScheduleTarget,
+  workspaceScheduleTargets,
+  type WorkspaceScheduleContext,
+  type WorkspaceScheduleTargetKind,
+} from "../services/workspace-schedule-execution";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceDirectoryExistsRequestSchema,
@@ -193,7 +205,6 @@ import {
   WorkspaceRuntimeSqlRequestSchema,
   type WorkspaceRuntimeSqlRequest,
 } from "./workspace-runtime-sql";
-import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
 
 const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "schedules",
@@ -329,6 +340,22 @@ const AUTHORIZATION_REVALIDATE_MS = 30_000;
  * interval: for a retraction the sweep is enforcement, not an optimization.
  */
 const ACCESS_RETRACTING_TOPICS: ReadonlySet<WorkspaceSyncTopic> = new Set(["member_directory"]);
+/** How often a workspace rechecks a region that is closed for maintenance. */
+const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+/** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
+const PRODUCT_ALARM_KIND = "product";
+const PRODUCT_ALARM_KEY = "workspace";
+/** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
+const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
+  "schedule",
+  "watch",
+  "maintenance",
+  "terminal",
+];
+
+function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
+  return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
+}
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -593,6 +620,33 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // decide channel admission, and no query ever consulted the allowlist.
     `DROP TABLE IF EXISTS slack_agent_channel_allowlist`,
   ],
+}, {
+  version: 4,
+  description: "hold this workspace's whole schedule behind its single alarm",
+  statements: [
+    ...SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+    // Product work already queued keeps its wake-up across the cutover. Every
+    // other target — schedules, watches, maintenance, Terminal deadlines — is
+    // reconciled from its own table by `refreshSchedule`, which the retiring
+    // scheduler object calls on its next alarm; product work has no such
+    // second writer, so a window queued before this deploy would otherwise
+    // wait for an unrelated enqueue to rediscover it.
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'product', 'workspace', MIN(due_at), NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+       FROM (
+         SELECT process_after AS due_at FROM opportunity_batch_windows WHERE status = 'pending'
+         UNION ALL
+         SELECT lease_expires_at AS due_at FROM opportunity_batch_windows WHERE status = 'processing'
+         UNION ALL
+         SELECT COALESCE(lease_expires_at, due_at) AS due_at
+           FROM suggested_work_sets WHERE due_at IS NOT NULL
+       )
+      WHERE due_at IS NOT NULL
+     HAVING MIN(due_at) IS NOT NULL`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -854,7 +908,7 @@ interface WorkspaceAuthRoleRow {
  */
 const MIGRATION_COMPONENT = "workspace_do";
 
-export class WorkspaceDO extends DurableObject<Env> {
+export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   /**
@@ -895,8 +949,13 @@ export class WorkspaceDO extends DurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
+      await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  protected override scheduleReady(): Promise<void> {
+    return this.initialized;
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -929,7 +988,16 @@ export class WorkspaceDO extends DurableObject<Env> {
         const target = workspaceMutationTarget(statement.sql);
         return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
       })) {
-        this.state.waitUntil(refreshWorkspaceSchedulerAlarm(this.env, request.workspaceId));
+        this.state.waitUntil(this.refreshSchedule(request.workspaceId).catch((error: unknown) => {
+          // Swallowed silently, a failed refresh here leaves a schedule dark
+          // until something else reconciles. The alarm's own end-of-drain
+          // refresh is the backstop; this line is how anyone finds out the
+          // backstop was needed.
+          logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
+            workspace_id: request.workspaceId,
+            code: error instanceof Error ? error.message : "unknown_error",
+          });
+        }));
       }
       return responseToRpcResult(json({ results }));
     } catch (error) {
@@ -1008,22 +1076,191 @@ export class WorkspaceDO extends DurableObject<Env> {
    * a due request parked without another alarm. Their next authenticated read
    * schedules the object again, avoiding an idle per-workspace polling loop.
    */
-  override async alarm(): Promise<void> {
-    await this.initialized;
+  /**
+   * Hold every due target while this region is closed for maintenance.
+   *
+   * The frozen D1 snapshot is the authority for this object's tables during an
+   * import, and the importer re-verifies every page it sends. Claiming a
+   * window, advancing a schedule, or reaping a completed one here would mutate
+   * exactly those rows between a page and its retry. Nothing is dropped: every
+   * entry keeps its due time and this rechecks on a fixed cadence rather than
+   * waiting for the next future target, so a workspace whose whole schedule is
+   * already overdue still resumes the moment the region reopens.
+   */
+  protected override async scheduledAlarmDeferral(now: number): Promise<number | null> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") return null;
+    return now + MAINTENANCE_RECHECK_MS;
+  }
+
+  /**
+   * Everything this object wakes for that is not a stored entry.
+   *
+   * Only the activity-event retention sweep: it is derived from the oldest row
+   * in a table this object writes constantly, so an entry would be rewritten on
+   * every event. Product work, schedules, watches, maintenance passes, and
+   * Terminal deadlines are all entries, each with its own retry gate.
+   */
+  protected override nextDerivedAlarmAt(now: number): number | null {
+    const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
+      `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
+    ).one().created_at;
+    return oldest === null ? null : Math.max(now + 1, Number(oldest) + ACTIVITY_EVENT_RETENTION_MS);
+  }
+
+  /**
+   * The one thing this object's alarm does that no entry owns.
+   *
+   * Expired activity events are swept on every wake rather than through an
+   * entry: the sweep is idempotent, bounded to 500 rows, and its due time
+   * moves with every event this workspace records.
+   */
+  protected override async runDueAlarmWork(now: number): Promise<void> {
+    this.reapExpiredActivityEvents(now);
+    const workspaceId = this.workspaceId();
+    // Re-derive the whole index before this alarm ends, exactly as the object
+    // that used to own it did. A target that just fired has advanced its own
+    // canonical row — `runSchedule` writes the next `next_run_at`,
+    // `runResourceWatch` the next `next_poll_at`, a bounded maintenance pass
+    // can leave rows behind — and it writes them through the local executor,
+    // which does not pass the auto-refresh in `executeRuntimeSql`. Without
+    // this, the drain settles the one-shot entry it just ran and nothing arms
+    // the occurrence that replaced it: a recurring automation fires once and
+    // then never again until an unrelated mutation happens to reconcile.
+    if (workspaceId) await this.refreshSchedule(workspaceId);
+  }
+
+  protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
-    // While a maintenance campaign is running, the frozen D1 snapshot is the
-    // authority for this object's product tables and the importer re-verifies
-    // every page it sends. Claiming a window or reaping a completed one here
-    // would mutate exactly those rows between a page and its retry, so product
-    // work waits for the region to open. The import itself re-arms this alarm.
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase !== "durable_object_open" && authority.phase !== "legacy_open") {
-      await this.refreshProductAlarm({ suppressPastDue: true });
+    if (alarm.kind === PRODUCT_ALARM_KIND) {
+      await this.runProductAlarm(workspaceId);
       return;
     }
+    if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
+      throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
+    }
+    await runWorkspaceScheduleTarget(
+      this.scheduleContext(workspaceId),
+      { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
+      new Date(),
+    );
+  }
+
+  protected override onScheduledAlarmFailure(
+    alarm: ScheduledAlarm,
+    error: unknown,
+    attempt: number,
+  ): void {
+    const workspaceId = this.workspaceId();
+    logWarn(this.env, "workspace_scheduled_alarm_failed", {
+      workspace_id: workspaceId,
+      alarm_kind: alarm.kind,
+      alarm_key: alarm.key,
+      attempt,
+      code: error instanceof Error ? error.message : "unknown_error",
+    });
+    if (!workspaceId || !isWorkspaceScheduleAlarmKind(alarm.kind)) return;
+    // The audit row is a regional D1 write and this hook cannot await; the
+    // retry gate is already persisted, so losing the record to an eviction
+    // costs the operator one line and the product nothing.
+    this.state.waitUntil(recordWorkspaceScheduleFailure(
+      this.scheduleContext(workspaceId),
+      { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
+      error,
+    ).catch(() => undefined));
+  }
+
+  /**
+   * Reconcile every workspace-wide target into the alarm index.
+   *
+   * Called after any mutation that can move a due time — a schedule edited, a
+   * watch enabled, an outbox row written through the runtime SQL port — and by
+   * the retiring `WorkspaceScheduler` on its final alarm. Reconciling rather
+   * than appending is what lets a cancelled schedule take its alarm with it.
+   */
+  async refreshSchedule(workspaceId: string): Promise<{ alarmAt: string | null }> {
+    await this.initialized;
+    const parsed = WorkspaceIdSchema.parse(workspaceId);
+    // No identity means no workspace rows: every write to this object asserts
+    // its identity first, so there is nothing here that could be due.
+    if (this.workspaceId() === null) return { alarmAt: null };
+    this.assertWorkspace(parsed);
+    const targets = await workspaceScheduleTargets(this.scheduleContext(parsed));
+    const grouped = new Map<WorkspaceScheduleTargetKind, { key: string; dueAt: number }[]>(
+      WORKSPACE_SCHEDULE_ALARM_KINDS.map((kind) => [kind, []]),
+    );
+    for (const target of targets) {
+      grouped.get(target.kind)?.push({ key: target.id, dueAt: Date.parse(target.dueAt) });
+    }
+    this.state.storage.transactionSync(() => {
+      for (const [kind, entries] of grouped) this.scheduledAlarms.reconcile(kind, entries);
+    });
+    const alarmAt = await this.armNextAlarm();
+    return { alarmAt: alarmAt === null ? null : new Date(alarmAt).toISOString() };
+  }
+
+  /**
+   * Re-derive the Terminal deadlines alone.
+   *
+   * Only this kind: the other three read tables a directory effect never
+   * touches, and a full refresh on the hottest write path this object has
+   * would put ten queries behind every directory publish. The source is the
+   * same method the full reconcile reads, so there is still one derivation of
+   * when a sandbox is due.
+   */
+  private async refreshTerminalSchedule(): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const targets = await this.workstreamScheduleTargets({ workspaceId });
+    await this.reconcileScheduledAlarms(
+      "terminal",
+      targets.items
+        .filter((target) => target.kind === "terminal")
+        .map((target) => ({ key: target.workstreamId, dueAt: Date.parse(target.dueAt) }))
+        .filter((target) => Number.isFinite(target.dueAt)),
+    );
+  }
+
+  private scheduleContext(workspaceId: string): WorkspaceScheduleContext {
+    return {
+      env: this.env,
+      workspaceEnv: this.localWorkspaceEnv(workspaceId),
+      workspaceId,
+      directory: this,
+    };
+  }
+
+  /**
+   * This workspace's database, addressed without leaving the object.
+   *
+   * The moved schedule code speaks `env.DB`, and routing that back through the
+   * namespace would have the object call itself. The local executor runs the
+   * same statements against its own storage instead.
+   */
+  private localWorkspaceEnv(workspaceId: string): Env {
+    return withWorkspaceRuntimeDatabase(this.env, workspaceId, (statements) =>
+      Promise.resolve(executeWorkspaceRuntimeSql(
+        this.state.storage,
+        WorkspaceRuntimeSqlRequestSchema.parse({
+          workspaceId,
+          requestId: uuidV7(),
+          statements,
+        }),
+      )));
+  }
+
+  /**
+   * Workspace-local product scheduler.
+   *
+   * SQLite decides what is due and fences each claim. The alarm only starts a
+   * deterministic Workflow instance; inference and ranking never run in the
+   * object's single-threaded request path. A dormant member deliberately leaves
+   * a due request parked without another alarm. Their next authenticated read
+   * schedules the object again, avoiding an idle per-workspace polling loop.
+   */
+  private async runProductAlarm(workspaceId: string): Promise<void> {
     const now = Date.now();
-    this.reapExpiredActivityEvents(now);
     const product = this.productStorage();
     product.reapCompletedOpportunityWindows(now - 30 * 24 * 60 * 60_000);
     product.reapSettledSuggestedWork(now);
@@ -1092,6 +1329,9 @@ export class WorkspaceDO extends DurableObject<Env> {
         launched += 1;
       }
     }
+    // Suppressed when nothing launched: what is left is parked behind a
+    // dormant member, and re-arming for an instant already past is the one way
+    // this object turns into a polling loop.
     await this.refreshProductAlarm({ suppressPastDue: launched === 0 });
   }
 
@@ -1885,6 +2125,13 @@ export class WorkspaceDO extends DurableObject<Env> {
         viewerChanges.set(envelope.workstreamId, users);
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
+    }
+    if (commonChanges.size > 0) {
+      // A `directory_common` effect is the only writer of
+      // `next_terminal_action_at`, and it arrives outside any alarm — off the
+      // Queue — so a sandbox deadline created or moved here would otherwise
+      // wait for an unrelated target to reconcile before anything armed it.
+      await this.refreshTerminalSchedule();
     }
     if (directoryChanged) {
       await Promise.all([
@@ -2925,23 +3172,27 @@ export class WorkspaceDO extends DurableObject<Env> {
     );
   }
 
+  /**
+   * Point the product entry at the next opportunity window or ranking request.
+   *
+   * An entry rather than a derived timestamp because the answer depends on the
+   * caller: an enqueue wants the instant even if it is already past, while the
+   * alarm that launched nothing wants past-due rows left parked. A derived
+   * source has no way to carry that distinction, and reading it the wrong way
+   * turns a parked window into a wake every millisecond.
+   */
   private async refreshProductAlarm(options: { suppressPastDue?: boolean } = {}): Promise<void> {
     const now = Date.now();
     const productDue = this.productStorage().nextProductAlarmAt(now, options.suppressPastDue === true);
-    const activity = this.state.storage.sql.exec<{ created_at: number | null }>(
-      `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
-    ).one().created_at;
-    const activityDue = activity === null ? null : Number(activity) + ACTIVITY_EVENT_RETENTION_MS;
-    const candidates = [productDue, activityDue]
-      .filter((value): value is number => value !== null)
-      .map((value) => Math.max(now + 1, value));
-    if (candidates.length === 0) {
-      await this.state.storage.deleteAlarm();
+    if (productDue === null) {
+      await this.cancelScheduledAlarm(PRODUCT_ALARM_KIND, PRODUCT_ALARM_KEY);
       return;
     }
-    const next = Math.min(...candidates);
-    const current = await this.state.storage.getAlarm();
-    if (current === null || current > next) await this.state.storage.setAlarm(next);
+    await this.scheduleAlarm({
+      kind: PRODUCT_ALARM_KIND,
+      key: PRODUCT_ALARM_KEY,
+      dueAt: Math.max(now + 1, productDue),
+    });
   }
 
   private assertWorkspace(workspaceId: string): void {

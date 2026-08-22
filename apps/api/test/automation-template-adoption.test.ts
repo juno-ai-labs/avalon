@@ -1,7 +1,17 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import type * as WakeupService from "../src/services/workstream-wakeup-service";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
+
+// Binding WORKSPACE_DOS here would route this fixture's SQL into a stub object;
+// the reconcile call is the seam this file cares about.
+vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => ({
+  ...await importOriginal<typeof WakeupService>(),
+  refreshWorkspaceSchedulerAlarm: vi.fn(async () => undefined),
+}));
+
+import { refreshWorkspaceSchedulerAlarm } from "../src/services/workstream-wakeup-service";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -94,13 +104,9 @@ describe("automation template version adoption", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T00:00:00.000Z"));
     const database = new AdoptionDatabase();
-    const schedulerRefresh = vi.fn(async () => undefined);
-    const schedulerGet = vi.fn(() => ({ refresh: schedulerRefresh }));
-    const schedulerId = vi.fn(() => ({ toString: () => "scheduler-id" }));
     const env = createTestEnv({
       DB: database.binding,
       AVALON_REGION: "global",
-      WORKSPACE_SCHEDULERS: { idFromName: schedulerId, get: schedulerGet },
     });
     const auth: AuthContext = {
       sessionId: "session-1",
@@ -149,8 +155,10 @@ describe("automation template version adoption", () => {
         "2026-08-01T00:00:00.000Z",
       ],
     });
-    expect(schedulerId).toHaveBeenCalledWith("global:668953d2-25f2-44fd-8d72-1e8cf024a277");
-    expect(schedulerRefresh).toHaveBeenCalledWith("668953d2-25f2-44fd-8d72-1e8cf024a277");
+    expect(refreshWorkspaceSchedulerAlarm).toHaveBeenCalledWith(
+      expect.anything(),
+      "668953d2-25f2-44fd-8d72-1e8cf024a277",
+    );
     expect(get).toHaveBeenCalledWith("subscription-1");
   });
 });

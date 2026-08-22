@@ -18,7 +18,6 @@ import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness"
 import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -42,6 +41,7 @@ import {
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
@@ -2165,13 +2165,7 @@ export class AutomationService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    const scheduler = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_SCHEDULERS,
-      this.auth.workspaceId,
-      `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
-    );
-    await scheduler.refresh(this.auth.workspaceId);
+    await refreshWorkspaceSchedulerAlarm(this.env, this.auth.workspaceId);
   }
 }
 
