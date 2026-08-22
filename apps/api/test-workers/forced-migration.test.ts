@@ -181,6 +181,20 @@ describe("forceMigration", () => {
     await expect(applyMigrationCommand(env, command({ className: "MigrationRegistry" })))
       .rejects.toThrow(/migration_command_unknown_class:MigrationRegistry/u);
   });
+
+  /**
+   * A name off `Object.prototype` is a class name as far as the command
+   * contract is concerned — `constructor` matches its regex — and looking the
+   * dispatcher up with a plain index finds `Object` rather than `undefined`.
+   * The unknown-class guard then passes, `Object(command)` returns the command,
+   * and the consumer acknowledges a message as applied having woken nothing.
+   */
+  it("refuses a class name inherited from Object.prototype", async () => {
+    for (const className of ["constructor", "toString", "valueOf"]) {
+      await expect(applyMigrationCommand(env, command({ className })))
+        .rejects.toThrow(new RegExp(`migration_command_unknown_class:${className}`, "u"));
+    }
+  });
 });
 
 /**

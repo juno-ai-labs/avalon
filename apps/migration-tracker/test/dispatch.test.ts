@@ -231,6 +231,34 @@ describe("dispatchMigrationRun", () => {
     });
   });
 
+  /**
+   * The two regions are separate queues, so one refusing says nothing about the
+   * other. Failing both because Global was walked first would turn one region's
+   * outage into two, and the EU objects would go unreached with nothing in the
+   * run row explaining why.
+   */
+  it("still reaches the healthy region when the other one refuses", async () => {
+    await sweepIn([
+      namespaceOf("global", "WorkspaceDO", [objectId("a")]),
+      namespaceOf("eu", "WorkspaceDO", [objectId("b")]),
+    ]);
+    const queues = boundEnv({ failAfter: 0 });
+
+    const run = await dispatchMigrationRun(
+      queues.env,
+      registryStub(),
+      { className: "WorkspaceDO" },
+      "operator@example.test",
+    );
+
+    expect(queues.global.sent).toEqual([]);
+    expect(queues.eu.sent.map((command) => command.objectId)).toEqual([objectId("b")]);
+    expect(run.dispatched).toBe(1);
+    expect(run.status).toBe("failed");
+    // Named, so the gap between matched and dispatched has an explanation.
+    expect(run.errorMessage).toContain("global");
+  });
+
   it("records a run that matched nothing as empty", async () => {
     const queues = boundEnv();
 
