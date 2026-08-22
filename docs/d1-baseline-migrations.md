@@ -70,6 +70,13 @@ chain is always there to fall back to, and a setup command that refused to run
 because a *cache* was stale would be a bad trade. The staleness is still a test
 failure, so it is loud in CI and quiet in your terminal.
 
+The two manifest states a bad merge produces — an entry whose `.sql` was never
+staged, and a boundary claimed twice with no way to tell which snapshot is right
+— are also skipped, but `loadCatalog` reports them and `pnpm db:migrate` prints
+them before it plans. Both otherwise end as a full chain replay, which from the
+outside is indistinguishable from an ordinary slow first run, and so is exactly
+the kind of breakage nobody investigates.
+
 ### Applying one
 
 `pnpm db:migrate` runs `scripts/migrate-d1.mjs`, which discovers the regions,
@@ -402,6 +409,10 @@ removes the obscure failure at a fraction of the risk. Unifying them is the real
 fix and is still owed. Also *keeping the ledger read off the warm path* for its
 one wrangler start-up: the command already spends several, and the alternative
 was two checks that could never fire.
+
+Manifest anomalies that force a chain replay — a baseline file missing from
+disk, a boundary claimed twice — are now reported rather than only dropped,
+because their symptom is a slow setup rather than an error.
 
 **Consequences:** `production-fingerprint.json` is now re-recorded on its own
 schedule rather than as a step in a migration's pull request, and a migration

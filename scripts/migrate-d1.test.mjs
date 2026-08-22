@@ -1228,11 +1228,13 @@ test("the repository's own migrations sort identically under both orderings", ()
 // Manifest states a bad merge leaves behind
 // ---------------------------------------------------------------------------
 
-test("a manifest entry whose baseline file is missing is dropped, not announced", () => {
+test("a manifest entry whose baseline file is missing is dropped, and said so", () => {
   // The usual cause is a merge that took the manifest hunk while the generated
   // `.sql` was never staged. The plan would otherwise announce a baseline and
   // then hand Wrangler a path that does not exist — a confusing failure for
-  // something the chain can do perfectly well.
+  // something the chain can do perfectly well. Dropping it is right; dropping
+  // it in silence is not, because what the operator then sees is a chain replay
+  // that looks like an ordinary slow first run.
   const root = mkdtempSync(join(tmpdir(), "avalon-catalog-"));
   try {
     const migrations = join(root, "m");
@@ -1244,11 +1246,52 @@ test("a manifest entry whose baseline file is missing is dropped, not announced"
       baselines: [{ through: "0001_a.sql", file: "b_0001_a.sql", migrations: ["0001_a.sql"], digest: "x" }],
     }), "utf8");
 
-    assert.deepEqual(loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines }).baselines, []);
+    const without = loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines });
+    assert.deepEqual(without.baselines, []);
+    assert.equal(without.anomalies.length, 1);
+    assert.match(without.anomalies[0], /b_0001_a\.sql is in manifest\.json but not on disk/u);
+    assert.match(without.anomalies[0], /replaying the migration chain instead/u);
+
     writeFileSync(join(baselines, "b_0001_a.sql"), "-- present", "utf8");
-    assert.equal(
-      loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines }).baselines.length,
-      1,
+    const with_ = loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines });
+    assert.equal(with_.baselines.length, 1);
+    assert.deepEqual(with_.anomalies, [], "a healthy manifest reports nothing");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a boundary claimed twice is dropped in both copies, and said so", () => {
+  // Only a merge that kept both sides produces this — `mergeIntoManifest`
+  // replaces by boundary. Neither copy can be trusted over the other, so both
+  // go and the chain runs; without the report that is indistinguishable from
+  // having no baseline at all.
+  const root = mkdtempSync(join(tmpdir(), "avalon-catalog-"));
+  try {
+    const migrations = join(root, "m");
+    const baselines = join(root, "b");
+    mkdirSync(migrations);
+    mkdirSync(baselines);
+    writeFileSync(join(migrations, "0001_a.sql"), "CREATE TABLE a (id TEXT);", "utf8");
+    for (const file of ["b_0001_a.sql", "b_0001_a_theirs.sql"]) {
+      writeFileSync(join(baselines, file), "-- present", "utf8");
+    }
+    writeFileSync(join(baselines, "manifest.json"), JSON.stringify({
+      baselines: [
+        { through: "0001_a.sql", file: "b_0001_a.sql", migrations: ["0001_a.sql"], digest: "ours" },
+        { through: "0001_a.sql", file: "b_0001_a_theirs.sql", migrations: ["0001_a.sql"], digest: "theirs" },
+      ],
+    }), "utf8");
+
+    const catalog = loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines });
+    assert.equal(catalog.baselines.length, 2, "both are still loaded; selection is what drops them");
+    assert.equal(catalog.anomalies.length, 1);
+    assert.match(catalog.anomalies[0], /claims 0001_a\.sql twice/u);
+
+    // And selection really does drop both rather than picking by sort order.
+    assert.deepEqual(
+      usableBaselines(catalog.baselines, catalog.migrationsOnDisk, () => "ours"),
+      [],
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

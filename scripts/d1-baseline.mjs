@@ -889,17 +889,30 @@ export function readBaselineManifest(contents) {
  * manifest matches disk — so it is loud in CI and quiet in your terminal, which
  * is the right way round.
  */
-export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
-  // A boundary appearing twice can only come from a merge that kept both sides:
-  // `mergeIntoManifest` replaces by boundary, so no single regeneration produces
-  // one. There is no way to tell which snapshot is right, and the comparator
-  // never returns 0 for equal boundaries — so which one "won" was a sort
-  // artifact that flipped with input order. Both are dropped, and the chain runs.
+/**
+ * Boundaries a manifest claims more than once.
+ *
+ * Only a merge that kept both sides produces one — `mergeIntoManifest` replaces
+ * by boundary, so no single regeneration can. Exported separately from the
+ * filtering below because dropping them is right but doing it silently is not:
+ * the run then replays the whole chain, which looks like a slow setup rather
+ * than a manifest somebody has to fix.
+ */
+export function duplicateBoundaries(baselines) {
   const seen = new Map();
   for (const baseline of baselines) seen.set(baseline.through, (seen.get(baseline.through) ?? 0) + 1);
+  return [...seen.entries()].filter(([, count]) => count > 1).map(([through]) => through);
+}
+
+export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
+  // A boundary appearing twice is dropped in both copies. There is no way to
+  // tell which snapshot is right, and the comparator never returns 0 for equal
+  // boundaries — so which one "won" was a sort artifact that flipped with input
+  // order. Both go, and the chain runs.
+  const duplicated = new Set(duplicateBoundaries(baselines));
 
   return baselines
-    .filter((baseline) => seen.get(baseline.through) === 1)
+    .filter((baseline) => !duplicated.has(baseline.through))
     .filter((baseline) => {
       const expected = migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) <= 0);
       if (expected.length !== baseline.migrations.length) return false;
