@@ -146,6 +146,63 @@ export function seedWorkstreamObjectRoot(
   ).run(now, now);
 }
 
+/**
+ * Seed one tool receipt in the object's own vocabulary.
+ *
+ * Fixtures used to write `tool_invocations` and let the compatibility trigger
+ * translate — and invent the five `NOT NULL` columns the old vocabulary never
+ * carried. With the view retired there is nothing to translate, so the
+ * invention happens here, once, where it can be read. Note `status`: the view
+ * spelled the first two `pending` and `started`; the object has only ever
+ * stored `admitted` and `executing`.
+ */
+export function seedToolReceipt(
+  database: DatabaseSync,
+  receipt: {
+    id: string;
+    runId: string;
+    toolCallId: string;
+    toolName: string;
+    status?: "admitted" | "executing" | "completed" | "failed" | "ambiguous";
+    mode?: "read" | "write";
+    position?: number;
+    requestHash?: string;
+    inputJson?: string;
+    outputRef?: string | null;
+    outputSummary?: string | null;
+    executionPlanJson?: string | null;
+    startedAt?: number | null;
+    settledAt?: number | null;
+    checkpointIndex?: number;
+  },
+): void {
+  database.prepare(
+    `INSERT INTO tool_effects
+       (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
+        mode, request_hash, authority_revision, status, tool_call_id, input_json,
+        output_ref, output_summary, execution_plan_json, started_at, settled_at,
+        checkpoint_index)
+     VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    receipt.id,
+    receipt.runId,
+    receipt.position ?? 0,
+    `runtime:${receipt.id}`,
+    receipt.toolName,
+    receipt.mode ?? "read",
+    receipt.requestHash ?? "hash",
+    receipt.status ?? "executing",
+    receipt.toolCallId,
+    receipt.inputJson ?? "{}",
+    receipt.outputRef ?? null,
+    receipt.outputSummary ?? null,
+    receipt.executionPlanJson ?? null,
+    receipt.startedAt ?? null,
+    receipt.settledAt ?? null,
+    receipt.checkpointIndex ?? 0,
+  );
+}
+
 export interface RuntimeStatement {
   sql: string;
   params: Array<string | number | null>;
