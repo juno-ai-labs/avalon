@@ -12,6 +12,7 @@ import {
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
   workstreamObjectRun,
+  seedToolReceipt,
 } from './helpers/durable-authority';
 
 const userId = asUserId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1');
@@ -193,21 +194,21 @@ describe('agent tool usage telemetry', () => {
       workstreamId,
       JSON.stringify({ type: 'user', userId }),
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO tool_invocations
-         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-          input_hash, input_json, status, started_at, completed_at, error_json,
-          execution_plan_json)
-       VALUES (?, ?, ?, ?, 'call-1', 'create_issue', 'hash', '{"title":"secret"}', 'failed',
-               '2026-08-12T20:00:01.000Z', '2026-08-12T20:00:07.000Z',
-               '{"code":"provider_timeout","message":"secret provider response"}',
-               '{"pluginId":"linear","canonicalToolName":"create_issue","capability":"linear.issue.create","mode":"write"}')`,
-      userInvocationId,
-      workspaceId,
-      workstreamId,
-      harnessRunId,
-    );
+    seedToolReceipt(objectStore, {
+      id: userInvocationId,
+      runId: harnessRunId,
+      toolCallId: 'call-1',
+      toolName: 'create_issue',
+      mode: 'write',
+      status: 'failed',
+      inputJson: '{"title":"secret"}',
+      startedAt: Date.parse('2026-08-12T20:00:01.000Z'),
+      settledAt: Date.parse('2026-08-12T20:00:07.000Z'),
+      executionPlanJson: '{"pluginId":"linear","canonicalToolName":"create_issue","capability":"linear.issue.create","mode":"write"}',
+    });
+    objectStore.prepare(
+      `UPDATE tool_effects SET error_json = ? WHERE effect_intent_id = ?`,
+    ).run('{"code":"provider_timeout","message":"secret provider response"}', userInvocationId);
     const routedEnv = withWorkstreamRuntimeDatabase(
       env,
       workspaceId,
