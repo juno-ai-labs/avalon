@@ -230,11 +230,15 @@ what was asked for, who asked, how many objects matched, how many messages the
 queue actually accepted, and two numbers that exist because they come apart from
 each other:
 
-- **`unroutable`** — matched objects with no resolvable region. A command picks a
-  queue by region, and the region an object *reports* is the one thing an
-  unreported object does not have. The script name from the sweep resolves it
-  instead, through `REGION_BY_SCRIPT_NAME`; an object with neither has nowhere to
-  be sent, and it is counted rather than dropped.
+- **`unroutable`** — matched objects the command could not be addressed to, for
+  either of two disjoint reasons. Most often the *region* could not be resolved:
+  a command picks a queue by region, and the region an object *reports* is the
+  one thing an unreported object does not have, so the script name from the
+  sweep resolves it instead through `REGION_BY_SCRIPT_NAME` and an object with
+  neither has nowhere to go. The other is a region whose command queue this
+  deployment holds no binding for at all, which the page also names in a banner.
+  One number covers both because the operator's remedy is the same — the object
+  was not reached — and it is counted rather than dropped.
 - **`truncated`** — the class holds more live objects than one run dispatches.
   The cap is 5,000, which is an order of magnitude above the largest class in
   this account, so in practice it caps nothing. It exists so that an operator who

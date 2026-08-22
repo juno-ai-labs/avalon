@@ -188,6 +188,14 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * producer that the queue's name never would.
    */
   region: z.enum(["global", "eu"]),
+  /**
+   * When the operator started the run. Carried rather than derived, and
+   * deliberately not read by the consumer: the case it exists for is a message
+   * sitting in the dead-letter queue, where the object could not be reached and
+   * the point is to read the message on its own. Without it, dating a stuck
+   * command means joining `runId` back to a registry the operator is looking at
+   * the queue precisely because they cannot get an answer from.
+   */
   requestedAt: z.number().int().positive(),
 });
 export type DurableObjectMigrationCommand = z.infer<typeof DurableObjectMigrationCommandSchema>;
