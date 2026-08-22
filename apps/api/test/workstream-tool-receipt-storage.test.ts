@@ -73,6 +73,7 @@ function plan(overrides: Partial<Parameters<WorkstreamToolReceiptStorage["admit"
     executionPlanHash: "plan-hash",
     executionPlanJson: '{"mode":"read"}',
     compatiblePriorPlanHashes: [],
+    incomingIsRead: true,
     providerIdempotencyKey: null,
     fence,
     now: NOW,
@@ -207,21 +208,28 @@ describe("admitting a tool call's execution plan", () => {
 });
 
 describe("the run lease every receipt write is fenced against", () => {
+  /**
+   * The reason is carried, not collapsed. A cancelled run is a person stopping
+   * the work and surfaces as `RunCancelledError`; everything else is this
+   * executor no longer being the one doing it. Only the second is a fault, and
+   * the routed version drew the same line inside `assertHarnessAttemptOwned`.
+   */
   const lost = [
-    ["the lease expired", `UPDATE runs SET lease_expires_at = ${NOW - 1}`],
-    ["another executor took the attempt", `UPDATE runs SET lease_owner = 'someone-else'`],
-    ["the attempt was superseded", `UPDATE runs SET legacy_attempt_id = 'attempt-2'`],
-    ["cancellation was requested", `UPDATE runs SET cancellation_requested_at = ${NOW}`],
-    ["the run was terminalized", `UPDATE runs SET terminalized_at = ${NOW}`],
-    ["the run left running", `UPDATE runs SET status = 'completed'`],
+    ["the lease expired", `UPDATE runs SET lease_expires_at = ${NOW - 1}`, "ownership_lost"],
+    ["another executor took the attempt", `UPDATE runs SET lease_owner = 'someone-else'`, "ownership_lost"],
+    ["the attempt was superseded", `UPDATE runs SET legacy_attempt_id = 'attempt-2'`, "ownership_lost"],
+    ["cancellation was requested", `UPDATE runs SET cancellation_requested_at = ${NOW}`, "cancelled"],
+    ["the run was cancelled", `UPDATE runs SET status = 'cancelled'`, "cancelled"],
+    ["the run was terminalized", `UPDATE runs SET terminalized_at = ${NOW}`, "ownership_lost"],
+    ["the run left running", `UPDATE runs SET status = 'completed'`, "ownership_lost"],
   ] as const;
 
-  for (const [because, breakFence] of lost) {
+  for (const [because, breakFence, outcome] of lost) {
     it(`refuses to admit when ${because}`, () => {
       const { storage, sql } = open();
       sql.exec(breakFence);
 
-      expect(storage.admit(plan())).toEqual({ state: "ownership_lost" });
+      expect(storage.admit(plan())).toEqual({ state: outcome });
       expect(sql.exec(`SELECT COUNT(*) AS count FROM tool_effects`).toArray())
         .toEqual([{ count: 0 }]);
     });
@@ -235,7 +243,7 @@ describe("the run lease every receipt write is fenced against", () => {
         effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
         outputSummary: "done", providerOperationId: null, payloadJson: "{}",
         allowAmbiguousReconciliation: false, fence, now: NOW,
-      })).toBe("ownership_lost");
+      })).toBe(outcome);
       expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
         .toEqual([{ status: "executing" }]);
     });

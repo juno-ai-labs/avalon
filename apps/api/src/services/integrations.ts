@@ -181,6 +181,8 @@ import {
   refreshAgentTimerAlarm,
   resolveWakeupInstant,
 } from "./workstream-wakeup-service";
+import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
+import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
@@ -2749,7 +2751,9 @@ export async function runWorkstreamHarness(
         // against the receipt as it stands. A `failed` row is still mutable and
         // still flips — a write may have reached the provider before failing.
         if (row.status !== "ambiguous" && row.status !== "completed") {
-          await finalizeToolInvocationFailure(env.DB, liveness.lease, {
+          await finalizeToolInvocationFailure(
+            createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+            liveness.lease, {
             harnessRunId: input.harnessRunId,
             invocationId: row.id,
             status: "ambiguous",
@@ -2863,7 +2867,9 @@ export async function runWorkstreamHarness(
             idempotency,
             toolSurfaceHash: receiptPolicy.toolSurfaceHash,
           };
-          const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
+          const receipt = await persistToolExecutionPlan(
+            createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+            liveness.lease, {
             harnessRunId: input.harnessRunId,
             workspaceId: input.workspaceId,
             workstreamId: input.workstreamId,
@@ -3011,19 +3017,23 @@ export async function runWorkstreamHarness(
                   idempotency: receiptPolicy.definition.idempotency,
                   toolSurfaceHash: receiptPolicy.toolSurfaceHash,
                 };
-                return persistToolExecutionPlan(env.DB, liveness.lease, {
-                  harnessRunId: input.harnessRunId,
-                  workspaceId: input.workspaceId,
-                  workstreamId: input.workstreamId,
-                  toolCallId: event.toolCallId,
-                  toolName: event.toolName,
-                  ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
-                  inputHash: await canonicalToolInputHash({}),
-                  input: {},
-                  plan: executionPlan,
-                  compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
-                  mode,
-                });
+                return persistToolExecutionPlan(
+                  createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+                  liveness.lease,
+                  {
+                    harnessRunId: input.harnessRunId,
+                    workspaceId: input.workspaceId,
+                    workstreamId: input.workstreamId,
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
+                    inputHash: await canonicalToolInputHash({}),
+                    input: {},
+                    plan: executionPlan,
+                    compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
+                    mode,
+                  },
+                );
               },
             ));
             if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
@@ -3033,18 +3043,22 @@ export async function runWorkstreamHarness(
             invocationId = plannedInvocation.id;
           }
           if (!planAlreadyAmbiguous) {
-            await settleRootHarnessToolFailure(env.DB, liveness.lease, {
-              harnessRunId: input.harnessRunId,
-              invocationId,
-              status: ambiguous ? "ambiguous" : "failed",
-              phase: checkpointPhase,
-              error: {
-                code: errorCode,
-                message: event.error,
-                ...(event.data ? { data: event.data } : {}),
+            await settleRootHarnessToolFailure(
+              createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+              liveness.lease,
+              {
+                harnessRunId: input.harnessRunId,
+                invocationId,
+                status: ambiguous ? "ambiguous" : "failed",
+                phase: checkpointPhase,
+                error: {
+                  code: errorCode,
+                  message: event.error,
+                  ...(event.data ? { data: event.data } : {}),
+                },
+                memberSafePayload: { code: errorCode },
               },
-              memberSafePayload: { code: errorCode },
-            });
+            );
           }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
@@ -3968,7 +3982,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   idempotency: receiptPolicy.definition.idempotency,
                   toolSurfaceHash: receiptPolicy.toolSurfaceHash,
                 };
-                const receipt = await persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
+                const receipt = await persistToolExecutionPlan(
+                  createToolReceiptObjectPort(
+                    options.env, childInput.workspaceId, childInput.workstreamId,
+                  ),
+                  childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
                   workspaceId: childInput.workspaceId,
                   workstreamId: childInput.workstreamId,
@@ -4083,19 +4101,27 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                         idempotency: receiptPolicy.definition.idempotency,
                         toolSurfaceHash: receiptPolicy.toolSurfaceHash,
                       };
-                      return persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
-                        harnessRunId: childInput.harnessRunId,
-                        workspaceId: childInput.workspaceId,
-                        workstreamId: childInput.workstreamId,
-                        toolCallId: event.toolCallId,
-                        toolName: event.toolName,
-                        ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
-                        inputHash: await canonicalToolInputHash({}),
-                        input: {},
-                        plan: executionPlan,
-                        compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
-                        mode: receiptPolicy.definition.mode,
-                      });
+                      return persistToolExecutionPlan(
+                        createToolReceiptObjectPort(
+                          options.env, childInput.workspaceId, childInput.workstreamId,
+                        ),
+                        childLiveness.lease,
+                        {
+                          harnessRunId: childInput.harnessRunId,
+                          workspaceId: childInput.workspaceId,
+                          workstreamId: childInput.workstreamId,
+                          toolCallId: event.toolCallId,
+                          toolName: event.toolName,
+                          ...(receiptPolicy.connectionId
+                            ? { connectionId: receiptPolicy.connectionId }
+                            : {}),
+                          inputHash: await canonicalToolInputHash({}),
+                          input: {},
+                          plan: executionPlan,
+                          compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
+                          mode: receiptPolicy.definition.mode,
+                        },
+                      );
                     },
                   );
                   if (resolved.planAlreadyAmbiguous) throw new Error("tool_receipt_input_mismatch");
@@ -4110,7 +4136,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   invocationId = invocation.id;
                 }
                 const failure = classifyHarnessToolFailure(event);
-                await finalizeToolInvocationFailure(options.env.DB, childLiveness.lease, {
+                await finalizeToolInvocationFailure(
+                  createToolReceiptObjectPort(
+                    options.env, childInput.workspaceId, childInput.workstreamId,
+                  ),
+                  childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
                   invocationId,
                   status: "failed",
@@ -4595,6 +4625,13 @@ async function persistSuccessfulToolResult(
     allowCancellationRequested?: boolean;
   },
   ownershipGuard?: () => Promise<void>,
+  /**
+   * The receipt port, injectable so the Node suite can reach a real storage
+   * instance over `node:sqlite` rather than a Durable Object namespace. Same
+   * seam the Terminal port takes, and for the same reason.
+   */
+  receipts: ToolReceiptObjectPort
+    = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const replayPayload = serializeToolReplayOutput(result.output);
   const contentHash = await sha256(replayPayload);
@@ -4630,7 +4667,7 @@ async function persistSuccessfulToolResult(
   await assertSettlementOwned();
   await env.PAYLOADS.put(outputRef, replayPayload, putOptions);
   await ownershipGuard?.();
-  await completeToolInvocation(env.DB, lease, {
+  await completeToolInvocation(receipts, lease, {
     harnessRunId: input.harnessRunId,
     invocationId: result.invocationId,
     checkpointIndex: 1,
@@ -4698,11 +4735,11 @@ async function settleRootHarnessToolCompletion(
 }
 
 async function settleRootHarnessToolFailure(
-  database: D1Database,
+  receipts: ToolReceiptObjectPort,
   lease: AttemptLease,
   input: Omit<ToolInvocationFailure, "allowCancellationRequested">,
 ): Promise<"persisted" | "already_persisted"> {
-  return finalizeToolInvocationFailure(database, lease, {
+  return finalizeToolInvocationFailure(receipts, lease, {
     ...input,
     // The same event-call-site invariant as successful completion: no new work
     // is admitted, but the exact live owner may close what Bind already ran.

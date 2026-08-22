@@ -2,6 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
+import {
+  TOOL_RECEIPT_OPERATIONS,
+  type ToolReceiptObjectPort,
+} from "../../src/durable-objects/workstream-tool-receipt-protocol";
+import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
 import {
   createTerminalPortFactory,
@@ -520,4 +525,30 @@ export function testSubstreamAgentsBinding(
     jurisdiction: vi.fn((): DurableObjectNamespace => binding),
   });
   return binding;
+}
+
+/**
+ * A tool-receipt port backed by the same in-memory object database.
+ *
+ * The Node suite's stand-in for the `/internal/tool-receipt` round trip: the
+ * real storage class over the real object schema, so every statement and every
+ * fence is exercised. What the *runtime* decides — that the operation is atomic
+ * against a concurrent caller — is proved in `test-workers/` instead.
+ */
+export function testToolReceiptPort(database: DatabaseSync): ToolReceiptObjectPort {
+  const storage = new WorkstreamToolReceiptStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    TOOL_RECEIPT_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as ToolReceiptObjectPort;
 }
