@@ -161,7 +161,7 @@ healthRoutes.get("/", async (c) => {
   checks.opsNotifications = opsNotificationsConfigured(c.env)
     ? { ok: true, message: "configured" }
     : c.env.OPS_SLACK_BOT_TOKEN?.trim() || c.env.OPS_SLACK_CHANNEL_ID?.trim()
-      ? { ok: false, message: "half configured: the bot token and the channel id are set together" }
+      ? { ok: false, message: "half configured: set both OPS_SLACK_BOT_TOKEN and OPS_SLACK_CHANNEL_ID, or neither" }
       : { ok: false, message: "not configured" };
   const linearValues = [
     c.env.LINEAR_OAUTH_CLIENT_ID?.trim(),

@@ -31,7 +31,7 @@ export const SCHEDULED_ALARM_ALERT_ATTEMPT = 3;
 export interface ScheduledAlarmAttemptReport {
   /** The log event, and the notice's identity: `<object>_scheduled_alarm_failed` or `_stalled`. */
   event: string;
-  /** What an operator is being told, in one sentence that says what is owed. */
+  /** What happened and where to look, in one sentence; the attempt and the hold are appended here. */
   summary: string;
   attempt: number;
   /** Identity only: ids, kinds, keys, codes. This text may leave Avalon. */
@@ -71,5 +71,6 @@ export function reportScheduledAlarmAttempt(
   if (rest.attempt !== SCHEDULED_ALARM_ALERT_ATTEMPT) return;
   // The gate is already persisted; a notification lost to an eviction costs
   // one message, which is why it is not awaited.
-  waitUntil(notifyOps(env, { event: rest.event, summary: rest.summary, fields: noticed }).catch(() => undefined));
+  const summary = `${rest.summary} This is attempt ${rest.attempt} without progress; the entry is held behind its retry gate and retried up to every 30 minutes, and this message is not repeated while that continues.`;
+  waitUntil(notifyOps(env, { event: rest.event, summary, fields: noticed }).catch(() => undefined));
 }

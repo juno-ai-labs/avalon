@@ -141,6 +141,22 @@ describe("ops Slack notifier", () => {
     expect(loggedText(warning)).not.toContain(BOT_TOKEN);
   });
 
+  it("reports an answer it cannot read or hold as a failure", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const unreadable = vi.fn<typeof fetch>(async () => {
+      const response = new Response("{}", { status: 200 });
+      vi.spyOn(response, "text").mockRejectedValue(new TypeError("body stream broke"));
+      return response;
+    });
+    expect(await notifyOps(notifierEnv(), NOTICE, unreadable)).toBe("failed");
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({ code: "response_unreadable", status: 200 }));
+
+    const enormous = vi.fn<typeof fetch>(async () => new Response(`{"ok":true,"pad":"${"x".repeat(40_000)}"}`, { status: 200 }));
+    expect(await notifyOps(notifierEnv(), NOTICE, enormous)).toBe("failed");
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({ code: "response_too_large", status: 200 }));
+  });
+
   it("gives up on a post that outlives the deadline, and clears the timer", async () => {
     vi.useFakeTimers();
     try {
@@ -167,11 +183,26 @@ describe("ops Slack notifier", () => {
       fields: { code: "x".repeat(1_000), detail: "<@U123> & <https://example.com|here>" },
     });
 
-    expect(text).toContain(`• code: ${"x".repeat(200)}`);
+    expect(text).toContain(`• code: ${"x".repeat(200)}…`);
     expect(text).not.toContain("x".repeat(201));
     expect(text).toContain("Given up &lt;!channel&gt;.");
     expect(text).toContain("• detail: &lt;@U123&gt; &amp; &lt;https://example.com|here&gt;");
     expect(text).not.toMatch(/<[!@]/u);
     expect(text.startsWith(":rotating_light: *[eu]* `slack_ingress_job_exhausted`")).toBe(true);
+  });
+
+  it("keeps every value on its own line, whatever whitespace it carried", () => {
+    const text = renderOpsNotification("global", {
+      event: "workspace_scheduled_alarm_failed",
+      summary: "Failed.",
+      fields: { code: "first line\nsecond\tline   third", alarm_key: "k" },
+    });
+
+    expect(text.split("\n")).toEqual([
+      ":rotating_light: *[global]* `workspace_scheduled_alarm_failed`",
+      "Failed.",
+      "• code: first line second line third",
+      "• alarm_key: k",
+    ]);
   });
 });

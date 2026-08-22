@@ -18,6 +18,7 @@ sockets, and effects — belong to
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | How a gated entry is reported, whichever object holds it: the attempt that warns, the one that logs an error, the one that notifies an operator, and what of a thrown error may leave. |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
@@ -213,9 +214,16 @@ derived source has no way to carry that distinction.
   `expired_drafts` arm excludes the linked drafts the reap keeps; every derived
   instant is rounded up to the next whole second, because `strftime` drops the
   milliseconds the pass's own cutoff keeps and an alarm that fires early finds
-  nothing due. An arm that counts what its pass leaves behind is the stall
+  nothing due; the `slack_unfurls` arm counts only links on a connection the
+  sweep would load. An arm that counts what its pass leaves behind is the stall
   gate's steady customer — a drip and a report rather than a loop, but a
   defect all the same.
+- **A bounded pass reports the rows it retired.** Every maintenance reap
+  answers the stall check with its count, because a backlog sharing one second
+  re-derives the same instant until it is gone; the two Slack sweeps answer
+  nothing, because neither moves the rows its query counts and either would
+  claim progress forever. A wait that is not a positive finite number is not a
+  wait; the entry takes the stall rule.
 - **Entries sharing an instant are totally ordered.** The due query and
   `nextDueAt` order by `MAX(due_at, retry_at)` and then by the primary key, so a
   tie larger than `SCHEDULED_ALARM_DRAIN_LIMIT` is sliced into consecutive wakes
@@ -388,10 +396,13 @@ existing retry gate with its attempt carried forward, and reported through a new
 failure and stall hooks report through `reportScheduledAlarmAttempt`
 (`scheduled-alarm-report.ts`): a warning on attempts one and two, an error from
 three, one operator notification at three ([`ops-alerting.md`](ops-alerting.md)).
-The bounded reaps report progress; a Terminal deadline waits while a run holds
-its sandbox or its directory effect is on the Queue. Every derived due time is
-rounded up to the next second; the `expired_drafts` arm excludes linked drafts;
-the `slack_ingress` arm counts a link challenge a day after it was spent.
+Every bounded maintenance pass reports the rows it retired as progress; the two
+Slack sweeps report nothing; a Terminal deadline waits while a run holds its
+sandbox or its directory effect is on the Queue. Every derived due time is
+rounded up to the next second; the `expired_drafts` arm excludes linked drafts,
+the `slack_unfurls` arm excludes a disabled connection's links, and the
+`slack_ingress` arm counts a link challenge at the same grace horizon the reap
+binds, from one constant.
 
 **Why:** The gate only ever caught a handler that threw. One that returned
 without moving its source re-derived the same past instant, the re-arm floored

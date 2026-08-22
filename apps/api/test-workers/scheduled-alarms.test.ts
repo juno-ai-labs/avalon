@@ -289,6 +289,7 @@ describe("the shared Durable Object alarm list", () => {
       store.schedule({ kind: "test_stall", key: "moved", dueAt }, now);
       store.schedule({ kind: "test_stall", key: "progressed", dueAt }, now);
       store.schedule({ kind: "test_stall", key: "waiting", dueAt }, now);
+      store.schedule({ kind: "test_stall", key: "bad-wait", dueAt }, now);
       const stalled: string[] = [];
       scheduling(instance).onScheduledAlarmStalled = (alarm: ScheduledAlarm) => { stalled.push(alarm.key); };
       scheduling(instance).runScheduledAlarm = (alarm: ScheduledAlarm) => {
@@ -297,24 +298,27 @@ describe("the shared Durable Object alarm list", () => {
         if (alarm.key === "moved") store.schedule({ kind: alarm.kind, key: alarm.key, dueAt: dueAt - 1 }, now);
         if (alarm.key === "progressed") return Promise.resolve({ progressed: true } as const);
         if (alarm.key === "waiting") return Promise.resolve({ waitMs: 45_000 });
+        // A wait nobody could have meant: not a hold, the stall rule.
+        if (alarm.key === "bad-wait") return Promise.resolve({ waitMs: Number.NaN });
         return Promise.resolve();
       };
 
       const ran = await scheduling(instance).drainDueScheduledAlarms(now);
-      expect(ran.map((run) => run.alarm.key)).toEqual(["moved", "progressed", "stuck", "waiting"]);
-      // The re-derive a workspace does in `runDueAlarmWork`, for the three
+      expect(ran.map((run) => run.alarm.key)).toEqual(["bad-wait", "moved", "progressed", "stuck", "waiting"]);
+      // The re-derive a workspace does in `runDueAlarmWork`, for the four
       // one-shots the settle deleted: each comes back at the identical instant.
-      for (const key of ["stuck", "progressed", "waiting"]) {
+      for (const key of ["stuck", "progressed", "waiting", "bad-wait"]) {
         store.schedule({ kind: "test_stall", key, dueAt }, now);
       }
 
       const gatedAt = Date.now();
       scheduling(instance).gateStalledScheduledAlarms(ran, gatedAt);
 
-      expect(stalled).toEqual(["stuck"]);
+      expect(stalled).toEqual(["stuck", "bad-wait"]);
       const stuck = store.get("test_stall", "stuck");
       expect(stuck?.attempt).toBe(1);
       expect(stuck!.retryAt).toBeGreaterThanOrEqual(gatedAt + scheduledAlarmRetryDelay(1, () => 0));
+      expect(stuck!.retryAt).toBeLessThanOrEqual(gatedAt + scheduledAlarmRetryDelay(1, () => 1));
       // Moved to a different instant: untouched, and still the earliest thing.
       expect(store.get("test_stall", "moved")).toMatchObject({ dueAt: dueAt - 1, attempt: 0, retryAt: 0 });
       // Reported progress: untouched.
@@ -542,6 +546,7 @@ describe("a workspace's schedule", () => {
       expect(gated?.dueAt).toBe(Date.parse(stuckAt));
       expect(gated?.attempt).toBe(1);
       expect(gated!.retryAt).toBeGreaterThanOrEqual(first + scheduledAlarmRetryDelay(1, () => 0));
+      expect(gated!.retryAt).toBeLessThanOrEqual(Date.now() + scheduledAlarmRetryDelay(1, () => 1));
       expect(await state.storage.getAlarm()).toBe(gated!.retryAt);
 
       // The attempt carries across the settle-and-reinsert, so the delay keeps
@@ -557,6 +562,7 @@ describe("a workspace's schedule", () => {
       const again = store.get("schedule", scheduleId);
       expect(again?.attempt).toBe(2);
       expect(again!.retryAt).toBeGreaterThanOrEqual(second + scheduledAlarmRetryDelay(2, () => 0));
+      expect(again!.retryAt).toBeLessThanOrEqual(Date.now() + scheduledAlarmRetryDelay(2, () => 1));
       expect(await state.storage.getAlarm()).toBe(again!.retryAt);
     });
   });

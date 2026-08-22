@@ -470,12 +470,13 @@ not own:
   Every failure is a `slack_ingress_queue_processing_failed` row already; the
   failure that pins the job — a non-retryable error, or the twentieth attempt —
   writes `slack_ingress_job_exhausted` at `error` and posts it to the operator
-  channel when one is configured ([`ops-alerting.md`](ops-alerting.md)). The
-  claim refuses a job at the ceiling, so the Queue's redelivery of the message
-  that threw is acknowledged without running it again. Nothing processes such a
-  job again without a reauthorization re-drive. The maintenance pass logs the
-  standing count as one `slack_ingress_exhausted_jobs` row, not one error row
-  per job per pass.
+  channel when one is configured ([`ops-alerting.md`](ops-alerting.md)) — once
+  per installation and error code within an hour, since a broken installation
+  fails every event the same way. The claim refuses a job at the ceiling, so
+  the Queue's redelivery of the message that threw is acknowledged without
+  running it again. Nothing processes such a job again without a
+  reauthorization re-drive. The maintenance pass logs the standing count as one
+  `slack_ingress_exhausted_jobs` row, not one error row per job per pass.
 - **A missing `reactions:write` discovered mid-prompt does not stop the task.**
   Avalon continues and marks the installation for reconnect.
 - **A challenge that cannot be redeemed is refused with the reason**, not a generic
@@ -661,10 +662,11 @@ what caused this.
 
 **Consequences:** A link clicked within a day of expiry or redemption is still
 refused with its specific reason; after that it is `slack_link_unknown`, and
-the remedy is the same click either way. An exhausted job is one `error` row
-and one message, never more; the standing count is a `warn` row per pass. The
-exhaustion notice carries only the job id, the workspace id, the error code,
-and whether the failure was retryable.
+the remedy is the same click either way. An exhausted job is one `error` row,
+and an installation failing one way is one message an hour, never more; the
+standing count is a `warn` row per pass. The exhaustion notice carries only the
+job id, the workspace id, the job kind, the error code, and whether the failure
+was retryable.
 
 ### 2026-08-18 — Slack work-stream discovery reads WorkspaceDO
 

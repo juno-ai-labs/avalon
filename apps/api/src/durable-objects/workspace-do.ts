@@ -1232,7 +1232,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const workspaceId = this.workspaceId();
     reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
       event: "workspace_scheduled_alarm_failed",
-      summary: "A workspace alarm target has thrown on three consecutive attempts. It is held behind its retry gate and retried up to every 30 minutes; `code` is the handler's error.",
+      summary: "A workspace alarm target keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the target.",
       attempt,
       fields: {
         workspace_id: workspaceId,
@@ -1255,7 +1255,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
     reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
       event: "workspace_scheduled_alarm_stalled",
-      summary: "A workspace alarm target keeps coming back due at the same instant after running. It is held behind the retry gate and retried up to every 30 minutes until its source row moves; the reap or reconcile for this target is not removing what the schedule counts.",
+      summary: "A workspace alarm target keeps coming back due at the same instant after running: the reap or reconcile named by `alarm_kind` and `alarm_key` is not removing what its due-time query counts. Find the row it counts and why the pass does not move it.",
       attempt,
       fields: {
         workspace_id: this.workspaceId(),

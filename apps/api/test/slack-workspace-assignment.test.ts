@@ -14,6 +14,7 @@ import {
 } from "../src/services/workspace-schedule-execution";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -1427,6 +1428,9 @@ describe("Slack ingress maintenance reaps link challenges", () => {
     // that instant in the past for as long as the row lasts, and the workspace
     // alarm comes back for it as fast as it can: the 2026-08-22 hot loop.
     const database = migratedDatabase();
+    // The alarm's draft arm reads the object's links table, which no regional
+    // snapshot has ever carried.
+    createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
     seedChallenge(database, await sha256("expired"), "2026-01-01T00:15:00.000Z");
@@ -1530,6 +1534,94 @@ describe("Slack ingress jobs given up on", () => {
       "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:exhausted'",
     ).get()).toEqual({ status: "failed", attempt_count: 20 });
     expect(posted).toHaveLength(1);
+  });
+
+  it("reports one installation failing the same way as one episode", async () => {
+    // A broken installation fails every event it receives identically. The
+    // first exhausted job is the notice; the rest within the hour are rows.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).run();
+    insertSlackEventJob(database, "event:first", appMention("EvFirst"));
+    insertSlackEventJob(database, "event:second", appMention("EvSecond"));
+    const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
+    const failure = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { APP_ENV: "production", ...OPS_SECRETS },
+    );
+
+    await expect(new SlackAgentService(env).processQueuedIngress("event:first")).rejects.toThrow();
+    await expect(new SlackAgentService(env).processQueuedIngress("event:second")).rejects.toThrow();
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("• job_id: event:first");
+    expect(failure.mock.calls.map((call) => (call[0] as { job_id?: string }).job_id).filter(Boolean))
+      .toEqual(["event:first", "event:second"]);
+  });
+
+  it("claims a job one attempt short of the ceiling, and refuses it past it", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).run();
+    insertSlackEventJob(database, "event:nineteen", appMention("EvNineteen"));
+    database.prepare("UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 19 WHERE id = 'event:nineteen'").run();
+    const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
+    const env = slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { APP_ENV: "production", ...OPS_SECRETS },
+    );
+
+    await expect(new SlackAgentService(env).processQueuedIngress("event:nineteen")).rejects.toThrow();
+
+    expect(database.prepare("SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:nineteen'").get())
+      .toEqual({ attempt_count: 20 });
+    expect(posted).toHaveLength(1);
+  });
+
+  it("logs the standing count of exhausted jobs once per pass, not once per job", async () => {
+    // One error row per job per pass is what buried the 2026-08-22 incident
+    // under fifty thousand lines an hour.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    for (const id of ["event:dead-1", "event:dead-2", "event:dead-3"]) {
+      insertSlackEventJob(database, id, appMention(id));
+      // Failed today: the pass keeps an exhausted job for 30 days, and one
+      // older than that is reaped before it is counted.
+      database.prepare(
+        `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
+           error_code = 'session_revoked', updated_at = ? WHERE id = ?`,
+      ).run(new Date().toISOString(), id);
+    }
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failure = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).maintainIngress();
+
+    const summaries = warning.mock.calls.map((call) => call[0] as { event?: string; count?: number; job_ids?: string[]; error_codes?: string[] })
+      .filter((entry) => entry.event === "slack_ingress_exhausted_jobs");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ count: 3, error_codes: ["session_revoked"] });
+    expect(summaries[0]!.job_ids).toHaveLength(3);
+    expect(failure.mock.calls.map((call) => (call[0] as { event?: string }).event))
+      .not.toContain("slack_ingress_retry_budget_exhausted");
   });
 
   it("stays quiet for a failure the queue will retry", async () => {
