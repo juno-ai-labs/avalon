@@ -4300,12 +4300,15 @@ async function loadConnectorTriggerContext(
  * the frozen target — two copies of one briefing, from two senders.
  *
  * Each channel is filtered by the predicate its own sender uses, not by one
- * convenient guess. Email delivers only from `active`; Slack deliberately
- * delivers from `needs_input` too — its comment in `slack-agent-service.ts`
- * says why — and skips a member who turned that notification off. A third
- * predicate that disagreed with either would put the duplicate back for exactly
- * the targets it got wrong, so this reads the same conditions and the two must
- * change together.
+ * convenient guess. Email delivers only from `active`, and only in production —
+ * `sendResendEmail` refuses to send transactional mail from a developer's
+ * machine — while Slack deliberately delivers from `needs_input` too, its
+ * comment in `slack-agent-service.ts` says why, and skips a member who turned
+ * that notification off. A third predicate that disagreed with any of those
+ * would put the duplicate back for exactly the targets it got wrong, or stand a
+ * run down for a delivery that never happens: outside production that is every
+ * staging automation, which used to mail through the connector and would
+ * otherwise go quiet with nothing to explain it.
  *
  * The order is fixed. These rows are rendered into the system prefix, which is
  * re-rendered on every turn and must be byte-identical across a retry, and
@@ -4316,6 +4319,10 @@ async function loadAutomationResultDelivery(
   workspaceId: string,
   automationSubscriptionId: string,
 ): Promise<Array<{ channel: "email" | "slack_agent_dm"; destination: string }>> {
+  // Mirrors `sendResendEmail`'s own production guard rather than restating it as
+  // a status: no email is sent outside production, so naming one here would
+  // suppress the run's send and deliver nothing at all.
+  const emailDelivers = env.APP_ENV === "production";
   const targets = await env.DB.prepare(
     `SELECT dt.target_type, dt.email_address, dt.slack_user_id
      FROM automation_delivery_targets dt
@@ -4338,7 +4345,9 @@ async function loadAutomationResultDelivery(
   type Destination = { channel: "email" | "slack_agent_dm"; destination: string };
   const destinations = (targets.results ?? []).flatMap<Destination>((target) => {
     if (target.target_type === "email") {
-      return target.email_address ? [{ channel: "email", destination: target.email_address }] : [];
+      return emailDelivers && target.email_address
+        ? [{ channel: "email", destination: target.email_address }]
+        : [];
     }
     // The Slack destination is an id rather than a description, because the
     // rule the model applies is "does this recipient match one of these" and a
