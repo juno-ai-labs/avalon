@@ -121,6 +121,13 @@ describe("access enforcement", () => {
   });
 });
 
+/** The header cells of every table on a page, one array per table. */
+function tableHeaders(body: string): string[][] {
+  return [...body.matchAll(/<thead>([\s\S]*?)<\/thead>/g)].map((table) =>
+    [...table[1]!.matchAll(/<th>([\s\S]*?)<\/th>/g)].map((cell) => cell[1]!.trim()),
+  );
+}
+
 describe("the operator site", () => {
   it("renders the overview with the fleet's counts", async () => {
     await deliver(report());
@@ -149,6 +156,28 @@ describe("the operator site", () => {
     expect(body).toContain(OBJECT_NAME);
     expect(body).toContain("workstream_schema_hash_mismatch:4");
     expect(body).toContain("Failed");
+  });
+
+  it("keeps the applied versions out of both report tables", async () => {
+    await deliver(report({ schemaVersion: 11, latestVersion: 11, appliedVersions: [7, 11] }));
+
+    const overview = await (await get("/")).text();
+    const objectHistory = await (await get(`/objects/${OBJECT_ID}`)).text();
+
+    // Both report tables come from the same `eventTable`, and the column an
+    // operator asked to be rid of is the one a later change is most likely to
+    // put back by rendering the field that is still on `MigrationEvent`. Assert
+    // the whole header sequence rather than the absence of one cell: a stray
+    // `<th>` would otherwise slide `Worker version` and `Detail` one column
+    // left, which reads as plausible markup and wrong data.
+    expect(tableHeaders(overview)).toContainEqual(
+      ["When", "Object", "Status", "Version", "Head", "Worker version", "Detail"],
+    );
+    expect(tableHeaders(objectHistory)).toContainEqual(
+      ["When", "Status", "Version", "Head", "Worker version", "Detail"],
+    );
+    expect(overview).not.toContain("7, 11");
+    expect(objectHistory).not.toContain("7, 11");
   });
 
   it("abbreviates a name in the list but keeps the whole one reachable", async () => {
