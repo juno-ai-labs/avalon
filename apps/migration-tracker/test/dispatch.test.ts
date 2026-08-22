@@ -251,6 +251,60 @@ describe("dispatchMigrationRun", () => {
    * is the one that must never be silent: `truncated` is what tells an operator
    * that a class they believe they migrated is only partly done.
    */
+  /**
+   * A capped run has to make progress, or "run it again to continue" is a lie
+   * and the tail of a large class can never be forced. The order is
+   * least-recently-heard-from first, and a forced object reports as it wakes,
+   * so the second run reaches the objects the first one did not.
+   */
+  it("reaches different objects on a second run over a capped class", async () => {
+    await runInDurableObject(registryStub(), (_registry, state) => {
+      state.storage.sql.exec(
+        `WITH RECURSIVE counter(i) AS (
+           SELECT 1 UNION ALL SELECT i + 1 FROM counter WHERE i < 5001
+         )
+         INSERT INTO durable_objects
+           (object_id, namespace_id, script_name, class_name, has_stored_data,
+            first_seen_at, last_reported_at)
+         SELECT printf('%064x', i), 'ns-global-WorkspaceDO', 'avalon-api-global',
+                'WorkspaceDO', 1, 0, NULL
+           FROM counter`,
+      );
+    });
+    const queues = boundEnv({ regions: ["global"] });
+
+    const first = await dispatchMigrationRun(
+      queues.env,
+      registryStub(),
+      { className: "WorkspaceDO" },
+      "operator@example.test",
+    );
+    expect(first.truncated).toBe(true);
+    const firstIds = new Set(queues.global.sent.map((command) => command.objectId));
+
+    // The objects that were reached report as they wake, which is what moves
+    // them to the back of the next selection.
+    await runInDurableObject(registryStub(), (_registry, state) => {
+      state.storage.sql.exec(
+        `UPDATE durable_objects SET last_reported_at = 1 WHERE object_id IN (
+           SELECT object_id FROM durable_objects
+            ORDER BY COALESCE(last_reported_at, 0), object_id LIMIT 5000)`,
+      );
+    });
+
+    queues.global.sent.length = 0;
+    await dispatchMigrationRun(
+      queues.env,
+      registryStub(),
+      { className: "WorkspaceDO" },
+      "operator@example.test",
+    );
+
+    // The one object the first run could not reach is in the second run.
+    const secondIds = queues.global.sent.map((command) => command.objectId);
+    expect(secondIds.some((id) => !firstIds.has(id))).toBe(true);
+  });
+
   it("batches at a hundred and reports a run that hit the cap", async () => {
     await runInDurableObject(registryStub(), (_registry, state) => {
       state.storage.sql.exec(

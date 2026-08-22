@@ -1084,7 +1084,7 @@ the base awaiting a method named after the half above it.
 subclass's own constructor, before its fields are assigned, so every
 implementation must answer with module constants and nothing else. And the
 class list here is one of three that have to agree — the others are
-`REPORTING_CLASSES` in the tracker's registry and the dispatcher map in
+`REPORTING_CLASSES` in the tracker's protocol and the dispatcher map in
 `apps/api/src/queues/migration-command-consumer.ts`.
 
 ### 2026-08-22 — The object-store migration component takes the agent's name
