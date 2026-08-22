@@ -2,9 +2,9 @@
 
 > Created 2026-08-22.
 >
-> Remove the D1→Durable Object cutover compatibility layer — the two routed
+> Remove the D1→Durable Object cutover compatibility layer in full — both routed
 > `D1Database` wrappers and the 25 `_runtime_*` views behind one of them — by
-> converting each subsystem to a typed object port, in seven slices.
+> converting each subsystem to a typed object port, in fifteen slices.
 > Standing contract:
 > [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Subsystem references: [`agent-harness.md`](../../agent-harness.md),
@@ -21,9 +21,11 @@ migrated table to the owning object — and on the work-stream side, rewrite the
 table names onto compatibility views whose `INSTEAD OF` triggers translate
 between the old D1 shapes and the object's real ones.
 
-This PRD removes both. Each subsystem gains a typed storage class on the object
-and a typed Worker-side port, its statements are converted or deleted, and the
-views it used are dropped by a new object migration. When the last slice lands,
+This PRD removes both, end to end: all 81 routed tables and roughly 1,300
+statements, as fifteen slices — seven on the work-stream side, eight on the
+workspace side. Each subsystem gains a typed storage class on the object and a
+typed Worker-side port, its statements are converted or deleted, and the views
+it used are dropped by a new object migration. When the last slice lands,
 `withWorkspaceRuntimeDatabase`, `withWorkstreamRuntimeDatabase`,
 `rewriteWorkstreamRuntimeSql`, and both `/internal/runtime-sql` endpoints are
 deleted, and no service file names a legacy product table in SQL.
@@ -100,7 +102,7 @@ object, and every new query written against the old vocabulary makes it larger.
 5. Each converted subsystem's module document gains a changelog entry saying why
    its port is shaped the way it is.
 6. The two surfaces that render a fabricated `author_name` render a real one.
-7. The work lands as seven independently reviewable, independently revertable
+7. The work lands as fifteen independently reviewable, independently revertable
    changes, not one.
 
 ## Non-goals
@@ -366,10 +368,14 @@ preserved a bug. Establish what the caller does with the value first.
 
 ### Slices
 
-Statement counts are distinct SQL literals in `apps/api/src` naming at least one
-of the slice's tables, counted once per slice they touch, and they include dead
-legacy arms — separating those reliably needs the per-file read that is the
-slice's own first step, so the counts come down as the work starts.
+Fifteen, covering all 81 routed tables. Statement counts are distinct SQL
+literals in `apps/api/src` naming at least one of the slice's tables, counted
+once per slice they touch, and they include dead legacy arms — separating those
+reliably needs the per-file read that is the slice's own first step, so the
+counts come down as the work starts.
+
+**Work-stream side.** Seven slices, 25 tables, 447 statements, 25 views to drop.
+These carry the migrations and the translation traps, and they are ordered:
 
 | # | Slice | Tables | Statements | Files | Views |
 | --- | --- | --- | --- | --- | --- |
@@ -387,29 +393,32 @@ Cross-slice statements, which decide method ownership rather than order:
 `identity + resources` 4, `block-dashboard + harness-runs` 3, and a tail of 11
 across eight more combinations.
 
-The workspace side has no schema step and no ordering constraint: 56 tables,
-513 statements, 55 files. It is unusually concentrated — four services hold
-nearly forty per cent of it:
+**Workspace side.** Eight slices, 56 tables, 536 statements. No views to drop,
+no migration, and no ordering constraint from schema — so these may be worked in
+any order, and in parallel with the work-stream side once the port pattern is
+settled:
 
-| Owner | Statements |
-| --- | --- |
-| `services/slack-agent-service.ts` | 58 |
-| `services/automation-service.ts` | 54 |
-| `services/connection-service.ts` | 52 |
-| `services/memory-table-service.ts` | 37 |
-| `durable-objects/workspace-do.ts` | 22 |
-| `services/integrations.ts` | 21 |
-| `services/memory-service.ts` | 20 |
-| `services/workspace-schedule-execution.ts` | 19 |
-| `services/resend-inbound-email-service.ts` | 19 |
-| everything else (46 files) | 211 |
+| # | Slice | Tables | Statements | Files |
+| --- | --- | --- | --- | --- |
+| 8 | sandbox policy | `workspace_sandbox_network_policies`, `_domains`, `_policy_mutations` | 14 | 3 |
+| 9 | workspace misc | `workstream_notification_intents`, `workspace_workstream_pins`, `workstream_email_receipts`, `realtime_transcription_*` | 26 | 7 |
+| 10 | digests | `digest_*`, `schedules` | 47 | 9 |
+| 11 | Slack | `slack_*` | 55 | 7 |
+| 12 | memory | `memory_*` | 63 | 4 |
+| 13 | automations | `automation_*` | 92 | 19 |
+| 14 | notes and resources | `notes`, `note_*`, `resources`, `resource_watches`, `resource_object_deletion_outbox` | 98 | 24 |
+| 15 | connectors | `connector_connections`, `connector_oauth_attempts`, `webhook_receipts`, `external_user_identities`, `workspace_connector_event*` | 141 | 24 |
 
-That concentration is the plan: the first four files are four changes, not
-fifty-five, and each is a coherent subsystem with its own tables. The long tail
-is single statements in files that mostly do something else, and those come out
-with whichever slice owns the table. Because the names and shapes already match,
-most conversions wrap the same SQL in a method — the value is the typing and the
-single-round-trip transaction, not a reshape.
+Same ordering rule as the work-stream side: smallest blast radius first. Memory
+and Slack are unusually cheap for their statement counts — 63 statements across
+four files, and 55 across seven — because each is one service that owns its own
+tables. Connectors and notes-and-resources are the opposite: ~24 files each,
+because their tables are read from everywhere.
+
+Because the names and shapes already match, most conversions wrap the same SQL in
+a method. The value there is the typing and the single-round-trip transaction,
+not a reshape — which is why these slices are cheaper per statement than the
+work-stream ones, and why they are also the less urgent half.
 
 ### Slice 1, specified
 
@@ -617,8 +626,9 @@ showing a name rather than a UUID.
    participants — or the two surfaces render unattributed. This decides whether
    goal 6 is a projection change or a rendering change, and it should be settled
    before slice 7 starts, not during it.
-3. **Should the workspace-side conversion be one PRD or seven more slices?**
-   It is 56 tables with no migration and no view, so it may be tractable as a
-   handful of larger PRs. Deferred until at least one work-stream slice has
-   landed and the port pattern's real cost per table is known rather than
-   estimated.
+3. **Does the workspace side want a smaller port shape?** Its objects hold no
+   compat views and its table names already match, so a slice there may be a
+   thinner thing than a work-stream slice — possibly a storage class with no
+   protocol module, since there is no vocabulary to translate. Worth deciding
+   once slice 1 has landed and the pattern's real cost per table is known
+   rather than estimated. It changes how slices 8–15 are built, not whether.
