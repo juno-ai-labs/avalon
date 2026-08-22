@@ -13,6 +13,23 @@ import { uuidV7 } from "../lib/uuid-v7";
 type RuntimeValue = string | number | null;
 
 const REGIONAL_DATABASE = Symbol("workspace-regional-database");
+/**
+ * Local executors carried on the environment, keyed by workspace.
+ *
+ * WorkspaceDO hands its own storage in as an executor so its SQL never leaves
+ * the object. Without this the very next helper to re-derive an execution
+ * environment from that one — and several do — would build a port with no
+ * executor and send every statement back through the namespace into the object
+ * that issued it. See `lib/durable-object-self.ts` for the general defect.
+ */
+const LOCAL_EXECUTORS = Symbol("workspace-local-executors");
+
+type LocalExecutorRegistry = ReadonlyMap<string, LocalStatementExecutor>;
+
+function carriedExecutors(env: Env): LocalExecutorRegistry {
+  return (env as Env & { [LOCAL_EXECUTORS]?: LocalExecutorRegistry })[LOCAL_EXECUTORS]
+    ?? new Map();
+}
 
 interface BoundStatement {
   sql: string;
@@ -281,21 +298,36 @@ export function withWorkspaceRuntimeDatabase(
   workspaceId: string,
   localExecutor?: LocalStatementExecutor,
 ): Env {
+  const inherited = carriedExecutors(env);
+  const executor = localExecutor ?? inherited.get(workspaceId);
   // Focused unit environments and maintenance utilities may intentionally omit
   // the namespace. Production cannot reach this path because the environment
   // contract requires WORKSPACE_DOS before request dispatch.
-  if (!env.WORKSPACE_DOS && !localExecutor) return env;
-  const database = workspaceRuntimeDatabase(env, workspaceId, localExecutor);
+  if (!env.WORKSPACE_DOS && !executor) return env;
+  const database = workspaceRuntimeDatabase(env, workspaceId, executor);
+  const carried: LocalExecutorRegistry = localExecutor
+    ? new Map(inherited).set(workspaceId, localExecutor)
+    : inherited;
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "DB") return database;
       if (property === REGIONAL_DATABASE) return target.DB;
+      if (property === LOCAL_EXECUTORS) return carried;
       return Reflect.get(target, property, receiver) as unknown;
     },
   });
 }
 
-/** Escape hatch for explicitly global/regional control-plane SQL. */
+/**
+ * Escape hatch for explicitly global/regional control-plane SQL.
+ *
+ * Strictly, this peels off *this* port rather than every port: it answers with
+ * whatever `DB` was before `withWorkspaceRuntimeDatabase` replaced it. Where the
+ * two environments are nested — `runWorkstreamHarness` layers this over an
+ * agent's work-stream port — that is the work-stream database, not regional D1,
+ * and `loadHarnessTools` depends on exactly that to reach `workstream_resources`.
+ * Said here because the name reads like an unconditional route to D1 and is not.
+ */
 export function workspaceRegionalDatabase(env: Env): D1Database {
   return (env as Env & { [REGIONAL_DATABASE]?: D1Database })[REGIONAL_DATABASE] ?? env.DB;
 }

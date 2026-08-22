@@ -2,6 +2,7 @@ import type { Region } from "@avalon/contracts";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
+import { durableObjectSelf } from "./durable-object-self";
 
 type AvalonEnvironment = "development" | "test" | "staging" | "production";
 
@@ -142,6 +143,8 @@ export function durableObjectStubForRegionalSingleton<
   namespace: DurableObjectNamespace<T>,
   name: string,
 ): DurableObjectStub<T> {
+  const self = durableObjectSelf(env, namespace, name);
+  if (self) return self;
   return durableObjectStubForRegion(
     namespace,
     env.AVALON_REGION,
@@ -215,6 +218,10 @@ export async function durableObjectStubForWorkspace<
   name: string,
   affinity?: WorkspacePlacementAffinity,
 ): Promise<DurableObjectStub<T>> {
+  // Before the affinity read, because an object addressing itself must not
+  // depend on a D1 row to find the storage it is already holding.
+  const self = durableObjectSelf(env, namespace, name);
+  if (self) return self;
   const selected = affinity ?? await workspacePlacementAffinity(env, workspaceId);
   if (!isWorkspacePlacementAffinityForRegion(env.AVALON_REGION, selected)) {
     throw new Error(`workspace_placement_affinity_mismatch:${env.AVALON_REGION}:${selected}`);

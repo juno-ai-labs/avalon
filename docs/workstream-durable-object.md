@@ -53,6 +53,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
+| `apps/api/src/lib/durable-object-self.ts` | Where an object recognizes its own name, so a shared helper addressing "the object that owns this work stream" reaches the caller directly instead of leaving it over RPC and coming back. Every Durable Object class registers here in its constructor. |
 | `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
 | `apps/api/src/services/workstream-regional-effect-service.ts` | Queue consumer handoff into WorkspaceDO for directory/user/feedback/activity/notification effects. |
@@ -1041,6 +1042,77 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-22 — An object addressing its own name reaches itself
+
+**What changed:** Every Durable Object class registers itself with
+`lib/durable-object-self.ts` in its constructor — the binding it answers on, a
+thunk for its own deterministic name, its id, and the instance — and
+`durableObjectStubForWorkspace` and `durableObjectStubForRegionalSingleton`
+consult that registration before doing anything else. When the name being
+resolved is the caller's own, the resolver returns a stand-in stub over the
+object itself, so the same method is called with the same arguments and no
+request leaves the isolate. Any other name — a sibling work stream, another
+workspace, the same name under a different binding — resolves through the
+namespace exactly as before, and so does every name until the object has an
+identity to compare against. The registration rides on `env`, which is how it
+reaches helpers several layers below the object that never hear about it.
+
+Alongside it, the local SQL executors that `WorkspaceDO` and `SubstreamAgent`
+already install are now inherited: `withWorkspaceRuntimeDatabase` and
+`withWorkstreamRuntimeDatabase` carry the executor on the environment they
+return and reuse it when a later caller derives an execution environment for the
+same workspace, work stream, and substream without supplying one. A different
+work stream or workspace never borrows it.
+
+**Why:** An audit of every stub resolution in `apps/api/src` found twelve paths
+that left an object and came straight back into it, in two classes. None was
+written as a self-call. Each was a shared helper that addresses an object by
+role — `publishWorkstreamEvent`, `launchWorkstreamHarness`, the flag-targeting
+attribute loader, `refreshAgentTimerAlarm`, `refreshWorkspaceSchedule`, digest
+settlement — which is correct for the Worker, queue consumer, or Workflow that
+is almost always calling it, and became a self-call as the objects grew inward:
+a work stream's whole agent loop now runs inside its `SubstreamAgent`, and a
+workspace's schedule inside its `WorkspaceDO`. The cost was a namespace lookup, a
+placement-affinity read, and a round trip to reach storage the caller was already
+holding, plus a second concurrent invocation of a single-threaded object, a
+statement that could not join the caller's `transactionSync`, and local invariant
+violations arriving as foreign-object errors. The report is
+[`durable-object-self-rpc-audit-2026-08-22.md`](durable-object-self-rpc-audit-2026-08-22.md).
+
+**How it is proved:** the routing decision in the Node suite, and the four
+registrations and name derivations against real objects in
+`test-workers/durable-object-self-registration.test.ts` — including that the
+collaborators an object builds and keeps hold a registered environment, which is
+the case the first draft of this change failed.
+
+**Considered and rejected:** *Threading a local port per method*, as the Terminal
+port and the two SQL executors already do. That is the right shape for a hot path
+and stays, but there were fourteen distinct methods across thirteen service
+modules reachable as self-calls, and the next method added would silently
+reintroduce the defect — the previous two rounds of this fix each closed one path
+and left the rest. *Refusing a self-call outright*, which the audit floated as
+the loud option: it would turn working production paths into errors for a
+condition the resolver can simply answer correctly, and the objects would still
+need a local route for every one of them. *Leaving it*, on the argument that an
+open input gate means these complete: they do complete, and the only thing
+holding that up is that no self-call currently sits inside a
+`blockConcurrencyWhile` — an invariant nothing stated or tested, and the same
+shape as the alarm-joins-drain fault in
+[`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md).
+
+**What a future change has to respect:** A new Durable Object class registers
+itself in its constructor, or it is exempt from this without anyone noticing. The
+name thunk must return `null` until the object's identity is durably its own —
+a name derived too early is a name for a different object. The registration is
+compared by binding *identity* and name equality, so a helper resolving a name
+that is not the caller's own must keep reaching the namespace: that is what makes
+a sibling call still a real hop. And the registration line rebinds the
+constructor's `env` parameter as well as assigning the field, so that nothing
+below it can hand the unregistered environment to a collaborator that keeps it:
+`SubstreamAgent` built `WorkstreamObjectProductService` with the raw parameter in
+the first draft of this change, which left that service — and the model routing
+it resolves for its own work stream — still going out through the namespace.
 
 ### 2026-08-22 — Object-local visibility comes back; only the D1 read stays gone
 
