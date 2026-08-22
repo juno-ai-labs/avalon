@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -339,6 +340,13 @@ describe("durable UI-to-model transcript projection", () => {
     const env = createTestEnv({
       DB: database,
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+      // The replay check reads its dependencies from the work-stream object
+      // now, not from this mocked D1. An empty object store is the state this
+      // test always described — no recorded dependency means nothing is
+      // provably still-current — so the outcome is unchanged and the mock's
+      // empty default no longer has to stand in for it.
+      AVALON_REGION: "global",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
     });
 
     const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
