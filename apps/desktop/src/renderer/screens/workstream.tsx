@@ -1044,16 +1044,17 @@ export function WorkstreamScreen(): React.JSX.Element {
   // transcript is a page away rather than loaded.
   const {
     atEnd: transcriptAtEnd,
-    claimNextScroll: claimTranscriptScroll,
     onScroll: onTranscriptScroll,
     onWheel: onTranscriptWheel,
     release: releaseTranscriptFollow,
-    resume: resumeTranscriptFollow,
+    scrollTo: scrollTranscriptTo,
+    scrollToEnd: scrollTranscriptToEnd,
   } = useTranscriptFollow(
     transcriptRef,
     initialPositionedWorkstreamRef.current === id
       && transcript.length > 0
       && newerMessageCursor.data === null,
+    id,
   );
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
@@ -1081,17 +1082,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
-        const preserved = preservedPrependScrollTop(
+        scrollTranscriptTo(preservedPrependScrollTop(
           previousScrollTop,
           previousScrollHeight,
           element.scrollHeight,
-        );
-        // Only claim the scroll when there is one to claim. A page that
-        // prepended nothing moves nothing, and the flag would then be spent on
-        // the reader's next scroll instead.
-        if (preserved === element.scrollTop) return;
-        claimTranscriptScroll();
-        element.scrollTop = preserved;
+        ));
       });
     } catch (error) {
       if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1155,11 +1150,11 @@ export function WorkstreamScreen(): React.JSX.Element {
         after = newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
-      resumeTranscriptFollow();
-      window.requestAnimationFrame(() => {
-        const current = queryClient.getQueryData<Message[]>(['messages', id]) ?? [];
-        transcriptVirtualizer.scrollToIndex(Math.max(0, current.length - 1), { align: 'end', behavior: 'smooth' });
-      });
+      // Not `scrollToIndex`: aimed at the last row with `align: 'end'` it
+      // targets the virtualizer's maximum offset, which it recomputes every
+      // frame for five seconds — against a row still growing that is a second
+      // follow, competing with this one and with the reader.
+      window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
     } catch (error) {
       if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
         pendingJumpAfterReconnectRef.current = true;
@@ -1378,6 +1373,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
     if (!api || !workstream.data) throw new Error('This work stream is not ready to receive messages.');
+    // Sending is the strongest statement anyone can make that they mean to be
+    // at the end: they are about to add to it, and the answer is what they are
+    // waiting for. Before the follow could be stopped at all this happened by
+    // accident, because the next token re-armed it.
+    scrollTranscriptToEnd();
     const readyAttachments = attachmentDraft.ready;
     pendingSendCount.current += 1;
     setSending(true);
@@ -1456,18 +1456,28 @@ export function WorkstreamScreen(): React.JSX.Element {
     initialPositionedWorkstreamRef.current = id;
     const anchorSequence = workstream.data.firstUnreadSequenceNumber;
     window.requestAnimationFrame(() => {
-      if (activeWorkstreamIdRef.current !== id || transcript.length === 0) return;
+      if (activeWorkstreamIdRef.current !== id) return;
+      // A work stream created moments ago has no transcript yet and a run
+      // already going. There is nothing to position, and the reply that is
+      // about to arrive is what the person is waiting to read.
+      if (transcript.length === 0) {
+        scrollTranscriptToEnd();
+        return;
+      }
       const anchorIndex = initialTranscriptAnchorIndex(transcript, anchorSequence);
       if (anchorIndex !== null) {
         // Opened at the first unread message rather than at the end, so the
         // transcript is not following: a run already streaming into this work
         // stream must not pull the reader off the message they came back for.
         releaseTranscriptFollow();
+        // The one sanctioned `scrollToIndex`: the rows above the anchor have
+        // never been measured, so only the virtualizer can find the offset, and
+        // its reconcile loop is what corrects the estimate as they measure. It
+        // aims at a row that is not moving, so it settles instead of following.
         transcriptVirtualizer.scrollToIndex(anchorIndex, { align: 'start' });
         return;
       }
-      resumeTranscriptFollow();
-      transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' });
+      scrollTranscriptToEnd();
     });
   }, [id, messages.isLoading, transcript, transcriptVirtualizer, workstream.data]);
 
@@ -1613,8 +1623,18 @@ export function WorkstreamScreen(): React.JSX.Element {
           )}
         </BlockDashboardRail>
       ) : null}
+      {/* Focusable so the transcript can be scrolled from the keyboard at all.
+          Chromium gives Page Up, Home, and the arrows to a scroller only when it
+          can take focus, and the composer takes it when a work stream opens — so
+          without this a reader using the keyboard has no way to leave the end of
+          a streaming turn, which is the whole thing the follow is built around.
+          `log` rather than `region`: the content is appended over time and a
+          screen reader should treat it that way. */}
       <div
+        aria-label="Transcript"
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
+        role="log"
+        tabIndex={0}
         onDragEnter={transcriptDrop.onDragEnter}
         onDragLeave={transcriptDrop.onDragLeave}
         onDragOver={transcriptDrop.onDragOver}
@@ -1622,7 +1642,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         // The transcript reads scrolling intent from the wheel as well as from
         // the scroll it causes, because the two do not arrive in the same frame.
         // `useTranscriptFollow` holds the reasoning.
-        onWheel={(event) => onTranscriptWheel(event.deltaY)}
+        onWheel={(event) => onTranscriptWheel(event.currentTarget, event.deltaY)}
         onScroll={(event) => {
           const element = event.currentTarget;
           onTranscriptScroll(element);
