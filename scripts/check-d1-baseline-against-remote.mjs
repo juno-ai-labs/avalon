@@ -29,7 +29,7 @@ import { DatabaseSync } from "node:sqlite";
 import process from "node:process";
 
 import { isEntryPoint } from "./entry-point.mjs";
-import { discoverRegions, wranglerArguments } from "./migrate-d1.mjs";
+import { discoverRegions, pnpmExecutable, wranglerArguments } from "./migrate-d1.mjs";
 import {
   applyMigrations,
   compareFingerprints,
@@ -69,7 +69,7 @@ export async function readRemoteSchema(region, { run = execFileAsync } = {}) {
   const target = discoverRegions().find((entry) => entry.region === region);
   if (!target) throw new Error(`${region} is not a region in this checkout`);
   const { stdout } = await run(
-    "pnpm",
+    pnpmExecutable(),
     wranglerArguments({ ...target, remote: true }, ["execute"], ["--json", "--command", SCHEMA_QUERY]),
     { cwd: apiDirectory, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );

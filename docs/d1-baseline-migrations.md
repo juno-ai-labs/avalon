@@ -288,6 +288,12 @@ for one.
   detector can only see what changes between two runs. A seeded column whose
   value is derived from a coarse clock has to be recognised by the person
   writing the migration, not by the generator.
+- **A volatile column must be within ten minutes of generation.** The renderer
+  writes one expression, `datetime('now')`, and the `YYYY-MM-DD HH:MM:SS` shape
+  does not distinguish that from `datetime('now', '+1 day')` — so the value is
+  also required to *be* roughly now, and a modifier coarse enough to matter
+  stops generation by name. An offset smaller than that window stays
+  undetectable, for the same reason as the item above.
 - **A manifest state only a bad merge produces is skipped, not resolved.** A
   boundary appearing twice — both branches regenerated, the merge kept both —
   has no right answer, and the comparator never returns 0 for equal boundaries,
@@ -371,6 +377,46 @@ the migrations. That is an incident in the schema, not in the baseline; do not
 regenerate to make it pass.
 
 ## Changelog
+
+### 2026-08-22 — Hold the config and the seeded clock to what they actually claim
+
+**What changed:** `stripJsonComments` drops trailing commas, so the JSONC
+Wrangler accepts is the JSONC discovery accepts. A region whose `migrations_dir`
+resolves anywhere but the shared chain is refused, the way a custom
+`migrations_table` already was. A volatile column must hold a value that *is*
+roughly the generation time, not merely one shaped like a timestamp. And both D1
+scripts launch pnpm through `pnpmExecutable()`, which is `pnpm.cmd` on Windows.
+
+**Why:** each was a valid input the tooling rejected, or an invalid one it
+accepted. Discovery parses every `wrangler.*.jsonc` before choosing a region, so
+one trailing comma anywhere failed local migration, hosted migration and
+baseline verification for every region at once — and a trailing comma is not a
+mistake in a file Wrangler reads with a real JSONC parser. `migrations_dir` was
+read only as the marker that a binding is migratable and then discarded, while
+everything downstream planned against `packages/db/migrations`: a region naming
+a different directory would have been handed this chain's baseline and ledger
+rows and then had another chain applied on top, with each half internally
+consistent and nothing to compare them. The volatile check was the worst of the
+three, because the shape `YYYY-MM-DD HH:MM:SS` does not distinguish
+`datetime('now')` from `datetime('now', '+1 day')`: detection found the column,
+the renderer wrote back the wrong expression, and the equivalence suite strips
+volatile columns from both sides before comparing, so nothing offline could see
+a value a day out.
+
+**Considered and rejected:** *requiring an explicit supported expression per
+volatile column*, declared in the manifest. That is the thorough fix and it adds
+a surface someone has to maintain in step with the migrations. Comparing the
+observed value against the actual generation time needs no declaration and
+cannot fall out of date: the snapshot was taken seconds earlier, so any modifier
+coarse enough to matter puts the value far outside the window.
+
+**Consequences:** a volatile column is now required to be within ten minutes of
+generation, so a seed computed with a modifier stops the generator by name
+rather than being silently rewritten — but an offset *smaller* than that window
+is still undetectable, alongside the coarse-clock limitation the 1.1-second
+replay gap already has. Both are recorded under failure modes. `discoverRegions`
+takes a `migrationsDirectory` so a test can build a throwaway `apps/api`; the
+repository's own configs are held to the real directory by their own test.
 
 ### 2026-08-22 — Keep every gate repairable, and make the diagnostics reachable
 

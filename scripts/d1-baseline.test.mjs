@@ -294,6 +294,8 @@ test("the shared exclusion fragment escapes the underscore wildcard", () => {
 // Rendering rules
 // ---------------------------------------------------------------------------
 
+const FIXTURE_STAMP = "2026-08-21 10:00:00";
+
 function renderFixture(overrides = {}) {
   return renderBaselineSql({
     through: "0002_b.sql",
@@ -305,9 +307,13 @@ function renderFixture(overrides = {}) {
         { type: "index", name: "t_idx", tbl_name: "t", sql: "CREATE INDEX t_idx ON t(id)" },
         { type: "trigger", name: "t_guard", tbl_name: "t", sql: "CREATE TRIGGER t_guard BEFORE INSERT ON t BEGIN SELECT RAISE(ABORT, 'no'); END" },
       ],
-      rows: { t: [{ id: "one", stamped: "2026-08-21 10:00:00" }] },
+      rows: { t: [{ id: "one", stamped: FIXTURE_STAMP }] },
     },
     volatileColumns: { t: ["stamped"] },
+    // Pinned rather than left to the wall clock: the generator requires a
+    // volatile value to be roughly now, and a fixture that drifted out of that
+    // window would fail for the date rather than for anything it tests.
+    now: Date.parse(`${FIXTURE_STAMP.replace(" ", "T")}Z`),
     ...overrides,
   });
 }
@@ -332,7 +338,7 @@ test("the ledger claim is rendered last, after every object it describes", () =>
 test("a volatile column is re-derived on apply and a stable one is frozen", () => {
   const sql = renderFixture();
   assert.match(sql, /datetime\('now'\)/u);
-  assert.ok(!sql.includes("2026-08-21 10:00:00"), "the volatile literal must not be frozen into the file");
+  assert.ok(!sql.includes(FIXTURE_STAMP), "the volatile literal must not be frozen into the file");
   assert.ok(sql.includes("'one'"), "a stable value is frozen");
 });
 
@@ -710,6 +716,41 @@ test("normalization leaves every real schema object in the baseline unchanged", 
 // ---------------------------------------------------------------------------
 // The generator refuses what it cannot render faithfully
 // ---------------------------------------------------------------------------
+
+test("a volatile column the chain computes with a modifier stops generation", async () => {
+  // The shape test alone cannot tell `datetime('now')` from
+  // `datetime('now', '+1 day')` — both produce `YYYY-MM-DD HH:MM:SS` — and the
+  // renderer writes only the first. Detection would find the column, the file
+  // would be written with a value a day earlier than any replay produces, and
+  // nothing downstream would notice: the equivalence suite strips volatile
+  // columns from both sides before comparing.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE ctl (id INTEGER PRIMARY KEY, due_at TEXT NOT NULL);\n"
+      + "INSERT INTO ctl (id, due_at) VALUES (1, datetime('now', '+1 day'));",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 1100 }),
+      /ctl\.due_at is volatile and holds .* which is \d+s from now/u,
+    );
+  });
+});
+
+test("a volatile column the chain computes with plain datetime('now') is accepted", async () => {
+  // The other half of the check above: the tolerance has to be wide enough for
+  // a slow replay, or every real generation would fail on the same rule.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE ctl (id INTEGER PRIMARY KEY, stamped_at TEXT NOT NULL);\n"
+      + "INSERT INTO ctl (id, stamped_at) VALUES (1, datetime('now'));",
+  }, async (directory) => {
+    const { sql, manifestEntry } = await buildBaseline({
+      through: "0001_a.sql",
+      directory,
+      settleMilliseconds: 1100,
+    });
+    assert.deepEqual(manifestEntry.volatileColumns, { ctl: ["stamped_at"] });
+    assert.match(sql, /datetime\('now'\)/u);
+  });
+});
 
 test("a seeded TEXT value SQLite hands back truncated stops generation", () => {
   // `node:sqlite` returns TEXT only as far as its first embedded NUL, and the

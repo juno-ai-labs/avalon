@@ -66,7 +66,11 @@ export const BASELINES_DIRECTORY = join(repositoryRoot, "packages", "db", "basel
  * Comments are stripped before parsing because these are `.jsonc`; Wrangler
  * accepts comments in them and `JSON.parse` does not.
  */
-export function discoverRegions(apiDirectory = API_DIRECTORY, { read = readFileSync, list = readdirSync } = {}) {
+export function discoverRegions(apiDirectory = API_DIRECTORY, {
+  read = readFileSync,
+  list = readdirSync,
+  migrationsDirectory = MIGRATIONS_DIRECTORY,
+} = {}) {
   const regions = [];
   for (const fileName of list(apiDirectory).sort()) {
     const match = /^wrangler\.([a-z0-9-]+)\.jsonc?$/u.exec(fileName);
@@ -95,17 +99,40 @@ export function discoverRegions(apiDirectory = API_DIRECTORY, { read = readFileS
         + "region, so a per-region ledger table cannot be supported without reworking both.",
       );
     }
+    // `migrations_dir` is the marker that this binding is migratable, and it is
+    // also the chain Wrangler will actually apply — while everything here plans
+    // against `packages/db/migrations`: the baseline, its ledger rows, the
+    // digest, the pending count. A region pointing somewhere else would be
+    // handed this chain's baseline and then have a different chain applied on
+    // top of it. Refused for the same reason `migrations_table` is: one baseline
+    // serves every region, so every region has to be the same chain.
+    const declared = resolve(apiDirectory, binding.migrations_dir);
+    if (declared !== migrationsDirectory) {
+      throw new Error(
+        `${fileName} points migrations_dir at ${binding.migrations_dir}, which resolves to ${declared} `
+        + `rather than ${migrationsDirectory}. Every region shares one chain and one baseline, so `
+        + "planning here and applying there would build a database from two different histories.",
+      );
+    }
     regions.push({ region: match[1], config: fileName, binding: binding.binding ?? "DB" });
   }
   return regions;
 }
 
 /**
- * Removes `//` and block comments from JSONC, leaving string contents alone.
+ * Turns JSONC into JSON: strips `//` and block comments, and drops the trailing
+ * commas JSONC allows.
  *
  * A `//` inside a string is a URL, not a comment — `wrangler.global.jsonc` is
  * full of `https://…` in routes — so this tracks quoting rather than running a
  * regular expression over the whole file.
+ *
+ * Trailing commas are dropped because Wrangler reads these files with a real
+ * JSONC parser and accepts them, so a config carrying one is valid input that
+ * this would otherwise reject. Discovery parses *every* `wrangler.*.jsonc`
+ * before picking the requested region, so one such comma anywhere fails local
+ * migration, hosted migration and baseline verification for every region at
+ * once.
  */
 export function stripJsonComments(source) {
   let output = "";
@@ -136,6 +163,11 @@ export function stripJsonComments(source) {
       index = end === -1 ? source.length : end + 2;
       continue;
     }
+    // A closing brace or bracket retroactively makes any comma behind it — and
+    // any whitespace or comment that was between them — a trailing comma.
+    // Trimming here rather than with a regex over the finished text keeps
+    // `{"a": "x,"}` intact, since a comma inside a string never reaches this.
+    if (character === "}" || character === "]") output = output.replace(/,\s*$/u, "");
     output += character;
     index += 1;
   }
@@ -186,6 +218,19 @@ export function assertRegionalEnvFilesExist(targets, directory = API_DIRECTORY) 
     + "so a region added through its Wrangler config needs adding there too.");
 }
 
+/**
+ * The pnpm to launch, which is not `pnpm` everywhere.
+ *
+ * On Windows the installed entry point is the `pnpm.cmd` shim, and `execFile`
+ * and `spawn` run an executable directly rather than through a shell, so they
+ * do not find it under the bare name. `scripts/dev-regional-api.mjs` already
+ * carries this; naming it once means the next script that shells out inherits
+ * the answer instead of rediscovering it.
+ */
+export function pnpmExecutable(platform = process.platform) {
+  return platform === "win32" ? "pnpm.cmd" : "pnpm";
+}
+
 const LEDGER_QUERY = "SELECT name FROM d1_migrations ORDER BY id";
 
 /**
@@ -202,7 +247,7 @@ const INVENTORY_QUERY = `SELECT
 
 async function query(target, sql, { run = execFileAsync } = {}) {
   const { stdout } = await run(
-    "pnpm",
+    pnpmExecutable(),
     wranglerArguments(target, ["execute"], ["--json", "--command", sql]),
     { cwd: API_DIRECTORY, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
@@ -297,7 +342,10 @@ export function loadCatalog({
 
 function runInherited(target, command, args = []) {
   return new Promise((resolveRun, reject) => {
-    const child = spawn("pnpm", wranglerArguments(target, command, args), { cwd: API_DIRECTORY, stdio: "inherit" });
+    const child = spawn(pnpmExecutable(), wranglerArguments(target, command, args), {
+      cwd: API_DIRECTORY,
+      stdio: "inherit",
+    });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (signal) reject(new Error(`wrangler was interrupted by ${signal}`));
