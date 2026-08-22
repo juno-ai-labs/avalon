@@ -775,9 +775,37 @@ pre {
 .mini-state.draft { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); height: 10px; width: 10px; }
 .sidebar-row.is-draft .sidebar-row-title { color: var(--av-sys-color-text-muted); }
 .sidebar-empty { color: var(--av-ref-color-neutral-8); font-size: 11px; margin: 3px 8px; }
-.sidebar-skeleton { animation: skeleton-pulse 1.5s ease-in-out infinite; background: var(--av-sys-color-surface-subtle); border-radius: var(--av-sys-size-radius-md); height: 70px; }
-.sidebar-skeleton.tall { height: 150px; }
+/* The sidebar's placeholder rows. One pulse drives the whole set: the bars are
+   siblings sharing a start time, so the section breathes as a unit rather than
+   as a dozen independently blinking rectangles. The global reduced-motion reset
+   near the end of this file stops it. */
 @keyframes skeleton-pulse { 50% { opacity: 0.45; } }
+
+.skeleton-row { animation: skeleton-pulse 1.5s ease-in-out infinite; }
+/* `neutral-4`, not `surface-subtle`: the sidebar's own ground is within a
+   shade or two of subtle in both light themes, and bars filled with it were
+   invisible in a real window even though the DOM was correct. This is the
+   same quiet fill a selected row uses, and it separates from the ground in
+   all four themes. */
+.skeleton-bar { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-pill); display: block; }
+.skeleton-row-marker { border-radius: 50%; flex: 0 0 10px; height: 10px; margin: 0 4px; }
+.skeleton-row-line { height: 0.72em; width: 74%; }
+.skeleton-row-subline { height: 0.62em; margin-top: var(--av-cmp-row-hint-gap); width: 45%; }
+
+/* Unequal titles, the way a real list is. Three widths on a five-row cycle so
+   the repeat does not line up with either skeleton group's row count. */
+.skeleton-row:nth-child(5n+2) .skeleton-row-line { width: 58%; }
+.skeleton-row:nth-child(5n+3) .skeleton-row-line { width: 86%; }
+.skeleton-row:nth-child(5n+4) .skeleton-row-line { width: 49%; }
+.skeleton-row:nth-child(5n+2) .skeleton-row-subline { width: 62%; }
+.skeleton-row:nth-child(5n+4) .skeleton-row-subline { width: 33%; }
+
+.skeleton-group-label {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  height: 0.6em;
+  margin: 0 8px var(--av-cmp-group-label-gap);
+  width: 7ch;
+}
 
 /* Stands in for a title Avalon is still choosing. Sized in `em` and `ch` so it
    takes the line height and roughly the width of the name it is waiting for,

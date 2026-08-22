@@ -36,6 +36,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
+| `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
@@ -558,7 +559,11 @@ listability, “You Are Mentioned,” and the Home/sidebar list of work streams 
 interest. Pins, resource links, and resolved suggestion feedback live beside
 those rows so cross-work-stream queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
-WorkspaceDO socket. Common and viewer rows retain separate monotonic waterlines,
+WorkspaceDO socket, and receives the sidebar itself on the answer to
+`subscribe` — the first page together with the viewer's
+`automation_subscriptions` and `notes` rows, since all three are this object's
+tables. Opening the sidebar therefore costs no request at all.
+[`realtime-sockets.md`](realtime-sockets.md) holds the protocol and its bounds. Common and viewer rows retain separate monotonic waterlines,
 because Queue is at-least-once and unordered. Electron keeps one shared
 per-work-stream waterline ledger behind the header/detail/sidebar caches. The
 active WorkstreamDO socket normally wins first; the later WorkspaceDO event is
@@ -1135,6 +1140,25 @@ thirty, and costs no read at all when nothing has been revoked.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
+### 2026-08-22 — The sidebar push takes the sweep every publisher takes
+
+**What changed:** `publishSidebarList` awaits `revalidateBeforePublish(false)`
+before sending, which made `runWorkspaceSql` and both of its callers async.
+
+**Why:** This object has three publish paths and this was the only one sending
+without the authorization sweep. It carries a viewer's whole automation or note
+list — the same class of product data `publishWorkstreamState` sweeps for — to
+sockets that have said nothing since they connected, so a session revoked
+without a membership retraction to publish kept receiving those rows on every
+write until an unrelated publication swept. The interval-gated form, not the
+certain one: a write to `notes` is not a retraction this path can judge.
+
+**Considered and rejected:** Keeping the push synchronous and sweeping on a
+timer of its own, which is a second answer to a question `revalidateBeforePublish`
+already answers, and would let the two intervals disagree about who is still
+allowed to listen. A future publisher added here has to join that sweep too;
+the bound is on the object, not on any one path.
+
 ### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
 
 **What changed:** The main `SubstreamAgent` exposes its resident Bind execution
@@ -1211,6 +1235,94 @@ expired. Recovery remains row-derived and survives eviction, while a
 receipt terminalized by recovery converges the transcript in the same SQLite
 transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
 tests pin both the v13-to-v14 repair and ordinary receipt semantics.
+
+### 2026-08-21 — The sidebar rides on the subscribe answer
+
+**What changed:** `subscribe` builds the whole sidebar for that viewer — the
+first directory page, the automations, the notes — and attaches it to the
+`workspace_sync` event it already sends. The `list_sidebar` message it replaces
+is gone. A resume with no topics to report still answers, under a new `resume`
+reason, so the payload reaches a socket that was away.
+
+**Why:** The object holds the socket and the rows; the ticket already proved who
+connected. Waiting to be asked spends a round trip establishing something the
+object had already determined, and it is what
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks a connect
+exchange not to do.
+
+**Considered and rejected:** Sending the sidebar as its own frame beside the
+sync event — one more frame per subscribe, and nothing to attach it to on a
+quiet resume; and taking `includeSystem` from the client so the payload could
+serve debug viewers too, which puts a preference this object does not hold into
+every connect for a case that is rare and internal.
+
+**Consequences:** Every subscribe now performs three reads before it answers,
+where before it read a bounded replay log. Reconnect storms therefore cost this
+object more than they used to, bounded by 250 rows per list and by the reads
+being local and synchronous. The payload is per viewer, so it cannot be built
+once and broadcast; a future surface wanting a connect payload of its own should
+expect the same shape of cost.
+
+### 2026-08-21 — A write to an automation or note pushes its list
+
+**What changed:** `runWorkspaceSql` — the entry point behind both the
+`executeRuntimeSql` RPC method and the in-object `localWorkspaceEnv` the alarm
+uses — now notes which sidebar list a statement writes — by the same write-target match the alarm refresh already uses — and
+re-sends that list whole to every subscribed socket, read per viewer the way
+`publishWorkstreamState` reads its row.
+
+**Why:** These tables had no push at all; the desktop learned about a change
+from a topic the Worker derived from the mutating REST request. Writers with no
+request were therefore invisible, and the workspace alarm advancing
+`next_run_at` after a run is one — it reaches the same tables through the
+workspace runtime database like every other writer, which is what makes one
+check here cover all of them. The check sits below the RPC method rather than
+in it because the alarm runs inside this object and takes `localWorkspaceEnv`
+straight to the SQL executor: guarding only the RPC entry point would have left
+the writer that motivated the push silent again.
+
+**Considered and rejected:** Emitting from each service that writes these
+tables, which spreads the obligation across many call sites and misses the
+alarm's own writes entirely; and pushing only the changed rows, which
+would need this layer to understand the statement rather than just its target.
+
+**Consequences:** This object now sends product data on a write path that
+previously only returned rows, so a slow or large list read is felt by the
+writer. Both lists are bounded at 250 and the reads are local and synchronous,
+which is what keeps that acceptable. A future table whose rows appear in the
+sidebar must be added to `SIDEBAR_LIST_SOURCE_TABLES` or its writes will be
+silently invisible to open clients.
+
+Schema v4 adds `workspace_sidebar_list_state`, one waterline per list, advanced
+by `executeWorkspaceRuntimeSql` inside the same transaction as the write that
+earns it. Inside, not after: a counter that can lag its own write would let the
+next push carry a version the client has already applied, and the change would
+be dropped as a duplicate. The counters are seeded at zero by the migration so
+no reader has to decide what an absent row means.
+
+### 2026-08-21 — The sidebar's three lists are read together in one object
+
+**What changed:** WorkspaceDO answers a new `list_sidebar` socket command with
+the directory page, the viewer's automations and the viewer's notes, read from
+its own SQLite with no `await` between them. The statement and row mapping for
+each list are shared with the REST services rather than written a second time.
+
+**Why:** `automation_subscriptions` and `notes` have been this object's tables
+since the authority cutover, but the sidebar still reached them through the
+Worker's REST routes, which route back into this object over RPC. The reads
+already belonged here; only the transport did not.
+
+**Considered and rejected:** Duplicating each SELECT inside the object, which
+puts two copies of one query behind one client cache with no response schema to
+catch the drift; and reconciling automation email routes inside the batch, which
+would put a Global-registry network call on the socket handler's single thread
+alongside the directory read.
+
+**Consequences:** This handler is now the object's widest synchronous read, and
+a list added to the sidebar later should join it rather than open a transport.
+Anything in it that cannot be answered from local SQL — the email-route
+reconciliation is the first such case — stays on the REST path and converges
+through the topic that owns it.
 
 ### 2026-08-21 — WorkspaceDO sweeps the sockets it publishes to
 
@@ -2262,6 +2374,7 @@ already a retry loop with a natural backoff; duplicating it inside the tick
 adds concurrency for no coverage), and treating every error as retryable (a
 data conflict must stop the campaign — retrying it forever would hide the
 defect the quarantine exists to surface).
+
 ### 2026-08-19 — The authority cutover campaign machinery is retired
 
 **What changed:** With both regions permanently at `durable_object_open`, the
@@ -2291,6 +2404,7 @@ same change (40+ call sites fail closed without the row — removal has to
 follow, not accompany, the code that reads it), and keeping the import RPCs as
 "harmless" dead surface (an import RPC on a live object is a data-corruption
 primitive if ever reachable).
+
 ### 2026-08-19 — Every Durable Object reports its migration outcome
 
 **What changed:** All five constructors now run their migration call inside
