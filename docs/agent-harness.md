@@ -178,7 +178,7 @@ The canonical `request_elicitation` tool belongs to `avalon:core` and is rendere
 
 ### Durable receipts and terminal state
 
-Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
+Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Avalon keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and normalizes a string only where the field
@@ -635,6 +635,33 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-22 — Tools receive the receipt identity their effects are keyed to
+
+**What changed:** `HarnessToolContext` gained an optional `effectIntentId`, and
+`resolveToolEffectIntentId` was added to the host ports. Bind calls it once per
+dispatch — after the `tool_started` event, before the tool runs — and forwards
+the answer on the context.
+
+**Why:** A tool that starts work outside Avalon has to name that work with
+something a resumed attempt will recognize. Until now the one tool that needed
+it, Terminal, queried the host's `tool_invocations` table for its own receipt
+id: a subsystem reading another's table for an answer the host had in hand.
+
+**Considered and rejected:** Deriving the id inside Bind from `toolCallId`.
+That coordinate is stable across a resume, but the receipt row it maps to is
+created once and kept, so the derived id would diverge from the one an
+interrupted attempt already used — exactly the case the identity exists to
+handle. Also rejected: returning it from `persistToolExecutionPlan`. Avalon's
+host does that work while handling `tool_started` rather than through that
+port, so the return value would reach nobody.
+
+**Consequences:** The ordering is load-bearing and asserted, not just
+commented: resolving before `tool_started` would read whatever a previous
+attempt left. A host that implements no receipt ports leaves the field absent,
+and a tool that needs one must fail rather than substitute `toolCallId`.
+Because tool calls within a turn may run concurrently, a host keys its answers
+by `toolCallId` rather than remembering only the latest.
 
 ### 2026-08-22 — Required host failures name the invariant that did not persist
 
