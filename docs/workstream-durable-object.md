@@ -1082,7 +1082,7 @@ thirty, and costs no read at all when nothing has been revoked.
 - The reasoning for the removed mechanisms is preserved in the entry below; this
   is a reversal of it, not a correction of the record.
 
-Shipped in #TBD. Owned by [`access-revocation.md`](access-revocation.md).
+Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
 ### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
 
