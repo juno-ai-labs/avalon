@@ -457,6 +457,25 @@ not own:
   matched, explicitly mentioned retry of a denial created *before* this mechanism
   may read at most the first 15 messages in that single thread to recover the
   prompting mention; unmentioned messages in other threads are ignored.
+- **A spent link challenge is kept for a day, then reaped.** Expired or
+  consumed, the row stays 24 hours so a late click is refused with its reason
+  rather than as a link Avalon has never seen, and the `slack_ingress`
+  maintenance pass removes it after that. The workspace alarm counts a
+  challenge as due at exactly that horizon, and the reap has to remove what
+  that expression counts, or the alarm comes straight back for the row it just
+  failed to remove. Ingress jobs have a longer horizon by design: a completed
+  job and an exhausted one are history, kept 30 days, and the schedule counts
+  them at that horizon.
+- **An ingress job that reaches the 20-attempt ceiling is reported, once.**
+  Every failure is a `slack_ingress_queue_processing_failed` row already; the
+  failure that pins the job — a non-retryable error, or the twentieth attempt —
+  writes `slack_ingress_job_exhausted` at `error` and posts it to the operator
+  channel when one is configured ([`ops-alerting.md`](ops-alerting.md)). The
+  claim refuses a job at the ceiling, so the Queue's redelivery of the message
+  that threw is acknowledged without running it again. Nothing processes such a
+  job again without a reauthorization re-drive. The maintenance pass logs the
+  standing count as one `slack_ingress_exhausted_jobs` row, not one error row
+  per job per pass.
 - **A missing `reactions:write` discovered mid-prompt does not stop the task.**
   Avalon continues and marks the installation for reconnect.
 - **A challenge that cannot be redeemed is refused with the reason**, not a generic
@@ -509,7 +528,7 @@ not own:
 | `apps/api/test/slack-mention-service.test.ts` | The lookup-based mention path and its email fallback. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
-| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant. |
+| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, and the operator notice an exhausted job posts. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
@@ -605,6 +624,47 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-22 — A spent link challenge is kept a day, and an exhausted job is reported once
+
+**What changed:** `maintainIngress` deletes a link challenge a day after it
+expired or was consumed (`SLACK_LINK_CHALLENGE_GRACE_MS`), where it bound the
+30-day retention cutoff, and the workspace alarm's `slack_ingress` arm counts a
+challenge at that same horizon. `processQueuedIngress` writes
+`slack_ingress_job_exhausted` at `error` and posts an operator notification
+when the job it just failed reaches the attempt ceiling, and its claim refuses
+a job already at the ceiling. The maintenance pass logs exhausted jobs as one
+summary row per pass.
+
+**Why:** The workspace alarm's `slack_ingress` due time is the earliest instant
+among the rows that pass reaps, and for challenges it was `MIN(expires_at)` —
+fifteen minutes after the click. Holding the row for 30 days left that instant
+in the past for a month, and the alarm re-armed for it after every pass: on
+2026-08-22 one workspace's alarm ran about 1.5 times a second for hours,
+logging its eight exhausted ingress jobs on every wake. Two of those jobs were
+`@Avalon` mentions that had died on `session_revoked` at 18:20 UTC, and the
+only record was an error row nobody was watching. The notification is what
+would have said so within a minute; the agreeing horizons are what end the
+loop. The claim bound exists because the Queue redelivers a message whose
+processing threw, and without it every redelivery re-ran the dead job, pinned
+it again, and would have posted again.
+
+**Considered and rejected:** Deleting a challenge the moment it is spent — the
+first draft. It ends the loop just as well, but it makes `slack_link_expired`
+and `slack_link_consumed` unreachable in practice: the pass runs at the expiry
+instant, so a member clicking a twenty-minute-old link would be told Avalon has
+never seen it. A day of grace keeps the reason and costs nothing; what matters
+is that both sides name the same horizon. Keeping the 30-day retention and
+narrowing the schedule's expression to live challenges was rejected for the
+same reason in reverse: two sides that disagree about when a row is done is
+what caused this.
+
+**Consequences:** A link clicked within a day of expiry or redemption is still
+refused with its specific reason; after that it is `slack_link_unknown`, and
+the remedy is the same click either way. An exhausted job is one `error` row
+and one message, never more; the standing count is a `warn` row per pass. The
+exhaustion notice carries only the job id, the workspace id, the error code,
+and whether the failure was retryable.
 
 ### 2026-08-18 — Slack work-stream discovery reads WorkspaceDO
 

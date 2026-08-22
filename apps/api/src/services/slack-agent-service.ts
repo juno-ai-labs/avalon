@@ -50,6 +50,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
+import { notifyOps } from "../observability/ops-slack-notifier";
 import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -189,6 +190,18 @@ const SLACK_AUDIENCE_PROFILE_CONCURRENCY = 6;
 /** One shared budget, so a large private room cannot hold prompt admission indefinitely. */
 const SLACK_AUDIENCE_PROFILE_TIMEOUT_MS = 10_000;
 
+/**
+ * How long a spent link challenge — expired or consumed — is kept.
+ *
+ * Long enough that a late click is refused with its reason
+ * (`slack_link_expired`, `slack_link_consumed`) rather than as a link Avalon
+ * has never seen, and nothing more: the hash is single-use and the row holds
+ * no other value. The workspace alarm counts a challenge as due at exactly
+ * this horizon (`workspace-schedule-execution.ts`, the `slack_ingress` arm);
+ * the two must agree, because a reap that leaves behind what the schedule
+ * counts is the hot loop of 2026-08-22.
+ */
+const SLACK_LINK_CHALLENGE_GRACE_MS = 24 * 60 * 60_000;
 /**
  * The `error_code` values a job carries when it failed on authorization, and so
  * the only ones a later reauthorization can plausibly repair.
@@ -331,14 +344,22 @@ export class SlackAgentService {
       }
     }
     const retentionCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+    const spentBefore = new Date(Date.now() - SLACK_LINK_CHALLENGE_GRACE_MS).toISOString();
     await this.env.DB.batch([
       this.env.DB.prepare(
         "DELETE FROM slack_ingress_jobs WHERE status = 'completed' AND completed_at < ?",
       ).bind(retentionCutoff),
+      // Bound to the grace horizon, not `retentionCutoff`. The workspace alarm
+      // counts a challenge as due a day after it was spent, so this reap has
+      // to remove exactly what that expression counts, the way the claim and
+      // pending-prompt reaps below do. Holding a challenge for the 30-day
+      // retention instead left every expired 15-minute token "due" for a
+      // month, and the alarm hot-looped on the gap (2026-08-22, ~1.5 fires a
+      // second for hours).
       this.env.DB.prepare(
         `DELETE FROM slack_link_challenges
          WHERE (consumed_at IS NOT NULL AND consumed_at < ?) OR expires_at < ?`,
-      ).bind(retentionCutoff, retentionCutoff),
+      ).bind(spentBefore, spentBefore),
       this.env.DB.prepare(
         "DELETE FROM slack_agent_thread_claims WHERE lease_expires_at < ?",
       ).bind(at),
@@ -355,11 +376,16 @@ export class SlackAgentService {
        WHERE status = 'failed' AND attempt_count >= 20
        ORDER BY updated_at DESC LIMIT ?`,
     ).bind(limit).all<{ id: string; workspace_id: string; error_code: string | null }>();
-    for (const job of exhausted.results) {
-      logError(this.env, "slack_ingress_retry_budget_exhausted", {
-        job_id: job.id,
-        workspace_id: job.workspace_id,
-        error_code: job.error_code,
+    // One row per pass. The moment a job exhausts is logged at `error` and
+    // reported by `processQueuedIngress`; this is the standing count, and one
+    // error row per job per pass is what buried the 2026-08-22 incident under
+    // fifty thousand lines an hour.
+    if (exhausted.results.length > 0) {
+      logWarn(this.env, "slack_ingress_exhausted_jobs", {
+        workspace_id: exhausted.results[0]?.workspace_id ?? null,
+        count: exhausted.results.length,
+        job_ids: exhausted.results.slice(0, 10).map((job) => job.id),
+        error_codes: [...new Set(exhausted.results.map((job) => job.error_code ?? "unknown"))],
       });
     }
   }
@@ -674,12 +700,19 @@ export class SlackAgentService {
     if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const leaseId = crypto.randomUUID();
     const at = nowIso();
+    // A job at the attempt ceiling is not claimable: the Queue redelivers a
+    // message whose processing threw, and without this bound every redelivery
+    // re-ran a dead job, pinned it again, and reported it again. Only the
+    // reauthorization re-drive, which resets the count, brings one back. A
+    // worker that died mid-attempt (`processing`, lease expired) is reclaimed
+    // regardless, because its attempt was never recorded as a failure.
     const claimed = await this.env.DB.prepare(
       `UPDATE slack_ingress_jobs SET
          status = 'processing', attempt_count = attempt_count + 1,
          lease_id = ?, lease_expires_at = ?, error_code = NULL, updated_at = ?
        WHERE id = ? AND (? = '' OR workspace_id = ?)
-         AND (status IN ('queued', 'failed') OR (status = 'processing' AND lease_expires_at < ?))
+         AND ((status IN ('queued', 'failed') AND attempt_count < 20)
+           OR (status = 'processing' AND lease_expires_at < ?))
        RETURNING id, workspace_id, connection_id, team_id, body_hash, kind, payload_json, lease_id`,
     ).bind(
       leaseId,
@@ -713,12 +746,29 @@ export class SlackAgentService {
       if (slackReconnectRequired(error)) {
         await this.markSlackReconnectRequired(job.connection_id, slackErrorReason(error));
       }
-      await this.env.DB.prepare(
+      const code = slackIngressErrorCode(error);
+      const failed = await this.env.DB.prepare(
         `UPDATE slack_ingress_jobs SET status = 'failed', lease_id = NULL,
            lease_expires_at = NULL, error_code = ?,
            attempt_count = CASE WHEN ? THEN attempt_count ELSE 20 END, updated_at = ?
-         WHERE id = ? AND lease_id = ?`,
-      ).bind(slackIngressErrorCode(error), retryable ? 1 : 0, nowIso(), job.id, leaseId).run();
+         WHERE id = ? AND lease_id = ?
+         RETURNING attempt_count`,
+      ).bind(code, retryable ? 1 : 0, nowIso(), job.id, leaseId).first<{ attempt_count: number }>();
+      // Twenty is the ceiling the recovery sweep and the claim above stop at,
+      // so a job that reaches it here is not coming back on its own: only a
+      // reauthorization re-drive lifts it, or Slack delivering the event
+      // again. Two `@Avalon` mentions died this way on 2026-08-22, and the
+      // only record was an error row nobody was reading — hence the row, then
+      // the notice, in that order.
+      if (failed && failed.attempt_count >= 20) {
+        const fields = { workspace_id: job.workspace_id, job_id: job.id, kind: job.kind, code, retryable };
+        logError(this.env, "slack_ingress_job_exhausted", fields);
+        await notifyOps(this.env, {
+          event: "slack_ingress_job_exhausted",
+          summary: "A Slack event was given up on after its retry budget. Nothing will process it again unless the installation is reauthorized, which re-drives it, or Slack delivers the event afresh; fix the cause first.",
+          fields,
+        });
+      }
       throw error;
     }
   }
@@ -1155,8 +1205,9 @@ export class SlackAgentService {
        WHERE c.token_hash = ?
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace'`,
     ).bind(tokenHash).first<Record<string, unknown>>();
-    // Scheduled maintenance keeps rows for 30 days, far beyond the 15-minute
-    // lifetime, so nothing that merely aged out arrives here as a missing row.
+    // Scheduled maintenance keeps a spent row for a day past its expiry or
+    // consumption, far beyond the 15-minute lifetime, so nothing that merely
+    // aged out arrives here as a missing row.
     if (!challenge) throw new ApiError(404, "slack_link_unknown", "Avalon does not recognize this Slack connection link; click Connect Avalon in Slack to get a new one");
     // Ahead of the state checks: their answers are not owed to a caller who
     // holds a token minted for a different Avalon workspace.

@@ -101,6 +101,26 @@ export interface ScheduledAlarmInput {
   payload?: string | null;
 }
 
+/**
+ * What a handler may say about the entry it just ran, beyond returning.
+ *
+ * Returning nothing is the common answer and leaves the decision to the base:
+ * an entry that is due again at the identical instant after the re-derive is
+ * a stall. `progressed` says the pass moved its source and the identical
+ * instant is transient — a bounded reap that cleared a hundred rows of the
+ * same second and has more behind them — so the entry keeps its immediate
+ * re-wake. `waitMs` says the work is legitimately not possible yet — a sandbox
+ * a live run holds, a directory row the Queue has not caught up to — and asks
+ * for the entry to be held that long without it counting as an attempt.
+ */
+export type ScheduledAlarmOutcome = { progressed: true } | { waitMs: number } | void;
+
+/** One drained entry and what its handler said about it. */
+export interface ScheduledAlarmRun {
+  alarm: ScheduledAlarm;
+  outcome: ScheduledAlarmOutcome;
+}
+
 interface ScheduledAlarmRow {
   [column: string]: SqlStorageValue;
   kind: string;
@@ -327,6 +347,19 @@ export class ScheduledAlarmStore {
     );
     return attempt;
   }
+
+  /** Hold an entry until `until` without counting an attempt: a wait, not a failure. */
+  hold(alarm: Pick<ScheduledAlarm, "kind" | "key" | "dueAt">, until: number, now: number): void {
+    this.sql.exec(
+      `UPDATE _internal_durable_alarms SET retry_at = ?, updated_at = ?
+        WHERE kind = ? AND alarm_key = ? AND due_at = ?`,
+      until,
+      now,
+      alarm.kind,
+      alarm.key,
+      alarm.dueAt,
+    );
+  }
 }
 
 /**
@@ -352,8 +385,11 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
    */
   protected abstract nextDerivedAlarmAt(now: number): number | null;
 
-  /** Run one due stored entry. Throwing puts it behind its retry gate. */
-  protected abstract runScheduledAlarm(alarm: ScheduledAlarm): Promise<void>;
+  /**
+   * Run one due stored entry. Throwing puts it behind its retry gate; what it
+   * returns is read by the stall check after the re-derive.
+   */
+  protected abstract runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome>;
 
   /** Whatever this object's alarm does that is not a stored entry. */
   protected abstract runDueAlarmWork(now: number): Promise<void>;
@@ -383,6 +419,14 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
     error: unknown,
     attempt: number,
   ): void;
+
+  /**
+   * Report an entry that ran, returned, and came back due at the same instant.
+   * The base has already gated it exactly as it would a throw, so like the
+   * failure hook this is observability only, implemented per object for its
+   * own identity fields.
+   */
+  protected abstract onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void;
 
   /**
    * Add or move one entry, then point the alarm at whatever is now earliest.
@@ -467,20 +511,64 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
    * turn the object into a hot loop either — so the gate is persisted before
    * the failure hook runs, where an exception would otherwise leave the entry
    * due again a millisecond later.
+   *
+   * Returns the entries whose handler returned, as they were when they ran
+   * and with what the handler said: the stall check after the re-derive needs
+   * the instant and the attempt the settle is about to erase.
    */
-  protected async drainDueScheduledAlarms(now: number): Promise<number> {
-    let ran = 0;
+  protected async drainDueScheduledAlarms(now: number): Promise<ScheduledAlarmRun[]> {
+    const ran: ScheduledAlarmRun[] = [];
     for (const alarm of this.scheduledAlarms.due(now)) {
       try {
-        await this.runScheduledAlarm(alarm);
+        const outcome = await this.runScheduledAlarm(alarm);
         this.scheduledAlarms.settle(alarm, Date.now());
-        ran += 1;
+        ran.push({ alarm, outcome });
       } catch (error) {
         const attempt = this.scheduledAlarms.defer(alarm, Date.now());
         this.onScheduledAlarmFailure(alarm, error, attempt);
       }
     }
     return ran;
+  }
+
+  /**
+   * Hold back every entry that ran, returned, and is due again at the very
+   * instant it just ran at.
+   *
+   * The retry gate has always caught a handler that throws. It never caught one
+   * that returns without moving its source: the settle retires the entry, the
+   * re-derive in `runDueAlarmWork` puts the same past instant straight back,
+   * and `armNextAlarm` floors it at `now + 1` — one wake per handler duration,
+   * for as long as the source stays put, with nothing logged. That is the
+   * shape every hot-alarm loop here has had. On 2026-08-22 a Slack link
+   * challenge that expires after 15 minutes but was reaped only after 30 days
+   * ran one workspace's alarm about 1.5 times a second for hours.
+   *
+   * The test is deliberately narrow: the entry is back under the same key with
+   * the identical `dueAt`, and that instant has already passed. A handler that
+   * advanced its row re-derives a later instant; one that rescheduled itself
+   * wrote a different one; an entry the drain never reached, or that came due
+   * during it, is not in `ran` and still gets its immediate wake. A handler
+   * that reported progress keeps its immediate wake too, and one that asked to
+   * wait is held without an attempt counted. Only an entry that made no
+   * progress at all is held behind the gate a throw earns, with the attempt it
+   * arrived with carried forward — the settle deleted the row and the reconcile
+   * re-inserted it at zero, and without the carry the delay restarts at its
+   * first step on every wake and never reaches the ceiling.
+   */
+  protected gateStalledScheduledAlarms(ran: readonly ScheduledAlarmRun[], now: number): void {
+    for (const { alarm, outcome } of ran) {
+      if (outcome && "progressed" in outcome) continue;
+      const current = this.scheduledAlarms.get(alarm.kind, alarm.key);
+      if (current === null || current.dueAt !== alarm.dueAt) continue;
+      if (Math.max(current.dueAt, current.retryAt) > now) continue;
+      if (outcome && "waitMs" in outcome) {
+        this.scheduledAlarms.hold(current, now + Math.max(1, Math.floor(outcome.waitMs)), now);
+        continue;
+      }
+      const attempt = this.scheduledAlarms.defer({ ...current, attempt: alarm.attempt }, now);
+      this.onScheduledAlarmStalled(current, attempt);
+    }
   }
 
   /**
@@ -516,8 +604,9 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
       await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, deferral));
       return;
     }
-    await this.drainDueScheduledAlarms(now);
+    const ran = await this.drainDueScheduledAlarms(now);
     await this.runDueAlarmWork(now);
+    this.gateStalledScheduledAlarms(ran, Date.now());
     await this.armAlarmAfterDueWork();
   }
 }

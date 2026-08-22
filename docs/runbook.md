@@ -74,6 +74,10 @@ Set these shared Worker secrets separately in each regional deployment:
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
   principal accepted by that region's restricted telemetry operator surface
+- `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`; optional, as a pair — the
+  internal Slack app operator notifications are posted with, and the channel
+  they go to ([`ops-alerting.md`](ops-alerting.md)). Either absent, the Worker
+  posts nothing and `/health` reports `opsNotifications` as not or half configured
 
 Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker when PostHog delivery is
 enabled. The checked-in Global configuration fixes `POSTHOG_HOST` to the approved
@@ -962,6 +966,18 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 | Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
+
+**Operator notifications** are the one push surface. `notifyOps`
+([`ops-alerting.md`](ops-alerting.md)) posts to the `OPS_SLACK_CHANNEL_ID`
+channel when a Durable Object alarm entry reaches its third consecutive attempt
+without progress — `*_scheduled_alarm_failed` or `*_scheduled_alarm_stalled`
+for the workspace, work-stream, and agent objects, each also at `level = error`
+from that attempt on, so the Failures view carries them — and when a Slack
+ingress job is given up on (`slack_ingress_job_exhausted`). Its own outcomes
+are `ops_notification_sent` (info) and `ops_notification_failed` (warn, with
+`code` and `status`); a region whose notices are all failing is a region whose
+webhook needs attention, not a quiet one. Outside `production` and `staging`
+the notifier posts nothing.
 
 **Work-stream flow latency** has no saved view yet, deliberately: the thresholds
 would be guesses until there are production rows to pick them from. Starting,
