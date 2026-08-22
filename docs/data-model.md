@@ -40,7 +40,7 @@ knowing an object's ID is enough to read it — it never is.
 | --- | --- |
 | `packages/db/migrations/NNNN_*.sql` | The authoritative regional D1 schema. Monotonically numbered, immutable once deployed. |
 | `packages/db/src/index.ts` | Region-aware repositories and the D1 wrapper every service is handed. |
-| `packages/db/test/migrations.test.ts` | Applies every migration in order and asserts on the resulting schema. |
+| `packages/db/test/baseline-migration.test.ts` | Replays every migration in order and proves the checked-in baseline leaves the same schema. |
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
@@ -672,13 +672,17 @@ has a document, and the column notes above point at it rather than restating it:
 
 `pnpm --filter @avalon/db test` is the suite that covers the schema itself:
 
-- `packages/db/test/migrations.test.ts` applies every `.sql` file in
+- `packages/db/test/baseline-migration.test.ts` replays every `.sql` file in
   `packages/db/migrations/` in sorted order into an in-memory `node:sqlite`
-  database and asserts on the result. `migrateDatabaseThrough(fileName)` stops
-  part-way, which is how a data backfill is tested against the schema as it stood
-  when the backfill shipped — that is the fixture to reach for, rather than
-  building a bespoke database.
-- `packages/db/test/workstreams.test.ts` drives the repositories over that same
+  database. There is no longer a per-migration suite asserting on each step: all
+  95 migrations sit at or below the baseline boundary and are immutable once
+  deployed, and `scripts/d1-baseline.test.mjs` fails if one is edited or a file
+  is inserted below it — so a step-by-step assertion could not catch a change the
+  digest does not catch first.
+- `packages/db/test/dev-seed.test.ts` covers `seed.sql` and `seed-product.json`,
+  which — unlike the migrations — are live editable files. Its standing job is to
+  fail if the D1 seed ever recreates a product table that migration 0090 dropped.
+- `packages/db/src/index.test.ts` drives the repositories over that same
   migrated SQLite database through a `D1DatabaseLike` shim.
 - `packages/db/test/baseline-migration.test.ts` proves the checked-in baseline
   leaves the same database as replaying the migrations it subsumes, comparing
@@ -708,6 +712,40 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-22 — The per-migration test suite is retired
+
+**What changed:** `packages/db/test/migrations.test.ts` is deleted — 3062 lines
+and 48 tests that applied the chain step by step and asserted on each
+intermediate schema. `baseline-migration.test.ts` still replays all 95 files and
+diffs the result against the checked-in baseline, so the chain is still executed
+on every run; what is gone is the per-step assertion. The three tests in that
+file that covered the development seed rather than a migration moved to
+`packages/db/test/dev-seed.test.ts`.
+
+**Why:** Every migration now sits at or below the 0090 baseline boundary, and a
+deployed migration is immutable. `scripts/d1-baseline.test.mjs` already fails if
+a subsumed migration is edited or a file is inserted below the boundary — the
+manifest digest covers the file list *and* the contents. A test asserting that
+`0037` leaves a particular column therefore could not catch a regression the
+digest does not catch first: the file it describes cannot change. What the suite
+did still cost was runtime — it was most of `pnpm --filter @avalon/db test`,
+which drops from ~24s to ~3s.
+
+**The alternative that was rejected:** keeping the ~14 tests that assert on
+pre-0090 legacy shapes and deleting the rest. It draws the line in the wrong
+place — those are the *least* relevant, describing tables 0090 dropped, and
+keeping them would have left the impression that a per-migration test is still
+the thing to write when adding a migration. It is not: a new migration is
+covered by the baseline equivalence check and by the service test for the
+behaviour it enables.
+
+**What a future change has to respect:** this holds *because* the boundary
+subsumes everything. If a migration is ever added above the baseline boundary
+and left there, nothing replays it step by step and no digest covers it — move
+the boundary, or test it where its behaviour is used. And `seed.sql` and
+`seed-product.json` are not migrations: they stay editable, so `dev-seed.test.ts`
+keeps asserting that the D1 seed never recreates a product table 0090 dropped.
 
 ### 2026-08-21 — A work stream is born private
 
