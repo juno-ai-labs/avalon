@@ -22,7 +22,7 @@ name: Deploy Avalon migration tracker
 # `avalon-api-global` can already deploy anything in the account.
 #
 # Prerequisites this workflow does not perform (one-time, per docs/runbook.md):
-# the `avalon-migration-reports` queue must exist (proved below, not created),
+# the `avalon-migration-reports` queue is created below if it is missing, but
 # Cloudflare Access must be configured, and the sweep's read-only
 # `CLOUDFLARE_API_TOKEN` must be set as a Worker secret — a different, runtime
 # token from the deployment one above. None of them block the deploy: an
@@ -112,7 +112,7 @@ jobs:
       # Wrangler file and create whatever is missing first; nothing about a
       # queue is a manual step. The API deployment runs the same script, and a
       # create the two race on is resolved by re-listing, not by failing.
-      - name: Create every Queue the Wrangler configs declare that does not exist
+      - name: Ensure every Queue the Wrangler configs declare exists
         run: node scripts/ensure-cloudflare-queues.mjs
 
       - name: Deploy the migration tracker
