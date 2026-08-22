@@ -7,6 +7,13 @@ export interface WorkstreamAutomationPromptContext {
   versionNumber: number;
   instructions: string;
   expectedOutputs: string[];
+  /**
+   * Where Avalon itself copies this run's final message once the run ends —
+   * the destinations frozen on the automation when it was saved. The model is
+   * told so it does not send the same result a second time through a provider
+   * tool of its own.
+   */
+  resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
   defaultBehavior: Record<string, unknown>;
   overrides: Record<string, unknown>;
   durableTables: Array<{
@@ -75,6 +82,7 @@ ${ATTACHMENT_INSPECTION_POLICY}
 # Communication and completion
 - For interactive work that needs multiple tool rounds, begin with one short plan before the first tool calls and add only meaningful phase-change updates.
 - For automation or other headless work, skip progress narration and concentrate on the durable result.
+- Avalon delivers a run's final message itself to every destination listed under the task context's automation.resultDelivery, so that message is the deliverable rather than something to also send. Never send, draft, or post a copy of the result to a destination listed there — not through a connector's mail, message, or post tool, and not through any other surface. A different recipient the task itself names is a different destination and is unaffected.
 - Finish with the outcome first, the most useful evidence, and any unresolved blocker. Be concise and do not narrate private reasoning.`;
 
 export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): string {

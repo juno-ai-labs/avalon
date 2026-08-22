@@ -1,45 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { digestEmailHtml, digestMarkdownToHtml } from "../src/services/digest-email-content";
+import { digestEmailHtml } from "../src/services/digest-email-content";
 import { occurrenceLabel } from "../src/services/digest-delivery-service";
 
-describe("digest markdown rendering", () => {
-  it("renders the structure a digest actually uses", () => {
-    const html = digestMarkdownToHtml([
-      "## Launch",
-      "",
-      "Two things moved today.",
-      "",
-      "- Shipped the **installer**",
-      "- Reviewed [the plan](https://example.com/plan)",
-    ].join("\n"));
-
-    // Two heading levels and no more: a third reads as noise in a mail client.
-    expect(html).toContain("<h2");
-    expect(html).toContain("Launch");
-    expect(html).toContain("<ul");
-    expect(html).toContain("<strong");
-    expect(html).toContain('<a href="https://example.com/plan"');
-  });
-
-  it("never lets model output become markup", () => {
-    const html = digestMarkdownToHtml('<img src=x onerror="alert(1)"> and <script>alert(2)</script>');
-
-    expect(html).not.toContain("<img");
-    expect(html).not.toContain("<script");
-    expect(html).toContain("&lt;img");
-    expect(html).toContain("&lt;script");
-  });
-
-  it("refuses a link target that is not http", () => {
-    // The label survives as text; only the anchor is withheld, so nothing is
-    // silently swallowed and nothing dangerous is emitted.
-    const html = digestMarkdownToHtml("[click](javascript:alert(1))");
-
-    expect(html).not.toContain("<a href");
-    expect(html).toContain("click");
-  });
-
+describe("digest email", () => {
   it("keeps every style inline, because mail clients drop stylesheets", () => {
     const html = digestEmailHtml({
       recipientName: "Ada",

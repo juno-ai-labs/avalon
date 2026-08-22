@@ -45,6 +45,7 @@ const workstreamAutomation = {
   versionNumber: 3,
   instructions: currentDraft.instructions,
   expectedOutputs: currentDraft.expectedOutputs,
+  resultDelivery: [{ channel: "email" as const, destination: "owner@example.com" }],
   defaultBehavior: currentDraft.defaultBehavior,
   overrides: { tone: "concise" },
   durableTables: [],
@@ -82,7 +83,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "84d3ee69bf92d84e8664729f007729ae832ab2539fc350e6233cca7994de3290",
+        hash: "6e290ce270bf7d9dd8378405f2d87c56fd729d6ded5761bab912fe86672851a0",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -93,14 +94,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "31d4cc88c2bd3068cd3cc81d8019f400978a3bc126457d7e14a4401bf1a01837",
+        hash: "3a6f987b732cbfe2080bb9a1e86e5850e49710c8b13dfd1b9d9884bc6d0af137",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "8c65d13a515af943f34b7fc81aa6aa4c781fcbb30e6528cd3fb7a4d560e6fe3e",
+        hash: "958972525820211ae470097871ad7c3237ff9993ed275b5268d17be05860e6cc",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -108,7 +109,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "e140dcc462583c7a91d3aaaaaf5a3779564f552021c7c645a66685d071ef3b9f",
+        hash: "ac6004fdd636619c6489071d81b356da237eb764e7522dd985e4f286fa0c47b0",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -204,6 +205,27 @@ describe("prompt renderers", () => {
     )).toEqual(Object.fromEntries(
       Object.entries(goldenCases).map(([name, golden]) => [name, golden.hash]),
     ));
+  });
+
+  it("tells an automation run that Avalon delivers its result, and where", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Weekly engineering brief: 2026-08-07",
+      objective: "Produce the scheduled weekly engineering brief.",
+      automation: workstreamAutomation,
+    });
+
+    expect(prompt).toContain('"destination": "owner@example.com"');
+    expect(prompt).toContain("Avalon delivers a run's final message itself to every destination listed under the task context's automation.resultDelivery");
+    expect(prompt).toContain("Never send, draft, or post a copy of the result to a destination listed there");
+  });
+
+  it("tells the automation compiler that a destination is not a send step", () => {
+    const [system] = renderAutomationCompilerMessages({
+      messages: [{ role: "user", content: "Email me a competitor briefing every morning." }],
+    });
+
+    expect(system?.content).toContain("never instruct a provider send such as gmail.send for it");
+    expect(system?.content).toContain("Avalon itself sends each run's final message to the destinations chosen when the automation is accepted");
   });
 
   it("keeps hostile checkpoint data ordered inside one user-role payload", () => {
