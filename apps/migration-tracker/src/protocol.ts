@@ -226,9 +226,15 @@ export interface MigrationTarget {
  *
  * `matched` counts every live object of the class before the cap, so a
  * truncated run reports the size it could not cover rather than the size it
- * did. `unroutable` counts the objects whose region could not be resolved: a
- * command is addressed to a region's queue, so an object that has never
- * reported and whose script name is unrecognised has nowhere to be sent.
+ * did.
+ *
+ * `unroutable` counts the objects a command cannot be addressed to, and it has
+ * two disjoint causes that the run reports as one number because the operator's
+ * remedy for both is the same — the object was not reached. Here it is the
+ * objects whose *region* could not be resolved from either a report or a known
+ * script name. The dispatcher adds the other cause: an object whose region is
+ * known but whose command queue this deployment holds no binding for. They
+ * cannot overlap, because an object with no region never reaches `targets`.
  */
 export interface MigrationTargetSelection {
   targets: MigrationTarget[];
