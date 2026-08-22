@@ -1,5 +1,5 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
-import { createTerminalPortFactory } from "./object-port";
+import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
 import { asWorkspaceId } from "@avalon/contracts";
 import {
   githubRepositoryAuthorization,
@@ -103,6 +103,7 @@ export function createTerminalRepositorySelector(
   provider: TerminalSandboxProvider,
   catalog: TerminalRepositoryCatalogGateway,
   coordinator: TerminalSandboxCoordinator,
+  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
 ): TerminalRepositorySelector {
   return {
     async checkout(context, input) {
@@ -186,7 +187,7 @@ export function createTerminalRepositorySelector(
         Number(left.policyAccess === "full_access") - Number(right.policyAccess === "full_access")
       ));
       const selected = candidates[0]!;
-      const terminal = createTerminalPortFactory(env)(context.workspaceId, context.workstreamId);
+      const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
       const current = await terminal.repository();
       const sameRepositoryIdentity = (
         current?.state === "selected"
@@ -307,7 +308,7 @@ export function createTerminalRepositorySelector(
         harnessRunId: context.harnessRunId,
         triggerMessageId: run?.trigger_message_id ?? null,
         executionPrincipal: context.executionPrincipal,
-      });
+      }, new Date(), terminalPortFactory);
       await emitProductUsageTelemetry(env, {
         workspaceId: asWorkspaceId(context.workspaceId),
         userId: context.executionPrincipal.userId,
