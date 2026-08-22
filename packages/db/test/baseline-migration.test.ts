@@ -24,35 +24,102 @@ import { beforeAll, describe, expect, it } from "vitest";
 const migrationsDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 const baselinesDirectory = fileURLToPath(new URL("../baselines/", import.meta.url));
 
-const manifest = JSON.parse(
-  readFileSync(new URL("../baselines/manifest.json", import.meta.url), "utf8"),
-).baseline as {
+interface BaselineEntry {
   through: string;
   file: string;
   migrations: string[];
   volatileColumns: Record<string, string[]>;
   objectCounts: { tables: number; indexes: number; triggers: number };
   seededRowCounts: Record<string, number>;
-};
+}
+
+const manifestFile = JSON.parse(
+  readFileSync(new URL("../baselines/manifest.json", import.meta.url), "utf8"),
+) as { baselines?: BaselineEntry[]; baseline?: BaselineEntry };
+
+/**
+ * Wrangler's own ordering, re-derived here rather than imported.
+ *
+ * The rest of this file re-derives everything it checks, and ordering is not an
+ * exception: importing `compareMigrationPaths` from `scripts/d1-baseline.mjs`
+ * would let the generator and its check agree on a wrong order. A plain string
+ * sort is *not* it — `89_backfill.sql` is below a `0090` boundary for Wrangler
+ * and above it for `Array.prototype.sort` — and every assertion below about
+ * what a baseline subsumes, what is left pending, and what gets replayed on top
+ * of it depends on getting that boundary the same way the migrate script does.
+ *
+ * "records exactly its own subsumed migrations" pins this against the shared
+ * implementation through the artifact: the set this comparator puts below a
+ * boundary has to be the set the generator recorded in the manifest.
+ */
+function compareMigrations(left: string, right: string): number {
+  const leftNumber = Number.parseInt(left.split("_")[0] ?? "", 10);
+  const rightNumber = Number.parseInt(right.split("_")[0] ?? "", 10);
+  if (leftNumber !== rightNumber) {
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+    if (Number.isFinite(leftNumber)) return -1;
+    if (Number.isFinite(rightNumber)) return 1;
+  }
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+/** Every checked-in baseline, oldest boundary first. */
+const allBaselines: BaselineEntry[] = [...(manifestFile.baselines ?? (manifestFile.baseline ? [manifestFile.baseline] : []))]
+  .sort((left, right) => compareMigrations(left.through, right.through));
+
+/** The one an empty database is given: the boundary that reaches furthest. */
+const manifest = allBaselines.at(-1) as BaselineEntry;
 
 const baselineSql = readFileSync(new URL(`../baselines/${manifest.file}`, import.meta.url), "utf8");
 
-/** Applies the migrations the baseline subsumes, in Wrangler's order. */
+const migrationFileNames = readdirSync(migrationsDirectory)
+  .filter((name) => name.endsWith(".sql"))
+  .sort(compareMigrations);
+
+/** The migrations a baseline stands for: everything at or below its boundary. */
+function atOrBelow(boundary: string): string[] {
+  return migrationFileNames.filter((name) => compareMigrations(name, boundary) <= 0);
+}
+
+/** The migrations that still have to run on top of a baseline. */
+function above(boundary: string): string[] {
+  return migrationFileNames.filter((name) => compareMigrations(name, boundary) > 0);
+}
+
+/** Replays every migration in the repository, in Wrangler's order. */
 function chainDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
-  const files = readdirSync(migrationsDirectory)
-    .filter((name) => name.endsWith(".sql"))
-    .sort()
-    .filter((name) => name <= manifest.through);
-  for (const name of files) {
+  for (const name of migrationFileNames) {
     database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
   }
   return database;
 }
 
-function baselineDatabase(): DatabaseSync {
+/**
+ * A baseline, plus every migration above its boundary — which is what the
+ * migrate script actually builds, and the only thing that can be compared to a
+ * full replay once work continues above a baseline. Comparing the snapshot
+ * alone would hold today, when the boundary happens to be the newest migration,
+ * and start failing the day one lands above it.
+ */
+function baselineOnly(baseline: BaselineEntry = manifest): DatabaseSync {
   const database = new DatabaseSync(":memory:");
-  database.exec(baselineSql);
+  database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
+  return database;
+}
+
+/**
+ * A baseline, plus every migration above its boundary — which is what the
+ * migrate script actually builds.
+ */
+function baselineDatabase(baseline: BaselineEntry = manifest): DatabaseSync {
+  const database = new DatabaseSync(":memory:");
+  database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
+  for (const name of above(baseline.through)) {
+    database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
+  }
   return database;
 }
 
@@ -80,6 +147,13 @@ function userTableNames(database: DatabaseSync): string[] {
               ORDER BY name`)
     .all()
     .map((row) => String(row.name));
+}
+
+/** The tables holding at least one row. */
+function populatedTables(database: DatabaseSync): string[] {
+  return userTableNames(database)
+    .filter((table) => Number(database.prepare(`SELECT COUNT(*) c FROM "${table}"`).get()?.c) > 0)
+    .sort();
 }
 
 function tableShape(database: DatabaseSync, table: string): TableShape {
@@ -154,7 +228,6 @@ describe("the D1 baseline reproduces the migration chain", () => {
 
   it("creates exactly the same tables", () => {
     expect(userTableNames(baseline)).toEqual(userTableNames(chain));
-    expect(userTableNames(baseline)).toHaveLength(manifest.objectCounts.tables);
   });
 
   it("gives every table the same columns, types, nullability, defaults, and primary key", () => {
@@ -180,9 +253,7 @@ describe("the D1 baseline reproduces the migration chain", () => {
   });
 
   it("creates the same triggers with the same bodies", () => {
-    const bodies = triggerBodies(baseline);
-    expect(bodies).toEqual(triggerBodies(chain));
-    expect(Object.keys(bodies)).toHaveLength(manifest.objectCounts.triggers);
+    expect(triggerBodies(baseline)).toEqual(triggerBodies(chain));
   });
 
   it("seeds the same control rows", () => {
@@ -194,9 +265,12 @@ describe("the D1 baseline reproduces the migration chain", () => {
   });
 
   it("leaves no table holding rows the chain does not seed", () => {
-    const populated = userTableNames(baseline)
-      .filter((table) => Number(baseline.prepare(`SELECT COUNT(*) c FROM "${table}"`).get()?.c) > 0);
-    expect(populated.sort()).toEqual(Object.keys(manifest.seededRowCounts).sort());
+    // Against the chain rather than against `manifest.seededRowCounts`: the
+    // manifest describes the snapshot file, and this database is the snapshot
+    // plus everything above its boundary. A migration that seeds a row into a
+    // table it creates is a correct thing to do, and it belongs on both sides
+    // of this comparison rather than failing it.
+    expect(populatedTables(baseline)).toEqual(populatedTables(chain));
   });
 
   it("leaves a database whose foreign keys all resolve", () => {
@@ -268,10 +342,7 @@ describe("the baseline only ever applies to an empty database", () => {
 
   it("refuses a partially migrated database, the exact state a broken chain leaves", () => {
     const database = new DatabaseSync(":memory:");
-    const partial = readdirSync(migrationsDirectory)
-      .filter((name) => name.endsWith(".sql"))
-      .sort()
-      .filter((name) => name <= "0077_connector_oauth_telemetry_shape.sql");
+    const partial = atOrBelow("0077_connector_oauth_telemetry_shape.sql");
     for (const name of partial) database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
     expect(() => database.exec(baselineSql)).toThrow(guard);
     database.close();
@@ -353,7 +424,7 @@ describe("the baseline hands a correct ledger to Wrangler", () => {
     const recorded = database.prepare("SELECT name FROM d1_migrations ORDER BY id").all()
       .map((row) => String(row.name));
     expect(recorded).toContain(manifest.through);
-    expect(recorded.filter((name) => name > manifest.through)).toEqual([]);
+    expect(recorded.filter((name) => compareMigrations(name, manifest.through) > 0)).toEqual([]);
     database.close();
   });
 
@@ -451,9 +522,119 @@ describe("the baseline is not mistaken for a migration", () => {
     // A baseline is an addition. If someone ever "cleans up" by deleting the
     // migrations it subsumes, every hosted database that has not run them loses
     // the only description of how to get there.
-    const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort();
+    const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql"));
     for (const subsumed of manifest.migrations) {
       expect(migrationFiles, `${subsumed} was deleted after being subsumed`).toContain(subsumed);
     }
   });
+});
+
+describe("every checked-in baseline, not just the newest", () => {
+  // The newest baseline is the one an empty database is given, so the suite
+  // above is about that one. This asserts the property that makes keeping older
+  // baselines safe: each of them, plus the migrations above its own boundary,
+  // still reproduces the chain. A baseline that stopped being true would
+  // otherwise sit in the manifest looking usable.
+  it.each(allBaselines.map((baseline) => [baseline.through, baseline] as const))(
+    "%s plus everything after it equals a full replay",
+    (_through, baseline) => {
+      const chain = chainDatabase();
+      const built = baselineDatabase(baseline);
+      try {
+        expect(userTableNames(built)).toEqual(userTableNames(chain));
+        for (const table of userTableNames(chain)) {
+          expect(tableShape(built, table), table).toEqual(tableShape(chain, table));
+        }
+        expect(triggerBodies(built)).toEqual(triggerBodies(chain));
+        expect(built.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      } finally {
+        chain.close();
+        built.close();
+      }
+    },
+  );
+
+  it("records exactly its own subsumed migrations in the ledger, and no more", () => {
+    for (const baseline of allBaselines) {
+      const database = new DatabaseSync(":memory:");
+      try {
+        database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
+        const recorded = database.prepare("SELECT name FROM d1_migrations ORDER BY id").all()
+          .map((row) => String(row.name));
+        expect(recorded, baseline.through).toEqual(baseline.migrations);
+        // And the ledger is exactly what this file's own reading of Wrangler's
+        // order says it should be. If the two ever disagreed — an unpadded name
+        // landing on the other side of the boundary for one of them — the
+        // suite would be replaying a different chain than the one the generator
+        // subsumed, and every comparison below it would be against the wrong
+        // database while still passing.
+        expect(recorded, baseline.through).toEqual(atOrBelow(baseline.through));
+        // Everything above the boundary must still be pending, or the migrate
+        // script would skip work a fresh database has not done.
+        expect(recorded.filter((name) => above(baseline.through).includes(name))).toEqual([]);
+      } finally {
+        database.close();
+      }
+    }
+  });
+
+  it("names a file that exists, at the boundary its name claims", () => {
+    for (const baseline of allBaselines) {
+      expect(baseline.file).toBe(`b_${baseline.through}`);
+      expect(() => readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url))).not.toThrow();
+      expect(migrationFileNames).toContain(baseline.through);
+    }
+  });
+});
+
+describe("the manifest describes the snapshot file, not the chain above it", () => {
+  // `objectCounts` and `seededRowCounts` are recorded by the generator from the
+  // database it snapshotted, so they are claims about the `.sql` file alone.
+  // Asserting them against baseline-plus-later-migrations conflates the two and
+  // goes red the day an ordinary migration adds a table — a failure that says
+  // nothing about whether the baseline is correct. Here they meet the database
+  // they actually describe.
+  function schemaCounts(database: DatabaseSync): Record<string, number> {
+    const counts = database
+      .prepare(`SELECT type, COUNT(*) AS c FROM sqlite_schema
+                  WHERE sql IS NOT NULL AND TRIM(sql) <> ''
+                    AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+                    AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'
+                    AND name <> 'd1_migrations'
+                    AND name <> '_baseline_empty_database_guard'
+                    AND COALESCE(tbl_name, '') <> 'd1_migrations'
+                  GROUP BY type`)
+      .all();
+    return Object.fromEntries(counts.map((row) => [String(row.type), Number(row.c)]));
+  }
+
+  it.each(allBaselines.map((baseline) => [baseline.through, baseline] as const))(
+    "%s holds the tables, indexes and triggers its manifest entry claims",
+    (_through, baseline) => {
+      const database = baselineOnly(baseline);
+      try {
+        const counts = schemaCounts(database);
+        expect(counts.table ?? 0).toBe(baseline.objectCounts.tables);
+        expect(counts.index ?? 0).toBe(baseline.objectCounts.indexes);
+        expect(counts.trigger ?? 0).toBe(baseline.objectCounts.triggers);
+      } finally {
+        database.close();
+      }
+    },
+  );
+
+  it.each(allBaselines.map((baseline) => [baseline.through, baseline] as const))(
+    "%s seeds rows into exactly the tables and counts its manifest entry claims",
+    (_through, baseline) => {
+      const database = baselineOnly(baseline);
+      try {
+        expect(populatedTables(database)).toEqual(Object.keys(baseline.seededRowCounts).sort());
+        for (const [table, count] of Object.entries(baseline.seededRowCounts)) {
+          expect(Number(database.prepare(`SELECT COUNT(*) c FROM "${table}"`).get()?.c), table).toBe(count);
+        }
+      } finally {
+        database.close();
+      }
+    },
+  );
 });

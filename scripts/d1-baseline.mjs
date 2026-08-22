@@ -109,9 +109,57 @@ export function internalTableExclusionSql(columnName = "name") {
   ].join("\n              AND ");
 }
 
+/**
+ * Orders two migration names **exactly as Wrangler does**, which is not the same
+ * as ordering them as strings.
+ *
+ * Wrangler's `compareMigrationPaths` splits on `/`, and for each segment parses
+ * the leading integer (`parseInt(segment.split("_")[0], 10)`); when both parse
+ * and differ it compares them numerically, and only otherwise falls back to a
+ * string compare. So `89_backfill.sql` sorts *before* `0090_boundary.sql` for
+ * Wrangler and *after* it for `Array.prototype.sort`.
+ *
+ * That divergence is not cosmetic. Every zero-padded name in this repository
+ * orders identically either way, which is why a string sort survived this long —
+ * but a single unpadded file lands below the boundary for Wrangler and above it
+ * for us, so it is applied on top of a baseline that never ran it, the manifest
+ * digest never changes because the subsumed set never changes, and the
+ * `outOfOrder` check misses it because that compared as strings too. The
+ * database silently differs from a replay. Comparing the way Wrangler does
+ * removes the whole class rather than policing filenames for one shape of it.
+ *
+ * Copied from `wrangler-dist/cli.js` (`compareMigrationPaths` /
+ * `compareSegments`, wrangler 4.123.0). If Wrangler ever changes this, the
+ * tooling has to follow: it is Wrangler that decides the order migrations are
+ * applied in, and this only has to agree.
+ */
+export function compareMigrationPaths(left, right) {
+  const leftSegments = left.split("/");
+  const rightSegments = right.split("/");
+  const shared = Math.min(leftSegments.length, rightSegments.length);
+  for (let index = 0; index < shared; index += 1) {
+    const comparison = compareMigrationSegments(leftSegments[index], rightSegments[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return leftSegments.length - rightSegments.length;
+}
+
+function compareMigrationSegments(left, right) {
+  const leftNumber = Number.parseInt(left.split("_")[0], 10);
+  const rightNumber = Number.parseInt(right.split("_")[0], 10);
+  if (leftNumber !== rightNumber) {
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+    if (Number.isFinite(leftNumber)) return -1;
+    if (Number.isFinite(rightNumber)) return 1;
+  }
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** Every migration file in `directory`, in the order Wrangler applies them. */
 export function listMigrationFiles(directory) {
-  return readdirSync(directory).filter((name) => name.endsWith(".sql")).sort();
+  return readdirSync(directory).filter((name) => name.endsWith(".sql")).sort(compareMigrationPaths);
 }
 
 /**
@@ -123,18 +171,22 @@ export function listMigrationFiles(directory) {
  * would include one of a pair and drop the other, producing a baseline missing
  * a migration that every real database ran.
  *
- * The string comparison is the same ordering Wrangler applies migrations in,
- * and it is correct only because the sequence is zero-padded to four digits —
- * the convention `classify-pending-d1-migrations.mjs` also encodes. A name that
- * broke it (`0090a_…`, or a five-digit sequence) would sort somewhere this does
- * not expect. The manifest digest is the backstop: it fails on any insertion at
- * or below the boundary, however that file sorts.
+ * The ordering is `compareMigrationPaths` — Wrangler's own comparator, which
+ * parses the leading integer and compares numerically, falling back to a string
+ * compare only on a tie. That tie-break is what keeps the doubled numbers
+ * together, and the numeric half is what stops an unpadded name (`89_backfill.sql`)
+ * landing on the wrong side of a `0090` boundary. A bare `Array.sort()` used to
+ * stand here and disagreed with Wrangler in exactly that case, which the
+ * manifest digest does *not* catch: the subsumed set is unchanged, so the digest
+ * is unchanged, so the baseline stays usable while the database it produces
+ * diverges from a replay. The digest is the backstop for a file inserted at or
+ * below the boundary, not for one the two orderings disagree about.
  */
 export function subsumedMigrations(allFiles, throughFile) {
   if (!allFiles.includes(throughFile)) {
     throw new Error(`${throughFile} is not a migration in this repository`);
   }
-  return allFiles.filter((name) => name <= throughFile);
+  return allFiles.filter((name) => compareMigrationPaths(name, throughFile) <= 0);
 }
 
 /**
@@ -171,11 +223,92 @@ export function snapshotDatabase(database) {
     .filter((object) => typeof object.sql === "string" && object.sql.trim() !== "");
 
   const rows = {};
+  const dependsOn = {};
+  const storageTypes = {};
+  const byteLengths = {};
   for (const { name } of objects.filter((object) => object.type === "table")) {
-    const tableRows = database.prepare(`SELECT * FROM "${name}"`).all();
-    if (tableRows.length > 0) rows[name] = tableRows;
+    // `SELECT *` returns generated columns, and `INSERT` rejects them —
+    // "cannot INSERT into generated column". `table_xinfo` marks them: hidden 2
+    // is VIRTUAL, hidden 3 is STORED. Both are derived from other columns, so
+    // reproducing them is neither possible nor needed.
+    const storedColumns = database.prepare("SELECT name, hidden FROM pragma_table_xinfo(?)")
+      .all(name)
+      .filter((column) => ![2, 3].includes(Number(column.hidden)))
+      .map((column) => String(column.name));
+    if (storedColumns.length === 0) continue;
+    const columnList = storedColumns.map((column) => `"${column.replaceAll('"', '""')}"`).join(", ");
+
+    // Integers beyond 2^53 — a Slack `ts` in nanoseconds, a snowflake id —
+    // throw "Value is too large to be represented as a JavaScript number"
+    // without this. Values that fit are handed back as ordinary numbers so
+    // nothing downstream has to learn about BigInt for the common case.
+    const statement = database.prepare(`SELECT ${columnList} FROM "${name}"`);
+    statement.setReadBigInts?.(true);
+    const tableRows = statement.all().map((row) => Object.fromEntries(
+      Object.entries(row).map(([column, value]) => [column, narrowBigInt(value)]),
+    ));
+    if (tableRows.length === 0) continue;
+    rows[name] = tableRows;
+
+    // SQLite's storage class per value, because JavaScript cannot tell a REAL
+    // 2.0 from an INTEGER 2 — both are the number 2. Emitting `2` for a REAL
+    // changes the stored type, which `typeof()` filters and STRICT `ANY`
+    // columns both notice.
+    const typeList = storedColumns
+      .map((column) => `typeof("${column.replaceAll('"', '""')}") AS "${column.replaceAll('"', '""')}"`)
+      .join(", ");
+    storageTypes[name] = database.prepare(`SELECT ${typeList} FROM "${name}"`).all();
+    // The stored byte length of every value, which is what makes an embedded
+    // NUL visible: `node:sqlite` hands back TEXT only as far as its first NUL,
+    // and the truncated string is a perfectly ordinary string afterwards. Both
+    // replays truncate identically, so volatility detection sees nothing, and
+    // the shortened value is written into the baseline as if it were the whole
+    // one. Zipped by row index, the same way `storageTypes` above is.
+    const byteList = storedColumns
+      .map((column) => `length(CAST("${column.replaceAll('"', '""')}" AS BLOB)) AS "${column.replaceAll('"', '""')}"`)
+      .join(", ");
+    byteLengths[name] = database.prepare(`SELECT ${byteList} FROM "${name}"`).all();
+    // The tables this one points at. Seeded rows have to be inserted after the
+    // rows they reference, and `sqlite_schema` order is alphabetical, which is
+    // unrelated to that.
+    dependsOn[name] = [...new Set(
+      database.prepare("SELECT \"table\" AS parent FROM pragma_foreign_key_list(?)")
+        .all(name)
+        .map((row) => String(row.parent))
+        .filter((parent) => parent !== name),
+    )];
   }
-  return { objects, rows };
+
+  // AUTOINCREMENT's high-water mark. It lives in `sqlite_sequence`, which is an
+  // internal table and so is excluded from `objects` — but it is *state*, not
+  // bookkeeping: it records the highest id ever issued, including ids of rows
+  // since deleted. Re-inserting the surviving rows sets it to the highest
+  // surviving id, so a baselined database re-issues ids that are permanently
+  // retired everywhere else.
+  const hasSequence = database
+    .prepare("SELECT COUNT(*) AS present FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'")
+    .get()?.present;
+  //
+  // Read the same way the seeded rows above are, and for the same reason: `seq`
+  // is the highest id *ever issued*, so one explicit insert of an external id —
+  // a snowflake, a millisecond timestamp — puts a value beyond 2^53 there
+  // permanently. Without `setReadBigInts` that read throws mid-snapshot, and
+  // narrowing it through `Number()` would round it *down*, handing a baselined
+  // database exactly the retired ids this block exists to protect.
+  const sequences = Number(hasSequence ?? 0) > 0
+    ? readSequences(database)
+    : [];
+
+  return { objects, rows, dependsOn, sequences, storageTypes, byteLengths };
+}
+
+/** `sqlite_sequence`, read without losing a counter that outgrew a JS number. */
+function readSequences(database) {
+  const statement = database.prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name");
+  statement.setReadBigInts?.(true);
+  return statement.all()
+    .filter((row) => !isInternalTableName(String(row.name)))
+    .map((row) => ({ name: String(row.name), seq: narrowBigInt(row.seq) }));
 }
 
 /**
@@ -206,7 +339,9 @@ export function detectVolatileColumns(firstRows, secondRows) {
       if (!secondRow) continue;
       compared += 1;
       for (const column of Object.keys(firstRow)) {
-        if (firstRow[column] !== secondRow[column]) movedIn.set(column, (movedIn.get(column) ?? 0) + 1);
+        if (!sameSeededValue(firstRow[column], secondRow[column])) {
+          movedIn.set(column, (movedIn.get(column) ?? 0) + 1);
+        }
       }
     }
 
@@ -233,12 +368,62 @@ export function detectVolatileColumns(firstRows, secondRows) {
   return volatileColumns;
 }
 
-/** A SQL literal for a value read back out of SQLite. */
-export function sqlLiteral(value) {
+/**
+ * An integer read as BigInt, narrowed back to a number when it fits exactly.
+ *
+ * Reading every integer as BigInt is what stops a value beyond 2^53 from
+ * throwing, but handing BigInts to everything downstream would make the common
+ * case everybody's problem. Only values that cannot be represented exactly stay
+ * BigInt, and `sqlLiteral` already renders those.
+ */
+export function narrowBigInt(value) {
+  if (typeof value !== "bigint") return value;
+  return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(value)
+    : value;
+}
+
+/**
+ * Whether two values read out of two replays are the same value.
+ *
+ * `!==` is wrong for BLOBs: SQLite hands them back as fresh `Uint8Array`
+ * objects, and two distinct objects are never `!==`-equal, so **every** seeded
+ * blob looked volatile in every row of every run. The generator then refused
+ * with a message about `datetime('now')`, sending the reader to look for a
+ * timestamp expression that does not exist — and `sqlLiteral`'s `X'…'` branch
+ * became unreachable through the generator, despite being written for exactly
+ * this case.
+ */
+export function sameSeededValue(left, right) {
+  if (left instanceof Uint8Array && right instanceof Uint8Array) {
+    return left.length === right.length && left.every((byte, index) => byte === right[index]);
+  }
+  return left === right;
+}
+
+/**
+ * A SQL literal for a value read back out of SQLite.
+ *
+ * `storageClass` is SQLite's own `typeof()` for the value, and it is needed for
+ * exactly one case: a REAL with no fractional part. JavaScript has one number
+ * type, so `2.0` and `2` are the same value and `String()` renders both as `2` —
+ * which SQLite then stores as an INTEGER. A declared `REAL` column is rescued by
+ * column affinity, but a typeless column or a STRICT `ANY` one is not, and
+ * `typeof()` filters and JSON output change underneath.
+ */
+export function sqlLiteral(value, storageClass) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`${value} has no SQL literal`);
-    return String(value);
+    const rendered = String(value);
+    // `${value}.0` only makes a REAL literal while `String` stays in decimal
+    // form. At 1e21 it switches to exponent notation and the suffix lands after
+    // the exponent — `1e+21.0`, which SQLite rejects with `near ".0": syntax
+    // error`. An exponent-form literal is already REAL to SQLite, so there is
+    // nothing to add. Getting this wrong writes an unappliable file and exits
+    // successfully, so the break surfaces at somebody else's `pnpm db:migrate`.
+    if (storageClass === "real" && Number.isInteger(value) && !/[eE]/u.test(rendered)) return `${rendered}.0`;
+    return rendered;
   }
   if (typeof value === "bigint") return String(value);
   if (value instanceof Uint8Array) {
@@ -306,7 +491,14 @@ export const RENDERABLE_OBJECT_TYPES = ["table", "index", "trigger"];
  * guesses.
  */
 export function assertEveryObjectRenderable(objects) {
-  const unsupported = objects.filter((object) => !RENDERABLE_OBJECT_TYPES.includes(object.type));
+  // A virtual table has `type = 'table'`, so the type check alone waves it
+  // through — and then the renderer emits the `CREATE VIRTUAL TABLE` *and*
+  // explicit `CREATE TABLE`s for the shadow tables that statement creates for
+  // itself, so applying the baseline dies on "table already exists". This
+  // docstring used to claim the generator stopped on FTS5 (0036/0037). It did
+  // not; this is what makes it true.
+  const unsupported = objects.filter((object) => !RENDERABLE_OBJECT_TYPES.includes(object.type)
+    || /^\s*CREATE\s+VIRTUAL\s+TABLE/iu.test(object.sql));
   if (unsupported.length === 0) return;
   throw new Error(
     `Cannot render ${unsupported.map((object) => `${object.type}:${object.name}`).join(", ")} into a `
@@ -333,28 +525,93 @@ const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u;
  * and the fingerprint reads `sqlite_schema` and never a row. So the assumption
  * is asserted here, at generation, where the message can name the column and
  * say what the renderer needs to learn.
+ *
+ * The shape alone does not prove it. `datetime('now', '+1 day')` produces the
+ * same `YYYY-MM-DD HH:MM:SS`, passes a shape test, and is then written back as
+ * `datetime('now')` — a value silently a day earlier than a replay's, in a
+ * column whose whole purpose was to hold a date the chain computed. So the
+ * value is also required to *be* roughly now: the snapshot was taken seconds
+ * ago, so anything an offset modifier could shift it by is far outside
+ * `toleranceMs` while a slow chain replay is comfortably inside it. An offset
+ * smaller than the tolerance stays undetectable, which is the same limitation
+ * the 1.1-second replay gap has and is documented with it.
  */
-export function assertVolatileValuesAreTimestamps(rows, volatileColumns) {
+export function assertVolatileValuesAreTimestamps(rows, volatileColumns, {
+  now = Date.now(),
+  toleranceMs = 10 * 60 * 1000,
+} = {}) {
   for (const [table, columns] of Object.entries(volatileColumns)) {
     for (const row of rows[table] ?? []) {
       for (const column of columns) {
         const value = row[column];
-        if (typeof value === "string" && SQLITE_DATETIME.test(value)) continue;
+        if (typeof value !== "string" || !SQLITE_DATETIME.test(value)) {
+          throw new Error(
+            `${table}.${column} is volatile but holds ${JSON.stringify(value)}, which `
+            + "datetime('now') does not produce. renderBaselineSql would rewrite it as a text "
+            + "timestamp and change its type. Teach the renderer that column's expression.",
+          );
+        }
+        // `datetime()` renders UTC without a zone, so it is read back as one.
+        const drift = Math.abs(Date.parse(`${value.replace(" ", "T")}Z`) - now);
+        if (drift <= toleranceMs) continue;
         throw new Error(
-          `${table}.${column} is volatile but holds ${JSON.stringify(value)}, which `
-          + "datetime('now') does not produce. renderBaselineSql would rewrite it as a text "
-          + "timestamp and change its type. Teach the renderer that column's expression.",
+          `${table}.${column} is volatile and holds ${JSON.stringify(value)}, which is `
+          + `${Math.round(drift / 1000)}s from now — so the chain computes it with a modifier `
+          + "(`datetime('now', '+1 day')` and the like), not plain datetime('now'). "
+          + "renderBaselineSql only writes datetime('now'), which would silently move the value. "
+          + "Teach the renderer that column's expression.",
         );
       }
     }
   }
 }
 
-function renderRows(table, tableRows, volatileForTable) {
+/**
+ * Orders seeded tables so a row is inserted after the rows it references.
+ *
+ * `snapshot.rows` arrives in `sqlite_schema` order, which is alphabetical and
+ * has nothing to do with foreign keys — so a child whose name sorts before its
+ * parent's was inserted first and the file died on `FOREIGN KEY constraint
+ * failed`, naming no table. Worse, it died *partway*: the schema was created,
+ * the ledger rows at the end were not, and the next run saw a database with
+ * tables and no ledger and sent Wrangler to replay migration 0001 onto it.
+ *
+ * Only seeded tables are ordered; a parent with no rows constrains nothing.
+ * A cycle among seeded tables is refused rather than guessed at — SQLite would
+ * need `PRAGMA defer_foreign_keys`, which D1 does not allow, so there is no
+ * order that works and the honest answer is to say so.
+ */
+export function orderSeededTables(rows, dependsOn = {}) {
+  const seeded = Object.keys(rows);
+  const ordered = [];
+  const state = new Map();
+  const visit = (table, trail) => {
+    if (state.get(table) === "done") return;
+    if (state.get(table) === "visiting") {
+      throw new Error(
+        `Seeded tables ${[...trail, table].join(" -> ")} reference each other in a cycle, so there is `
+        + "no insert order that satisfies their foreign keys. D1 does not allow "
+        + "PRAGMA defer_foreign_keys, so renderBaselineSql cannot emit these rows.",
+      );
+    }
+    state.set(table, "visiting");
+    for (const parent of dependsOn[table] ?? []) {
+      if (seeded.includes(parent)) visit(parent, [...trail, table]);
+    }
+    state.set(table, "done");
+    ordered.push(table);
+  };
+  for (const table of seeded) visit(table, []);
+  return ordered;
+}
+
+function renderRows(table, tableRows, volatileForTable, typesForTable = []) {
   const columns = Object.keys(tableRows[0]);
-  const rendered = tableRows.map((row) => {
+  const rendered = tableRows.map((row, index) => {
     const values = columns.map((column) => (
-      volatileForTable.includes(column) ? "datetime('now')" : sqlLiteral(row[column])
+      volatileForTable.includes(column)
+        ? "datetime('now')"
+        : sqlLiteral(row[column], typesForTable[index]?.[column])
     ));
     return `  (${values.join(", ")})`;
   });
@@ -374,13 +631,41 @@ function renderRows(table, tableRows, volatileForTable) {
  * The ledger rows come last of all: they are the claim "these migrations have
  * run", and it must not be recorded before the schema they describe exists.
  */
-export function renderBaselineSql({ through, files, digest, snapshot, volatileColumns = {} }) {
+/**
+ * Refuses a seeded TEXT value that SQLite stores in more bytes than JavaScript
+ * received — in practice, one containing an embedded NUL.
+ *
+ * Every other refusal in this file exists because the generator would produce a
+ * file that fails to apply. This one is worse: the file applies perfectly and
+ * the database is quietly wrong, with a truncated string where the chain has a
+ * longer one, and nothing downstream can tell. Reproduced with
+ * `CAST(X'610062' AS TEXT)`: three bytes stored, `"a"` read back.
+ */
+export function assertSeededTextIsIntact(rows, byteLengths = {}) {
+  for (const [table, tableRows] of Object.entries(rows)) {
+    const lengths = byteLengths[table];
+    if (!lengths) continue;
+    for (const [index, row] of tableRows.entries()) {
+      for (const [column, value] of Object.entries(row)) {
+        if (typeof value !== "string") continue;
+        const stored = Number(lengths[index]?.[column] ?? Buffer.byteLength(value));
+        if (stored === Buffer.byteLength(value)) continue;
+        throw new Error(`${table}.${column} holds ${stored} bytes but reads back as `
+          + `${Buffer.byteLength(value)} — an embedded NUL truncates TEXT on the way out of SQLite, `
+          + "so this value cannot be snapshotted faithfully. Store it as a BLOB, or stop seeding it.");
+      }
+    }
+  }
+}
+
+export function renderBaselineSql({ through, files, digest, snapshot, volatileColumns = {}, now = Date.now() }) {
   const tables = snapshot.objects.filter((object) => object.type === "table");
   const indexes = snapshot.objects.filter((object) => object.type === "index");
   const triggers = snapshot.objects.filter((object) => object.type === "trigger");
 
   assertEveryObjectRenderable(snapshot.objects);
-  assertVolatileValuesAreTimestamps(snapshot.rows, volatileColumns);
+  assertVolatileValuesAreTimestamps(snapshot.rows, volatileColumns, { now });
+  assertSeededTextIsIntact(snapshot.rows, snapshot.byteLengths);
 
   const sections = [];
   sections.push(`-- Generated by \`node scripts/create-d1-baseline.mjs ${through}\` — do not edit by hand.
@@ -407,15 +692,35 @@ ${D1_MIGRATIONS_TABLE_SQL};`);
 
   sections.push(`-- Tables.\n${tables.map((table) => `${table.sql.trim()};`).join("\n\n")}`);
 
-  const seeded = Object.entries(snapshot.rows);
+  const seededOrder = orderSeededTables(snapshot.rows, snapshot.dependsOn);
+  const seeded = seededOrder.map((table) => [table, snapshot.rows[table]]);
   if (seeded.length > 0) {
     const rendered = seeded
-      .map(([table, tableRows]) => renderRows(table, tableRows, volatileColumns[table] ?? []))
+      .map(([table, tableRows]) => renderRows(
+        table, tableRows, volatileColumns[table] ?? [], (snapshot.storageTypes ?? {})[table] ?? [],
+      ))
       .join("\n\n");
     sections.push(`-- Control rows the subsumed migrations seed. A column the chain recomputes on
 -- every run is re-derived here rather than frozen, so a baselined database is
 -- stamped when it is created rather than when this file was generated.
 ${rendered}`);
+  }
+
+  const sequences = snapshot.sequences ?? [];
+  if (sequences.length > 0) {
+    // AUTOINCREMENT never reissues an id, so the high-water mark is part of the
+    // state a replay would leave. Re-inserting the surviving rows only raises it
+    // to the highest surviving id, which hands a baselined database the ids of
+    // rows the chain deleted. D1 permits writing `sqlite_sequence` directly
+    // (verified against local D1); DELETE-then-INSERT rather than UPSERT because
+    // `sqlite_sequence` carries no uniqueness constraint for `ON CONFLICT` to
+    // target, and the row may not exist at all when every seeded row was later
+    // deleted.
+    const restored = sequences.map(({ name, seq }) => (
+      `DELETE FROM sqlite_sequence WHERE name = ${sqlLiteral(name)};\n`
+      + `INSERT INTO sqlite_sequence (name, seq) VALUES (${sqlLiteral(name)}, ${sqlLiteral(seq)});`
+    )).join("\n");
+    sections.push(`-- AUTOINCREMENT high-water marks, which the inserts above do not reproduce.\n${restored}`);
   }
 
   if (indexes.length > 0) {
@@ -431,7 +736,35 @@ INSERT OR IGNORE INTO d1_migrations (name)
 VALUES
 ${ledgerValues};`);
 
-  return `${sections.join("\n\n")}\n`;
+  const rendered = `${sections.join("\n\n")}\n`;
+  assertWranglerWillNotRewrite(rendered);
+  return rendered;
+}
+
+/**
+ * Refuses a baseline Wrangler would quietly edit before running it.
+ *
+ * `wrangler d1 execute --file` passes the text through `trimSqlQuery`, which is
+ * a substring check and two blind `String.replace` calls: if the file contains
+ * `BEGIN TRANSACTION` anywhere — a migration comment copied verbatim, a seeded
+ * row holding a SQL snippet — it deletes the first `BEGIN TRANSACTION;` **and
+ * the first `COMMIT;`**, wherever those happen to be, including inside a trigger
+ * body or a string literal. A second occurrence is a hard error instead
+ * ("contains several transactions").
+ *
+ * So the failure is either a mangled database or a refusal naming a
+ * transaction nobody wrote. Neither is worth discovering during setup, and the
+ * generator is the only place that can see it coming.
+ */
+export function assertWranglerWillNotRewrite(sql) {
+  if (!sql.includes("BEGIN TRANSACTION")) return;
+  throw new Error(
+    "The rendered baseline contains the text 'BEGIN TRANSACTION'. `wrangler d1 execute --file` "
+    + "strips the first 'BEGIN TRANSACTION;' and the first 'COMMIT;' from any file containing it — "
+    + "wherever they appear, including inside a comment, a trigger body, or a seeded string — and "
+    + "errors outright if it appears twice. Remove or reword whatever carries that text before "
+    + "this boundary can be baselined.",
+  );
 }
 
 /** Applies migration files to an open database, in order. */
@@ -546,4 +879,201 @@ export function parseWranglerJson(stdout, context) {
     }
   }
   throw new Error(`wrangler returned no JSON for ${context}`);
+}
+
+// ---------------------------------------------------------------------------
+// Choosing a baseline, and deciding what to apply on top of it
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the baselines manifest as a list, newest boundary last.
+ *
+ * Accepts the single-baseline shape the first version wrote (`{ baseline }`)
+ * as well as the list (`{ baselines }`), so a checkout mid-upgrade still runs.
+ */
+export function readBaselineManifest(contents) {
+  const parsed = typeof contents === "string" ? JSON.parse(contents) : contents;
+  const baselines = parsed.baselines ?? (parsed.baseline ? [parsed.baseline] : []);
+  return [...baselines].sort((left, right) => compareMigrationPaths(left.through, right.through));
+}
+
+/**
+ * The baselines that still describe the migrations on disk, newest first.
+ *
+ * A baseline is usable only if the files it claims to subsume are *exactly* the
+ * files at or below its boundary today, and their contents still hash to what
+ * it recorded. Either check failing means the chain moved underneath it — a
+ * migration edited, or one inserted into a gap below the boundary — and the
+ * snapshot no longer describes what replaying would produce.
+ *
+ * Unusable baselines are skipped rather than fatal: the chain is always there
+ * to fall back to, and a setup command that refuses to run because a *cache* is
+ * stale would be a worse trade than one that is briefly slower. The staleness
+ * is still a test failure — `d1-baseline.test.mjs` asserts the checked-in
+ * manifest matches disk — so it is loud in CI and quiet in your terminal, which
+ * is the right way round.
+ */
+/**
+ * Boundaries a manifest claims more than once.
+ *
+ * Only a merge that kept both sides produces one — `mergeIntoManifest` replaces
+ * by boundary, so no single regeneration can. Exported separately from the
+ * filtering below because dropping them is right but doing it silently is not:
+ * the run then replays the whole chain, which looks like a slow setup rather
+ * than a manifest somebody has to fix.
+ */
+export function duplicateBoundaries(baselines) {
+  const seen = new Map();
+  for (const baseline of baselines) seen.set(baseline.through, (seen.get(baseline.through) ?? 0) + 1);
+  return [...seen.entries()].filter(([, count]) => count > 1).map(([through]) => through);
+}
+
+export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
+  // A boundary appearing twice is dropped in both copies. There is no way to
+  // tell which snapshot is right, and the comparator never returns 0 for equal
+  // boundaries — so which one "won" was a sort artifact that flipped with input
+  // order. Both go, and the chain runs.
+  const duplicated = new Set(duplicateBoundaries(baselines));
+
+  return baselines
+    .filter((baseline) => !duplicated.has(baseline.through))
+    .filter((baseline) => {
+      const expected = migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) <= 0);
+      if (expected.length !== baseline.migrations.length) return false;
+      if (expected.some((name, index) => name !== baseline.migrations[index])) return false;
+      return digestFor(expected) === baseline.digest;
+    })
+    .sort((left, right) => compareMigrationPaths(right.through, left.through));
+}
+
+/**
+ * The baseline that gets a fresh database furthest, or null to replay the chain.
+ *
+ * "Furthest" is the largest subsumed set, not the newest file on disk: several
+ * baselines can coexist, and the one that saves the most work is the one whose
+ * boundary is highest. Everything after that boundary is applied on top by
+ * Wrangler in the ordinary way, so adding a migration does not invalidate a
+ * baseline — it just means there is one more thing to apply after it.
+ */
+export function selectBaseline(baselines, migrationsOnDisk, digestFor) {
+  return usableBaselines(baselines, migrationsOnDisk, digestFor)[0] ?? null;
+}
+
+/**
+ * What to do with one database, given what it already has.
+ *
+ * The three outcomes, and what separates them:
+ *
+ * - **`baseline`** — the database is empty, and a usable baseline exists. Apply
+ *   the snapshot, then the migrations after its boundary.
+ * - **`migrate`** — anything else with work outstanding. A database that has
+ *   tables, or a ledger, gets the ordinary chain: a baseline reproduces a
+ *   schema and cannot merge into one, and a ledger without the schema it
+ *   describes is a failed migration rather than an invitation to start over.
+ * - **`up-to-date`** — nothing pending.
+ *
+ * `allowBaseline` is how the hosted policy is expressed rather than assumed:
+ * hosted databases replay the chain in full, so the caller passes `false` and
+ * the plan can never be `baseline`. Keeping it a parameter rather than a
+ * separate code path means the rule is one line, and a test can state it.
+ *
+ * `unknownApplied` names ledger rows with no file on disk. That is a database
+ * ahead of this checkout — a branch that added migrations, or a rollback — and
+ * it is reported rather than acted on, because guessing which is wrong.
+ *
+ * `outOfOrder` names pending migrations that sort *below* something the
+ * database has already applied. Wrangler applies whatever is missing in sort
+ * order without regard to what ran before, so such a file runs late on an old
+ * database and early on a fresh one — and the two end up with different
+ * schemas. It is silent: `ALTER TABLE` in the late file appends its column
+ * after the earlier one's instead of before, so the columns exist, the
+ * migration succeeds, and only the order differs. Where the inserted file
+ * *creates* something a later one already used, it fails outright instead.
+ *
+ * A baseline makes this easier to hit rather than causing it: a baselined
+ * database is fresh by construction, so it takes the fresh ordering while
+ * production takes the late one. Reported rather than refused, because the
+ * repair is a decision about migrations — renumber, or accept — that this
+ * script cannot make.
+ *
+ * `applied` may be **null**, meaning the ledger was deliberately not read: a
+ * database with tables is never baselined whatever its ledger says, so reading
+ * it there costs a wrangler start-up to learn something that cannot change the
+ * decision. The plan then carries `pending: null` rather than a count it did not
+ * compute — an earlier version filled in "every migration is pending", which on
+ * a fully migrated database is both wrong and alarming. Wrangler works the real
+ * figure out when it runs.
+ */
+export function planMigration({
+  applied = [],
+  userTables = 0,
+  baselines = [],
+  migrationsOnDisk = [],
+  digestFor,
+  allowBaseline = true,
+}) {
+  const ledgerKnown = Array.isArray(applied);
+  const appliedSet = new Set(ledgerKnown ? applied : []);
+  const pending = ledgerKnown ? migrationsOnDisk.filter((name) => !appliedSet.has(name)) : null;
+  const unknownApplied = ledgerKnown
+    ? applied.filter((name) => !migrationsOnDisk.includes(name)).sort()
+    : [];
+  const highestApplied = ledgerKnown && applied.length > 0
+    ? applied.reduce((highest, name) => (compareMigrationPaths(name, highest) > 0 ? name : highest))
+    : null;
+  const outOfOrder = highestApplied === null
+    ? []
+    : (pending ?? []).filter((name) => compareMigrationPaths(name, highestApplied) < 0);
+  const isEmpty = userTables === 0 && ledgerKnown && applied.length === 0;
+
+  if (isEmpty && allowBaseline) {
+    const baseline = selectBaseline(baselines, migrationsOnDisk, digestFor);
+    if (baseline) {
+      return {
+        action: "baseline",
+        baseline,
+        thenApply: migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) > 0),
+        pending,
+        unknownApplied,
+        outOfOrder,
+      };
+    }
+  }
+
+  return {
+    action: pending !== null && pending.length === 0 ? "up-to-date" : "migrate",
+    baseline: null,
+    thenApply: [],
+    pending,
+    unknownApplied,
+    outOfOrder,
+  };
+}
+
+/** One line saying what a region is about to do, and why. */
+export function describePlan(region, plan) {
+  const notes = [];
+  if (plan.unknownApplied.length > 0) {
+    notes.push(`${plan.unknownApplied.length} applied migration(s) not in this checkout: `
+      + plan.unknownApplied.join(", "));
+  }
+  if (plan.outOfOrder.length > 0) {
+    // Worth a sentence rather than a word: the reader has to know this produces
+    // a different schema from a fresh database, not merely an odd ordering.
+    notes.push(`out of order — ${plan.outOfOrder.join(", ")} sort(s) below a migration `
+      + "this database already applied, so applying now gives it a different schema than a "
+      + "fresh database gets");
+  }
+  const suffix = notes.length > 0 ? ` (${notes.join("; ")})` : "";
+  if (plan.action === "baseline") {
+    const after = plan.thenApply.length === 0
+      ? "nothing after it"
+      : `${plan.thenApply.length} migration(s) after it`;
+    return `${region}: empty — applying ${plan.baseline.file} (${plan.baseline.migrations.length} migrations), then ${after}.${suffix}`;
+  }
+  if (plan.action === "up-to-date") return `${region}: already up to date.${suffix}`;
+  if (plan.pending === null) {
+    return `${region}: has tables — Wrangler will apply whatever is still pending.${suffix}`;
+  }
+  return `${region}: applying ${plan.pending.length} pending migration(s) the ordinary way.${suffix}`;
 }
