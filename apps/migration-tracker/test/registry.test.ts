@@ -35,7 +35,7 @@ function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableO
     objectId: objectId("a"),
     objectName: `global:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
     className: "SubstreamAgent",
-    component: "workstream",
+    component: "substream_agent_do",
     region: "global",
     appEnv: "production",
     workerVersionId: "0.24.0",
@@ -59,6 +59,32 @@ function sweep(overrides: Partial<InventorySweep> = {}): InventorySweep {
     errorMessage: null,
     ...overrides,
   };
+}
+
+/** The head the old key was last seen at, and the one the new key carries. */
+const LEGACY_OBSERVED_AT = 1_700_000_000_000;
+const RENAMED_OBSERVED_AT = LEGACY_OBSERVED_AT + 60_000;
+
+/**
+ * Rewrite every stored component back to the pre-rename key.
+ *
+ * Reports cannot seed this: `applyReport` normalizes the legacy key on the way
+ * in, which is the whole point of the compatibility branch — so a test that
+ * seeded through it would prove the migration works against a database that
+ * never held the old key. This writes the shape v3 actually meets.
+ *
+ * `observed_at` is stamped too, because the registry writes it from its own
+ * clock: both sides of a collision otherwise land in the same millisecond, and
+ * the merge's `MAX` has nothing to choose between.
+ */
+function rewindToLegacyComponent(state: DurableObjectState): void {
+  for (const table of ["durable_objects", "migration_events"]) {
+    state.storage.sql.exec(`UPDATE ${table} SET component = 'workstream'`);
+  }
+  state.storage.sql.exec(
+    `UPDATE component_versions SET component = 'workstream', observed_at = ?`,
+    LEGACY_OBSERVED_AT,
+  );
 }
 
 /** A fresh registry per test; the object is a singleton, so it is reset by hand. */
@@ -145,13 +171,13 @@ describe("recordReport", () => {
         status: "failed",
         schemaVersion: 2,
         appliedVersions: [],
-        failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
+        failure: { message: "substream_agent_do_schema_hash_mismatch:3", version: 3 },
       }));
       return registry.objectDetail(objectId("a"));
     });
 
     expect(detail?.object.status).toBe("failed");
-    expect(detail?.object.failureMessage).toBe("workstream_schema_hash_mismatch:3");
+    expect(detail?.object.failureMessage).toBe("substream_agent_do_schema_hash_mismatch:3");
     expect(detail?.object.failureVersion).toBe(3);
     expect(detail?.events).toHaveLength(1);
     expect(detail?.events[0]?.status).toBe("failed");
@@ -163,7 +189,7 @@ describe("recordReport", () => {
         status: "failed",
         schemaVersion: 2,
         appliedVersions: [],
-        failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
+        failure: { message: "substream_agent_do_schema_hash_mismatch:3", version: 3 },
       }));
       record(registry, report({ status: "applied", schemaVersion: 3, appliedVersions: [3] }));
       return registry.objectDetail(objectId("a"))?.object;
@@ -340,7 +366,7 @@ describe("recordSweep", () => {
         className: "SubstreamAgent",
         status: "failed",
         appliedVersions: [],
-        failure: { message: "workstream_schema_hash_mismatch:4", version: 4 },
+        failure: { message: "substream_agent_do_schema_hash_mismatch:4", version: 4 },
       }));
       return registry.objectDetail(objectId("a"));
     });
@@ -455,7 +481,9 @@ describe("the registry schema", () => {
       expect(() => storage.sql.exec(`SELECT retired_at FROM durable_object_namespaces`))
         .toThrow();
 
-      return applyRegistrySchema(storage);
+      // Only through v2: this test owns the v1 -> v2 step, and applying the
+      // whole list would make every later migration change its expectation.
+      return applyRegistrySchema(storage, REGISTRY_MIGRATIONS.slice(0, 2));
     });
 
     expect(applied).toEqual([2]);
@@ -474,6 +502,157 @@ describe("the registry schema", () => {
       return registry.overview().namespaces;
     });
     expect(namespaces[0]?.retiredAt).toBeNull();
+  });
+
+  /**
+   * v3 renames `SubstreamAgent`'s component key. The rename is only safe
+   * because the tracker is the sole holder of that key, which also means the
+   * tracker is the only thing that can carry the existing history across: an
+   * unmigrated registry would show the fleet split between `workstream` at v15
+   * and a new key at head 0. These two tests are the halves of that — the
+   * carry, and the collision the carry has to survive when the API deploys
+   * first and has already created the row this migration wants to write.
+   */
+  it("carries the stored history onto the renamed component", async () => {
+    const applied = await withRegistry((registry, state) => {
+      record(registry, report({ schemaVersion: 15, latestVersion: 15 }));
+      rewindToLegacyComponent(state);
+      // Rewind to v2: the receipt is what makes the runner skip a migration, so
+      // dropping it replays v3 against a database holding the old key.
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 3`);
+      return applyRegistrySchema(state.storage);
+    });
+    expect(applied).toEqual([3]);
+
+    const rows = await withRegistry((_registry, state) => ({
+      components: state.storage.sql.exec<{ component: string; latest_version: number }>(
+        `SELECT component, latest_version FROM component_versions`,
+      ).toArray(),
+      objects: state.storage.sql.exec<{ component: string }>(
+        `SELECT component FROM durable_objects`,
+      ).toArray(),
+      events: state.storage.sql.exec<{ component: string }>(
+        `SELECT component FROM migration_events`,
+      ).toArray(),
+    }));
+    expect(rows.components).toEqual([{ component: "substream_agent_do", latest_version: 15 }]);
+    expect(rows.objects).toEqual([{ component: "substream_agent_do" }]);
+    expect(rows.events).toEqual([{ component: "substream_agent_do" }]);
+
+    // Renamed and still resolvable: the head carried across, so the object that
+    // reported v15 is current rather than behind a head that restarted at 0.
+    const overview = await withRegistry((registry) => registry.overview());
+    expect(overview.totals.current).toBe(1);
+    expect(overview.totals.behind).toBe(0);
+    expect(overview.components.map((component) => component.component))
+      .toEqual(["substream_agent_do"]);
+  });
+
+  /**
+   * The migration alone is not enough: it runs once, and the tracker's deploy
+   * workflow is the smaller of the two, so it usually lands before the API
+   * build that stops sending the old key. A report that arrives in that window
+   * would otherwise put the legacy key back into all three tables, where only
+   * `durable_objects` heals itself on the object's next wake.
+   */
+  it("files a report that still carries the legacy key under the new one", async () => {
+    const rows = await withRegistry((registry, state) => {
+      record(registry, report({ component: "workstream", schemaVersion: 15, latestVersion: 15 }));
+      return {
+        components: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM component_versions`,
+        ).toArray(),
+        objects: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM durable_objects`,
+        ).toArray(),
+        events: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM migration_events`,
+        ).toArray(),
+      };
+    });
+
+    expect(rows.components).toEqual([{ component: "substream_agent_do" }]);
+    expect(rows.objects).toEqual([{ component: "substream_agent_do" }]);
+    expect(rows.events).toEqual([{ component: "substream_agent_do" }]);
+  });
+
+  it("merges into a head the renamed component already has", async () => {
+    const applied = await withRegistry((registry, state) => {
+      // The API deployed first, so its reports have already created the row
+      // this migration wants to write. The heads differ in both directions,
+      // one per region, because the merge has to keep the higher one whichever
+      // side of the collision it is on — taking either side unconditionally
+      // reads as a passing test against the other region.
+      record(
+        registry,
+        report({ schemaVersion: 15, latestVersion: 15, workerVersionId: "0.23.0" }),
+        report({
+          objectId: objectId("c"),
+          objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
+          region: "eu",
+          schemaVersion: 12,
+          latestVersion: 12,
+          workerVersionId: "0.23.0",
+        }),
+      );
+      rewindToLegacyComponent(state);
+      // Only now the API's side of the collision, which lands under the new key
+      // and carries the newer build.
+      record(
+        registry,
+        report({ objectId: objectId("b"), schemaVersion: 12, latestVersion: 12 }),
+        report({
+          objectId: objectId("d"),
+          objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
+          region: "eu",
+          schemaVersion: 15,
+          latestVersion: 15,
+        }),
+      );
+      state.storage.sql.exec(
+        `UPDATE component_versions SET observed_at = ? WHERE component = 'substream_agent_do'`,
+        RENAMED_OBSERVED_AT,
+      );
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 3`);
+      return applyRegistrySchema(state.storage);
+    });
+    expect(applied).toEqual([3]);
+
+    // The build and the timestamp are asserted beside the version because the
+    // merge chooses all three, and the two that the surviving row inherits from
+    // the *losing* side are the ones a naive `excluded.<column>` would get
+    // wrong without changing any version — a head attributed to a build that
+    // never ran it, which is the same wrong-number-no-error failure the merge
+    // exists to avoid.
+    const components = await withRegistry((_registry, state) =>
+      state.storage.sql.exec<{
+        component: string;
+        region: string;
+        latest_version: number;
+        worker_version_id: string;
+        observed_at: number;
+      }>(
+        `SELECT component, region, latest_version, worker_version_id, observed_at
+           FROM component_versions ORDER BY component, region`,
+      ).toArray());
+    expect(components).toEqual([
+      {
+        component: "substream_agent_do",
+        region: "eu",
+        latest_version: 15,
+        // The new key was already ahead here, so its build keeps the head.
+        worker_version_id: "0.24.0",
+        observed_at: RENAMED_OBSERVED_AT,
+      },
+      {
+        component: "substream_agent_do",
+        region: "global",
+        latest_version: 15,
+        // The legacy side was ahead here, so the build that ran v15 keeps it.
+        worker_version_id: "0.23.0",
+        observed_at: RENAMED_OBSERVED_AT,
+      },
+    ]);
   });
 });
 
@@ -848,7 +1027,7 @@ describe("listObjects", () => {
         objectId: objectId("9"),
         objectName: null,
         status: "failed",
-        failure: { message: "workstream_schema_ahead:9", version: 9 },
+        failure: { message: "substream_agent_do_schema_ahead:9", version: 9 },
       }));
       return registry.listObjects(ObjectQuerySchema.parse({ limit: 2 }));
     });
