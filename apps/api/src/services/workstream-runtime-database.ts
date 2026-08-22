@@ -13,6 +13,28 @@ import { readWorkstreamAuthorityControl } from "./workstream-authority";
 type RuntimeValue = string | number | null;
 
 const REGIONAL_DATABASE = Symbol("workstream-regional-database");
+/**
+ * Local executors carried on the environment, keyed by substream.
+ *
+ * A `SubstreamAgent` hands its own storage in as an executor so its SQL never
+ * leaves the object. Without this the very next helper to re-derive an
+ * execution environment from that one — `launchWorkstreamHarness`, the flag
+ * targeting loader, digest settlement — would build a port with no executor and
+ * send every statement back through the namespace into the object that issued
+ * it. See `lib/durable-object-self.ts` for the general defect.
+ */
+const LOCAL_EXECUTORS = Symbol("workstream-local-executors");
+
+type LocalExecutorRegistry = ReadonlyMap<string, LocalStatementExecutor>;
+
+function executorKey(workspaceId: string, workstreamId: string, substreamId: string): string {
+  return `${workspaceId}:${workstreamId}:${substreamId}`;
+}
+
+function carriedExecutors(env: Env): LocalExecutorRegistry {
+  return (env as Env & { [LOCAL_EXECUTORS]?: LocalExecutorRegistry })[LOCAL_EXECUTORS]
+    ?? new Map();
+}
 
 interface BoundStatement {
   sql: string;
@@ -273,17 +295,24 @@ export function withWorkstreamRuntimeDatabase(
   substreamId = "0",
   localExecutor?: LocalStatementExecutor,
 ): Env {
+  const inherited = carriedExecutors(env);
+  const key = executorKey(workspaceId, workstreamId, substreamId);
+  const executor = localExecutor ?? inherited.get(key);
   const database = workstreamRuntimeDatabase(
     env,
     workspaceId,
     workstreamId,
     substreamId,
-    localExecutor,
+    executor,
   );
+  const carried: LocalExecutorRegistry = localExecutor
+    ? new Map(inherited).set(key, localExecutor)
+    : inherited;
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "DB") return database;
       if (property === REGIONAL_DATABASE) return target.DB;
+      if (property === LOCAL_EXECUTORS) return carried;
       return Reflect.get(target, property, receiver) as unknown;
     },
   });
