@@ -32,6 +32,8 @@ import {
   applyMigrationCommand,
   consumeMigrationCommandQueue,
   migrationCommandDispatchers,
+  migrationShortfall,
+  MIGRATION_COMMAND_HEADS,
 } from "../src/queues/migration-command-consumer";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 
@@ -322,5 +324,41 @@ describe("consumeMigrationCommandQueue", () => {
 
     expect(delivery.messages.map((message) => message.retried)).toEqual([false, true, false]);
     expect(delivery.messages.map((message) => message.acked)).toEqual([true, false, true]);
+  });
+});
+
+/**
+ * The shortfall check, which used to compare an outcome's own two versions and
+ * therefore could never fire: both are read inside the object's isolate after a
+ * successful migration pass, so they are equal by construction. The case worth
+ * flagging — an object still awake on a previous build — has *both* numbers
+ * from that older build, so it read as a clean apply.
+ */
+describe("migrationShortfall", () => {
+  it("has a head for every class a command can name", () => {
+    expect(Object.keys(MIGRATION_COMMAND_HEADS).sort())
+      .toEqual(Object.keys(migrationCommandDispatchers(env)).sort());
+    for (const head of Object.values(MIGRATION_COMMAND_HEADS)) expect(head).toBeGreaterThan(0);
+  });
+
+  it("says nothing when the object is on the version this build ships", () => {
+    expect(migrationShortfall({
+      className: "WorkspaceDO",
+      schemaVersion: MIGRATION_COMMAND_HEADS.WorkspaceDO!,
+    })).toBeNull();
+  });
+
+  /**
+   * The stale-isolate case. It reports a version below this deployment's head
+   * while its own `latestVersion` agrees with it, which is exactly why the old
+   * self-comparison stayed silent here.
+   */
+  it("names this build's head when the object answered from an older one", () => {
+    const head = MIGRATION_COMMAND_HEADS.WorkspaceDO!;
+    expect(migrationShortfall({ className: "WorkspaceDO", schemaVersion: head - 1 })).toBe(head);
+  });
+
+  it("says nothing for a class this Worker has no head for", () => {
+    expect(migrationShortfall({ className: "MigrationRegistry", schemaVersion: 0 })).toBeNull();
   });
 });
