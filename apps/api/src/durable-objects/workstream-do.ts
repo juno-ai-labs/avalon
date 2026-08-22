@@ -519,10 +519,14 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     // Everything downstream is handed this environment or one derived from it,
-    // so a helper that addresses "the WorkstreamDO for this work stream"
-    // reaches the object it is already running in rather than the namespace.
-    // See `lib/durable-object-self.ts`.
-    this.env = withDurableObjectSelf(env, {
+    // so a helper that addresses "the WorkstreamDO for this work stream" reaches
+    // the object it is already running in rather than the namespace. See
+    // `lib/durable-object-self.ts`.
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived.
+    this.env = env = withDurableObjectSelf(env, {
       namespace: env.WORKSTREAM_DOS,
       name: () => this.selfObjectName(),
       id: state.id,
