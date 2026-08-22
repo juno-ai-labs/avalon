@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildTemplateDatabase,
+  type SqliteTemplateVariant,
+} from "./helpers/migrated-schema";
+import {
   legacyProductSqliteDatabase,
   migratedSqliteDatabase,
   preRetirementProductSqliteDatabase,
-  type SqliteTemplateVariant,
 } from "./helpers/sqlite-d1";
 
 /**
