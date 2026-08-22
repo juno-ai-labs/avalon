@@ -129,10 +129,10 @@ export async function emitCorrelatedRunOutcome(
               ORDER BY ia.started_at, ia.id LIMIT 1) AS first_ttft_ms,
             (SELECT COUNT(DISTINCT ia.turn_id) FROM inference_attempts ia
               WHERE ia.harness_run_id = hr.id AND ia.outcome = 'success') AS turn_count,
-            (SELECT COUNT(*) FROM tool_invocations ti
-              WHERE ti.harness_run_id = hr.id) AS tool_call_count,
-            (SELECT COUNT(*) FROM tool_invocations ti
-              WHERE ti.harness_run_id = hr.id
+            (SELECT COUNT(*) FROM tool_effects ti
+              WHERE ti.run_id = hr.id) AS tool_call_count,
+            (SELECT COUNT(*) FROM tool_effects ti
+              WHERE ti.run_id = hr.id
                 AND json_extract(ti.execution_plan_json, '$.mode') = 'write') AS write_tool_call_count,
             EXISTS(SELECT 1 FROM inference_attempts ia
               WHERE ia.harness_run_id = hr.id AND ia.fallback_attempt > 0) AS fallback_used

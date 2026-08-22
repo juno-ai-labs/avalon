@@ -116,6 +116,31 @@ describe('authoritative run outcome telemetry', () => {
       workspaceId,
       workstreamId,
     );
+    // Two receipts, one of them a write. Nothing else in this suite covered the
+    // outcome event's tool counts, so retargeting their subqueries at
+    // `tool_effects` would otherwise have been an unasserted change.
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO tool_invocations
+         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+          input_hash, input_json, status, execution_plan_json)
+       VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', ?, ?, ?, 'call-1', 'read_resource',
+               'hash-1', '{}', 'completed', '{"mode":"read"}')`,
+      workspaceId,
+      workstreamId,
+      runId,
+    );
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO tool_invocations
+         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+          input_hash, input_json, status, execution_plan_json)
+       VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', ?, ?, ?, 'call-2', 'publish_branch',
+               'hash-2', '{}', 'completed', '{"mode":"write"}')`,
+      workspaceId,
+      workstreamId,
+      runId,
+    );
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: 'global',
@@ -184,8 +209,11 @@ describe('authoritative run outcome telemetry', () => {
         duration: '5s_30s',
         timeToFirstOutput: '1s_5s',
         turnCount: 'two_to_five',
-        toolCallCount: 'zero',
-        writeToolCallCount: 'zero',
+        // Two receipts, one of them a write. These previously read `zero`
+        // against a run with no receipts at all, which meant breaking the
+        // subqueries outright left the assertion green.
+        toolCallCount: 'two_to_five',
+        writeToolCallCount: 'one',
         modelRoute: 'openai/gpt-5',
         fallbackUsed: true,
       },
