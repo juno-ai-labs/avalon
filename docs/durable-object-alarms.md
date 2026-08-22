@@ -276,6 +276,11 @@ a failing target a free immediate attempt.
   handler overran, and the agent-timer index.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
+- `apps/api/test/workspace-do-schema.test.ts` applies the WorkspaceDO ledger one
+  version at a time against `node:sqlite`. A migration that inserts a row is a
+  claim about SQL, and the version it lives in is the claim that matters: the
+  bootstrap must appear when 5 runs against a carried-over object, must not
+  appear for a new one, and must not appear in 4, which is released.
 - Driving an alarm in a test: `runDurableObjectAlarm(stub)` from
   `cloudflare:test` invokes the handler and reports whether one was armed.
   Reading state afterwards needs `runInDurableObject`, because a stored entry is
@@ -302,7 +307,7 @@ a failing target a free immediate attempt.
 
 **What changed:** New `ScheduledDurableObject` base and `_internal_durable_alarms` table,
 adopted by `WorkspaceDO`, `WorkstreamDO`, and `SubstreamAgent` (schema versions
-4, 2, and 15 respectively). The `WorkspaceScheduler` Durable Object's work —
+4 — plus 5 for the bootstrap below — 2, and 15 respectively). The `WorkspaceScheduler` Durable Object's work —
 due schedules, resource watches, maintenance passes, and Terminal deadlines —
 moved into WorkspaceDO as reconciled entries, with its execution code extracted
 to `services/workspace-schedule-execution.ts`, and the class itself was deleted:
@@ -338,10 +343,13 @@ forwarder that handed each surviving alarm to WorkspaceDO before clearing itself
 would have avoided that, at the price of carrying a dead class through another
 release and remembering to finish the job.
 
-What replaces it is the `schedule_bootstrap` entry that WorkspaceDO's alarm
-migration writes into any object that already has an identity: the first time
-such an object wakes it reconciles itself once, unprompted, and the entry is
-consumed. That covers every workspace whose object is constructed after the
+What replaces it is the `schedule_bootstrap` entry that WorkspaceDO migration
+**5** writes into any object that already has an identity: the first time such an
+object wakes it reconciles itself once, unprompted, and the entry is consumed.
+It is its own version rather than an addition to 4 because 4 ships in the release
+before this one — amending a released version's statements changes the hash every
+deployed object recorded and throws `workspace_do_schema_hash_mismatch:4` in its
+constructor, for good. That covers every workspace whose object is constructed after the
 deploy, which is every workspace with any traffic at all. It does **not** cover
 a workspace that is never touched again — nothing inside a Durable Object can
 wake it — so if a schedule matters there, an operator reconciles it by calling
@@ -371,7 +379,8 @@ Two dead pre-cutover paths went with the move: the legacy-phase wake-up drain,
 which read a regional `workstream_wakeups` table that migration `0090` dropped
 and which was unreachable in the `durable_object_open` phase, and
 `runIsolatedSchedulerMaintenance`, whose whole job — one failing sweep must not
-take its siblings down — is now a property of the drain itself. Maintenance is also no longer all-or-nothing per alarm: each pass is its own entry with its own
+take its siblings down — is now a property of the drain itself. Maintenance is
+also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
 the memory-index outbox every time it retries.
 

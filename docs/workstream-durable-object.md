@@ -13,9 +13,9 @@ names, SQL tables, RPC contracts, socket audiences, and `/block-dashboard`
 routes use the internal name; rendered labels, accessibility copy, and model-
 visible product copy continue to say HyperSight.
 
-All five Durable Object classes in this subsystem (`WorkspaceDO`,
-`WorkstreamDO`, `SubstreamAgent`, `BlockDashboardAgent`, and
-`BlockDashboardAgent`) use SQLite-backed namespaces and explicit SQL only.
+All four Durable Object classes in this subsystem (`WorkspaceDO`,
+`WorkstreamDO`, `SubstreamAgent`, and `BlockDashboardAgent`) use SQLite-backed
+namespaces and explicit SQL only.
 Durable Object key/value persistence is forbidden by lint. `WorkspaceDO` is the
 authoritative cross-work-stream directory and inverted-index owner, first-party
 activity/digest log, connector-event store, and complete suggested-work product
@@ -1148,8 +1148,9 @@ watches, maintenance passes, Terminal deadlines — with its execution code in
 `services/workspace-schedule-execution.ts`. SubstreamAgent's agent timers became
 one entry per pending wake-up instead of a derived `MIN(due_at)`. The scheduler
 object was deleted outright — binding, class, and Wrangler tag `v4` — and a
-one-shot `schedule_bootstrap` entry in WorkspaceDO's alarm migration reconciles
-each carried-over workspace once instead.
+one-shot `schedule_bootstrap` entry, carried as WorkspaceDO migration 5 rather
+than an amendment to the released version 4, reconciles each carried-over
+workspace once instead.
 [`durable-object-alarms.md`](durable-object-alarms.md) is the new module
 document and holds the full reasoning, including what deleting the class costs.
 
