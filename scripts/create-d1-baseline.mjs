@@ -21,7 +21,7 @@
 // runs agree and the generator would freeze a timestamp into every future local
 // database.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import process from "node:process";
 import { isEntryPoint } from "./entry-point.mjs";
 import {
   applyMigrations,
+  readBaselineManifest,
   detectVolatileColumns,
   digestMigrations,
   listMigrationFiles,
@@ -109,6 +110,21 @@ export async function buildBaseline({ through, directory = MIGRATIONS_DIRECTORY,
   return { sql, manifestEntry };
 }
 
+/**
+ * Places a new baseline in the manifest, replacing one at the same boundary.
+ *
+ * Baselines accumulate rather than replace each other. An older one still
+ * describes its own boundary correctly and still gets an empty database most of
+ * the way there, so keeping it costs a file and loses nothing;
+ * `selectBaseline` picks whichever reaches furthest. Regenerating at a boundary
+ * that already has one overwrites it, because two snapshots of the same point
+ * cannot both be right.
+ */
+export function mergeIntoManifest(existing, entry) {
+  const others = existing.filter((baseline) => baseline.through !== entry.through);
+  return [...others, entry].sort((left, right) => (left.through < right.through ? -1 : 1));
+}
+
 async function main() {
   const through = process.argv[2];
   if (!through) {
@@ -118,14 +134,15 @@ async function main() {
 
   mkdirSync(BASELINES_DIRECTORY, { recursive: true });
   writeFileSync(join(BASELINES_DIRECTORY, manifestEntry.file), sql, "utf8");
-  // One baseline at a time. Keeping several would mean deciding which one a
-  // fresh database gets, and the answer is always "the newest", so the older
-  // ones would be dead files that still have to pass the equivalence suite.
-  writeFileSync(MANIFEST_PATH, `${JSON.stringify({ baseline: manifestEntry }, null, 2)}\n`, "utf8");
+
+  const existing = existsSync(MANIFEST_PATH) ? readBaselineManifest(readFileSync(MANIFEST_PATH, "utf8")) : [];
+  const baselines = mergeIntoManifest(existing, manifestEntry);
+  writeFileSync(MANIFEST_PATH, `${JSON.stringify({ baselines }, null, 2)}\n`, "utf8");
 
   console.log(`Wrote ${manifestEntry.file}: ${manifestEntry.migrations.length} migrations subsumed, `
     + `${manifestEntry.objectCounts.tables} tables, ${manifestEntry.objectCounts.indexes} indexes, `
     + `${manifestEntry.objectCounts.triggers} triggers.`);
+  console.log(`Manifest now holds ${baselines.length} baseline(s): ${baselines.map((b) => b.through).join(", ")}`);
   const volatile = Object.entries(manifestEntry.volatileColumns);
   if (volatile.length === 0) console.log("No volatile columns detected.");
   else for (const [table, columns] of volatile) console.log(`Volatile: ${table}.${columns.join(", ")}`);
