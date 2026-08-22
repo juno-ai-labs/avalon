@@ -443,13 +443,35 @@ export class WorkspaceService {
     if (member.role === "owner" && this.auth.role !== "owner") {
       throw new ApiError(403, "forbidden", "Only an owner can remove an owner");
     }
-    // No last-owner check: the two rules above already keep one. Only an owner
-    // may remove an owner, an owner may not remove themselves, and a role is
-    // only carried by an active membership — so whoever removes the target is
-    // an active owner who remains one afterwards.
-    await this.env.DB.prepare(
-      `DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
-    ).bind(this.auth.workspaceId, userId).run();
+    // The delete re-asserts the caller's own standing, because the checks above
+    // read it in an earlier round trip. Two owners removing each other at the
+    // same time both pass those checks — and without this clause both deletes
+    // land, leaving a workspace with no owner at all. SQLite serializes the two
+    // statements, so whichever runs second finds its actor already gone and
+    // removes nothing. There is still no last-owner count: this is what makes
+    // "the remover is an active owner who remains one" true under concurrency,
+    // which is the only condition it was ever in doubt under.
+    const removal = await this.env.DB.prepare(
+      `DELETE FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ?
+          AND EXISTS (
+            SELECT 1 FROM workspace_members actor
+             WHERE actor.workspace_id = ? AND actor.user_id = ?
+               AND actor.status = 'active' AND actor.role = ?
+          )
+        RETURNING user_id`,
+    ).bind(this.auth.workspaceId, userId, this.auth.workspaceId, this.auth.userId, this.auth.role)
+      .first<{ user_id: string }>();
+    if (!removal) {
+      // Either the caller's own standing went away underneath them, or somebody
+      // else removed this person first. Both mean this request did not do what
+      // it reports, and neither should announce a revocation it did not cause.
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The workspace membership changed while this removal was in flight. Check it and try again.",
+      );
+    }
     await publishAccessRevocation(this.env, {
       reason: "workspace_membership_removed",
       workspaceId: asWorkspaceId(this.auth.workspaceId),

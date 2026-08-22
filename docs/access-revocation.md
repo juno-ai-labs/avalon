@@ -21,7 +21,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/routes/workspace-membership.ts` | `DELETE /workspaces/:workspaceId/membership/member/:userId`, the only route that ends a membership. |
 | `apps/api/src/services/workspace-service.ts` | `removeMember` — deletes the D1 row and publishes in the same request. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
-| `apps/api/src/index.ts` | Queue dispatch by name, and `reapExpiredSessions` on the five-minute cron. |
+| `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent}.ts` | `revokeSocketAccess` on each of the four socket-holding objects. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 
@@ -118,7 +118,9 @@ room would go on seeing an evicted reader listed as present.
 - **An object returns lists; it does not publish.** Keeping the transport in the
   consumer is what keeps the four objects independent of the queue.
 - **Publishing never fails the request that wrote the fact.** The removal
-  committed; failing the response would tell the operator it did not.
+  committed; failing the response would tell the operator it did not. A producer
+  that *can* still retry — the expiry sweep, which owns its own schedule — reads
+  the returned flag and leaves the row for the next run instead.
 
 ## Boundary
 
@@ -146,7 +148,18 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   `access_revocation_publish_failed` and swallowed. The socket outlives the
   retraction until the client reconnects and fails admission — which every
   desktop does on its own reconnect cycle. The alternative, failing the request,
-  reports a removal that did happen as a removal that did not.
+  reports a removal that did happen as a removal that did not. **This is the
+  module's weakest point**: a membership removal has already committed, so a
+  dropped message is not retried by anything and that socket keeps receiving
+  until it reconnects. Making it durable needs an outbox row written in the same
+  D1 write as the retraction, and a sweep that enqueues until delivery; that is
+  a real design change and is not built.
+- **The expiry sweep publishes before it marks**, which is what stops the same
+  failure being permanent there. Marking first would exclude the row from every
+  later sweep, so a transient queue outage would lose that expiry for good; in
+  this order the row stays unmarked and the next run retries it. The cost is a
+  duplicate message when the mark fails, and a duplicate revocation is a hop
+  that finds nothing left to close.
 - **A hop throws.** Logged as `access_revocation_hop_failed` and retried, up to
   `max_retries: 5`, then dead-lettered to
   `avalon-{global,eu}-access-revocations-dead-letter`. A non-empty dead-letter
@@ -175,7 +188,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 | Suite | What it proves |
 | --- | --- |
 | `pnpm --filter @avalon/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children, and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
-| `pnpm --filter @avalon/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. |
+| `pnpm --filter @avalon/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
 
 Traps:
 

@@ -141,15 +141,19 @@ export default {
     return app.fetch(request, env, context);
   },
   queue: withEnvContract(async (batch, env) => {
+    // Revocations dispatch before the maintenance gate, not after. They are a
+    // separate queue resource so they never wait behind an activity backlog,
+    // and they are the only path from a retraction to an open socket — so
+    // refusing them during maintenance would retry every one of them into the
+    // dead-letter queue while the sockets they name stayed open. Closing a
+    // socket is not new work-stream work: it reads an object's own storage and
+    // hangs up. See docs/access-revocation.md.
+    if (isAccessRevocationQueue(batch.queue)) {
+      return consumeAccessRevocationQueue(batch, env);
+    }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
       throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
-    }
-    // Dispatch by queue: access revocations are a separate resource because
-    // they are the only path from a retraction to an open socket, and must not
-    // wait behind an activity backlog. See docs/access-revocation.md.
-    if (isAccessRevocationQueue(batch.queue)) {
-      return consumeAccessRevocationQueue(batch, env);
     }
     return consumeActivityQueue(batch, env);
   }),
