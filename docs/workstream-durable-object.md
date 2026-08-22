@@ -32,6 +32,7 @@ serve workspace product state or transcripts after cutover.
 | --- | --- |
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, work-stream, and substream object names. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative workspace product database, work-stream directory, hibernating synchronization/command socket, typed product SQL RPC, local product alarm, bounded topic replay, and one-time workspace-ticket receipts. |
+| `apps/api/src/durable-objects/workspace-socket-authorization.ts` | The one question a workspace-socket sweep asks D1 — which connected session-and-user pairs may still hold a socket — batched under D1's bound-parameter limit. Separate from the object so it can be proved against the checked-in migrations in the Node suite. |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
@@ -202,6 +203,37 @@ Electron does not fall back to a D1 work-stream list. A user message is never ac
 `create_message` sent there receives `workspace_socket_required`. This keeps
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
+
+A window that only listens is still revalidated. Both publish paths —
+`publishSync` and `publishWorkstreamState` — sweep the connected set before they
+send: immediately when the payload names a topic that can retract access
+(`member_directory` today), and otherwise at most once per 30 seconds
+(`AUTHORIZATION_REVALIDATE_MS`). The sweep asks the same question the connection
+was admitted with — an unrevoked, unexpired regional session joined to an active
+membership in this region — of every connected identity at once, in batches of
+48 to stay inside D1's 100-parameter statement limit, and closes the sockets
+that fail it with `1008`, which is the code the desktop reads as final. An
+identity is a session *and* a user, never a session alone: the development
+bypass issues the id `development` to everyone, so a sweep keyed on the session
+would let one member's membership decide every local window's fate. The answer
+is also keyed by the session row's own `user_id` rather than the socket's claim,
+so a socket presenting someone else's session is not permitted by it.
+Concurrent publications join the sweep already running instead of each starting
+their own — a directory batch fans out to one publication per changed work
+stream, and all of them would otherwise pass the interval check before the first
+sweep recorded itself. Publications are also serialized: `publishSync`
+allocates its waterline and sends inside a queue, one at a time. The sweep
+between those two steps is a D1 round trip and the input gate is open across it,
+so without the queue a cheaper concurrent publication — one that skips the sweep
+because the interval is fresh — allocates the higher waterline and sends first,
+and the desktop's `waterline <= lastWaterline` guard then discards the parked
+payload along with every topic it named. A `member_directory` publication is the
+guaranteed victim, because forcing the sweep is what it does. When the query
+itself fails during a retraction the object closes every socket with `1011`
+instead: a reconnect is authorized at connect time, so everyone still entitled
+returns within a second rather than being stranded on an access-revoked screen by
+one failed query. The interval lives in memory, so a hibernation eviction resets
+it and the next publication sweeps.
 
 All four socket roles use short-lived, audience-specific, single-use tickets. The
 edge Worker verifies the signed ticket and passes only verified headers to the
@@ -656,6 +688,8 @@ misrouted product statement now fails because the table or column is absent.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
+- **Sync waterlines are allocated and sent one publication at a time.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. Anything that lets two publications interleave between their allocation and their send silently drops the slower one's invalidation.
+- **A socket that has stopped being authorized is closed, not merely skipped.** Every role that pushes to a listening socket bounds its authorization: `SubstreamAgent` and `WorkspaceDO` sweep the connected set before publishing — immediately on a retraction, otherwise once per 30 seconds — and `BlockDashboardAgent` revalidates its attachment after 60. A push may then trust an open socket, which is what keeps an authorization query off the token path. Without the sweep a revoked session keeps receiving whatever that object publishes until the window closes.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** HyperSight attachments carry only a bounded 60-second authorization cache and receive explicit parent sweeps; no long-lived ticket or attachment is continuing authority for a new write.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
@@ -979,6 +1013,61 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — WorkspaceDO sweeps the sockets it publishes to
+
+**What changed:** Both WorkspaceDO publish paths now revalidate the connected
+set before sending and close the sockets that no longer pass — immediately when
+the payload names a topic that can retract access, otherwise at most once per 30
+seconds. A session revoked at sign-out, a session that expired, or a membership
+going inactive now ends the socket rather than being invisible to it.
+
+**Why:** `sessionAuth` ran on the upgrade and on each inbound command, so a
+window that only listened was authorized as of the last thing it said — and this
+object's whole design asks windows to sit and listen. A person whose session was
+revoked kept receiving workspace metadata and work-stream rows, including titles,
+previews and unread counts, until they closed the window. The desktop already had
+the other half of this: `workspace-socket.tsx` treats a `1008` close as final,
+stops retrying, and rejects pending commands with `workspace_access_revoked`. It
+had simply never been sent one. `architecture.md` also already described an
+explicit retraction sweep and bounded revalidation for *all four* socket roles;
+it was true of three.
+
+**Considered and rejected:** Authorizing on every push, which is where this
+started. For the sync path it would be one D1 query per payload, and the same
+rule applied to a transcript feed would put a query on every token frame —
+`SubstreamAgent` skips its own revalidation for `stream_delta` precisely to
+avoid that. Bounding the staleness instead keeps the hot path clear and makes
+the cost proportional to publication rather than to traffic. Also rejected:
+asking `sessionAuth` once per socket, which is N queries per sweep where one
+batched query answers the whole connected set.
+
+**Consequences:** Sync publication is serialized, and has to stay that way. The
+sweep introduced an await between the waterline allocation and the send, which
+let a concurrent publication overtake a parked one and take its invalidation
+down with it. The obvious repair — moving the sweep ahead of the allocation so
+nothing awaits between allocation and send — was tried and abandoned: it makes
+workerd die with `kj/async.c++: Promise callback destroyed itself` partway
+through the runtime suite, reproducibly, while the queue is stable over repeated
+runs. A future change that wants to remove the queue has to answer that crash
+first. A push may trust an open socket, and that is now a rule the
+next socket-bearing object inherits rather than a property of this one — closing
+on retraction is the mechanism, not a per-frame check. Anything that retracts
+access needs a topic in `ACCESS_RETRACTING_TOPICS` to be enforced promptly;
+without one it waits out the interval, which is the accepted bound and the
+reason the interval is short. The batch size of 48 exists because D1 permits 100
+bound parameters per statement and the fixed predicate takes four. The
+development bypass in `sessionAuth` admits a socket with no session row, so the
+sweep carries a matching membership-only branch; a change to either has to move
+both or local windows close on the first publication. The unit a sweep decides
+about is a session *and* a user, because that bypass gives every user the same
+session id — a future authorization path that introduces another shared
+credential inherits the same requirement. Sweeps coalesce, so a caller may
+assume publishing does not multiply the query, but a *certain* caller never
+joins an uncertain sweep: an uncertain sweep leaves everyone connected when its
+query fails, which is the wrong answer for a retraction.
+
+Shipped in #220.
 
 ### 2026-08-21 — Terminal addresses its own tables through a typed port
 

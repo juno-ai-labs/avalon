@@ -685,7 +685,9 @@ consequence of breaking it.
   decision that changes rarely, which is why `SubstreamAgent` skips its periodic
   revalidation for `stream_delta` entirely. Break it the other way — never
   sweeping — and someone who was removed keeps receiving until they close the
-  window.
+  window. Every role that pushes to a listener bounds this: `SubstreamAgent` and
+  `WorkspaceDO` sweep before publishing, at 30 seconds or immediately on a
+  retraction, and `BlockDashboardAgent` revalidates its attachment after 60.
 - **The connect payload is bounded**, and it is paid per window — Main,
   Settings, and Meeting each hold their own socket, and none of them is
   distinguishable at admission today. Break this and the cost lands on every
@@ -720,10 +722,10 @@ describes behaviour to replace, not a pattern to copy into something new.**
 
 ## Known divergences
 
-Four places where the running code does not follow this document. They are
+Three places where the running code does not follow this document. They are
 written down so that nobody reproduces them by copying what is already there,
 and so the work to close them is legible to whoever picks it up. **None of them
-is an exception you may extend: three are gaps, and the message send is a single
+is an exception you may extend: two are gaps, and the message send is a single
 argued-for carve-out.**
 
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
@@ -758,21 +760,6 @@ The push path already exists — `connector_connections` is one of the workspace
 sync topics — so closing it means applying pushed connection state on that
 screen instead of re-reading. Until then, this is the one place a timer-like
 read survives, and it is not a precedent.
-
-**The workspace socket keeps pushing to a revoked session until that session
-speaks.** `publishSync` and `publishWorkstreamState` write to every subscribed
-attachment without re-checking the session, and WorkspaceDO has no sweep that
-closes a socket whose D1 session or workspace membership has been revoked.
-`sessionAuth` runs on the upgrade and on each inbound command — `subscribe`,
-`list_workstreams`, `create_message` — so a connection that only listens is
-authorized as of the last thing it said. `SubstreamAgent` and
-`BlockDashboardAgent` do not have this gap: both sweep immediately on an
-access-retracting event and revalidate on a bound. This is the "never sweeping"
-half of the [revocation invariant](#invariants), and it is the one divergence
-here with a security consequence rather than a cost one: workspace and
-work-stream metadata can reach a member after their access ended. Closing it
-means giving WorkspaceDO the same retraction sweep, closing affected sockets
-with a policy close before the next payload goes out.
 
 **Message sends go up the workspace socket, not over REST.** This was decided
 on purpose and the reasoning is recorded in
