@@ -1,0 +1,162 @@
+/**
+ * Force one Durable Object onto the running build's schema.
+ *
+ * The receiving half of the tracker's **Force a migration** page. An operator
+ * picks a class there; the tracker turns every object it knows of into one
+ * message on this region's `avalon-<region>-migration-commands` queue; and this
+ * consumer wakes the object each message names and reads back where it landed.
+ * `docs/durable-object-migration-tracking.md` owns the flow.
+ *
+ * A queue between the two, rather than the tracker calling the objects itself:
+ * a class has hundreds of instances and applying a migration means waking every
+ * one of them, which is a fan-out no single invocation should hold open, and
+ * which the queue meters into batches this Worker can absorb. It is also the
+ * only shape available — a Durable Object can only be addressed by a Worker
+ * holding a binding to its namespace, and only this region's Worker holds
+ * bindings to this region's objects.
+ *
+ * The hop from here into the object is RPC because this consumer reads the
+ * answer: `forceMigration` returns the version the object ended on, and an
+ * object that comes back below the build's head is logged as a warning rather
+ * than a success. That is the split `docs/choosing-queues-or-rpc.md` describes —
+ * a queue per hop, RPC inside the hop — and the same one `access-revocation.md`
+ * already uses.
+ *
+ * Forcing an object twice is the same as forcing it once: the wake applies
+ * whatever is unapplied and reports where it is. So a redelivered message needs
+ * no dedupe key, which is what lets a failed hop retry on its own.
+ */
+import {
+  DurableObjectMigrationCommandSchema,
+  type DurableObjectMigrationCommand,
+} from "@avalon/contracts/durable-object-migrations";
+
+import type { ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
+import type { Env } from "../env";
+import { durableObjectStubById } from "../lib/durable-object-namespace";
+import { logStructuredEvent, logWarn } from "../observability/logger";
+
+/**
+ * The classes this region can force, and the binding each is addressed through.
+ *
+ * The authority on what may be forced, and deliberately not derived from the
+ * message: a class name this Worker does not deploy has no namespace to look an
+ * ID up in, so guessing one would either throw somewhere less legible or —
+ * worse — resolve an ID in the wrong namespace and create an empty object.
+ *
+ * A map of calls rather than a map of namespaces because
+ * `DurableObjectNamespace<T>` is invariant in `T`: four namespaces of four
+ * classes have no common supertype to store side by side, even though every one
+ * of those classes extends `MigratableDurableObject` and every stub answers the
+ * same method. Resolving the stub inside each entry keeps each one concrete.
+ *
+ * `CrashSymbolicatorContainer` is absent because it is a container rather than a
+ * migrated object; it runs no schema and has nothing to force. Add a class here
+ * in the same change that adds it to the Worker, and to `REPORTING_CLASSES` in
+ * `apps/migration-tracker/src/registry.ts`, which is what decides whether the
+ * tracker offers it at all.
+ */
+export function migrationCommandDispatchers(env: Env): Record<
+  string,
+  (command: DurableObjectMigrationCommand) => Promise<ForcedMigrationOutcome>
+> {
+  return {
+    SubstreamAgent: (command) =>
+      durableObjectStubById(env, env.SUBSTREAM_AGENTS, command.objectId).forceMigration(command),
+    BlockDashboardAgent: (command) =>
+      durableObjectStubById(env, env.BLOCK_DASHBOARD_AGENTS, command.objectId)
+        .forceMigration(command),
+    WorkstreamDO: (command) =>
+      durableObjectStubById(env, env.WORKSTREAM_DOS, command.objectId).forceMigration(command),
+    WorkspaceDO: (command) =>
+      durableObjectStubById(env, env.WORKSPACE_DOS, command.objectId).forceMigration(command),
+  };
+}
+
+/** Carry one forced migration to one object and read back where it landed. */
+export async function applyMigrationCommand(
+  env: Env,
+  command: DurableObjectMigrationCommand,
+): Promise<ForcedMigrationOutcome> {
+  const dispatch = migrationCommandDispatchers(env)[command.className];
+  if (!dispatch) throw new Error(`migration_command_unknown_class:${command.className}`);
+  return dispatch(command);
+}
+
+/**
+ * Queue entry point: one object per message, retried on its own.
+ *
+ * Two kinds of message are acknowledged rather than retried, because neither
+ * can ever become valid: one the contract refuses, and one addressed to the
+ * other region. The second is a misrouted producer rather than a transient
+ * fault, and rerouting it here would be the Global fallback
+ * `docs/choosing-queues-or-rpc.md` forbids — a command must be applied by the
+ * region that owns the object or not at all.
+ *
+ * Everything else is retried, including a migration that threw. That is the
+ * outcome to want: the object reports its own failure on the way past, so the
+ * tracker shows the break, and the messages that exhaust their retries land in
+ * the dead-letter queue, which counts how many objects are stuck without
+ * anybody building a tally.
+ */
+export async function consumeMigrationCommandQueue(
+  batch: MessageBatch<unknown>,
+  env: Env,
+): Promise<void> {
+  await Promise.all(batch.messages.map(async (message) => {
+    const parsed = DurableObjectMigrationCommandSchema.safeParse(message.body);
+    if (!parsed.success) {
+      logWarn(env, "migration_command_invalid", {
+        queue: batch.queue,
+        errors: parsed.error.issues.slice(0, 4).map((issue) =>
+          `${issue.path.map(String).join(".") || "(root)"}: ${issue.code}`),
+      });
+      message.ack();
+      return;
+    }
+    const command = parsed.data;
+    if (command.region !== env.AVALON_REGION) {
+      logStructuredEvent(env, "error", "migration_command_misrouted", {
+        message: `migration_command_misrouted ${command.region} reached ${env.AVALON_REGION}`,
+        queue: batch.queue,
+        run_id: command.runId,
+        command_id: command.commandId,
+        object_id: command.objectId,
+        class_name: command.className,
+      });
+      message.ack();
+      return;
+    }
+
+    try {
+      const outcome = await applyMigrationCommand(env, command);
+      const behind = outcome.schemaVersion < outcome.latestVersion;
+      logStructuredEvent(env, behind ? "warn" : "info", "migration_command_applied", {
+        message: `migration_command_applied ${outcome.className} v${outcome.schemaVersion}`
+          + `${behind ? ` still behind v${outcome.latestVersion}` : ""}`,
+        run_id: command.runId,
+        command_id: command.commandId,
+        object_id: outcome.objectId,
+        object_name: outcome.objectName,
+        class_name: outcome.className,
+        component: outcome.component,
+        schema_version: outcome.schemaVersion,
+        latest_version: outcome.latestVersion,
+        // False means the object woke and ran its schema but its receipt was
+        // not accepted by the report queue, so the tracker will not show this
+        // pass until the object's next wake. The migration still happened.
+        reported: outcome.reported,
+      });
+      message.ack();
+    } catch (error) {
+      logWarn(env, "migration_command_failed", {
+        run_id: command.runId,
+        command_id: command.commandId,
+        object_id: command.objectId,
+        class_name: command.className,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+      message.retry();
+    }
+  }));
+}

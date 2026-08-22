@@ -303,6 +303,16 @@ schema version, and an error describing code, all converging on one account-wide
 registry object by design. A second queue would have doubled the resources and
 isolated nothing, so there is one.
 
+The forced-migration commands travelling the other way are the same subsystem
+answering the same test the other way round, which is why they are worth reading
+side by side. Their payload is just as opaque, and the volume is just as far from
+any ceiling — but the destination is not shared. A Durable Object can only be
+addressed from a Worker that binds its namespace, and a queue has exactly one
+consumer, so the Global commands must be consumed by the Global Worker and the
+EU commands by the EU one. **The destination decides the split, not the
+payload**, and the two halves of one subsystem landing on opposite answers is the
+clearest available demonstration of that.
+
 ### Best practices when you do split
 
 - **Name by region, consistently**: `avalon-<region>-<purpose>`, plus a
@@ -439,6 +449,7 @@ it.
 | --- | --- | --- | --- |
 | Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue | Split | Fan-in from webhooks and polls; nothing waits on the outcome. Split because the payload is workspace content and the consumer must be the region's own Worker. |
 | Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for both regions and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| Forced migrations into the objects that must apply them (`avalon-<region>-migration-commands`) | Queue | Split | An operator picks a class on the migration tracker and every live object of it is woken, which is hundreds of cold starts no single invocation should hold open. Split because a queue has exactly one consumer and only the region's own Worker binds its namespaces — the constraint below decides it outright. The consumer's call into each object is RPC because it reads back the version the object landed on. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | Access revocation into the socket-holding objects (`ACCESS_REVOCATION_QUEUE`) | Queue | Split | The Worker that ends a membership or a session walks away; nothing it returns depends on the sockets closing. Each object is one hop, so a hop that fails retries alone rather than restarting the walk, and the consumer's calls into the objects are RPC because it reads back the children each one names. Split because the objects, the sessions, and the memberships never cross the boundary. See [`access-revocation.md`](access-revocation.md). |
 | Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | Crosses, by design | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
 | Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Same region | Reads and writes whose results the request returns to the desktop. |

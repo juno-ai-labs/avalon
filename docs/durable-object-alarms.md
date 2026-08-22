@@ -19,6 +19,7 @@ sockets, and effects — belong to
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
+| `apps/api/src/durable-objects/migratable-durable-object.ts` | The base `ScheduledDurableObject` itself extends. It owns the schema half — the migration pass, its report, and `migrationsReady()`, which every method here awaits before touching `_internal_durable_alarms`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, so a wake-up a run scheduled fires from the object that owns it. |
@@ -69,7 +70,8 @@ before a full re-arm.
 
 `alarm()` is implemented once, in the base:
 
-1. Wait for the object's migrations (`scheduleReady()`).
+1. Wait for the object's migrations (`migrationsReady()`, from the base below
+   `ScheduledDurableObject`).
 2. **Re-arm immediately** through `armAlarmBeforeDueWork()`, before anything
    awaited. A cancelled invocation neither throws nor runs a `finally`, so an
    object that re-arms only at the end of its handler can be left with no
