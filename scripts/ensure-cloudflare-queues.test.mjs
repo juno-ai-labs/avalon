@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   assertPairedQueues,
+  assertSingleConsumerPerQueue,
   configuredQueues,
   createAccountQueue,
   ensureRequiredQueues,
@@ -67,18 +68,24 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
     { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-activities' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-access-revocations' },
+    { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
     { surface: 'api-eu', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-eu-activities' },
     { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocations' },
     { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-activities' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
+    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-migration-commands' },
+    { surface: 'migration-tracker', role: 'producer:GLOBAL_MIGRATION_COMMAND_QUEUE', name: 'avalon-global-migration-commands' },
+    { surface: 'migration-tracker', role: 'producer:EU_MIGRATION_COMMAND_QUEUE', name: 'avalon-eu-migration-commands' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
   ]);
   assert.deepEqual(createdOnDeploy.map((queue) => queue.name), [
     'avalon-global-activities-dead-letter',
     'avalon-global-access-revocations-dead-letter',
+    'avalon-global-migration-commands-dead-letter',
     'avalon-eu-activities-dead-letter',
     'avalon-eu-access-revocations-dead-letter',
+    'avalon-eu-migration-commands-dead-letter',
     'avalon-migration-reports-dead-letter',
   ]);
 });
@@ -88,13 +95,15 @@ test('against an empty account, exactly the queues the Wrangler files require ar
 
   await ensureRequiredQueues({ environment, log: () => {}, fetchImpl: account.fetchImpl });
 
-  // Five names from eleven bindings; no dead-letter queue among them.
+  // Seven names from sixteen bindings; no dead-letter queue among them.
   assert.deepEqual(account.created.map((request) => request.body.queue_name), [
     'avalon-global-activities',
     'avalon-global-access-revocations',
     'avalon-migration-reports',
+    'avalon-global-migration-commands',
     'avalon-eu-activities',
     'avalon-eu-access-revocations',
+    'avalon-eu-migration-commands',
   ]);
 });
 
@@ -360,4 +369,34 @@ test('strips comments without truncating a URL inside a string', () => {
   // URL, and a naive strip would cut the value in half.
   assert.equal(parsed.vars.PUBLIC_WEB_BASE_URL, 'https://rallywith.ai');
   assert.equal(parsed.queues.producers[0].queue, 'avalon-migration-reports');
+});
+
+test('the declared queues each have exactly one consumer', async () => {
+  const { required } = await configuredQueues();
+
+  assert.doesNotThrow(() => assertSingleConsumerPerQueue(required));
+});
+
+test('refuses a queue consumed by two Workers', () => {
+  // The shape a regional queue pasted into both regional files produces.
+  // `assertPairedQueues` is content with it — both sides are named — so this is
+  // the only thing standing between that edit and a half-completed release.
+  assert.throws(
+    () => assertSingleConsumerPerQueue([
+      { surface: 'api-global', role: 'producer:COMMANDS', name: 'avalon-global-migration-commands' },
+      { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
+      { surface: 'api-eu', role: 'consumer', name: 'avalon-global-migration-commands' },
+    ]),
+    /avalon-global-migration-commands is consumed by api-global and api-eu/u,
+  );
+});
+
+test('allows the same queue produced by two Workers', () => {
+  // `avalon-migration-reports` is exactly this: both API Workers produce it and
+  // only the tracker consumes it. The limit is on consumers alone.
+  assert.doesNotThrow(() => assertSingleConsumerPerQueue([
+    { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
+  ]));
 });
