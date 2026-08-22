@@ -389,6 +389,13 @@ export async function processWorkstreamNotificationIntent(
   }
 }
 
+/**
+ * Close one intent out, for either kind.
+ *
+ * The payload is cleared on the way: it held a message excerpt or a work
+ * stream's objective only so delivery could render it, and a settled intent is
+ * a receipt rather than a copy of what was said.
+ */
 async function settleNotificationIntent(
   env: Env,
   workspaceId: string,
