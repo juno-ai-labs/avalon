@@ -273,6 +273,14 @@ The refresh sweep's bounds, all deliberate:
 - **A WorkspaceDO lookup failure leaves every affected link untouched.** D1 is
   not a summary fallback; the next five-minute sweep retries the authoritative
   object.
+- **A link whose work stream is archived, or absent from the directory page,
+  has `refreshed_at` advanced like an unchanged card.** There is no card to
+  refresh, but the sweep's due time is the oldest `refreshed_at` in the table
+  ([`durable-object-alarms.md`](durable-object-alarms.md)), and a row left
+  behind pinned the whole workspace's sweep: it came straight back for the row
+  it had just skipped, and since the stall gate would be held and reported for
+  a link nobody will ever refresh. The due-time query also counts only links
+  on a connection that is not disabled, because the sweep loads only those.
 - **Up to five minutes of staleness** is the accepted cost of sweeping rather than
   hooking the seven `harness_status` writers.
 
@@ -299,6 +307,27 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-08-22 — A skipped link still advances
+
+**What changed:** The Durable-Object-mode sweep advances `refreshed_at` for a
+link whose work stream is archived or missing from the directory page, where it
+used to skip the row untouched. The workspace alarm's due-time query for the
+sweep counts only links on a connection that is not disabled.
+
+**Why:** The sweep's due time is `MIN(refreshed_at)` over the table, and the
+sweep loads rows through a non-disabled connection and skips archived work
+streams. A row that is counted but never advanced holds the due time at a past
+instant forever — the shape of the 2026-08-22 alarm hot loop — and, once the
+alarm base gates such an entry, holds every other card in the workspace behind
+a thirty-minute backoff and pages an operator for a link nobody will refresh.
+Advancing the row costs one `UPDATE` a sweep; excluding the disabled
+connection's rows from the count costs one `EXISTS`.
+
+**Consequences:** An archived work stream's link is re-examined every five
+minutes like any unchanged card, and deleted when its message or channel goes.
+A reap or sweep whose due-time query counts rows it will not move is a defect;
+see the invariant in `durable-object-alarms.md`.
 
 ### 2026-08-18 — Slack cards join work-stream summaries from WorkspaceDO
 

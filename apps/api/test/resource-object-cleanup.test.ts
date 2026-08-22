@@ -32,12 +32,14 @@ describe("resource object cleanup", () => {
       PAYLOADS: { async delete(key: string) { deleted.push(key); } },
     });
 
-    await reapDeletedResourceObjects(env);
+    // The count is what the alarm reads as progress: a batch that retired rows
+    // re-derives the same instant and must not be read as a stall.
+    expect(await reapDeletedResourceObjects(env)).toBe(100);
     expect(deleted).toHaveLength(100);
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 1 });
 
-    await reapDeletedResourceObjects(env);
+    expect(await reapDeletedResourceObjects(env)).toBe(1);
     expect(deleted).toHaveLength(101);
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 0 });
@@ -72,7 +74,8 @@ describe("resource object cleanup", () => {
       },
     });
 
-    await reapDeletedResourceObjects(env);
+    // A failure retires nothing, and says so: the alarm holds the entry.
+    expect(await reapDeletedResourceObjects(env)).toBe(0);
     expect(database.prepare(
       "SELECT attempt_count, last_error_code FROM resource_object_deletion_outbox WHERE object_ref = 'regional/object'",
     ).get()).toEqual({ attempt_count: 1, last_error_code: "temporary_r2_failure" });
@@ -85,7 +88,7 @@ describe("resource object cleanup", () => {
     expect(JSON.stringify(warning.mock.calls)).not.toContain("secret provider body");
 
     fail = false;
-    await reapDeletedResourceObjects(env);
+    expect(await reapDeletedResourceObjects(env)).toBe(1);
     expect(deleted).toEqual(["regional/object"]);
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 0 });
@@ -116,7 +119,8 @@ describe("resource object cleanup", () => {
       PAYLOADS: { delete: deleteObject },
     });
 
-    await reapDeletedResourceObjects(env);
+    // Retiring the outbox row without touching R2 is still progress.
+    expect(await reapDeletedResourceObjects(env)).toBe(1);
 
     expect(deleteObject).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())

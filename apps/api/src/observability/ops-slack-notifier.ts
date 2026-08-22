@@ -121,9 +121,19 @@ export function renderOpsNotification(region: string, notice: OpsNotification): 
     escapeMrkdwn(notice.summary),
   ];
   for (const [key, value] of Object.entries(notice.fields ?? {})) {
-    lines.push(`• ${escapeMrkdwn(key)}: ${escapeMrkdwn(String(value).slice(0, MAX_FIELD_CHARS))}`);
+    lines.push(`• ${escapeMrkdwn(oneLine(key))}: ${escapeMrkdwn(bounded(oneLine(String(value))))}`);
   }
   return lines.join("\n");
+}
+
+/** A value stays on its own line: a newline inside one would start a line the reader takes for a field. */
+function oneLine(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+/** Cut at the cap with a visible mark, so a reader knows there was more. */
+function bounded(value: string): string {
+  return value.length > MAX_FIELD_CHARS ? `${value.slice(0, MAX_FIELD_CHARS)}…` : value;
 }
 
 /** The three characters Slack's `mrkdwn` reads as markup, per its formatting reference. */

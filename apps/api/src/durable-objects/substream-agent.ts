@@ -2542,7 +2542,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_failed",
-      summary: "An agent object's alarm entry has thrown on three consecutive attempts. It is held behind its retry gate and retried up to every 30 minutes; `code` is the handler's error.",
+      summary: "An agent object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry.",
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,
@@ -2558,7 +2558,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_stalled",
-      summary: "An agent object's alarm entry keeps coming back due at the same instant after running. It is held behind the retry gate and retried up to every 30 minutes until its source row moves.",
+      summary: "An agent object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key` is not moving. Find why.",
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,

@@ -103,7 +103,7 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
       LIMIT ?`,
   ).bind(workspaceId, cutoff, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
   if (stale.results.length === 0) return 0;
-  await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
+  const deleted = await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
     `DELETE FROM resources
       WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
         AND attachment_status = 'draft' AND created_at < ?
@@ -112,5 +112,7 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
            WHERE link.resource_id = resources.id
         )`,
   ).bind(resource.id, workspaceId, cutoff)));
-  return stale.results.length;
+  // The rows the batch removed, not the rows the select found: a draft that
+  // was attached between the two is progress the select would have claimed.
+  return deleted.reduce((count, result) => count + Number(result.meta.changes ?? 0), 0);
 }
