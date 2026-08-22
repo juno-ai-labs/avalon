@@ -218,4 +218,97 @@ describe("the runtime messages insert trigger", () => {
       tool_status: "completed",
     }]);
   });
+
+  it("repairs a receipt-only stale settlement when upgrading from schema v13", () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null, setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(), sql,
+    });
+    applyDurableObjectSqliteMigrations({
+      storage,
+      migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.slice(0, 13),
+      component: "workstream",
+      workerVersionId: "v13",
+      now: 1,
+    });
+    sql.exec(`INSERT INTO workstream (
+        id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+        authority_mode, authority_generation, title, description, preview, scope,
+        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+        unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+        source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+        created_at, last_people_activity_at, state_changed_at, updated_at
+      ) VALUES (1,'S','W',NULL,0,'global','authoritative',1,'T','','','workspace',
+                'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
+    sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+      VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
+    const runId = "00000000-0000-7000-8000-00000000dd01";
+    const toolId = "00000000-0000-7000-8000-00000000dd02";
+    sql.exec(
+      `INSERT INTO _runtime_harness_runs
+         (id, workspace_id, workstream_id, origin, execution_principal_json,
+          status, started_at, created_at)
+       VALUES (?, 'W', 'S', 'message', '{}', 'running',
+               '2026-08-20T12:00:00.000Z', '2026-08-20T12:00:00.000Z')`,
+      runId,
+    );
+    sql.exec(
+      `INSERT INTO _runtime_messages
+         (id, client_message_id, workspace_id, workstream_id, author_type,
+          message_type, text_content, structured_content_json, sequence_number,
+          harness_run_id, created_at)
+       VALUES (?, ?, 'W', 'S', 'agent', 'tool', '', ?, 5, ?,
+               '2026-08-20T12:00:00.000Z')`,
+      toolId,
+      `tool:${toolId}`,
+      JSON.stringify({ invocation: {
+        id: toolId,
+        toolName: "terminal_write_file",
+        activityName: "Writing a file",
+        status: "started",
+        outputSummary: null,
+        completedAt: null,
+        error: null,
+      } }),
+      runId,
+    );
+    sql.exec(
+      `INSERT INTO _runtime_tool_invocations
+         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+          input_hash, input_json, status, started_at, execution_plan_json)
+       VALUES (?, 'W', 'S', ?, 'call-1', 'terminal_write_file',
+               'hash', '{}', 'started', '2026-08-20T12:00:00.000Z', '{"mode":"write"}')`,
+      toolId,
+      runId,
+    );
+    sql.exec(
+      `UPDATE _runtime_tool_invocations
+          SET status = 'ambiguous', completed_at = '2026-08-20T12:05:00.000Z',
+              error_json = '{"code":"ambiguous_external_write","message":"Outcome unknown"}'
+        WHERE id = ?`,
+      toolId,
+    );
+    expect(sql.exec<{ status: string }>(
+      `SELECT json_extract(structured_content_json, '$.invocation.status') AS status
+         FROM parts WHERE id = ?`,
+      toolId,
+    ).one().status).toBe("started");
+
+    applyWorkstreamObjectSchema(storage, "v14", 2);
+
+    expect(sql.exec<{
+      visible_status: string;
+      tool_status: string;
+      error_code: string;
+    }>(`SELECT json_extract(structured_content_json, '$.invocation.status') AS visible_status,
+              tool_status,
+              json_extract(structured_content_json, '$.invocation.error.code') AS error_code
+         FROM parts WHERE id = ?`, toolId).one()).toEqual({
+      visible_status: "ambiguous",
+      tool_status: "ambiguous",
+      error_code: "ambiguous_external_write",
+    });
+  });
 });

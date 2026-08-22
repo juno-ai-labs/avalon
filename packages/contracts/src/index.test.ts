@@ -256,6 +256,8 @@ describe("boundary contracts", () => {
       "run_tool_call_limit_exceeded",
       "run_cost_limit_exceeded",
       "context_limit_exceeded",
+      "tool_receipt_persistence_failed",
+      "run_state_persistence_failed",
       // The two provider arms are separate on purpose: one says Avalon called
       // and got nothing, the other that Avalon declined to call. Neither may
       // collapse back into `harness_execution_failed`, which means Avalon's own

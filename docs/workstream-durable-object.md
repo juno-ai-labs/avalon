@@ -407,6 +407,22 @@ never suppresses scheduling, and its result is awaited by the invocation that
 started it rather than left to `waitUntil`. Runtime ping/pong is handled
 by WebSocket auto-response and does not wake the object.
 
+A keep-alive heartbeat is a separate Durable Object event. When it observes an
+already active drain it never awaits that promise: joining would carry the alarm
+across a model/tool loop that belongs to another request context, hold unrelated
+alarm lanes open, and can invalidate later request-scoped I/O. It instead arms
+a heartbeat no sooner than 30 seconds, excluding the already-due run row from
+that calculation so the alarm cannot spin at `now + 1` while the run remains
+active. Recent in-memory drain progress or an unexpired durable harness attempt
+lease proves the owner is still healthy, including legitimate multi-hour runs.
+After five minutes without progress, the agent checks that durable lease; only
+when no live lease remains does it abandon the stranded promise and start a
+fenced successor. The late predecessor cannot clear the successor because the
+single-flight promise and dispatch lease tokens are both identity-fenced. The
+same rule applies to `SubstreamAgent` and `BlockDashboardAgent`; the former
+reads its local harness lease and the latter reads the source WorkstreamDO's
+runtime lease.
+
 The keep-alive alarm lowers the chance of eviction during a long model request,
 external API wait, or computation. It is not correctness state. If an isolate
 is evicted anyway, `agent_run_dispatches`, the attempt lease, run events, tool
@@ -896,7 +912,7 @@ join crosses an object boundary.
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
+| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. A terminal `tool_effects` update also projects into the same-id visible tool part, so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
@@ -916,7 +932,12 @@ that field, including while an older Worker omits the optional wire property.
 
 Compatibility views named `_runtime_*` map established D1-shaped repository SQL
 onto these normalized tables. They are not duplicate storage or a second
-authority.
+authority. For a compatibility-view mutation, `_runtime_statement_changes` is
+the semantic row count returned to the caller. workerd's native cursor count
+also includes bookkeeping and projection rows touched inside the `INSTEAD OF`
+trigger, so using that physical count would misclassify a first receipt write
+as a replay. Direct normalized-table mutations continue to use the native
+count.
 
 ### `BlockDashboardAgent`
 
@@ -1013,6 +1034,45 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-21 — Heartbeats never join a live run's request context
+
+**What changed:** Both agent objects defer an alarm drain request when their
+in-isolate `DurableAgentDrain` is already active, leaving the existing event to
+finish a healthy run. They arm the next heartbeat at least 30 seconds out rather
+than rescheduling against the already-due row. If the promise makes no progress
+for five minutes and its durable harness attempt lease is no longer live, an
+identity-fenced successor replaces it without waiting for isolate eviction.
+Workstream
+schema 14 also projects terminal tool-receipt updates into the visible same-id
+part and repairs receipt-only settlements produced before the new trigger. The
+runtime-SQL port now separates transaction failure from alarm failure after
+commit, and records each under a content-free structured event. Compatibility-
+view mutations return their explicit semantic change counter rather than
+workerd's count of every internal trigger row.
+
+**Why:** Production multi-step Terminal runs failed only after a long first
+operation, and one write remained active until lease reaping. A real-workerd
+regression showed the heartbeat alarm was joining the active drain promise
+created by the run's other request. The alarm then lived for the rest of that
+loop and could make subsequent I/O cross request contexts. Reaping correctly
+settled the authoritative receipt, but its generic runtime path had no live
+publisher to rewrite the participant-facing part.
+
+**Considered and rejected:** Letting every alarm await the existing single-
+flight promise, returning forever while a stranded promise stays active,
+rescheduling from the already-due dispatch row, suppressing the heartbeat alarm
+while a volatile flag is set, and repairing only the desktop projection. Those
+respectively recreate the request-context join, permanently stall a living
+isolate, busy-loop its alarm, make scheduling depend on in-memory state, or
+leave API and reconnect readers inconsistent.
+
+**Consequences:** An alarm invocation never adopts work already owned by a
+different live event, but can replace an owner only after durable liveness has
+expired. Recovery remains row-derived and survives eviction, while a
+receipt terminalized by recovery converges the transcript in the same SQLite
+transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
+tests pin both the v13-to-v14 repair and ordinary receipt semantics.
 
 ### 2026-08-21 — WorkspaceDO sweeps the sockets it publishes to
 

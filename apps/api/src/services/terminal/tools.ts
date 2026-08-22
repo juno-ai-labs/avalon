@@ -40,6 +40,10 @@ export interface TerminalCommandOutput {
   outputResourceId?: string;
   startedAt: string;
   completedAt: string;
+  /** Time spent making the existing or new sandbox ready for this invocation. */
+  acquisitionDurationMs: number;
+  /** Wall time inside the Terminal runtime, including acquisition and settlement. */
+  totalDurationMs: number;
 }
 
 export interface TerminalImportResourceOutput {

@@ -45,20 +45,55 @@ export class DurableAgentKeepAlive {
 /** One drain promise per isolate; durable SQL remains the restart authority. */
 export class DurableAgentDrain {
   private activeDrain: Promise<void> | null = null;
+  private activeSinceAt: number | null = null;
+  private lastProgressAt: number | null = null;
 
   get active(): boolean {
     return this.activeDrain !== null;
   }
 
+  get activeSince(): number | null {
+    return this.activeSinceAt;
+  }
+
+  get lastProgress(): number | null {
+    return this.lastProgressAt;
+  }
+
+  /** Records synchronous progress made by the invocation that owns the drain. */
+  touch(now = Date.now()): void {
+    if (this.activeDrain) this.lastProgressAt = now;
+  }
+
+  /**
+   * Forgets an active promise only after the caller's durable lease proves its
+   * owner is gone. This does not cancel the old continuation; its identity
+   * fence below prevents a late `finally` from clearing a successor drain.
+   */
+  abandonActive(): boolean {
+    if (!this.activeDrain) return false;
+    this.activeDrain = null;
+    this.activeSinceAt = null;
+    this.lastProgressAt = null;
+    return true;
+  }
+
   resume(operation: () => Promise<void>, settled: () => void | Promise<void>): Promise<void> {
     if (this.activeDrain) return this.activeDrain;
+    const startedAt = Date.now();
     const drain = Promise.resolve()
       .then(operation)
       .finally(async () => {
-        if (this.activeDrain === drain) this.activeDrain = null;
+        if (this.activeDrain === drain) {
+          this.activeDrain = null;
+          this.activeSinceAt = null;
+          this.lastProgressAt = null;
+        }
         await settled();
       });
     this.activeDrain = drain;
+    this.activeSinceAt = startedAt;
+    this.lastProgressAt = startedAt;
     void drain.catch(() => undefined);
     return drain;
   }

@@ -113,6 +113,13 @@ export const HarnessFailureCodeSchema = z.enum([
   "run_tool_call_limit_exceeded",
   "run_cost_limit_exceeded",
   "harness_execution_failed",
+  // Avalon could not durably record a tool's execution receipt. Separate from
+  // the catch-all because a write may already have crossed its external
+  // boundary and must not be repeated blindly.
+  "tool_receipt_persistence_failed",
+  // The run's own liveness, progress, activation, or inference ledger could
+  // not be persisted. This is an Avalon recovery problem, not a provider fault.
+  "run_state_persistence_failed",
   "context_limit_exceeded",
   "tool_surface_too_large",
   "ambiguous_external_write",
