@@ -125,7 +125,13 @@ export function applyPinnedWorkstreamsIfCurrent(
  * the cache entry; the fetcher is unreachable and says so, because a silent
  * `undefined` from an accidentally enabled query would look like an empty
  * sidebar rather than a bug. Invalidating one of these keys does nothing by
- * design — the socket is the only writer.
+ * design — the socket is the only *authority* for the contents.
+ *
+ * `onChangeNoteScope` below patches `['notes']` directly, which is the single
+ * exception and not a second authority: it holds no waterline, cannot advance
+ * the ledger, and is overwritten by the push the same write earns. It is a
+ * latency hedge against one visible reorder, and the push behind it is what
+ * makes the row correct.
  */
 function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
   return useQuery<T[]>({
@@ -262,6 +268,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // sidebar's sort key. Patching the scope alone would leave the row in
           // its old position until the next refetch moved it for no visible
           // reason, so the timestamps travel with it.
+          //
+          // Deliberately not through `applyVersionedSidebarList`: this patch has
+          // no waterline to offer, and inventing one would corrupt the ledger
+          // that orders the real pushes. It is an optimistic local edit, valid
+          // only until WorkspaceDO re-sends the list off this same write — see
+          // the note on `useSocketOwnedList`.
           queryClient.setQueryData<NoteSummary[]>(['notes'], (current) =>
             current?.map((item) => item.id === updated.id ? {
               ...item,
