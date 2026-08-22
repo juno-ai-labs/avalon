@@ -1,6 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
@@ -8,11 +7,11 @@ import { __workOpportunityTesting, WorkOpportunityService } from "../src/service
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userOne = asUserId("00000000-0000-7000-8000-000000000002");
 const userTwo = "00000000-0000-7000-8000-000000000003";
-const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
 const databases: DatabaseSync[] = [];
 
 class Statement {
@@ -57,11 +56,7 @@ afterEach(() => {
 });
 
 function migratedDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
-  for (const file of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (file.startsWith("0090_")) break;
-    database.exec(readFileSync(new URL(file, migrationsDirectory), "utf8"));
-  }
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
   return database;
 }

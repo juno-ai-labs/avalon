@@ -275,8 +275,9 @@ network proxy, or a general GitHub administration surface.
 
 The focused API suites are `apps/api/test/terminal-*.test.ts`; they use injected
 Daytona, GitHub, R2, clock, and D1 fakes and never require network access. The
-migration contract is in `packages/db/test/migrations.test.ts`. Renderer states
-are covered by `workspace-settings.test.tsx` and `inspector-rail.test.tsx`.
+schema those fixtures are built on is proved by
+`packages/db/test/baseline-migration.test.ts`. Renderer states are covered by
+`workspace-settings.test.tsx` and `inspector-rail.test.tsx`.
 Run the API set with:
 
 ```text

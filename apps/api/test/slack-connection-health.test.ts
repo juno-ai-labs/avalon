@@ -1,6 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { SlackWorkspaceBotScopes } from "@avalon/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +7,7 @@ import type { AuthContext, Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
 const connectionId = "00000000-0000-7000-8000-000000000031";
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000032");
@@ -141,14 +141,8 @@ function environment(database: DatabaseSync): Env {
 }
 
 function migratedDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  const migrations = new URL("../../../packages/db/migrations/", import.meta.url);
-  for (const fileName of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(new URL(fileName, migrations), "utf8"));
-  }
   return database;
 }
 

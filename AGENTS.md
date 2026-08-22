@@ -60,6 +60,12 @@ is a separate suite that CI runs as `pnpm --filter @avalon/desktop test:release`
 Run that one too when touching a release script, or its tests will not execute
 locally and the name of the other gate will suggest they did.
 
+Both gates cache; warm runs take seconds. **After changing a rule in
+`scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
+contents alone, so it clears the rest of the tree against the *old* rule. CI
+runs cold; limits in
+[`docs/dev-environment.md`](docs/dev-environment.md#quality-gate-caches).
+
 ## Writing tests
 
 **Read [`docs/testing.md`](docs/testing.md) before adding a test.** It maps the

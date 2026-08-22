@@ -1,4 +1,3 @@
-// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { DISABLE_AUTO_UPDATE_ENV, updatePolicy } from './update-policy';
 

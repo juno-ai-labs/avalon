@@ -1,71 +1,25 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results } from "./cloudflare-test";
-
-const migrationsDirectory = fileURLToPath(new URL("../../../../packages/db/migrations/", import.meta.url));
-
-function migrateSqliteDatabase(through?: string): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
-  database.exec("PRAGMA foreign_keys = ON");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-    if (fileName === through) break;
-  }
-  return database;
-}
-
-function detachImportedWorkstreamForeignKeys(database: DatabaseSync): void {
-  const tables = [
-    "artifacts",
-    "memory_mutations",
-    "memory_table_mutations",
-    "work_opportunities",
-    "digest_deliveries",
-  ];
-  database.exec("PRAGMA foreign_keys = OFF");
-  try {
-    for (const table of tables) {
-      const tableRow = database.prepare(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-      ).get(table) as { sql: string } | undefined;
-      if (!tableRow) continue;
-      const dependents = database.prepare(
-        `SELECT sql FROM sqlite_master
-          WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL
-          ORDER BY type, name`,
-      ).all(table) as Array<{ sql: string }>;
-      const columns = (database.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>)
-        .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
-        .join(", ");
-      const rebuilt = `${table}_object_compat`;
-      const create = tableRow.sql
-        .replace(`CREATE TABLE ${table}`, `CREATE TABLE ${rebuilt}`)
-        .replace(
-          /\s+REFERENCES\s+(?:harness_runs|messages)\s*\([^)]*\)\s+ON\s+DELETE\s+(?:CASCADE|SET\s+NULL)/giu,
-          "",
-        );
-      database.exec("BEGIN");
-      try {
-        database.exec(create);
-        database.exec(`INSERT INTO "${rebuilt}" (${columns}) SELECT ${columns} FROM "${table}"`);
-        database.exec(`DROP TABLE "${table}"`);
-        database.exec(`ALTER TABLE "${rebuilt}" RENAME TO "${table}"`);
-        for (const dependent of dependents) database.exec(dependent.sql);
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    }
-  } finally {
-    database.exec("PRAGMA foreign_keys = ON");
-  }
-}
+import { databaseFromSnapshot } from "./migrated-schema";
+import { migratedSchemaSnapshot } from "./migrated-schema-snapshots";
 
 /** Applies every checked-in migration to a fresh regional D1 database. */
 export function migratedSqliteDatabase(): DatabaseSync {
-  return migrateSqliteDatabase();
+  return databaseFromSnapshot(migratedSchemaSnapshot("regional"));
+}
+
+/**
+ * The product schema as it stood before 0090 dropped the legacy D1 tables, with
+ * the foreign keys those tables declared still pointing where they did.
+ *
+ * A service fixture that seeds legacy product rows and drives the object
+ * runtime over the same connection wants this rather than
+ * {@link preRetirementProductSqliteDatabase}: it keeps the work-stream foreign
+ * keys the import has to detach.
+ *
+ */
+export function legacyProductSqliteDatabase(): DatabaseSync {
+  return databaseFromSnapshot(migratedSchemaSnapshot("legacy-product"));
 }
 
 /**
@@ -78,14 +32,7 @@ export function migratedSqliteDatabase(): DatabaseSync {
  * {@link migratedSqliteDatabase} own that boundary.
  */
 export function preRetirementProductSqliteDatabase(): DatabaseSync {
-  const database = migrateSqliteDatabase("0089_confine_legacy_bookkeeping_triggers.sql");
-  // These tables crossed the workspace/work-stream boundary in D1. The object
-  // import keeps the opaque ids but cannot retain SQLite foreign keys into a
-  // different object database. Migration 0090 used to rebuild this same set
-  // before deleting only the work-stream half; the compatibility fixture keeps
-  // that post-import shape while the real regional fixture applies all of 0090.
-  detachImportedWorkstreamForeignKeys(database);
-  return database;
+  return databaseFromSnapshot(migratedSchemaSnapshot("pre-retirement"));
 }
 
 /** The narrow slice of the D1 surface the services under test use. */
