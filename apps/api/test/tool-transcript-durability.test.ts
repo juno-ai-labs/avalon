@@ -2,6 +2,8 @@ import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { ToolInvocation } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
+import type { ToolReceiptObjectPort } from "../src/durable-objects/workstream-tool-receipt-protocol";
+import type { ToolReceiptRecord } from "../src/durable-objects/workstream-tool-receipt-storage";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -141,7 +143,18 @@ describe("durable inline tool transcript", () => {
   });
 });
 
-class SingleRowDatabase {
+/**
+ * Only the connector lookup reaches D1 now.
+ *
+ * `loadToolInvocation` used to be one statement against a compatibility view,
+ * with attribution either joined in or fetched separately depending on whether
+ * `WORKSPACE_DOS` was bound. The join arm is deleted — the two tables live in
+ * different Durable Objects and nothing can join them — so attribution is
+ * always its own workspace-authority read, and the receipt itself comes through
+ * the typed port. What these tests are about is unchanged: what the projection
+ * makes of the two answers.
+ */
+class ConnectorLookup {
   sql = "";
 
   constructor(private readonly row: Record<string, unknown> | null) {}
@@ -156,33 +169,59 @@ class SingleRowDatabase {
   });
 }
 
-const invocationRow = {
-  id: invocationId,
-  harness_run_id: harnessRunId,
-  tool_call_id: "tool-call-1",
-  tool_name: "google_2_drive_search",
+const receiptRecord: ToolReceiptRecord = {
+  effectIntentId: invocationId,
+  runId: harnessRunId,
+  toolCallId: "tool-call-1",
+  toolName: "google_2_drive_search",
+  mode: "read",
+  connectionId: null,
+  requestHash: "request-hash",
+  inputJson: '{"query":"avalon"}',
   status: "completed",
-  input_json: '{"query":"avalon"}',
-  output_summary: "Found the authorized Drive folder",
-  started_at: "2026-08-01T12:00:01.000Z",
-  completed_at: "2026-08-01T12:00:04.000Z",
-  error_json: null,
+  outputRef: null,
+  outputSummary: "Found the authorized Drive folder",
+  providerOperationId: null,
+  errorJson: null,
+  executionPlanHash: null,
+  executionPlanJson: null,
+  startedAt: Date.parse("2026-08-01T12:00:01.000Z"),
+  settledAt: Date.parse("2026-08-01T12:00:04.000Z"),
+  checkpointIndex: 0,
+};
+
+/** Run the projection over one receipt and one connector row. */
+async function project(
+  receipt: Partial<ToolReceiptRecord>,
+  owner: Record<string, unknown> | null,
+): Promise<{ loaded: ToolInvocation | null; lookup: ConnectorLookup }> {
+  const lookup = new ConnectorLookup(owner);
+  const port = {
+    receiptForCall: async () => ({ ...receiptRecord, ...receipt }),
+  } satisfies Pick<ToolReceiptObjectPort, "receiptForCall">;
+  const loaded = await __integrationTesting.loadToolInvocation(
+    createTestEnv({ DB: lookup.binding }),
+    { workspaceId, workstreamId, harnessRunId },
+    "tool-call-1",
+    port,
+  );
+  return { loaded, lookup };
+}
+
+const CONNECTION_ID = "00000000-0000-7000-8000-000000000010";
+const driveOwner = {
+  connector_type: "google",
+  display_name: "Google Drive · Work",
+  model_plugin_id: "plugin_google_2",
 };
 
 describe("tool invocation attribution", () => {
   it("attributes an invocation to the connector that owns its tool", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
-      connection_id: "00000000-0000-7000-8000-000000000010",
-      owner_connector_type: "google",
-      owner_display_name: "Google Drive · Work",
-      owner_model_plugin_id: "plugin_google_2",
-    });
-    const env = createTestEnv({ DB: database.binding });
+    const { loaded, lookup } = await project({ connectionId: CONNECTION_ID }, driveOwner);
 
-    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
-
-    expect(database.sql).toContain("LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id");
+    // Attribution is a read of its own, against the workspace's connector
+    // table — not a join, which is no longer expressible across the boundary.
+    expect(lookup.sql).toContain("FROM connector_connections WHERE id = ?");
     expect(loaded?.plugin).toEqual({
       pluginId: "plugin_google_2",
       displayName: "Google Drive · Work",
@@ -192,81 +231,88 @@ describe("tool invocation attribution", () => {
   });
 
   it("leaves an Avalon-owned tool unattributed", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
-      tool_name: "web_search",
-      connection_id: null,
-      owner_connector_type: null,
-      owner_display_name: null,
-      owner_model_plugin_id: null,
-    });
-    const env = createTestEnv({ DB: database.binding });
-
-    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
+    const { loaded, lookup } = await project(
+      { toolName: "web_search", connectionId: null },
+      driveOwner,
+    );
 
     expect(loaded?.connectionId).toBeNull();
     expect(loaded?.plugin).toBeNull();
     expect(loaded?.activityName).toBe("Searched the public web");
+    // A receipt with no connection must not spend a round trip asking who owns
+    // it. The routed version got this free from a LEFT JOIN; here it is a
+    // decision, so it is asserted.
+    expect(lookup.sql).toBe("");
   });
 
   it("refuses to attribute a connection whose model plugin id is unusable", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
-      connection_id: "00000000-0000-7000-8000-000000000010",
-      owner_connector_type: "google",
-      owner_display_name: "Google Drive · Work",
-      owner_model_plugin_id: "Not-A-Plugin-Id",
-    });
-    const env = createTestEnv({ DB: database.binding });
+    const { loaded } = await project(
+      { connectionId: CONNECTION_ID },
+      { ...driveOwner, model_plugin_id: "Not-A-Plugin-Id" },
+    );
 
-    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.plugin).toBeNull();
+    expect(loaded?.plugin).toBeNull();
+  });
+
+  it("leaves a receipt unattributed when its connection is gone", async () => {
+    const { loaded } = await project({ connectionId: CONNECTION_ID }, null);
+
+    expect(loaded?.plugin).toBeNull();
+  });
+
+  it("translates the object's statuses and timestamps to the published shape", async () => {
+    // The compatibility view did this remap in SQL; it now happens here,
+    // because `ToolInvocationSchema` publishes `pending`/`started` and ISO-8601
+    // and the object stores neither.
+    expect((await project({ status: "admitted" }, null)).loaded?.status).toBe("pending");
+    expect((await project({ status: "executing" }, null)).loaded?.status).toBe("started");
+    const { loaded } = await project({}, null);
+    expect(loaded?.startedAt).toBe("2026-08-01T12:00:01.000Z");
+    expect(loaded?.completedAt).toBe("2026-08-01T12:00:04.000Z");
+  });
+
+  it("returns nothing when the object holds no receipt for the call", async () => {
+    const lookup = new ConnectorLookup(null);
+    const port = {
+      receiptForCall: async () => null,
+    } satisfies Pick<ToolReceiptObjectPort, "receiptForCall">;
+
+    expect(await __integrationTesting.loadToolInvocation(
+      createTestEnv({ DB: lookup.binding }),
+      { workspaceId, workstreamId, harnessRunId },
+      "tool-call-1",
+      port,
+    )).toBeNull();
   });
 });
 
 describe("tool invocation failure wording", () => {
   it("words a failed connector row as a failure, not a success", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
+    const { loaded } = await project({
       status: "failed",
-      output_summary: null,
-      error_json: JSON.stringify({ code: "provider_error", message: "Drive rejected the request" }),
-      connection_id: "00000000-0000-7000-8000-000000000010",
-      owner_connector_type: "google",
-      owner_display_name: "Google Drive · Work",
-      owner_model_plugin_id: "plugin_google_2",
-    });
-    const env = createTestEnv({ DB: database.binding });
+      outputSummary: null,
+      errorJson: JSON.stringify({ code: "provider_error", message: "Drive rejected the request" }),
+      connectionId: CONNECTION_ID,
+    }, driveOwner);
 
-    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
-      .toBe("Could not reach Google Drive · Work");
+    expect(loaded?.activityName).toBe("Could not reach Google Drive · Work");
   });
 
   it("keeps settled wording on an ambiguous write, which may still have landed", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
-      status: "ambiguous",
-      connection_id: "00000000-0000-7000-8000-000000000010",
-      owner_connector_type: "google",
-      owner_display_name: "Google Drive · Work",
-      owner_model_plugin_id: "plugin_google_2",
-    });
-    const env = createTestEnv({ DB: database.binding });
+    const { loaded } = await project(
+      { status: "ambiguous", connectionId: CONNECTION_ID },
+      driveOwner,
+    );
 
-    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
-      .toBe("Searched Google Drive · Work");
+    expect(loaded?.activityName).toBe("Searched Google Drive · Work");
   });
 
   it("leaves a row unattributed when the connector name is blank", async () => {
-    const database = new SingleRowDatabase({
-      ...invocationRow,
-      connection_id: "00000000-0000-7000-8000-000000000010",
-      owner_connector_type: "google",
-      owner_display_name: "   ",
-      owner_model_plugin_id: "plugin_google_2",
-    });
-    const env = createTestEnv({ DB: database.binding });
+    const { loaded } = await project(
+      { connectionId: CONNECTION_ID },
+      { ...driveOwner, display_name: "   " },
+    );
 
-    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
     expect(loaded?.plugin).toBeNull();
     expect(loaded?.activityName).toBe("Google 2 drive search");
   });
