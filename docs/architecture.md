@@ -786,7 +786,7 @@ catch what a producer forgot. A new socket-holding object owes a
 two retractions this deliberately does not carry are in
 [`access-revocation.md`](access-revocation.md).
 
-Shipped in #TBD.
+Shipped in #229.
 
 ### 2026-08-21 — A child's state change reaches the workspace socket immediately
 

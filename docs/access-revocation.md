@@ -282,4 +282,4 @@ it there is both immediate and cheaper than any number of objects polling for it
 - **The dead-letter queues are the monitoring.** There is no other signal that a
   revocation did not land.
 
-Shipped in #TBD.
+Shipped in #229.
