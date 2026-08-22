@@ -23,6 +23,7 @@ import {
   GUARD_TABLE_NAME,
   assertEveryObjectRenderable,
   assertVolatileValuesAreTimestamps,
+  assertWranglerWillNotRewrite,
   compareFingerprints,
   detectVolatileColumns,
   digestMigrations,
@@ -30,6 +31,7 @@ import {
   internalTableExclusionSql,
   isInternalTableName,
   listMigrationFiles,
+  narrowBigInt,
   normalizeSchemaSql,
   orderSeededTables,
   parseWranglerJson,
@@ -40,6 +42,7 @@ import {
   snapshotDatabase,
   sqlLiteral,
   subsumedMigrations,
+  usableBaselines,
 } from "./d1-baseline.mjs";
 import { MIGRATIONS_DIRECTORY, baselineFileNameFor, buildBaseline, snapshotChain } from "./create-d1-baseline.mjs";
 import { verifyAgainstRegions, chainFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
@@ -889,4 +892,132 @@ test("an ordinary table is not mistaken for a virtual one", () => {
   assert.doesNotThrow(() => assertEveryObjectRenderable([
     { type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (virtual_column TEXT)" },
   ]));
+});
+
+// ---------------------------------------------------------------------------
+// Values and shapes the renderer used to lose, retype, or choke on
+// ---------------------------------------------------------------------------
+
+test("a generated column is left out of the INSERT and recomputed on apply", async () => {
+  // `SELECT *` returns generated columns and `INSERT` rejects them outright, so
+  // the baseline could not be applied at all.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE plan (
+        id INTEGER PRIMARY KEY, cents INTEGER, seats INTEGER,
+        per_seat_cents INTEGER GENERATED ALWAYS AS (cents / seats) VIRTUAL,
+        total_cents INTEGER GENERATED ALWAYS AS (cents) STORED
+      );
+      INSERT INTO plan (id, cents, seats) VALUES (1, 100, 4);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    // The names appear in the CREATE, legitimately. What matters is the INSERT's
+    // column list, which is what SQLite rejects.
+    const insertColumns = /INSERT INTO "plan" \(([^)]*)\)/u.exec(sql)[1];
+    assert.deepEqual(insertColumns.split(", "), ['"id"', '"cents"', '"seats"'],
+      "generated columns, VIRTUAL and STORED, must be left out of the INSERT");
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    // Recomputed by SQLite from the columns that were inserted.
+    assert.equal(database.prepare("SELECT per_seat_cents AS v FROM plan").get().v, 25);
+    assert.equal(database.prepare("SELECT total_cents AS v FROM plan").get().v, 100);
+    database.close();
+  });
+});
+
+test("a REAL with no fractional part stays a REAL", async () => {
+  // JavaScript has one number type, so 2.0 and 2 are the same value and
+  // `String()` renders both as `2`, which SQLite stores as an INTEGER. Column
+  // affinity rescues a declared REAL column; a STRICT `ANY` column is not.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE m (id INTEGER PRIMARY KEY, v ANY) STRICT;
+      INSERT INTO m (id, v) VALUES (1, 2.0), (2, 2), (3, 2.5);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    assert.deepEqual(
+      database.prepare("SELECT id, typeof(v) AS t FROM m ORDER BY id").all().map((row) => String(row.t)),
+      ["real", "integer", "real"],
+      "each value keeps the storage class the chain gave it",
+    );
+    database.close();
+  });
+});
+
+test("an integer beyond 2^53 survives instead of crashing the generator", async () => {
+  // A Slack `ts` in nanoseconds, a snowflake id. Previously this threw
+  // "Value is too large to be represented as a JavaScript number" with no table
+  // or column named and no hint it was a baseline limitation.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE event (id INTEGER PRIMARY KEY, ts INTEGER);
+      INSERT INTO event (id, ts) VALUES (1, 1755870000123456789);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.match(sql, /1755870000123456789/u);
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    const statement = database.prepare("SELECT ts FROM event");
+    statement.setReadBigInts(true);
+    assert.equal(statement.get().ts, 1755870000123456789n);
+    database.close();
+  });
+});
+
+test("an ordinary integer is still rendered as a plain number", () => {
+  assert.equal(narrowBigInt(5n), 5);
+  assert.equal(typeof narrowBigInt(5n), "number");
+  assert.equal(narrowBigInt(2n ** 60n), 2n ** 60n);
+  assert.equal(sqlLiteral(5), "5");
+  assert.equal(sqlLiteral(5, "integer"), "5");
+  assert.equal(sqlLiteral(5, "real"), "5.0");
+  assert.equal(sqlLiteral(5.5, "real"), "5.5");
+});
+
+test("text Wrangler would silently edit out of the file stops generation", async () => {
+  // `wrangler d1 execute --file` strips the first `BEGIN TRANSACTION;` and the
+  // first `COMMIT;` from any file containing the former — wherever they are,
+  // including inside a comment or a string — and errors if it appears twice.
+  // SQLite keeps comments written inside a CREATE body, and seeded rows are
+  // copied verbatim, so both routes reach the file.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE z (\n  -- once wrapped in BEGIN TRANSACTION; before the cutover\n  id TEXT PRIMARY KEY\n);",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /contains the text 'BEGIN TRANSACTION'/u,
+    );
+  });
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE snippet (id TEXT PRIMARY KEY, body TEXT);\n"
+      + "INSERT INTO snippet VALUES ('s1', 'BEGIN TRANSACTION; UPDATE x SET y = 1; COMMIT;');",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /contains the text 'BEGIN TRANSACTION'/u,
+    );
+  });
+});
+
+test("an ordinary baseline is not caught by the transaction check", () => {
+  assert.doesNotThrow(() => assertWranglerWillNotRewrite("CREATE TABLE t (id TEXT);\nCOMMIT ok;"));
+  assert.throws(() => assertWranglerWillNotRewrite("-- BEGIN TRANSACTION\nCREATE TABLE t (id TEXT);"),
+    /BEGIN TRANSACTION/u);
+});
+
+test("a boundary appearing twice makes neither baseline usable, whatever the input order", () => {
+  // Only a merge that kept both sides produces this: `mergeIntoManifest`
+  // replaces by boundary. There is no way to tell which snapshot is right, and
+  // the comparator never returns 0 for equal boundaries — so the winner used to
+  // be a sort artifact that flipped with input order.
+  const migrations = ["0001_a.sql"];
+  const digestFor = () => "sha256:same";
+  const left = { through: "0001_a.sql", file: "b_from_branch_A.sql", migrations, digest: "sha256:same" };
+  const right = { through: "0001_a.sql", file: "b_from_branch_B.sql", migrations, digest: "sha256:same" };
+  assert.deepEqual(usableBaselines([left, right], migrations, digestFor), []);
+  assert.deepEqual(usableBaselines([right, left], migrations, digestFor), []);
+  assert.deepEqual(usableBaselines([left], migrations, digestFor).map((entry) => entry.file),
+    ["b_from_branch_A.sql"]);
 });

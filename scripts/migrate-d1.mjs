@@ -81,6 +81,19 @@ export function discoverRegions(apiDirectory = API_DIRECTORY, { read = readFileS
     }
     const binding = (config.d1_databases ?? []).find((entry) => typeof entry.migrations_dir === "string");
     if (!binding) continue;
+    // Wrangler reads the ledger from `migrations_table || "d1_migrations"`, but
+    // the baseline's emptiness guard, its ledger INSERT, and the inventory query
+    // all name `d1_migrations` outright — and one baseline file serves every
+    // region, so it cannot carry a different table per region anyway. A config
+    // that set this would leave the tooling reading a ledger Wrangler does not
+    // use, which is silent and total.
+    if (typeof binding.migrations_table === "string" && binding.migrations_table !== "d1_migrations") {
+      throw new Error(
+        `${fileName} sets migrations_table to ${JSON.stringify(binding.migrations_table)}. The baseline `
+        + "hardcodes d1_migrations in its guard and its ledger rows, and one baseline serves every "
+        + "region, so a per-region ledger table cannot be supported without reworking both.",
+      );
+    }
     regions.push({ region: match[1], config: fileName, binding: binding.binding ?? "DB" });
   }
   return regions;
@@ -196,7 +209,13 @@ export function loadCatalog({
 } = {}) {
   const migrationsOnDisk = listMigrationFiles(migrationsDirectory);
   const manifestPath = join(baselinesDirectory, "manifest.json");
-  const baselines = existsSync(manifestPath) ? readBaselineManifest(readFileSync(manifestPath, "utf8")) : [];
+  const declared = existsSync(manifestPath) ? readBaselineManifest(readFileSync(manifestPath, "utf8")) : [];
+  // A manifest entry whose `.sql` is not on disk — the usual cause is a merge
+  // that took the manifest hunk while the generated file was never staged. The
+  // plan would otherwise announce a baseline and then hand Wrangler a path that
+  // does not exist, which is a confusing failure for something the chain can do
+  // perfectly well.
+  const baselines = declared.filter((baseline) => existsSync(join(baselinesDirectory, baseline.file)));
   return {
     migrationsOnDisk,
     baselines,
