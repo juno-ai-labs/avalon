@@ -201,6 +201,21 @@ beforeEach(async () => {
   addresses on a completely green run. Read the summary line, and capture the
   output to a file as [AGENTS.md](../AGENTS.md#capturing-command-output) requires
   rather than judging it through a truncating pipe.
+- **An assertion placed after an `await` is racing the object's own background
+  work.** A real Durable Object keeps running between your awaits: its alarm
+  fires, and anything it dispatched keeps executing. Two tests here asserted
+  through that gap and passed only because they were faster — one counted
+  `durable_outbox` rows that the delivery alarm drains as soon as it forwards
+  them, the other read a run's status after `POST /internal/run-dispatch`, which
+  *starts* that run, and a run started in this suite dies on the bare D1 and
+  terminalizes its own row. Both stayed green in isolation and failed under
+  whole-monorepo load; both were reproduced on demand by inserting a two-second
+  wait before the assertion, which is how to check whether a green test here is
+  proving anything. Fix it by closing the window rather than shortening it: keep
+  the mutation and its check inside one invocation the input gate cannot open
+  between — one `state.blockConcurrencyWhile`, or one `runInDurableObject` that
+  makes the call and parks the alarm it arms, as `dispatchWithoutDraining` in
+  `agent-run-lifecycle.test.ts` does.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
