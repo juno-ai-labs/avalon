@@ -1,0 +1,286 @@
+// The one script that migrates D1 — every region, local or hosted.
+//
+//   node scripts/migrate-d1.mjs                     # every region, local
+//   node scripts/migrate-d1.mjs --region eu         # one region, local
+//   node scripts/migrate-d1.mjs --remote            # every region, hosted
+//   node scripts/migrate-d1.mjs --remote --list     # what is pending, hosted
+//
+// It replaced a pair of scripts and four package aliases that each knew one
+// region by name. Regions are now **discovered** from `apps/api/wrangler.*.jsonc`
+// — a config with a D1 binding that declares `migrations_dir` is a region, and
+// nothing else is — so adding one is adding its config, not editing a list here
+// and three more elsewhere. `wrangler.test.jsonc` binds D1 without a
+// `migrations_dir`, which is exactly the distinction: it is a test fixture, not
+// a database anybody migrates.
+//
+// The baseline is likewise **calculated** rather than named. Several baselines
+// may exist; the script picks the one that gets an empty database furthest,
+// skips any whose migrations have moved underneath it, and lets Wrangler apply
+// whatever comes after. See `planMigration` in `d1-baseline.mjs`.
+//
+// **Hosted databases never get a baseline.** That is passed in as
+// `allowBaseline: false` rather than living in a separate script, so it is one
+// line, stated once, and a test can assert it. The reasoning is in
+// `docs/d1-baseline-migrations.md`: the chain is the authoritative schema, a
+// baseline is derived from it, and a hosted database whose provenance is a
+// generated file is one nobody can check. Replaying 43 seconds once, when a
+// region is created, is not a cost worth trading that for.
+//
+// Wrangler remains the only thing that applies a migration or writes a ledger
+// row for one. This script decides what should happen and then asks Wrangler to
+// do it.
+
+import { execFile, spawn } from "node:child_process";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { promisify } from "node:util";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import process from "node:process";
+
+import { isEntryPoint } from "./entry-point.mjs";
+import {
+  describePlan,
+  digestMigrations,
+  internalTableExclusionSql,
+  listMigrationFiles,
+  parseWranglerJson,
+  planMigration,
+  readBaselineManifest,
+} from "./d1-baseline.mjs";
+
+const execFileAsync = promisify(execFile);
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const API_DIRECTORY = join(repositoryRoot, "apps", "api");
+export const MIGRATIONS_DIRECTORY = join(repositoryRoot, "packages", "db", "migrations");
+export const BASELINES_DIRECTORY = join(repositoryRoot, "packages", "db", "baselines");
+
+/**
+ * Every region with a migratable D1 database, in a stable order.
+ *
+ * The marker is a `d1_databases` entry carrying `migrations_dir`. A Worker can
+ * bind D1 without owning a migration history — `wrangler.test.jsonc` does — and
+ * migrating that one would create schema in a fixture database nobody reads.
+ *
+ * Comments are stripped before parsing because these are `.jsonc`; Wrangler
+ * accepts comments in them and `JSON.parse` does not.
+ */
+export function discoverRegions(apiDirectory = API_DIRECTORY, { read = readFileSync, list = readdirSync } = {}) {
+  const regions = [];
+  for (const fileName of list(apiDirectory).sort()) {
+    const match = /^wrangler\.([a-z0-9-]+)\.jsonc?$/u.exec(fileName);
+    if (!match) continue;
+    let config;
+    try {
+      config = JSON.parse(stripJsonComments(read(join(apiDirectory, fileName), "utf8")));
+    } catch {
+      // A config this cannot parse is not silently skipped as "not a region" —
+      // that would drop a real region on a stray comma and migrate one fewer
+      // database than the operator asked for.
+      throw new Error(`${fileName} could not be parsed while discovering regions`);
+    }
+    const binding = (config.d1_databases ?? []).find((entry) => typeof entry.migrations_dir === "string");
+    if (!binding) continue;
+    regions.push({ region: match[1], config: fileName, binding: binding.binding ?? "DB" });
+  }
+  return regions;
+}
+
+/**
+ * Removes `//` and block comments from JSONC, leaving string contents alone.
+ *
+ * A `//` inside a string is a URL, not a comment — `wrangler.global.jsonc` is
+ * full of `https://…` in routes — so this tracks quoting rather than running a
+ * regular expression over the whole file.
+ */
+export function stripJsonComments(source) {
+  let output = "";
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === '"') {
+      let end = index + 1;
+      while (end < source.length && !(source[end] === '"' && source[end - 1] !== "\\")) end += 1;
+      output += source.slice(index, end + 1);
+      index = end + 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      const newline = source.indexOf("\n", index);
+      index = newline === -1 ? source.length : newline;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+/**
+ * The wrangler argument vector for one region.
+ *
+ * `command` is the subcommand path and `args` what follows the database name,
+ * because the name's position depends on the subcommand: `d1 execute DB …` is
+ * one token deep and `d1 migrations apply DB` is two. Splicing on a fixed index
+ * puts the binding in the middle of `migrations apply`, which wrangler rejects
+ * with a usage error rather than doing something quietly wrong — but only when
+ * the command actually runs.
+ *
+ * A hosted run passes `--remote` and nothing else: no `--persist-to`, and no
+ * `--env-file`, matching what the remote scripts did before they were unified.
+ */
+export function wranglerArguments({ region, config, binding, remote }, command, args = []) {
+  const location = remote
+    ? ["--remote"]
+    : ["--local", "--persist-to", `.wrangler/state/${region}`, "--env-file", `.dev.vars.${region}`];
+  return ["exec", "wrangler", "d1", ...command, binding, ...args, ...location, "--config", config];
+}
+
+const LEDGER_QUERY = "SELECT name FROM d1_migrations ORDER BY id";
+
+/**
+ * Counts the tables a baseline would collide with, and whether Wrangler's
+ * ledger exists, through the same exclusion rule the baseline's own guard uses
+ * so the two can never disagree about what "empty" means.
+ */
+const INVENTORY_QUERY = `SELECT
+  (SELECT COUNT(*) FROM sqlite_schema
+    WHERE type = 'table'
+      AND ${internalTableExclusionSql()}
+  ) AS user_tables,
+  (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'd1_migrations') AS has_ledger`;
+
+async function query(target, sql, { run = execFileAsync } = {}) {
+  const { stdout } = await run(
+    "pnpm",
+    wranglerArguments(target, ["execute"], ["--json", "--command", sql]),
+    { cwd: API_DIRECTORY, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  return parseWranglerJson(stdout, target.region)[0]?.results ?? [];
+}
+
+/**
+ * What one database already holds: its user-table count and the migrations its
+ * ledger names.
+ *
+ * The ledger is read in a second query, and only when the first says it exists
+ * and the database is otherwise empty. SQLite compiles a statement whole, so
+ * naming `d1_migrations` before knowing it exists fails on the very database
+ * this is meant to detect — and reading it on a database that already has
+ * tables costs a wrangler start-up to learn something that cannot change the
+ * plan, on the path setup takes every session.
+ */
+export async function inspectDatabase(target, options = {}) {
+  const [inventory] = await query(target, INVENTORY_QUERY, options);
+  const userTables = Number(inventory?.user_tables ?? 0);
+  const hasLedger = Number(inventory?.has_ledger ?? 0) > 0;
+  // `null`, not `[]`: a database with tables is never baselined whatever its
+  // ledger holds, so the second query is skipped — but saying "nothing applied"
+  // would have the plan report every migration as pending on a database that is
+  // fully migrated.
+  if (userTables > 0) return { userTables, applied: null, hasLedger, ledgerRead: false };
+  if (!hasLedger) return { userTables, applied: [], hasLedger, ledgerRead: false };
+  const rows = await query(target, LEDGER_QUERY, options);
+  return { userTables, applied: rows.map((row) => String(row.name)), hasLedger, ledgerRead: true };
+}
+
+/** Loads the migrations and baselines this checkout offers. */
+export function loadCatalog({
+  migrationsDirectory = MIGRATIONS_DIRECTORY,
+  baselinesDirectory = BASELINES_DIRECTORY,
+} = {}) {
+  const migrationsOnDisk = listMigrationFiles(migrationsDirectory);
+  const manifestPath = join(baselinesDirectory, "manifest.json");
+  const baselines = existsSync(manifestPath) ? readBaselineManifest(readFileSync(manifestPath, "utf8")) : [];
+  return {
+    migrationsOnDisk,
+    baselines,
+    baselinesDirectory,
+    digestFor: (files) => digestMigrations(migrationsDirectory, files),
+  };
+}
+
+function runInherited(target, command, args = []) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn("pnpm", wranglerArguments(target, command, args), { cwd: API_DIRECTORY, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal) reject(new Error(`wrangler was interrupted by ${signal}`));
+      else if (code !== 0) reject(new Error(`wrangler exited ${code}`));
+      else resolveRun();
+    });
+  });
+}
+
+/** Parses argv into the run's shape, so the CLI surface is testable. */
+export function parseArguments(argv) {
+  const options = { remote: false, list: false, regions: [] };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--remote") options.remote = true;
+    else if (argument === "--list") options.list = true;
+    else if (argument === "--region") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--region needs a region name");
+      options.regions.push(value);
+      index += 1;
+    } else throw new Error(`Unrecognized argument ${argument}`);
+  }
+  return options;
+}
+
+/** The regions a run covers, refusing a name this checkout does not define. */
+export function resolveTargets(discovered, requested) {
+  if (requested.length === 0) return discovered;
+  return requested.map((name) => {
+    const found = discovered.find((entry) => entry.region === name);
+    if (!found) {
+      throw new Error(`${name} is not a region here; found ${discovered.map((entry) => entry.region).join(", ")}`);
+    }
+    return found;
+  });
+}
+
+async function main() {
+  const options = parseArguments(process.argv.slice(2));
+  const targets = resolveTargets(discoverRegions(), options.regions)
+    .map((entry) => ({ ...entry, remote: options.remote }));
+  if (targets.length === 0) throw new Error("No regions discovered in apps/api");
+
+  const catalog = loadCatalog();
+
+  for (const target of targets) {
+    if (options.list) {
+      // Delegated to Wrangler verbatim. `.github/workflows/deploy-api.yml` pipes
+      // this into `classify-pending-d1-migrations.mjs`, which reads every
+      // migration filename it sees as pending — so the deploy gate keys off
+      // Wrangler's own answer rather than this script's reimplementation of it.
+      await runInherited(target, ["migrations", "list"]);
+      continue;
+    }
+
+    const state = await inspectDatabase(target);
+    const plan = planMigration({
+      applied: state.applied,
+      userTables: state.userTables,
+      baselines: catalog.baselines,
+      migrationsOnDisk: catalog.migrationsOnDisk,
+      digestFor: catalog.digestFor,
+      // The hosted policy, stated once.
+      allowBaseline: !target.remote,
+    });
+    console.log(describePlan(`${target.region}${target.remote ? " (remote)" : ""}`, plan));
+
+    if (plan.action === "baseline") {
+      await runInherited(target, ["execute"], ["--file", join(catalog.baselinesDirectory, plan.baseline.file)]);
+    }
+    await runInherited(target, ["migrations", "apply"]);
+  }
+}
+
+if (isEntryPoint(import.meta.url)) await main();

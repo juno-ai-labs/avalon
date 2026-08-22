@@ -547,3 +547,145 @@ export function parseWranglerJson(stdout, context) {
   }
   throw new Error(`wrangler returned no JSON for ${context}`);
 }
+
+// ---------------------------------------------------------------------------
+// Choosing a baseline, and deciding what to apply on top of it
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the baselines manifest as a list, newest boundary last.
+ *
+ * Accepts the single-baseline shape the first version wrote (`{ baseline }`)
+ * as well as the list (`{ baselines }`), so a checkout mid-upgrade still runs.
+ */
+export function readBaselineManifest(contents) {
+  const parsed = typeof contents === "string" ? JSON.parse(contents) : contents;
+  const baselines = parsed.baselines ?? (parsed.baseline ? [parsed.baseline] : []);
+  return [...baselines].sort((left, right) => (left.through < right.through ? -1 : 1));
+}
+
+/**
+ * The baselines that still describe the migrations on disk, newest first.
+ *
+ * A baseline is usable only if the files it claims to subsume are *exactly* the
+ * files at or below its boundary today, and their contents still hash to what
+ * it recorded. Either check failing means the chain moved underneath it — a
+ * migration edited, or one inserted into a gap below the boundary — and the
+ * snapshot no longer describes what replaying would produce.
+ *
+ * Unusable baselines are skipped rather than fatal: the chain is always there
+ * to fall back to, and a setup command that refuses to run because a *cache* is
+ * stale would be a worse trade than one that is briefly slower. The staleness
+ * is still a test failure — `d1-baseline.test.mjs` asserts the checked-in
+ * manifest matches disk — so it is loud in CI and quiet in your terminal, which
+ * is the right way round.
+ */
+export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
+  return baselines
+    .filter((baseline) => {
+      const expected = migrationsOnDisk.filter((name) => name <= baseline.through);
+      if (expected.length !== baseline.migrations.length) return false;
+      if (expected.some((name, index) => name !== baseline.migrations[index])) return false;
+      return digestFor(expected) === baseline.digest;
+    })
+    .sort((left, right) => (left.through < right.through ? 1 : -1));
+}
+
+/**
+ * The baseline that gets a fresh database furthest, or null to replay the chain.
+ *
+ * "Furthest" is the largest subsumed set, not the newest file on disk: several
+ * baselines can coexist, and the one that saves the most work is the one whose
+ * boundary is highest. Everything after that boundary is applied on top by
+ * Wrangler in the ordinary way, so adding a migration does not invalidate a
+ * baseline — it just means there is one more thing to apply after it.
+ */
+export function selectBaseline(baselines, migrationsOnDisk, digestFor) {
+  return usableBaselines(baselines, migrationsOnDisk, digestFor)[0] ?? null;
+}
+
+/**
+ * What to do with one database, given what it already has.
+ *
+ * The three outcomes, and what separates them:
+ *
+ * - **`baseline`** — the database is empty, and a usable baseline exists. Apply
+ *   the snapshot, then the migrations after its boundary.
+ * - **`migrate`** — anything else with work outstanding. A database that has
+ *   tables, or a ledger, gets the ordinary chain: a baseline reproduces a
+ *   schema and cannot merge into one, and a ledger without the schema it
+ *   describes is a failed migration rather than an invitation to start over.
+ * - **`up-to-date`** — nothing pending.
+ *
+ * `allowBaseline` is how the hosted policy is expressed rather than assumed:
+ * hosted databases replay the chain in full, so the caller passes `false` and
+ * the plan can never be `baseline`. Keeping it a parameter rather than a
+ * separate code path means the rule is one line, and a test can state it.
+ *
+ * `unknownApplied` names ledger rows with no file on disk. That is a database
+ * ahead of this checkout — a branch that added migrations, or a rollback — and
+ * it is reported rather than acted on, because guessing which is wrong.
+ *
+ * `applied` may be **null**, meaning the ledger was deliberately not read: a
+ * database with tables is never baselined whatever its ledger says, so reading
+ * it there costs a wrangler start-up to learn something that cannot change the
+ * decision. The plan then carries `pending: null` rather than a count it did not
+ * compute — an earlier version filled in "every migration is pending", which on
+ * a fully migrated database is both wrong and alarming. Wrangler works the real
+ * figure out when it runs.
+ */
+export function planMigration({
+  applied = [],
+  userTables = 0,
+  baselines = [],
+  migrationsOnDisk = [],
+  digestFor,
+  allowBaseline = true,
+}) {
+  const ledgerKnown = Array.isArray(applied);
+  const appliedSet = new Set(ledgerKnown ? applied : []);
+  const pending = ledgerKnown ? migrationsOnDisk.filter((name) => !appliedSet.has(name)) : null;
+  const unknownApplied = ledgerKnown
+    ? applied.filter((name) => !migrationsOnDisk.includes(name)).sort()
+    : [];
+  const isEmpty = userTables === 0 && ledgerKnown && applied.length === 0;
+
+  if (isEmpty && allowBaseline) {
+    const baseline = selectBaseline(baselines, migrationsOnDisk, digestFor);
+    if (baseline) {
+      return {
+        action: "baseline",
+        baseline,
+        thenApply: migrationsOnDisk.filter((name) => name > baseline.through),
+        pending,
+        unknownApplied,
+      };
+    }
+  }
+
+  return {
+    action: pending !== null && pending.length === 0 ? "up-to-date" : "migrate",
+    baseline: null,
+    thenApply: [],
+    pending,
+    unknownApplied,
+  };
+}
+
+/** One line saying what a region is about to do, and why. */
+export function describePlan(region, plan) {
+  const suffix = plan.unknownApplied.length > 0
+    ? ` (${plan.unknownApplied.length} applied migration(s) not in this checkout: ${plan.unknownApplied.join(", ")})`
+    : "";
+  if (plan.action === "baseline") {
+    const after = plan.thenApply.length === 0
+      ? "nothing after it"
+      : `${plan.thenApply.length} migration(s) after it`;
+    return `${region}: empty — applying ${plan.baseline.file} (${plan.baseline.migrations.length} migrations), then ${after}.${suffix}`;
+  }
+  if (plan.action === "up-to-date") return `${region}: already up to date.${suffix}`;
+  if (plan.pending === null) {
+    return `${region}: has tables — Wrangler will apply whatever is still pending.${suffix}`;
+  }
+  return `${region}: applying ${plan.pending.length} pending migration(s) the ordinary way.${suffix}`;
+}

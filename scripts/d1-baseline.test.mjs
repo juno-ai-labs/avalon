@@ -32,6 +32,7 @@ import {
   listMigrationFiles,
   normalizeSchemaSql,
   parseWranglerJson,
+  readBaselineManifest,
   renderBaselineSql,
   schemaFingerprint,
   snapshotDatabase,
@@ -39,11 +40,13 @@ import {
   subsumedMigrations,
 } from "./d1-baseline.mjs";
 import { MIGRATIONS_DIRECTORY, baselineFileNameFor, buildBaseline, snapshotChain } from "./create-d1-baseline.mjs";
-import { verifyAgainstRegions, baselineFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
+import { verifyAgainstRegions, chainFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinesDirectory = join(repositoryRoot, "packages", "db", "baselines");
-const manifest = JSON.parse(readFileSync(join(baselinesDirectory, "manifest.json"), "utf8")).baseline;
+// The newest baseline: the one an empty database would be given, and the one
+// whose boundary the single-baseline assertions below are about.
+const manifest = readBaselineManifest(readFileSync(join(baselinesDirectory, "manifest.json"), "utf8")).at(-1);
 const baselineSql = readFileSync(join(baselinesDirectory, manifest.file), "utf8");
 
 /**
@@ -375,22 +378,25 @@ test("the baseline's object counts match the manifest", () => {
   database.close();
 });
 
-test("the baseline reproduces the schema recorded from the hosted databases", () => {
+test("the migration chain reproduces the schema recorded from the hosted databases", () => {
   // The offline half of `pnpm db:baseline:verify`: that script needs Cloudflare
   // credentials, this assertion keeps its answer enforced on every run without
-  // them. A failure means the baseline no longer describes what production has.
+  // them. A failure means the chain no longer describes what production has.
+  //
+  // The chain rather than a baseline, so this stays correct once migrations
+  // land above a boundary: a baseline describes its own boundary, and comparing
+  // it to production would then report every newer migration as drift.
+  // `packages/db/test/baseline-migration.test.ts` ties the baselines to the
+  // chain; this ties the chain to production.
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  const comparison = compareFingerprints(recorded.objects, baselineFingerprint(baselineSql));
-  assert.ok(fingerprintsMatch(comparison), describeComparison("baseline vs recorded production", comparison).join("\n"));
-  assert.equal(recorded.through, manifest.through);
+  const comparison = compareFingerprints(recorded.objects, chainFingerprint());
+  assert.ok(fingerprintsMatch(comparison), describeComparison("chain vs recorded production", comparison).join("\n"));
+  assert.equal(recorded.through, listMigrationFiles(MIGRATIONS_DIRECTORY).at(-1));
 });
 
-test("the recorded production fingerprint covers every object the baseline creates", () => {
+test("the recorded production fingerprint covers every object the chain creates", () => {
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.equal(
-    Object.keys(recorded.objects).length,
-    manifest.objectCounts.tables + manifest.objectCounts.indexes + manifest.objectCounts.triggers,
-  );
+  assert.equal(Object.keys(recorded.objects).length, Object.keys(chainFingerprint()).length);
 });
 
 // ---------------------------------------------------------------------------
@@ -446,11 +452,11 @@ test("the region check reports a divergence between two hosted databases as itse
   const table = (sql) => [{ type: "table", name: "t", tbl_name: "t", sql }];
   const baseline = schemaFingerprint(table("CREATE TABLE t (id TEXT)"));
   const { ok, lines } = verifyAgainstRegions({
-    baseline,
+    expected: baseline,
     regionSchemas: { global: table("CREATE TABLE t (id TEXT)"), eu: table("CREATE TABLE t (id INTEGER)") },
   });
   assert.equal(ok, false);
-  assert.ok(lines.some((line) => line.startsWith("baseline vs eu: MISMATCH")));
+  assert.ok(lines.some((line) => line.startsWith("chain vs eu: MISMATCH")));
   assert.ok(lines.some((line) => line.startsWith("global vs eu: MISMATCH")));
   assert.ok(lines.some((line) => line.includes("definition differs:    table:t")));
 });
@@ -458,11 +464,11 @@ test("the region check reports a divergence between two hosted databases as itse
 test("the region check passes only when the baseline and both regions agree", () => {
   const table = [{ type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (id TEXT)" }];
   const { ok, lines } = verifyAgainstRegions({
-    baseline: schemaFingerprint(table),
+    expected: schemaFingerprint(table),
     regionSchemas: { global: table, eu: table },
   });
   assert.equal(ok, true);
-  assert.deepEqual(lines, ["baseline vs global: match", "baseline vs eu: match", "global vs eu: match"]);
+  assert.deepEqual(lines, ["chain vs global: match", "chain vs eu: match", "global vs eu: match"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -659,7 +665,7 @@ test("normalization leaves every real schema object in the baseline unchanged", 
   const database = new DatabaseSync(":memory:");
   database.exec(baselineSql);
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.deepEqual(schemaFingerprint(snapshotDatabase(database).objects), recorded.objects);
+  assert.deepEqual(chainFingerprint(), recorded.objects);
   database.close();
 });
 

@@ -24,35 +24,54 @@ import { beforeAll, describe, expect, it } from "vitest";
 const migrationsDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 const baselinesDirectory = fileURLToPath(new URL("../baselines/", import.meta.url));
 
-const manifest = JSON.parse(
-  readFileSync(new URL("../baselines/manifest.json", import.meta.url), "utf8"),
-).baseline as {
+interface BaselineEntry {
   through: string;
   file: string;
   migrations: string[];
   volatileColumns: Record<string, string[]>;
   objectCounts: { tables: number; indexes: number; triggers: number };
   seededRowCounts: Record<string, number>;
-};
+}
+
+const manifestFile = JSON.parse(
+  readFileSync(new URL("../baselines/manifest.json", import.meta.url), "utf8"),
+) as { baselines?: BaselineEntry[]; baseline?: BaselineEntry };
+
+/** Every checked-in baseline, oldest boundary first. */
+const allBaselines: BaselineEntry[] = [...(manifestFile.baselines ?? (manifestFile.baseline ? [manifestFile.baseline] : []))]
+  .sort((left, right) => (left.through < right.through ? -1 : 1));
+
+/** The one an empty database is given: the boundary that reaches furthest. */
+const manifest = allBaselines.at(-1) as BaselineEntry;
 
 const baselineSql = readFileSync(new URL(`../baselines/${manifest.file}`, import.meta.url), "utf8");
 
-/** Applies the migrations the baseline subsumes, in Wrangler's order. */
+const migrationFileNames = readdirSync(migrationsDirectory)
+  .filter((name) => name.endsWith(".sql"))
+  .sort();
+
+/** Replays every migration in the repository, in Wrangler's order. */
 function chainDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
-  const files = readdirSync(migrationsDirectory)
-    .filter((name) => name.endsWith(".sql"))
-    .sort()
-    .filter((name) => name <= manifest.through);
-  for (const name of files) {
+  for (const name of migrationFileNames) {
     database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
   }
   return database;
 }
 
-function baselineDatabase(): DatabaseSync {
+/**
+ * A baseline, plus every migration above its boundary — which is what the
+ * migrate script actually builds, and the only thing that can be compared to a
+ * full replay once work continues above a baseline. Comparing the snapshot
+ * alone would hold today, when the boundary happens to be the newest migration,
+ * and start failing the day one lands above it.
+ */
+function baselineDatabase(baseline: BaselineEntry = manifest): DatabaseSync {
   const database = new DatabaseSync(":memory:");
-  database.exec(baselineSql);
+  database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
+  for (const name of migrationFileNames.filter((candidate) => candidate > baseline.through)) {
+    database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
+  }
   return database;
 }
 
@@ -454,6 +473,58 @@ describe("the baseline is not mistaken for a migration", () => {
     const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort();
     for (const subsumed of manifest.migrations) {
       expect(migrationFiles, `${subsumed} was deleted after being subsumed`).toContain(subsumed);
+    }
+  });
+});
+
+describe("every checked-in baseline, not just the newest", () => {
+  // The newest baseline is the one an empty database is given, so the suite
+  // above is about that one. This asserts the property that makes keeping older
+  // baselines safe: each of them, plus the migrations above its own boundary,
+  // still reproduces the chain. A baseline that stopped being true would
+  // otherwise sit in the manifest looking usable.
+  it.each(allBaselines.map((baseline) => [baseline.through, baseline] as const))(
+    "%s plus everything after it equals a full replay",
+    (_through, baseline) => {
+      const chain = chainDatabase();
+      const built = baselineDatabase(baseline);
+      try {
+        expect(userTableNames(built)).toEqual(userTableNames(chain));
+        for (const table of userTableNames(chain)) {
+          expect(tableShape(built, table), table).toEqual(tableShape(chain, table));
+        }
+        expect(triggerBodies(built)).toEqual(triggerBodies(chain));
+        expect(built.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      } finally {
+        chain.close();
+        built.close();
+      }
+    },
+  );
+
+  it("records exactly its own subsumed migrations in the ledger, and no more", () => {
+    for (const baseline of allBaselines) {
+      const database = new DatabaseSync(":memory:");
+      try {
+        database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
+        const recorded = database.prepare("SELECT name FROM d1_migrations ORDER BY id").all()
+          .map((row) => String(row.name));
+        expect(recorded, baseline.through).toEqual(baseline.migrations);
+        // Everything above the boundary must still be pending, or the migrate
+        // script would skip work a fresh database has not done.
+        const above = migrationFileNames.filter((name) => name > baseline.through);
+        expect(recorded.filter((name) => above.includes(name))).toEqual([]);
+      } finally {
+        database.close();
+      }
+    }
+  });
+
+  it("names a file that exists, at the boundary its name claims", () => {
+    for (const baseline of allBaselines) {
+      expect(baseline.file).toBe(`b_${baseline.through}`);
+      expect(() => readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url))).not.toThrow();
+      expect(migrationFileNames).toContain(baseline.through);
     }
   });
 });

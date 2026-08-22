@@ -63,9 +63,9 @@ Both commands cover Global and EU. Run them before starting a Worker: the
 migration and seed tooling writes to the same `.wrangler/state/<region>` SQLite
 files that a running `wrangler dev` holds open.
 
-An **empty** database is created from the checked-in baseline in
+An **empty** database is created from the newest checked-in baseline in
 `packages/db/baselines/` — a snapshot of the schema as of migration 0090 — and
-Wrangler then applies only the migrations after it. That is about four seconds
+Wrangler then applies whatever came after it. That is about four seconds
 per region instead of about forty-three for the full chain. A database that
 already has tables skips the baseline and is migrated the ordinary way, so
 re-running this on a warm container does what it always did. Hosted databases
