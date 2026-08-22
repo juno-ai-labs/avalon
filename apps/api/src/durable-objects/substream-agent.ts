@@ -76,6 +76,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -1844,6 +1845,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     await reapStaleHarnessRuns(executionEnv.DB, {
+      receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,

@@ -756,29 +756,85 @@ export class WorkstreamToolReceiptStorage {
    */
   abandonRunReceipts(input: { runId: string; terminalizedAt: number }): number {
     return this.storage.transactionSync(() => {
-      this.sql.exec(
-        `UPDATE tool_effects
-            SET status = CASE
-                  WHEN status = 'executing'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                  THEN 'ambiguous' ELSE 'failed' END,
-                settled_at = ?1,
-                error_json = CASE
-                  WHEN status = 'executing'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                  THEN json_object('code', 'ambiguous_external_write')
-                  ELSE json_object('code', 'parent_run_terminated') END
-          WHERE run_id = ?2 AND status IN ('admitted', 'executing')
-            AND EXISTS (
-              SELECT 1 FROM runs
-               WHERE run_id = ?2 AND terminalized_at = ?1
-            )`,
-        input.terminalizedAt,
+      // The guard, once, as its own question. The routed statement restated it
+      // as an `EXISTS` inside the UPDATE because it had no transaction to hold
+      // it in; here the answer cannot change between reading it and acting.
+      const terminalized = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
+        `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
         input.runId,
-      );
-      return this.sql.exec<{ changes: number } & Record<string, SqlStorageValue>>(
-        `SELECT changes() AS changes`,
-      ).one().changes;
+        input.terminalizedAt,
+      ));
+      if (!terminalized) return 0;
+
+      const abandoned = this.sql.exec<{
+        effect_intent_id: string; ambiguous: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT effect_intent_id,
+                CASE WHEN status = 'executing'
+                       AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                     THEN 1 ELSE 0 END AS ambiguous
+           FROM tool_effects
+          WHERE run_id = ? AND status IN ('admitted', 'executing')`,
+        input.runId,
+      ).toArray();
+      if (abandoned.length === 0) return 0;
+
+      const settledAtIso = new Date(input.terminalizedAt).toISOString();
+      for (const receipt of abandoned) {
+        const status = receipt.ambiguous === 1 ? "ambiguous" : "failed";
+        const errorJson = JSON.stringify(receipt.ambiguous === 1
+          ? {
+            code: "ambiguous_external_write",
+            message: "The parent run lost its durable lease while an external write was in flight",
+          }
+          : {
+            code: "parent_run_terminated",
+            message: "The parent run lost its durable lease",
+          });
+        this.sql.exec(
+          `UPDATE tool_effects
+              SET status = ?, settled_at = ?, error_json = ?
+            WHERE effect_intent_id = ?`,
+          status,
+          input.terminalizedAt,
+          errorJson,
+          receipt.effect_intent_id,
+        );
+        // And the tool card the member is looking at.
+        //
+        // This is not bookkeeping: it is the only thing that stops a reaped
+        // run's tool card spinning forever. Normal execution settles the
+        // receipt and then writes the transcript row again, but the sweep has
+        // no event publisher and no second write — so object schema migration
+        // 14 taught the *compatibility trigger* to project a terminal receipt
+        // into the same-id part inside the settling transaction. That made a
+        // piece of real product behavior, added after the cutover, live inside
+        // a compatibility object. It moves here, where it is visible, and it is
+        // the reason dropping that trigger is not a pure deletion.
+        this.sql.exec(
+          `UPDATE parts SET
+             structured_content_json = json_set(
+               parts.structured_content_json,
+               '$.invocation.status', ?1,
+               '$.invocation.activityName', json('null'),
+               '$.invocation.outputSummary', (
+                 SELECT output_summary FROM tool_effects WHERE effect_intent_id = ?4
+               ),
+               '$.invocation.completedAt', ?2,
+               '$.invocation.error', json(?5)
+             ),
+             tool_status = ?1,
+             edited_at = COALESCE(?3, parts.edited_at, parts.updated_at),
+             updated_at = MAX(parts.updated_at, ?3)
+           WHERE parts.id = ?4 AND parts.message_type = 'tool'`,
+          status,
+          settledAtIso,
+          input.terminalizedAt,
+          receipt.effect_intent_id,
+          errorJson,
+        );
+      }
+      return abandoned.length;
     });
   }
 
