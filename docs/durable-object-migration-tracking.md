@@ -207,6 +207,12 @@ full report history. Every page has a JSON twin under `/api/`.
 - **Every route on the site is authorized, including the JSON ones.** There is no
   second credential and no exempt path; an unconfigured Access setup refuses
   every request rather than serving the fleet's shape unauthenticated.
+- **Renaming a component key requires a registry migration in the same change.**
+  The key is the tracker's own identifier — no Durable Object stores it — and it
+  is the only join between a report and a head. Renamed on the producer alone, it
+  starts a second component at head 0 and strands every object that has not woken
+  under the old one, which reads as a healthy fleet rather than an error. Registry
+  v3 is the worked example.
 - **The tracker imports nothing from `apps/api`.** A build break in the Worker
   being observed must not take down the thing that reports on it — which is why
   the migration runner and the structured logger are deliberate copies.
@@ -424,6 +430,89 @@ that carries state — as WorkspaceDO migration 5's `schedule_bootstrap` entry
 does.
 
 ## Changelog
+
+### 2026-08-22 — SubstreamAgent's component is named after its class
+
+**What changed:** the component key `SubstreamAgent` reports under is
+`substream_agent_do`, renamed from `workstream`, and registry schema v3 carries
+the stored history — live rows, the report log, and the per-region head — onto
+the new key.
+
+**Why:** the site was showing `workstream` and `workstream_do` next to each
+other as if one were the other's namespace. They are two unrelated objects:
+`workstream_do` is `WorkstreamDO`'s own control-plane schema, while `workstream`
+was the object-store schema that `SubstreamAgent` applies through
+`WorkstreamObjectStore`. The key predates the class — it named the history when
+`WorkstreamRoom` owned it, and survived the v3 Wrangler `renamed_classes`
+migration because that rename was deliberately storage-preserving. Every other
+key on the site is derived from its class — snake-cased, `_do` where the class
+ends in `DO` — and `workstream` was derived from nothing still in the codebase.
+That it read as `workstream_do`'s parent is what made it worse than merely
+stale: of the four keys, it was the one an operator was most likely to misread
+during an incident.
+
+The rule is derivation, not equality. `block_dashboard_block_agent` carries a
+`block` that `BlockDashboardAgent` does not, and `substream_agent_do` takes the
+`_do` suffix from its two siblings rather than from `SubstreamAgent`. Both are
+recognisable from their class, which is all the key has to be.
+
+The rename is confined to this subsystem, which is what made it worth doing at
+all: no Durable Object stores its component key — `_sql_schema_migrations`
+records a version, a hash, and a build — so nothing in the fleet migrates, no
+receipt moves, and the Cloudflare-facing identifiers (script, class, binding,
+namespace, object id) are untouched. Renaming the *class* would have been the
+opposite: a `renamed_classes` tag, appended and irreversible, against the
+namespace every object's storage hangs off.
+
+The migration runner prefixes its thrown errors with the component, so this
+object's failure text changes shape with the key. Failure messages already in
+the report log are left exactly as they were reported: unlike the component
+column, which is an identifier the tracker assigns, the message is what an
+object actually said on the day it broke.
+
+A migration alone does not finish the rename, because it runs once and the two
+Workers deploy from independent workflows. The tracker's is much the smaller of
+the two and usually lands first, so reports from the outgoing API build keep
+arriving under `workstream` after v3 has already swept the tables — and v3
+cannot catch them, since its receipt is what stops a migration running twice.
+`applyReport` therefore rewrites that one key on the way in. The branch is
+bounded and is meant to be deleted: once no deployed build carries the old key,
+a report arriving under it is a producer nobody can account for, which is worth
+seeing rather than silently renaming.
+
+**Considered and rejected:** letting the new key simply start a second
+component, on the theory that objects would migrate to it as they woke. Every
+object that has reported and has not woken since the deploy would keep
+`component = 'workstream'` and go on resolving against the old head, while the
+new key started at 0 and showed everything that had woken as `current` against a
+head no build had raised. Not the never-reported objects, though: `recordSweep`
+writes no component at all, so a sweep-discovered object is `unreported` under
+no key and a producer-side rename cannot strand it. Also rejected: leaving the deploy window
+to an operator cleanup, which was the first shape of this change. It
+under-counted the damage. Only `durable_objects` heals itself on an object's
+next wake; the head row needs a manual delete, and every event written in the
+window stays in the log under a key nothing else uses, where no later migration
+repairs it. Making the ingestion branch bounded costs less than a permanent one
+and less than the repair.
+
+**What a future change has to respect:** the key is the tracker's own
+identifier and its only join between a report and a head, so renaming one again
+means a registry migration in the same change — `component_versions` is keyed
+`(component, region)` and a rename without one splits the fleet silently rather
+than failing. It also means a compatibility branch at ingestion for as long as
+the old producer can still be deployed, because the migration cannot see what
+arrives after it — and there is no third option where the objects simply re-announce
+themselves: `_migration_report_state` dedupes on version, status, and build, so
+a key that changes without one of those changing is silent until the 24-hour
+heartbeat. v3's write to `component_versions` merges rather than updates
+for the other order: if `apps/api` lands first, the row already exists, and an
+`UPDATE` onto it would collide with the primary key inside the registry's own
+constructor and take the tracker down.
+
+Both halves have to be tested below the writer that normalizes the key. A test
+that seeds the old key through `recordReports` proves the migration works
+against a database that never held it — it passes with every one of v3's
+statements removed, which is how this was caught.
 
 ### 2026-08-22 — The report tables drop the Applied column
 

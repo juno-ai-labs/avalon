@@ -91,6 +91,26 @@ type EventRow = {
 };
 
 /**
+ * The one component key a report may still arrive under, and what it is now.
+ *
+ * Registry v3 renamed `SubstreamAgent`'s component, and the two Workers deploy
+ * from independent workflows — the tracker's is much the smaller of the two, so
+ * it usually lands first and reports from the outgoing API build keep arriving
+ * under the old key after the migration has already run. v3 cannot catch those:
+ * its receipt is what stops a migration running twice. Without this they would
+ * recreate the head row, refile live objects under the old key, and — the part
+ * no later migration repairs — write history under a key nothing else uses.
+ *
+ * Deliberately bounded, and the reason it is acceptable in the write path at
+ * all. Delete it, and its test, once no deployed API build carries the old key:
+ * everything that reported under it has been rewritten by v3, so a report
+ * arriving under `workstream` after that is a producer nobody can account for,
+ * which is worth seeing rather than silently renaming.
+ */
+const RENAMED_COMPONENT_FROM = "workstream";
+const RENAMED_COMPONENT_TO = "substream_agent_do";
+
+/**
  * The Durable Object classes that run `withMigrationReport`.
  *
  * The sweep enumerates every namespace in the account, which is more than the
@@ -201,6 +221,9 @@ export class MigrationRegistry extends DurableObject<Env> {
 
   private applyReport(report: DurableObjectMigrationReport, recordedAt: number): void {
     const sql = this.storage.sql;
+    const component = report.component === RENAMED_COMPONENT_FROM
+      ? RENAMED_COMPONENT_TO
+      : report.component;
 
     // Monotonic: the head is the highest version this component has ever been
     // seen running in this region. A rolled-back deploy reporting a lower
@@ -219,7 +242,7 @@ export class MigrationRegistry extends DurableObject<Env> {
            ELSE component_versions.worker_version_id
          END,
          latest_version = MAX(component_versions.latest_version, excluded.latest_version)`,
-      report.component,
+      component,
       report.region,
       report.className,
       report.latestVersion,
@@ -254,7 +277,7 @@ export class MigrationRegistry extends DurableObject<Env> {
       report.objectId,
       report.objectName,
       report.className,
-      report.component,
+      component,
       report.region,
       report.appEnv,
       report.workerVersionId,
@@ -280,7 +303,7 @@ export class MigrationRegistry extends DurableObject<Env> {
       report.objectId,
       report.objectName,
       report.className,
-      report.component,
+      component,
       report.region,
       report.appEnv,
       report.workerVersionId,
