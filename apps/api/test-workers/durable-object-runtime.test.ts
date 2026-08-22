@@ -9,7 +9,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
@@ -53,7 +53,12 @@ const SESSION_ID = "runtime-test-session";
 const BLOCK_DASHBOARD_BLOCK_ID = asBlockId("00000000-0000-7000-8000-000000000109");
 
 beforeEach(async () => {
+  clearFlagTargetingAttributeCache();
   await reset();
+});
+
+afterEach(() => {
+  clearFlagTargetingAttributeCache();
 });
 
 async function seedOpenAuthority(): Promise<void> {
@@ -500,7 +505,6 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("does not read a preparing work stream while resolving its first model", async () => {
     await seedOpenAuthority();
-    clearFlagTargetingAttributeCache();
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -583,7 +587,7 @@ describe("Durable Objects in the Workers runtime", () => {
       });
 
       expect(getObjectDetails).toHaveBeenCalledOnce();
-      expect(observedAuthorityModes).not.toContain("preparing");
+      expect(observedAuthorityModes).toEqual([]);
     });
   });
 

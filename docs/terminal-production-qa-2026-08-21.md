@@ -109,9 +109,10 @@ harness_run_id=null
 ```
 
 This was not caused by Terminal, alarms, or parallel execution; the same event
-preceded all four fresh runs. During `createFromRegionalReservation`, the object
-creates an identity row in `preparing` mode and must commit the authoritative
-root, opening message, and first run atomically. Before that transaction,
+preceded all four fresh runs. During
+`WorkstreamObjectProductService.initialize`, the object creates an identity row
+in `preparing` mode and must commit the authoritative root, opening message, and
+first run atomically. Before that transaction,
 first-run model selection called the ordinary flag resolver with the new
 work-stream id. The targeting loader routed its work-stream-fact query back to
 the object, where `executeWorkstreamRuntimeSql` correctly rejected every access
@@ -131,7 +132,11 @@ root early was rejected because it would expose an incomplete object. Focused
 unit and real-workerd creation-path tests pin the distinct evaluation and
 attribute-read subjects. At this point in the acceptance record, those tests
 were green but the repair had not yet deployed or received its fresh-workstream
-production retest.
+production retest. Review then found the same not-yet-populated interval in the
+two scheduled creation callers: the activity consumer resolves before runtime
+bootstrap, while automation creation resolves from a bootstrapped shell before
+its product insert. The scheduled resolver now uses the same workspace-only
+attribute boundary, avoiding both the fence and placeholder targeting facts.
 
 ## Follow-up remediation status
 

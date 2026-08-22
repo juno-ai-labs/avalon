@@ -441,12 +441,16 @@ describe("agent model flags", () => {
     },
   );
 
-  it("records the work-stream agent's flagged model on scheduled runs", async () => {
+  it("records a scheduled new work stream's model without reading its uncommitted facts", async () => {
     const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] }));
 
-    await expect(scheduledWorkstreamModel(env, { workspaceId: "ws-1" })).resolves.toBe(
+    await expect(scheduledWorkstreamModel(env, {
+      workspaceId: "ws-1",
+      workstreamId: "wst-scheduled",
+    })).resolves.toBe(
       "anthropic/claude-opus-4.6",
     );
+    expect(servedAttributes.subjects).toEqual([{ workspaceId: "ws-1" }]);
   });
 
   it("admits only the model ids a creator may choose from", () => {
