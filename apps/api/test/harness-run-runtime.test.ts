@@ -844,13 +844,13 @@ describe("durable harness attempt runtime", () => {
       mode: "write",
     });
     sqlite.object.prepare(
-      "UPDATE tool_invocations SET status = 'pending' WHERE id = ?",
+      "UPDATE tool_effects SET status = 'admitted' WHERE effect_intent_id = ?",
     ).run("invocation-stale-pending-write");
     expect(sqlite.object.prepare(
-      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+      "SELECT status, settled_at, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stale-parent")).toEqual({
-      status: "started",
-      completed_at: null,
+      status: "executing",
+      settled_at: null,
       error_json: null,
     });
     sqlite.object.prepare(
@@ -865,7 +865,7 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare("SELECT status, lease_owner FROM harness_runs WHERE id = ?").get(RUN_ONE))
       .toEqual({ status: "failed", lease_owner: null });
     expect(sqlite.object.prepare(
-      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+      "SELECT status, settled_at, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stale-parent")).toMatchObject({
       status: "ambiguous",
       error_json: JSON.stringify({
@@ -884,10 +884,10 @@ describe("durable harness attempt runtime", () => {
       visible_error_code: "ambiguous_external_write",
     });
     expect(sqlite.object.prepare(
-      "SELECT id, status FROM tool_invocations WHERE id IN (?, ?) ORDER BY id",
+      "SELECT effect_intent_id, status FROM tool_effects WHERE effect_intent_id IN (?, ?) ORDER BY effect_intent_id",
     ).all("invocation-stale-pending-write", "invocation-stale-read")).toEqual([
-      { id: "invocation-stale-pending-write", status: "failed" },
-      { id: "invocation-stale-read", status: "failed" },
+      { effect_intent_id: "invocation-stale-pending-write", status: "failed" },
+      { effect_intent_id: "invocation-stale-read", status: "failed" },
     ]);
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-stale'",
@@ -1198,7 +1198,7 @@ describe("durable harness attempt runtime", () => {
       mayHaveWritten: true,
     })).toBe("ambiguous");
     expect(sqlite.object.prepare(
-      "SELECT status, provider_idempotency_key FROM tool_invocations WHERE id = 'invocation-write'",
+      "SELECT status, provider_idempotency_key FROM tool_effects WHERE effect_intent_id = 'invocation-write'",
     ).get()).toEqual({ status: "ambiguous", provider_idempotency_key: "avalon:run:call-write" });
     expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
@@ -1209,10 +1209,10 @@ describe("durable harness attempt runtime", () => {
       allowAmbiguousReconciliation: true,
     })).toBe("persisted");
     expect(sqlite.object.prepare(
-      "SELECT status, output_ref FROM tool_invocations WHERE id = 'invocation-write'",
+      "SELECT status, output_ref FROM tool_effects WHERE effect_intent_id = 'invocation-write'",
     ).get()).toEqual({ status: "completed", output_ref: "payloads/runtime/reconciled-write.json" });
     expect(sqlite.object.prepare(
-      "SELECT phase FROM tool_invocation_checkpoints WHERE tool_invocation_id = 'invocation-read' ORDER BY checkpoint_index",
+      "SELECT phase FROM tool_effect_checkpoints WHERE effect_intent_id = 'invocation-read' ORDER BY checkpoint_index",
     ).all()).toEqual([
       { phase: "execution_planned" },
       { phase: "provider_request_started" },
@@ -1399,8 +1399,8 @@ describe("durable harness attempt runtime", () => {
     })).toBe("failed");
 
     const rows = sqlite.object.prepare(
-      `SELECT id, status, error_json FROM tool_invocations
-        WHERE id IN (?, ?, ?, ?) ORDER BY id`,
+      `SELECT effect_intent_id, status, error_json FROM tool_effects
+        WHERE effect_intent_id IN (?, ?, ?, ?) ORDER BY effect_intent_id`,
     ).all(
       "invocation-plan-conflict",
       "invocation-write-retry",
@@ -1409,41 +1409,41 @@ describe("durable harness attempt runtime", () => {
     );
     expect(rows).toEqual([
       {
-        id: "invocation-definitive-failure",
+        effect_intent_id: "invocation-definitive-failure",
         status: "failed",
         error_json: '{"code":"tool_failed","message":"The provider rejected the request","data":{"code":"revision_conflict","details":{"reason":"Read the item again by ID before retrying."}}}',
       },
       {
-        id: "invocation-plan-conflict",
+        effect_intent_id: "invocation-plan-conflict",
         status: "ambiguous",
         error_json: '{"code":"ambiguous_external_write","message":"A tool-call receipt was reused with a different immutable execution plan"}',
       },
       {
-        id: "invocation-read-timeout",
+        effect_intent_id: "invocation-read-timeout",
         status: "failed",
         error_json: '{"code":"tool_timeout","message":"The tool request timed out before producing a result"}',
       },
       {
-        id: "invocation-write-retry",
+        effect_intent_id: "invocation-write-retry",
         status: "ambiguous",
         error_json: '{"code":"ambiguous_external_write","message":"A prior write may have reached the provider"}',
       },
     ]);
     expect(sqlite.object.prepare(
-      `SELECT tool_invocation_id, phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id IN (?, ?, ?, ?)
+      `SELECT effect_intent_id, phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id IN (?, ?, ?, ?)
           AND checkpoint_index = 1
-        ORDER BY tool_invocation_id`,
+        ORDER BY effect_intent_id`,
     ).all(
       "invocation-plan-conflict",
       "invocation-write-retry",
       "invocation-definitive-failure",
       "invocation-read-timeout",
     )).toEqual([
-      { tool_invocation_id: "invocation-definitive-failure", phase: "execution_failed" },
-      { tool_invocation_id: "invocation-plan-conflict", phase: "ambiguous_external_write" },
-      { tool_invocation_id: "invocation-read-timeout", phase: "timed_out" },
-      { tool_invocation_id: "invocation-write-retry", phase: "ambiguous_external_write" },
+      { effect_intent_id: "invocation-definitive-failure", phase: "execution_failed" },
+      { effect_intent_id: "invocation-plan-conflict", phase: "ambiguous_external_write" },
+      { effect_intent_id: "invocation-read-timeout", phase: "timed_out" },
+      { effect_intent_id: "invocation-write-retry", phase: "ambiguous_external_write" },
     ]);
   });
 
@@ -1523,13 +1523,13 @@ describe("durable harness attempt runtime", () => {
     // the original call's coordinates, and the next pass compared against the
     // wrong receipt.
     expect(sqlite.object.prepare(
-      `SELECT tool_name, status, input_hash, connection_id, output_ref, output_summary,
+      `SELECT tool_name, status, request_hash, connection_id, output_ref, output_summary,
               error_json, json_extract(execution_plan_json, '$.canonicalToolName') AS planned_tool
-         FROM tool_invocations WHERE id = 'invocation-reused-coordinate'`,
+         FROM tool_effects WHERE effect_intent_id = 'invocation-reused-coordinate'`,
     ).get()).toEqual({
       tool_name: "search_code",
-      status: "started",
-      input_hash: "github-search",
+      status: "executing",
+      request_hash: "github-search",
       // The rebinding call names no top-level connection (its connection
       // lives inside the plan); the rebind writes that null over the old
       // binding rather than leaving a stale one.
@@ -1540,8 +1540,8 @@ describe("durable harness attempt runtime", () => {
       planned_tool: "search_code",
     });
     expect(sqlite.object.prepare(
-      `SELECT phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+      `SELECT phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
     ).all()).toEqual([
       { phase: "execution_planned" },
       { phase: "result_persisted" },
@@ -1559,16 +1559,16 @@ describe("durable harness attempt runtime", () => {
       outputSummary: "Found 3 matches",
     })).toBe("persisted");
     expect(sqlite.object.prepare(
-      `SELECT status, output_ref, checkpoint_index FROM tool_invocations
-        WHERE id = 'invocation-reused-coordinate'`,
+      `SELECT status, output_ref, checkpoint_index FROM tool_effects
+        WHERE effect_intent_id = 'invocation-reused-coordinate'`,
     ).get()).toEqual({
       status: "completed",
       output_ref: "payloads/runtime/searched-code.json",
       checkpoint_index: 3,
     });
     expect(sqlite.object.prepare(
-      `SELECT checkpoint_index, phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+      `SELECT checkpoint_index, phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
     ).all()).toEqual([
       { checkpoint_index: 0, phase: "execution_planned" },
       { checkpoint_index: 1, phase: "result_persisted" },
@@ -1615,7 +1615,7 @@ describe("durable harness attempt runtime", () => {
       plan: readPlan,
     })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-settled-write" });
     expect(sqlite.object.prepare(
-      "SELECT status FROM tool_invocations WHERE id = 'invocation-settled-write'",
+      "SELECT status FROM tool_effects WHERE effect_intent_id = 'invocation-settled-write'",
     ).get()).toEqual({ status: "completed" });
   });
 
@@ -1761,7 +1761,7 @@ describe("durable harness attempt runtime", () => {
       plan: { ...readPlan, canonicalToolName: "search_code", capability: "code.read" },
     })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-failed-read" });
     expect(sqlite.object.prepare(
-      "SELECT status, error_json FROM tool_invocations WHERE id = 'invocation-failed-read'",
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = 'invocation-failed-read'",
     ).get()).toEqual({
       status: "ambiguous",
       error_json: '{"code":"ambiguous_external_write","message":"A tool-call receipt was reused with a different immutable execution plan"}',
@@ -1769,11 +1769,11 @@ describe("durable harness attempt runtime", () => {
 
     // Both refusals leave the settled receipts exactly as they were.
     expect(sqlite.object.prepare(
-      `SELECT id, status, input_hash FROM tool_invocations
-        WHERE id IN ('invocation-delegation', 'invocation-attachment') ORDER BY id`,
+      `SELECT effect_intent_id, status, request_hash FROM tool_effects
+        WHERE effect_intent_id IN ('invocation-delegation', 'invocation-attachment') ORDER BY effect_intent_id`,
     ).all()).toEqual([
-      { id: "invocation-attachment", status: "completed", input_hash: "first-resource" },
-      { id: "invocation-delegation", status: "completed", input_hash: "first-objective" },
+      { effect_intent_id: "invocation-attachment", status: "completed", request_hash: "first-resource" },
+      { effect_intent_id: "invocation-delegation", status: "completed", request_hash: "first-objective" },
     ]);
   });
 
@@ -1978,15 +1978,15 @@ describe("durable harness attempt runtime", () => {
     )).not.toBe(uploadedKey);
     expect(sqlite.object.prepare(
       `SELECT status, output_ref, output_summary, checkpoint_index
-         FROM tool_invocations WHERE id = ?`,
+         FROM tool_effects WHERE effect_intent_id = ?`,
     ).get("invocation-upload-race")).toEqual({
-      status: "started",
+      status: "executing",
       output_ref: null,
       output_summary: null,
       checkpoint_index: 0,
     });
     expect(sqlite.object.prepare(
-      "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+      "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
     ).get("invocation-upload-race")).toEqual({ count: 1 });
 
     uploaded = false;
@@ -2216,14 +2216,14 @@ describe("durable harness attempt runtime", () => {
           },
         })).rejects.toMatchObject({ code: fence.code });
         expect(sqlite.object.prepare(
-          "SELECT status, error_json, checkpoint_index FROM tool_invocations WHERE id = ?",
+          "SELECT status, error_json, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
         ).get(invocationId)).toEqual({
-          status: "started",
+          status: "executing",
           error_json: null,
           checkpoint_index: 0,
         });
         expect(sqlite.object.prepare(
-          "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+          "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
         ).get(invocationId)).toEqual({ count: 1 });
       }
     }

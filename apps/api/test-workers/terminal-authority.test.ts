@@ -351,8 +351,12 @@ describe("Terminal authority on real workerd", () => {
           workstreamId: WORKSTREAM_ID,
           requestId: "00000000-0000-7000-8000-00000000ae02",
           statements: [{
-            sql: "UPDATE tool_invocations SET status = ?, started_at = ? WHERE id = ?",
-            params: ["started", "2026-08-21T22:00:00.000Z", effectId],
+            // Real table and real vocabulary: `_runtime_tool_invocations` and
+            // its triggers are gone as of object schema migration 17, so a
+            // routed statement names `tool_effects`, says `executing` rather
+            // than `started`, and counts unix milliseconds.
+            sql: "UPDATE tool_effects SET status = ?, started_at = ? WHERE effect_intent_id = ?",
+            params: ["executing", Date.parse("2026-08-21T22:00:00.000Z"), effectId],
           }, {
             // This legacy statement rewrites directly to the normalized table,
             // not a compatibility view, so its native count must remain live.
@@ -370,7 +374,17 @@ describe("Terminal authority on real workerd", () => {
     expect(result.status).toBe(200);
     expect(rpcResultBody(result)).toMatchObject({
       results: [
-        { changes: 1 },
+        // Two, for one updated row. A direct normalized-table statement reports
+        // workerd's `rowsWritten`, which counts the index write as well —
+        // `tool_effects_status_idx` covers both columns this sets. It used to
+        // report 1 because it went through a compatibility view, where the
+        // trigger's own counter is authoritative. Nothing production reads this
+        // number for receipts any more: they settle through the typed port,
+        // which returns outcomes rather than row counts. It is recorded here
+        // rather than smoothed over, because a caller that switches a statement
+        // from a view to its real table and keeps an `=== 1` check will be
+        // wrong in exactly this way.
+        { changes: 2 },
         { changes: 1, rows: [{ sequence_number: expect.any(Number) }] },
       ],
     });

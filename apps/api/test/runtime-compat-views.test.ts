@@ -32,26 +32,6 @@ describe("the runtime compat views", () => {
   });
 });
 
-/** The run and root a `_runtime_tool_invocations` insert needs to resolve. */
-function seedRunForReceipts(sql: ReturnType<typeof createTestSqlStorage>): void {
-  sql.exec(`INSERT INTO workstream (
-      id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
-      authority_mode, authority_generation, title, description, preview, scope,
-      exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
-      unread_tracking_start_ordinal, authority_epoch, scope_epoch,
-      source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
-      created_at, last_people_activity_at, state_changed_at, updated_at
-    ) VALUES (1,'S','W',NULL,0,'global','authoritative',1,'T','','','workspace',
-              'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
-  sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
-    VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
-  sql.exec(`INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
-      model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-      active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-      tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-      created_at, updated_at)
-    VALUES ('R','0','running','{}',0,0,'',0,0,1,0,0,0,0,0,0,0,0,0,0,1,1)`);
-}
 
 describe("the runtime messages insert trigger", () => {
   // SQLite drops an ON CONFLICT clause aimed at a view; the trigger must
@@ -155,50 +135,13 @@ describe("the runtime messages insert trigger", () => {
     }]);
   });
 
-  it("keeps allocating fresh tool positions after a receipt is deleted", () => {
-    const database = new DatabaseSync(":memory:");
-    const sql = createTestSqlStorage(database);
-    applyWorkstreamObjectSchema(createCloudflareTestBinding<DurableObjectStorage>({
-      getAlarm: async () => null, setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => body(), sql,
-    }), "v", 1);
-    seedRunForReceipts(sql);
-
-    const admit = (id: string, toolCallId: string) => sql.exec(
-      `INSERT INTO _runtime_tool_invocations
-         (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-          input_hash, input_json, status, started_at, checkpoint_index)
-       VALUES (?, 'W', 'S', 'R', ?, 'read_resource', 'h', '{}', 'started',
-               '2026-08-20T12:00:00.000Z', 0)`,
-      id,
-      toolCallId,
-    );
-    const positions = () => sql.exec<{ effect_intent_id: string; tool_position: number }>(
-      `SELECT effect_intent_id, tool_position FROM tool_effects ORDER BY tool_position`,
-    ).toArray();
-
-    admit("effect-a", "call-a");
-    admit("effect-b", "call-b");
-    admit("effect-c", "call-c");
-    expect(positions().map((row) => row.tool_position)).toEqual([0, 1, 2]);
-
-    // `attachment-tool-receipts.ts` deletes a receipt by id from two paths, and
-    // the compat delete trigger turns that into a `DELETE FROM tool_effects`.
-    sql.exec(`DELETE FROM _runtime_tool_invocations WHERE id = 'effect-b'`);
-    expect(positions().map((row) => row.tool_position)).toEqual([0, 2]);
-
-    // The next admission must not reuse position 2. A `COUNT(*)` allocator
-    // returns 2 here, collides with `UNIQUE (run_id, attempt_epoch,
-    // tool_position)`, and `INSERT OR IGNORE` drops the row — after which
-    // `persistToolExecutionPlan` finds nothing under its own coordinates and
-    // ends the run with `RunOwnershipLostError`.
-    admit("effect-d", "call-d");
-    expect(positions()).toEqual([
-      { effect_intent_id: "effect-a", tool_position: 0 },
-      { effect_intent_id: "effect-c", tool_position: 2 },
-      { effect_intent_id: "effect-d", tool_position: 3 },
-    ]);
-  });
+  // The tool-position allocation spec that lived here is gone with the view it
+  // drove. Object schema migration 16 repaired `_runtime_tool_invocations_insert`
+  // so a deleted receipt could not wedge a run, and migration 17 drops that
+  // trigger outright; the same claim is now made against the typed path, in
+  // `workstream-tool-receipt-storage.test.ts` — "allocates a fresh position
+  // after a receipt is deleted", asserting the same gapped `0, 2, 3`. Migration
+  // 16 still has to exist for objects that applied it before 17 arrived.
 
   it("repairs a terminal tool row stranded before schema v11", () => {
     const database = new DatabaseSync(":memory:");

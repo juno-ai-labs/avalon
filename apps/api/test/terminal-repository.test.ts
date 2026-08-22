@@ -19,6 +19,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   testSubstreamAgentsBinding,
+  seedToolReceipt,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -112,16 +113,10 @@ function fixture(message = "Please publish these changes and open a pull request
     JSON.stringify({ type: "user", userId: U }),
     MESSAGE,
   );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO tool_invocations
-       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
-     VALUES (?, ?, ?, ?, 'publish-call', 'terminal_publish_branch_and_pr', 'hash', '{}', 'started')`,
-    I,
-    W,
-    S,
-    R,
-  );
+  seedToolReceipt(objectStore, {
+    id: I, runId: R, toolCallId: 'publish-call',
+    toolName: 'terminal_publish_branch_and_pr', mode: 'write',
+  });
   const env = createTestEnv({
     DB: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S }),
     AVALON_REGION: "global",
@@ -405,16 +400,11 @@ describe("Terminal repository publication", () => {
     await publisher.publishBranchAndPr(context, { title: "Ship it", body: "First commit" }, sandbox, provider);
 
     const secondInvocationId = "20000000-0000-4000-8000-000000000008";
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO tool_invocations
-       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
-       VALUES (?, ?, ?, ?, 'publish-call-2', 'terminal_publish_branch_and_pr', 'hash-2', '{}', 'started')`,
-      secondInvocationId,
-      W,
-      S,
-      R,
-    );
+    seedToolReceipt(objectStore, {
+      id: secondInvocationId, runId: R, toolCallId: 'publish-call-2',
+      toolName: 'terminal_publish_branch_and_pr', mode: 'write',
+      requestHash: 'hash-2', position: 1,
+    });
     const runCommand = vi.mocked(provider.runCommand);
     const firstImplementation = runCommand.getMockImplementation()!;
     runCommand.mockImplementation(async (sandboxId, input) => input.command.includes("rev-parse HEAD")
