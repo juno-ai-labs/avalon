@@ -420,7 +420,8 @@ of a deploy, so an ordinary release produces a trickle shaped by user traffic.
 The herd is any fan-out that touches many objects at once on a build whose
 `APP_VERSION` has just changed: an operator pass walking the fleet to seed or
 repair it, or a deploy whose migration arms an immediate alarm in every object
-that carries state — as WorkspaceDO's `schedule_bootstrap` entry does.
+that carries state — as WorkspaceDO migration 5's `schedule_bootstrap` entry
+does.
 
 ## Changelog
 

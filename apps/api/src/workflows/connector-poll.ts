@@ -173,6 +173,8 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       // Refresh even when the target already held this value: the previous
       // attempt may have committed D1 but lost its response before re-arming
       // the workspace alarm.
+      // The step name is durable Workflow history: renaming it would orphan
+      // every in-flight run's checkpoint, so it keeps the retired object's name.
       await step.do("refresh-workspace-scheduler", async () => {
         await refreshWorkspaceSchedule(this.env, input.workspaceId);
       });
