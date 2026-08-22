@@ -1762,17 +1762,20 @@ export function workstreamObjectSchemaImplementationHash(
  * under it; a second literal there could drift from this one and file the report
  * against a component the object's own ledger does not use.
  *
- * The value names the class that applies this schema, not this module, because
- * that is the only thing an operator reading the tracker can match against the
- * fleet: every other component key there is its class (`workstream_do`,
- * `workspace_do`). It said `workstream` while this history belonged to
- * `WorkstreamRoom`, and kept saying it through the class rename — which put the
- * one object in the fleet whose component and class did not correspond next to
- * `workstream_do`, a genuinely different object, under a name that reads like
- * its parent. Renaming the key is safe precisely because nothing but the
- * tracker reads it: the object's own `_sql_schema_migrations` ledger has no
+ * The value is derived from the class that applies this schema, not from this
+ * module, because the class is the only thing an operator reading the tracker
+ * can match against the fleet. Derived, not equal: `_do` comes from the two
+ * sibling keys whose classes end in `DO` (`workstream_do`, `workspace_do`)
+ * rather than from `SubstreamAgent`, and `block_dashboard_block_agent` carries
+ * a `block` its own class does not. The key said `workstream` while this
+ * history belonged to `WorkstreamRoom` and kept saying it through the class
+ * rename, which left the only key derived from nothing still in the codebase
+ * sitting next to `workstream_do` — a genuinely different object — under a name
+ * that reads like its parent. Renaming it is safe precisely because nothing but
+ * the tracker reads it: the object's own `_sql_schema_migrations` ledger has no
  * component column, so no receipt moves and no migration re-runs. Registry
- * migration v3 carries the stored history across.
+ * migration v3 carries the stored history across, and `applyReport` rewrites
+ * the old key on the way in until no deployed build can still send it.
  */
 export const WORKSTREAM_OBJECT_SCHEMA_COMPONENT = "substream_agent_do";
 

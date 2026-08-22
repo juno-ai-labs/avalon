@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
   applyWorkstreamObjectSchema,
+  WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
   WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
 } from "../src/durable-objects/workstream-object-schema";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
@@ -143,7 +144,7 @@ describe("the runtime messages insert trigger", () => {
     applyDurableObjectSqliteMigrations({
       storage,
       migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.slice(0, 10),
-      component: "workstream",
+      component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
       workerVersionId: "v10",
       now: 1,
     });
@@ -229,7 +230,7 @@ describe("the runtime messages insert trigger", () => {
     applyDurableObjectSqliteMigrations({
       storage,
       migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.slice(0, 13),
-      component: "workstream",
+      component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
       workerVersionId: "v13",
       now: 1,
     });

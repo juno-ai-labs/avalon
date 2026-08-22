@@ -61,6 +61,10 @@ function sweep(overrides: Partial<InventorySweep> = {}): InventorySweep {
   };
 }
 
+/** The head the old key was last seen at, and the one the new key carries. */
+const LEGACY_OBSERVED_AT = 1_700_000_000_000;
+const RENAMED_OBSERVED_AT = LEGACY_OBSERVED_AT + 60_000;
+
 /**
  * Rewrite every stored component back to the pre-rename key.
  *
@@ -68,11 +72,19 @@ function sweep(overrides: Partial<InventorySweep> = {}): InventorySweep {
  * in, which is the whole point of the compatibility branch — so a test that
  * seeded through it would prove the migration works against a database that
  * never held the old key. This writes the shape v3 actually meets.
+ *
+ * `observed_at` is stamped too, because the registry writes it from its own
+ * clock: both sides of a collision otherwise land in the same millisecond, and
+ * the merge's `MAX` has nothing to choose between.
  */
 function rewindToLegacyComponent(state: DurableObjectState): void {
-  for (const table of ["durable_objects", "migration_events", "component_versions"]) {
+  for (const table of ["durable_objects", "migration_events"]) {
     state.storage.sql.exec(`UPDATE ${table} SET component = 'workstream'`);
   }
+  state.storage.sql.exec(
+    `UPDATE component_versions SET component = 'workstream', observed_at = ?`,
+    LEGACY_OBSERVED_AT,
+  );
 }
 
 /** A fresh registry per test; the object is a singleton, so it is reset by hand. */
@@ -573,17 +585,19 @@ describe("the registry schema", () => {
       // reads as a passing test against the other region.
       record(
         registry,
-        report({ schemaVersion: 15, latestVersion: 15 }),
+        report({ schemaVersion: 15, latestVersion: 15, workerVersionId: "0.23.0" }),
         report({
           objectId: objectId("c"),
           objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
           region: "eu",
           schemaVersion: 12,
           latestVersion: 12,
+          workerVersionId: "0.23.0",
         }),
       );
       rewindToLegacyComponent(state);
-      // Only now the API's side of the collision, which lands under the new key.
+      // Only now the API's side of the collision, which lands under the new key
+      // and carries the newer build.
       record(
         registry,
         report({ objectId: objectId("b"), schemaVersion: 12, latestVersion: 12 }),
@@ -595,19 +609,49 @@ describe("the registry schema", () => {
           latestVersion: 15,
         }),
       );
+      state.storage.sql.exec(
+        `UPDATE component_versions SET observed_at = ? WHERE component = 'substream_agent_do'`,
+        RENAMED_OBSERVED_AT,
+      );
       state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 3`);
       return applyRegistrySchema(state.storage);
     });
     expect(applied).toEqual([3]);
 
+    // The build and the timestamp are asserted beside the version because the
+    // merge chooses all three, and the two that the surviving row inherits from
+    // the *losing* side are the ones a naive `excluded.<column>` would get
+    // wrong without changing any version — a head attributed to a build that
+    // never ran it, which is the same wrong-number-no-error failure the merge
+    // exists to avoid.
     const components = await withRegistry((_registry, state) =>
-      state.storage.sql.exec<{ component: string; region: string; latest_version: number }>(
-        `SELECT component, region, latest_version FROM component_versions
-          ORDER BY component, region`,
+      state.storage.sql.exec<{
+        component: string;
+        region: string;
+        latest_version: number;
+        worker_version_id: string;
+        observed_at: number;
+      }>(
+        `SELECT component, region, latest_version, worker_version_id, observed_at
+           FROM component_versions ORDER BY component, region`,
       ).toArray());
     expect(components).toEqual([
-      { component: "substream_agent_do", region: "eu", latest_version: 15 },
-      { component: "substream_agent_do", region: "global", latest_version: 15 },
+      {
+        component: "substream_agent_do",
+        region: "eu",
+        latest_version: 15,
+        // The new key was already ahead here, so its build keeps the head.
+        worker_version_id: "0.24.0",
+        observed_at: RENAMED_OBSERVED_AT,
+      },
+      {
+        component: "substream_agent_do",
+        region: "global",
+        latest_version: 15,
+        // The legacy side was ahead here, so the build that ran v15 keeps it.
+        worker_version_id: "0.23.0",
+        observed_at: RENAMED_OBSERVED_AT,
+      },
     ]);
   });
 });
