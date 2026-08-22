@@ -139,8 +139,14 @@ class IdentityDatabase {
               product_analytics_preference_version: 3,
             } as T;
           }
+          if (record.sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE id = ?")) {
+            // Ending the bootstrap session now reads back the row it revoked,
+            // so the revocation can be announced. See docs/access-revocation.md.
+            return { id: String(record.values[1]), user_id: platformUserId, workspace_id: null } as T;
+          }
           throw new Error(`Unexpected first query: ${record.sql}`);
         },
+        all: async <T>() => createTestD1Result<T>(({ success: true, results: [], meta: { changes: 0 } })),
         run: async <T>() => createTestD1Result<T>(({ success: true, results: [], meta: { changes: 1 } })),
       };
       return createTestD1PreparedStatement(statement);

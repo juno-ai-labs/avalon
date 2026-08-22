@@ -17,6 +17,8 @@ import {
   sendWorkspaceInvitationResolutionEmail,
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
+import { publishAccessRevocation } from "./access-revocation";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import {
@@ -410,6 +412,87 @@ export class WorkspaceService {
       )
       .run();
     return this.getWorkspace();
+  }
+
+  /**
+   * Take somebody out of this workspace.
+   *
+   * Two steps, in this order and no other: the membership row goes, which is
+   * what every authorization query in the product joins against, and then the
+   * revocation is published so the sockets they are already holding are closed.
+   * Deleting first means a failure to publish leaves them denied everywhere
+   * except an open connection; publishing first would announce a removal that
+   * might not commit.
+   *
+   * Their sessions are left alone deliberately. A session is bound to a
+   * workspace and every authorization query joins membership, so it stops
+   * resolving the moment the row is gone — revoking it as well would add a
+   * write whose only effect is on rows nobody can use.
+   */
+  async removeMember(userId: string): Promise<void> {
+    if (userId === this.auth.userId) {
+      throw new ApiError(400, "cannot_remove_self", "You cannot remove yourself from the workspace");
+    }
+    if (this.auth.role !== "owner" && this.auth.role !== "admin") {
+      throw new ApiError(403, "forbidden", "Only an owner or admin can remove a member");
+    }
+    const member = await this.env.DB.prepare(
+      `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(this.auth.workspaceId, userId).first<{ role: string }>();
+    if (!member) throw new ApiError(404, "member_not_found", "That person is not in this workspace");
+    if (member.role === "owner" && this.auth.role !== "owner") {
+      throw new ApiError(403, "forbidden", "Only an owner can remove an owner");
+    }
+    // The delete re-asserts both roles the checks above read, because it reads
+    // them in an earlier round trip and D1 auto-commits in between.
+    //
+    // The caller's: two owners removing each other at the same time both pass
+    // those checks, and without this clause both deletes land, leaving a
+    // workspace with no owner at all. SQLite serializes the two statements, so
+    // whichever runs second finds its actor already gone and removes nothing.
+    // There is still no last-owner count — this is what makes "the remover is
+    // an active owner who remains one" true under concurrency.
+    //
+    // The target's: an admin may remove a member but not an owner. Reading the
+    // target as a member and deleting unconditionally lets a promotion land in
+    // between, and the admin removes an owner they were never allowed to touch.
+    // Either lost race removes nothing and answers 409.
+    const removal = await this.env.DB.prepare(
+      `DELETE FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND role = ?
+          AND EXISTS (
+            SELECT 1 FROM workspace_members actor
+             WHERE actor.workspace_id = ? AND actor.user_id = ?
+               AND actor.status = 'active' AND actor.role = ?
+          )
+        RETURNING user_id`,
+    ).bind(
+      this.auth.workspaceId,
+      userId,
+      member.role,
+      this.auth.workspaceId,
+      this.auth.userId,
+      this.auth.role,
+    ).first<{ user_id: string }>();
+    if (!removal) {
+      // Either the caller's own standing went away underneath them, or somebody
+      // else removed this person first. Both mean this request did not do what
+      // it reports, and neither should announce a revocation it did not cause.
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The workspace membership changed while this removal was in flight. Check it and try again.",
+      );
+    }
+    await publishAccessRevocation(this.env, {
+      reason: "workspace_membership_removed",
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(userId),
+      // No session: the membership is gone, so none of their windows is
+      // admissible any longer.
+      sessionId: null,
+    });
+    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
   }
 
   async listMembers() {

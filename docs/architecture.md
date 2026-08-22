@@ -290,12 +290,13 @@ turning a failed network call into a lost sidebar update.
 All four object roles accept Cloudflare hibernating sockets with purpose-scoped,
 single-use tickets and serialized connection attachments. The ticket establishes
 the intended object/audience; admission and later commands still resolve current
-regional session, membership, and object-local visibility. An explicit
-retraction sweeps already connected readers, and a policy close (`1008`) tells
-Electron to stop retrying; each role then marks, reconciles, or removes its
-surface according to that role's product contract. Periodic
-revalidation bounds a missed retraction without putting an authorization query
-on every token frame. The complete role-specific protocol lives in
+regional session, membership, and object-local visibility. An already connected
+reader is closed only when a retraction reaches its object over the
+[access-revocation queue](access-revocation.md), and a policy close (`1008`)
+tells Electron to stop retrying; each role then marks, reconciles, or removes
+its surface according to that role's product contract. Nothing revalidates a
+listening socket on a timer, which is what keeps an authorization query off
+every token frame. The complete role-specific protocol lives in
 [`realtime-sockets.md`](realtime-sockets.md), and the rule for deciding whether
 a given payload travels on one of these sockets or over REST is
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
@@ -682,13 +683,11 @@ it.
   non-stream mutations.
 - **Publishing to a SubstreamAgent feed is best-effort** and swallows its own failures. The one
   exception is a retraction: `publishWorkstreamEvent` reports whether the room
-  accepted it, and the room re-asks D1 before delivering anything other than a
-  `stream_delta` when its last check is older than 30 seconds.
+  accepted it.
 - **A revocation closes the socket with `1008` and the desktop stops retrying** —
-  the ticket behind a retry now answers 404. A *failed authorization query* during
-  a retraction sweep closes every socket with `1011` instead, because a failed
-  query is not evidence that any particular reader lost access; those clients
-  reconnect and re-authorize in under a second.
+  the ticket behind a retry now answers 404. The revocation arrives as a queue
+  message published by whoever ended the access; see
+  [`access-revocation.md`](access-revocation.md).
 - **Reconnect uses equal-jitter exponential backoff capped at 30 seconds**, pauses
   while offline, and resumes from the last cursor/waterline for that socket role.
 - **Queue delivery is duplicate-prone and unordered by design.** WorkstreamDO
@@ -763,6 +762,31 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-22 — Losing access reaches a socket by queue, not by revalidation
+
+**What changed:** A dedicated per-region Cloudflare Queue now carries every
+access retraction to the objects holding that person's sockets, and all four
+socket roles stopped revalidating a listening socket on a timer. Admission and
+inbound commands still authorize as before.
+
+**Why:** An object cannot observe a revoked session or an ended membership —
+those are D1 facts owned by the Worker that wrote them — so every revalidation
+scheme was a poll, paying a query on a publish path to learn something up to a
+minute late. Publishing from the request that already knows it is both immediate
+and free when nothing changed.
+
+**Considered and rejected:** One RPC chain down the hierarchy. A single
+invocation would hold every object open, and one unreachable object would
+restart the walk; per-message retry is the reason for the queue.
+
+**Consequences:** Anything that ends access must publish — there is no sweep to
+catch what a producer forgot. A new socket-holding object owes a
+`revokeSocketAccess` and a place in its parent's child list. Full detail and the
+two retractions this deliberately does not carry are in
+[`access-revocation.md`](access-revocation.md).
+
+Shipped in #229.
 
 ### 2026-08-21 — A child's state change reaches the workspace socket immediately
 
