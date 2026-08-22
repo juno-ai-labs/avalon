@@ -87,7 +87,12 @@ function joinedCapture(head: string, tail: string): string {
   return tail ? `${head}\n… provider output omitted …\n${tail}` : head;
 }
 
-function commandOutputFromTask(task: TerminalTaskRecord): TerminalCommandOutput | null {
+type DurableTerminalCommandOutput = Omit<
+  TerminalCommandOutput,
+  "acquisitionDurationMs" | "totalDurationMs"
+>;
+
+function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommandOutput | null {
   if (task.state !== "completed" && task.state !== "failed"
     && task.state !== "timed_out" && task.state !== "cancelled") return null;
   const state = task.state;
@@ -332,7 +337,9 @@ export function createDaytonaTerminalRuntime(
     },
 
     async runCommand(context, input) {
+      const totalStartedAt = Date.now();
       const sandbox = await acquire(context);
+      const acquisitionDurationMs = Date.now() - totalStartedAt;
       const cwd = input.cwd ? await resolveInsideRoot(context, sandbox, input.cwd) : ROOT;
       const invocation = await database.prepare(
         `SELECT id FROM tool_invocations
@@ -348,7 +355,11 @@ export function createDaytonaTerminalRuntime(
       const replay = existing && commandOutputFromTask(existing);
       if (replay) {
         await provider.cleanupCommand?.(sandbox.providerSandboxId, taskName).catch(() => undefined);
-        return replay;
+        return {
+          ...replay,
+          acquisitionDurationMs,
+          totalDurationMs: Date.now() - totalStartedAt,
+        };
       }
 
       if (
@@ -468,6 +479,8 @@ export function createDaytonaTerminalRuntime(
         ...(outputResourceId ? { outputResourceId } : {}),
         startedAt: isoAt(startedAt),
         completedAt: isoAt(completedAt),
+        acquisitionDurationMs,
+        totalDurationMs: Date.now() - totalStartedAt,
       };
     },
 

@@ -119,6 +119,11 @@ export async function createAvalonTerminalPlugin(
         });
         return result;
       } catch (error) {
+        const code = error instanceof TerminalToolError
+          ? error.code
+          : error instanceof Error && "code" in error && typeof error.code === "string"
+            ? error.code
+            : "terminal_tool_failed";
         logStructuredEvent(env, "warn", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
@@ -126,7 +131,7 @@ export async function createAvalonTerminalPlugin(
           tool_invocation_id: context.toolCallId,
           tool_name: name,
           state: "failed",
-          code: error instanceof TerminalToolError ? error.code : "terminal_tool_failed",
+          code,
           duration_ms: Date.now() - startedAt,
         });
         throw error;

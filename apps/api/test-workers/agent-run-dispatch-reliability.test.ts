@@ -269,6 +269,44 @@ describe("a dispatched agent run is never orphaned", () => {
       expect(first.lease_token).toBeNull();
     }
   });
+
+  it("does not join an active drain from a heartbeat alarm", async () => {
+    const stub = substreamStub();
+    await boot(stub, "https://object.test/health");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+
+    await runInDurableObject(stub, (instance, state) => {
+      seedSubstreamDispatch(state, RUN_ID, {
+        state: "running",
+        startedAt: 1,
+        availableAt: Date.now() + 60_000,
+        leaseToken: "active-drain",
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+      const drain = (instance as unknown as {
+        agentDrain: {
+          resume(operation: () => Promise<void>, settled: () => void): Promise<void>;
+        };
+      }).agentDrain;
+      void drain.resume(() => held, () => undefined);
+    });
+
+    const heartbeat = runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as { alarm(): Promise<void> }).alarm();
+    });
+    const outcome = await Promise.race([
+      heartbeat.then(() => "returned" as const),
+      new Promise<"joined">((resolve) => setTimeout(() => resolve("joined"), 250)),
+    ]);
+    release();
+    await heartbeat;
+
+    // An alarm is a distinct request context. Awaiting a drain promise that
+    // belongs to the request already executing the run can strand both events
+    // and invalidates any request-scoped I/O the run performs afterward.
+    expect(outcome).toBe("returned");
+  });
 });
 
 // `runs_mutating_substream_uq` allows one mutating run per substream. A run
