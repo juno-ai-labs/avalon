@@ -143,7 +143,6 @@ export {
   type SlackMarkdownMessage,
 } from "./slack-markdown";
 export {
-  callGranolaMcp,
   createGranolaConnector,
   createGranolaWebhookEndpoint,
   deleteGranolaWebhookEndpoint,

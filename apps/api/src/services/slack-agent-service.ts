@@ -62,7 +62,6 @@ import { notifyOps } from "../observability/ops-slack-notifier";
 import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import {
   recordConnectorActorIdentity,
   resolveConnectorActorIdentity,
@@ -3139,19 +3138,25 @@ export class SlackAgentService {
    * a rate limit above all — keeps the rotation alive and simply leaves the
    * current reaction in place until the next tick.
    */
-  async advanceSessionReaction(sessionId: string): Promise<boolean> {
+  async advanceSessionReaction(input: {
+    workspaceId: string;
+    sessionId: string;
+    deliveryKey: string;
+  }): Promise<boolean> {
     try {
+      // `slack_agent_sessions` is WorkspaceDO's, so the alarm's bare env has to
+      // be scoped before it can read a session at all.
+      this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
       const session = await this.env.DB.prepare(
-        "SELECT * FROM slack_agent_sessions WHERE id = ?",
-      ).bind(sessionId).first<SlackSessionRow>();
+        "SELECT * FROM slack_agent_sessions WHERE id = ? AND workspace_id = ?",
+      ).bind(input.sessionId, input.workspaceId).first<SlackSessionRow>();
       if (!session?.reaction_channel_id || !session.reaction_message_ts) return false;
-      // Liveness comes from the run, not from the ticker's own bookkeeping, so a
-      // run that ended without reaching delivery still stops the rotation.
-      const live = await this.env.DB.prepare(
-        `SELECT 1 AS live FROM harness_runs
-          WHERE workstream_id = ? AND status IN ('scheduled', 'running') LIMIT 1`,
-      ).bind(session.workstream_id).first<{ live: number }>();
-      if (!live) return false;
+      // Liveness comes from the run, not the ticker's own bookkeeping: delivery
+      // stamps a new key, so a key that has moved means this run is over even if
+      // the explicit stop never arrived. Comparing against the baseline rather
+      // than against "has ever delivered" is what keeps a follow-up prompt in an
+      // existing thread rotating — it inherits the previous run's key.
+      if ((session.last_delivery_key ?? "") !== input.deliveryKey) return false;
       const connection = await this.connectionById(session.connection_id);
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
       const cursor = session.reaction_cursor + 1;
@@ -3168,6 +3173,8 @@ export class SlackAgentService {
           "UPDATE slack_agent_sessions SET reaction_current = ?, reaction_cursor = ?, updated_at = ? WHERE id = ?",
         ).bind(result.reaction, cursor, nowIso(), session.id).run();
       } catch (error) {
+        // A rate limit above all: keep the rotation alive and leave the current
+        // reaction until the next tick rather than ending it on one refusal.
         logWarn(this.env, "slack_working_reaction_failed", {
           session_id: session.id,
           reason: error instanceof Error ? error.message : "unknown",
@@ -3176,7 +3183,7 @@ export class SlackAgentService {
       return true;
     } catch (error) {
       logWarn(this.env, "slack_reaction_tick_abandoned", {
-        session_id: sessionId,
+        session_id: input.sessionId,
         reason: error instanceof Error ? error.message : "unknown",
       });
       return false;
@@ -3190,16 +3197,26 @@ export class SlackAgentService {
     intervalMs = SLACK_DEFAULT_REACTIONS.workingIntervalMs,
   ): Promise<void> {
     try {
-      const tickers = durableObjectNamespaceForRegion(
+      // Workspace-scoped rather than a regional singleton: the ticker belongs to
+      // one Slack session inside one workspace, so it takes that workspace's
+      // placement affinity like every other product object.
+      const ticker = await durableObjectStubForWorkspace(
+        this.env,
         this.env.SLACK_REACTION_TICKERS,
-        this.env.AVALON_REGION,
-        this.env.APP_ENV,
+        session.workspace_id,
+        `${this.env.AVALON_REGION}:slack-reaction:${session.id}`,
       );
-      const id = tickers.idFromName(`${this.env.AVALON_REGION}:${session.id}`);
-      await tickers.get(id).fetch(`https://slack-reaction-ticker.internal/${action}`, {
+      await ticker.fetch(`https://slack-reaction-ticker.internal/${action}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(action === "start" ? { sessionId: session.id, intervalMs } : {}),
+        body: JSON.stringify(action === "start"
+          ? {
+              workspaceId: session.workspace_id,
+              sessionId: session.id,
+              deliveryKey: session.last_delivery_key ?? "",
+              intervalMs,
+            }
+          : {}),
       });
     } catch (error) {
       logWarn(this.env, "slack_reaction_ticker_signal_failed", {
