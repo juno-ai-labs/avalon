@@ -143,6 +143,14 @@ may not write through to, inserts a new automation exactly as it always did.
   `updated_at` moves on every compile turn, so any query ordered by it — Slack's
   App Home is the one today — is otherwise led by whatever is being typed right
   now, and led away from the automations that run.
+- **A destination is not a step.** Avalon sends each run's final message to the
+  destinations frozen on the automation, so the compiler writes "email me the
+  briefing" into `expectedOutputs` and never into `instructions` as a
+  `gmail.send` call. An automation whose instructions do the sending delivers
+  the result twice, from two senders, and the second copy is the one nobody
+  asked for. The run-time half of this — the destinations the run is told about
+  and forbidden to write to — is in
+  [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
 - **The saved transcript ends with the reply on screen.** The service appends the
   assistant message it streamed. Persisting only the request's messages would
   resume every draft one turn behind what its author last read.
@@ -266,6 +274,25 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-22 — The compiler stops writing the delivery it is given
+
+**What changed:** The compiler prompt's Slack-only rule — describe the delivery,
+do not model the Avalon bot as a tool — now covers every destination Avalon
+delivers to, email included, and says outright not to instruct a provider send
+for one. It also asks for a result in ordinary Markdown, with no wrapper,
+envelope, HTML document, or subject line around it.
+
+**Why:** Only Slack was named, so a briefing automation whose owner asked to be
+emailed got `gmail.send` written into its instructions *and* an email delivery
+target frozen on it: the same briefing arrived twice, from the owner's own
+address and from Avalon's. The Markdown line is for the other half of that
+report — the result is rendered into an email, so a model asked for an
+email-shaped artifact produces one wrapped in another.
+
+**Considered and rejected:** Leaving this to the run-time policy alone. That
+policy stops the second send, but the instructions still describe work the
+automation is not doing, which is what its author reads on the overview screen.
 
 ### 2026-08-18 — Draft and promotion state move into WorkspaceDO
 

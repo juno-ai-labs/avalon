@@ -4,7 +4,8 @@ import { nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logWarn } from "../observability/logger";
-import { digestEmailHtml, digestMarkdownToText } from "./digest-email-content";
+import { digestEmailHtml } from "./digest-email-content";
+import { markdownToEmailText } from "./email-markdown";
 import { sendResendEmail, singleLine } from "./resend";
 import { SlackAgentService } from "./slack-agent-service";
 import {
@@ -165,7 +166,7 @@ async function deliverToTarget(
         appUrl: env.PUBLIC_WEB_BASE_URL,
         settingsUrl: digestSettingsUrl(env),
       }),
-      text: [digestTitle(context), "", digestMarkdownToText(context.bodyMarkdown)].join("\n"),
+      text: [digestTitle(context), "", markdownToEmailText(context.bodyMarkdown)].join("\n"),
       idempotencyKey: `avalon-digest/${target.id}/${context.deliveryId}`,
       category: "scheduled_digest",
       region: env.AVALON_REGION,

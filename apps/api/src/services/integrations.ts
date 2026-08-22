@@ -4291,6 +4291,39 @@ async function loadConnectorTriggerContext(
   };
 }
 
+/**
+ * The destinations Avalon itself copies this automation's result to.
+ *
+ * The run has to be told, or it does the delivery a second time: a briefing
+ * automation asked to reach somebody by email reads that as a task, sends it
+ * through the connector's own mail tool, and Avalon then mails the same result
+ * to the frozen target — two copies of one briefing, from two senders. Only
+ * active targets are listed, so a paused or failed one does not stop the run
+ * doing the work itself.
+ */
+async function loadAutomationResultDelivery(
+  env: Env,
+  workspaceId: string,
+  automationSubscriptionId: string,
+): Promise<Array<{ channel: "email" | "slack_agent_dm"; destination: string }>> {
+  const targets = await env.DB.prepare(
+    `SELECT target_type, email_address FROM automation_delivery_targets
+      WHERE workspace_id = ? AND automation_subscription_id = ? AND status = 'active'`,
+  ).bind(workspaceId, automationSubscriptionId).all<{
+    target_type: "email" | "slack_agent_dm";
+    email_address: string | null;
+  }>();
+  type Destination = { channel: "email" | "slack_agent_dm"; destination: string };
+  return (targets.results ?? []).flatMap<Destination>((target) => {
+    if (target.target_type === "email") {
+      return target.email_address
+        ? [{ channel: "email", destination: target.email_address }]
+        : [];
+    }
+    return [{ channel: "slack_agent_dm", destination: "the owner's Avalon Slack Agent DM" }];
+  });
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -4307,6 +4340,7 @@ async function loadRunPromptContext(
         versionNumber: number;
         instructions: string;
         expectedOutputs: string[];
+        resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: Awaited<ReturnType<typeof loadAutomationMemoryTableContext>>;
@@ -4335,6 +4369,11 @@ async function loadRunPromptContext(
       versionNumber: automation.version_number,
       instructions: automation.instructions,
       expectedOutputs: parseJson(automation.expected_outputs_json, []),
+      resultDelivery: await loadAutomationResultDelivery(
+        env,
+        input.workspaceId,
+        input.automationSubscriptionId,
+      ),
       defaultBehavior: parseJson(automation.default_behavior_json, {}),
       overrides: parseJson(automation.overrides_json, {}),
       durableTables: await loadAutomationMemoryTableContext(
@@ -5255,7 +5294,10 @@ function connectorPluginPresentation(
         ? ["Resolve an unknown recipient address with the Gmail contact-finding tool before addressing a draft or a message, and read the connected account's own address with the Gmail profile tool rather than inferring it from a signature or a header."]
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
-        ? ["Reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId."]
+        ? [
+          "Reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
+          "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
+        ]
         : []),
     ]
     : [];

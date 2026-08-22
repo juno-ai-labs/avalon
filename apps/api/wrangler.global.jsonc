@@ -33,6 +33,7 @@
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_AUTOMATION_MODEL": "x-ai/grok-4.5",
     "RESEND_FROM_EMAIL": "Avalon <invites@with-avalon.com>",
+    "RESEND_NOTIFICATION_FROM_EMAIL": "Avalon <notifications@with-avalon.com>",
     "WORKSTREAM_EMAIL_DOMAIN": "automation.with-avalon.com",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
     "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
