@@ -98,7 +98,12 @@ room would go on seeing an evicted reader listed as present.
   object polls, revalidates on a timer, or re-checks authorization while
   publishing. Adding any of those back reintroduces a per-broadcast D1 read on
   the hot path, and — as the changelog records — an ordering bug that silently
-  dropped invalidations.
+  dropped invalidations. If you are here because you grepped for
+  `AUTHORIZATION_REVALIDATE_MS`, `SOCKET_AUTHORIZATION_REVALIDATE_MS`,
+  `ACCESS_RETRACTING_TOPICS`, `retractsReadAccess`,
+  `evictListenersWhoMayNoLongerListen`, `evictReadersWhoMayNoLongerRead`, or
+  `workspace-socket-authorization.ts`: each of those was one of the four
+  mechanisms this replaced, and none of them is to come back.
 - **The producer publishes in the request that wrote the fact.** A fact written
   without a message is a socket that stays open until it reconnects. If you add a
   way to end access, you add a producer; there is nothing else to catch it.

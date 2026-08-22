@@ -124,6 +124,19 @@ export async function publishAccessRevocation(
   }
 }
 
+/**
+ * Whether a queue batch belongs to this protocol.
+ *
+ * Matched on the whole suffix rather than anywhere in the name: every region
+ * names its queue `avalon-<region>-access-revocations`, and the dead-letter
+ * queue beside it is `…-access-revocations-dead-letter`. A substring test would
+ * route a dead-lettered batch back into the consumer that already failed it,
+ * which is the one delivery that must not be retried here.
+ */
+export function isAccessRevocationQueue(queue: string): boolean {
+  return queue.endsWith("-access-revocations");
+}
+
 /** Cloudflare accepts at most 100 messages in one `sendBatch`. */
 const QUEUE_SEND_BATCH = 100;
 
