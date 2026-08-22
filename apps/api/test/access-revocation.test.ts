@@ -9,6 +9,7 @@ import { workspaceMembershipRoutes } from "../src/routes/workspace-membership";
 import { applyAccessRevocation, consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
 import {
   AccessRevocationMessageSchema,
+  isAccessRevocationQueue,
   type AccessRevocationMessage,
   publishAccessRevocation,
   reapExpiredSessions,
@@ -387,5 +388,26 @@ describe("carrying one revocation to the objects", () => {
     // rather than retried until the dead-letter queue takes it.
     expect(acked).toEqual(["unreadable"]);
     expect(retried).toEqual(["hop"]);
+  });
+});
+
+describe("recognizing this protocol's queue", () => {
+  it("accepts each region's queue and refuses the ones beside it", () => {
+    expect([
+      "avalon-global-access-revocations",
+      "avalon-eu-access-revocations",
+      "avalon-do-runtime-test-access-revocations",
+    ].every(isAccessRevocationQueue)).toBe(true);
+
+    // The dead-letter queue is the one that matters: it carries the batches
+    // this consumer already failed, so routing it back here would retry the
+    // undeliverable forever. `avalon-global-activities` stands for every other
+    // queue the same Worker handler serves.
+    expect([
+      "avalon-global-access-revocations-dead-letter",
+      "avalon-eu-access-revocations-dead-letter",
+      "avalon-global-activities",
+      "avalon-migration-reports",
+    ].some(isAccessRevocationQueue)).toBe(false);
   });
 });
