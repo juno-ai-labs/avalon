@@ -38,13 +38,17 @@ const shared = {
 // `// @vitest-environment jsdom` docblock, which overrides the project.
 export default defineConfig({
   test: {
-    // Vitest keeps one core free by default (`availableParallelism() - 1`),
-    // which is the right hedge for a watch run sharing a machine with an editor
-    // and a dev server. A one-shot `vitest run` — what CI and the quality gates
-    // do — has nothing to share with, and these files spend enough of their time
-    // off-CPU (module resolution, SQLite, reading fixtures) that the freed core
-    // is idle rather than held in reserve. Measured on a 4-core sandbox: api
-    // 98s -> 84s, desktop 84s -> 78s.
+    // A one-shot `vitest run` has nothing to share the machine with, so it takes
+    // the core Vitest holds back by default (`availableParallelism() - 1`) — the
+    // right hedge for a watch run beside an editor and a dev server, but idle
+    // capacity here. Measured alone: api 98s -> 84s, desktop 84s -> 78s.
+    //
+    // `pnpm test` starts every package at once, so the budgets do stack — nine
+    // runs claiming four workers each put the load average at 8-11 on 4 cores.
+    // That was measured and it costs nothing: capping every run at two workers
+    // came out at 233s against 234s uncapped, and capping at one at 358s. The
+    // scheduler handles the oversubscription, so there is no budget to split.
+    // `VITEST_MAX_WORKERS` overrides this if a machine ever disagrees.
     maxWorkers: availableParallelism(),
     projects: [
       {

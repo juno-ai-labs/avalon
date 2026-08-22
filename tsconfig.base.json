@@ -16,6 +16,14 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
+    // Type information is cached in a `*.tsbuildinfo` beside each tsconfig, so a
+    // warm `pnpm typecheck` re-checks only what changed: measured 24s -> 5s on
+    // apps/api. Unlike a per-file lint cache this is sound — TypeScript tracks
+    // the real module graph, so editing a signature in `packages/contracts`
+    // correctly re-checks every dependent (verified: 120 errors surfaced across
+    // apps/api from one such edit). The files are gitignored, and CI checks out
+    // fresh, so this changes nothing about what CI proves.
+    "incremental": true,
     "declaration": false,
     "sourceMap": true,
     "noEmit": true

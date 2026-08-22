@@ -251,6 +251,40 @@ an older worktree so the smoke test sees both fixtures.
 | EU health | `curl -s http://127.0.0.1:8788/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
+| Lint, ignoring the cache | `pnpm lint:fresh` |
+
+## Quality gate caches
+
+`pnpm lint` and `pnpm typecheck` both cache, which is the difference between a
+warm run of a few seconds and a cold one of about forty-five. Both caches are
+gitignored, and CI checks out fresh, so neither changes what CI proves.
+
+| Gate | Cold | Warm | Cache |
+| --- | --- | --- | --- |
+| `pnpm lint` | ~45s | ~2s | `.eslintcache` |
+| `pnpm typecheck` | ~45s | ~14s | `*.tsbuildinfo` beside each tsconfig |
+
+**The typecheck cache is sound.** TypeScript records the module graph it actually
+resolved, so editing a signature in `packages/contracts` re-checks every
+dependent — verified by changing `asUserId` to take a second argument, which
+surfaced 120 errors across `apps/api` on a warm run.
+
+**The ESLint cache is not, in two ways**, because it keys on each file's own
+contents and nothing else:
+
+- **A rule implementation changing is invisible to it.** The config imports the
+  17 rules in `scripts/eslint-rules/` from separate files, and those are not part
+  of the key. Rewriting one to report on every file flagged 889 files cold and 1
+  warm — the one being the rule file itself, which had changed. **Run
+  `pnpm lint:fresh` after touching a rule.**
+- **A type-aware verdict that depends on another file is too**, more narrowly.
+  `consistent-type-imports` reads whether an imported symbol is a type, which
+  lives in the file it came from, so turning an export from a value into a type
+  does not re-lint its importers.
+
+Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
+When a local green looks implausible, `pnpm lint:fresh` is the first thing to
+try.
 
 ## Working in a second checkout or worktree
 
