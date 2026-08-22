@@ -2,11 +2,11 @@
 
 ## Executive summary
 
-Production Terminal is not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout all worked. Repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
+The 2026-08-21 production pass found that Terminal was not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout worked, but repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
 
-The highest-confidence fault boundary is between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It is not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts have no command output, complete in 454 ms–1 s, and occur after successful operations against the same sandbox. The production deployment is running the same-day change that moved Terminal lifecycle state onto a typed port into the SubstreamAgent's object-local tables (merge commit `c9bba244`, PR #212). The evidence localizes the regression to that cutover, but the production error path discards the underlying exception before it reaches either the participant or a structured log, so the exact violated invariant is not recoverable from current telemetry.
+The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in production stress test passed all twenty requested areas, including 28 Terminal tool calls, two generated-resource publications, and a publish/import round trip.
 
-No code or production configuration was changed during this QA. Tests were confined to private QA workstreams, scratch sandboxes, and an authorized read-only checkout.
+The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout.
 
 ## 2026-08-22 post-deploy verification correction
 
@@ -34,9 +34,47 @@ that shares the RPC endpoint's identity, transaction, directory-effect, typed
 failure, and post-commit alarm semantics. It also keeps generated-resource link
 attachment—including oversized command output and repository-replacement
 backups—inside that same event instead of preserving a second self-RPC path.
-External Worker callers continue to use RPC. Production verification remains
-failed until that follow-up is merged and the same real-window sequence
-completes.
+External Worker callers continue to use RPC. The final production sequence below
+verified the resident path after that follow-up merged and deployed.
+
+## 2026-08-22 final production acceptance
+
+PR #228 merged as `e7e0288e0d78c27bd8db069c2c3012dbd669be16`.
+Deployment run `32583865005` checked out that exact revision, found no pending
+remote migrations, deployed EU version `8fd50480-acee-4d3a-aeb7-cdb8227ed2d1`
+and Global version `93358cb0-e6af-4c6c-9b2e-b420cd068d74`, and reported both
+regional health endpoints healthy. The signed-in Computer Use pass ran later
+against successfully deployed main revision
+`523573b39288ff307ea24176b28903dd6dbd294a`, which is a descendant of the #228
+merge.
+
+Fresh private workstream `01a02af9-7c6f-7b85-8738-a8afce00dd99` completed
+harness run `01a02af9-83e0-7f82-97e6-3dbfa1793cc4`. Production Global logs
+record one resident `SubstreamAgent` event with `outcome: ok` across 323,153 ms.
+The harness completed in 319,526 ms with 28 tool calls over 29 iterations, and
+`agent_run_outcome` recorded `completed` with no error code. Neither
+`tool_receipt_persistence_failed` nor `terminal_resident_runtime_incomplete`
+appeared.
+
+| Area | Final result | Production evidence |
+|---|---|---|
+| Sequential receipts | PASS | The exact first/second-command regression completed, followed by another successful command after an expected exit 7. |
+| Runtime and process execution | PASS | Node 25.9.0, Python 3.14.6, SQLite 3.46.1, and Git 2.55.0 reported; a two-second delayed command completed normally. |
+| Filesystem mutation | PASS | Write, read, shell `cat`, edit, and an atomic two-file patch produced the expected final contents. |
+| Local Git | PASS | A scratch repository initialized, committed `PR228_LOCAL_GIT`, and reported branch `master` and commit `4402a6a` without a remote. |
+| Binary handling | PASS | Terminal generated exactly 262,144 bytes with SHA-256 `7f8184e28d0c5f650a841d179a6c9fdcf4e247ef74c171130a3e51e2591a492a`. |
+| Generated resources | PASS | Text resource `01a02afd-499e-7f7b-bfef-669f19061823` and binary resource `01a02afd-7ece-7e61-acdd-9d4c950dd550` published sequentially and were visible in the workstream inspector. |
+| Resource round trip | PASS | Importing the published text resource produced the same 37-byte content and SHA-256 `55d152ee40abc1621f0963b14780a27ca33c9db7b1235660dcd4d7e72d911332`. |
+| Final durable state | PASS | The workstream inspector showed both resources, `Harness status: completed`, and the same run and workstream IDs as the Worker trace. |
+
+Three rejected calls were input-contract failures before execution, not
+recurrences. File mutation tools take sandbox-relative paths rather than an
+absolute `/workspace/...` `filePath`; `apply_patch` takes the documented patch
+envelope rather than a bare multi-file unified diff; and `publish_resource`
+only publishes a file staged under `$AVALON_RESOURCE_DIR`. The model corrected
+each input, after which the operation succeeded. None left an ambiguous write
+receipt. These boundaries are intentional path and patch validation, so no code
+change follows from them.
 
 ## Follow-up remediation status
 
@@ -44,10 +82,10 @@ The first remediation merged and deployed through PR #224, but the signed-in
 production retest above proved that it fixed only one ordering of the
 request-context race. The post-QA real-workerd reproduction correctly showed
 that a keep-alive alarm must not await another event's active drain promise.
-The follow-up correction now also removes the resident alarm's same-object
-Terminal-operation and generated-resource-link RPCs; it has not yet been
-deployed or production-retested. Recovery continues to belong to the durable
-dispatch row and harness attempt lease. A healthy long run retains its unexpired
+The follow-up correction also removes the resident alarm's same-object
+Terminal-operation and generated-resource-link RPCs. It is merged, deployed,
+and production-retested in the final acceptance above. Recovery continues to
+belong to the durable dispatch row and harness attempt lease. A healthy long run retains its unexpired
 attempt lease; a promise with no progress for five minutes and no live lease can
 be replaced inside the same isolate.
 
@@ -63,7 +101,7 @@ The remediation and review hardening also:
 - chooses harness persistence categories explicitly at each required port and classifies tool lifecycle-event failures as receipt failures;
 - refuses to replay terminal command rows whose timing evidence is incomplete.
 
-Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. On 2026-08-22 the signed-in production window was available again and still visibly reproduced the old deployment's 454 ms second-command failure with `harness_execution_failed`. Verification of the corrected cards remains outstanding because the fixes have not been deployed.
+Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. On 2026-08-22 the signed-in production window first reproduced the old deployment's 454 ms second-command failure, then the final acceptance above verified the corrected command, receipt, and resource cards after #228 deployed.
 
 ## Environment
 
@@ -137,7 +175,9 @@ Implemented validation:
 2. Real workerd proves both Terminal-operation and runtime-receipt commits remain successful when their follow-up alarm scheduling fails.
 3. Caught object-port and receipt failures log IDs, operation/request, stable code, and a private cause without command, output, or statement text.
 4. Bind retains participant-safe durable-host failure categories.
-5. The exact E two-command control still must be rerun in production Global and EU after deployment.
+5. The final production Global pass reran the exact two-command control and then
+   continued through 26 additional Terminal tool calls. The deployment workflow
+   verified both regional health endpoints for the exact merge revision.
 
 ## Issue 2 — P1: a Terminal write can remain “started” until stale-run reaping
 
@@ -209,8 +249,19 @@ Implemented locally: the Terminal object port returns `terminal_operation_not_co
 
 - Production behavior matches the current lazy-allocation documentation: loading Terminal alone does not start a sandbox. The proposed plug-in-activation prewarm is not production behavior; PR #173 (“Start Terminal sandbox on plugin activation”) remains open and unmerged.
 - Historical production QA workstreams visible from 2026-08-13 show successful sanitization, output overflow, package installation, patch atomicity, SQLite/Git, resource, and checkout tests. They are useful regression context, not current proof.
-- The Mac locked near the end of this session. Further visible UI testing was stopped and is reported as blocked rather than replaced with API-only claims.
+- The Mac locked before final acceptance and no API-only claim replaced the UI
+  gate. After unlock, Computer Use reran the matrix in a fresh production window
+  and visually inspected the completed workstream and both generated resources.
 
 ## Release recommendation
 
-Treat the currently deployed Terminal path as degraded and block any claim that multi-step Terminal workflows are production-ready. The local remediation is test-green but is not production evidence. After review and deployment, rerun the matrix sequentially and under two-way cold-start concurrency. Minimum release evidence should include two sequential commands, write/read/edit/patch, timeout, sanitization, package install, local Git, read-only checkout, and stale-attempt recovery in real production windows in both regions.
+The receipt-persistence release block is cleared. PR #228 is merged, its exact
+revision deployed healthy to EU and Global, and a later deployed descendant
+passed the signed-in Global Computer Use matrix without a receipt or resident
+runtime failure. This final pass proves sequential commands, mutations,
+expected-failure recovery, local Git, delayed execution, binary handling, and
+generated-resource publication/import. Historical production passes remain the
+evidence for package installation, output overflow/sanitization, and authorized
+read-only checkout; those were not repeated in this acceptance run. A future
+change to resident tool authority must retain the rule that the main child uses
+object-local ports while external callers use RPC.
