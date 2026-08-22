@@ -7,9 +7,7 @@ import { consumeAccessRevocationQueue } from "./queues/access-revocation-consume
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
-import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reconcileDigestDefaults } from "./services/digest-service";
-import { reapProcessedActivityPayloads } from "./services/normalized-activity-service";
 import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
@@ -175,9 +173,7 @@ export default {
         processDueSuggestedWork(env),
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
-        reapExpiredActivityEvents(env),
         reapExpiredSessions(env),
-        reapProcessedActivityPayloads(env),
         processTelemetry(env),
       ]);
     })());

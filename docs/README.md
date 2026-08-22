@@ -69,6 +69,7 @@ update it in the same change.
 | [`automation-drafts.md`](automation-drafts.md) | An automation that is being set up but has not been created: the subscription row it already is, the conversation saved with it, why it carries no schedule, address, or workspace scope, and how creating one promotes it in place. Read before changing the automation compiler's routes, `POST /automations`, the sidebar's automation section, or the New automation screen. |
 | [`menu-bar.md`](menu-bar.md) | The macOS status item: its drop-down and where each row goes, how the main process fetches the menu's content without a window, the template-image artwork, the login-item registration, and the hidden launch that follows from it. Read before changing the menu, adding a row, or touching anything that assumes a window exists at startup. |
 | [`assumptions.md`](assumptions.md) | Low-level ambiguities resolved without changing the product contract. Add to it when you make such a call. |
+| [`potential-bugs.md`](potential-bugs.md) | Things that look wrong, or that nothing proves are right, with the specific evidence that would settle each one. Not a defect list — a defect gets fixed or filed. Add an entry when you find a question you cannot answer without leaving the change you are in; delete it when it is answered. |
 | [`implementation-plan.md`](implementation-plan.md) | The phased build checklist and its current state. |
 
 ## Agent, connectors, and integrations
