@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
+import {
+  applyDurableObjectSqliteMigrations,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
 
 /**
  * The clock behind the rotating working reaction on a Slack session.
@@ -13,7 +18,11 @@ import { SlackAgentService } from "../services/slack-agent-service";
  * queued message cannot be cancelled — a run that finished in ten seconds would
  * keep waking for as long as its ticks had been scheduled, each one only to
  * discover it was over. An alarm cancels by being cleared and keeps its cursor
- * in its own storage, so D1 is untouched between transitions.
+ * in its own database, so the regional D1 is untouched between transitions.
+ *
+ * It is one object per Slack session rather than a member of WorkspaceDO's
+ * alarm set, because the cadence is per thread: several sessions in a workspace
+ * rotate independently and on their own phases.
  *
  * **This object is decoration and is allowed to be lost.** The outcome reaction
  * is applied by the delivery path, which runs on every terminal status whether
@@ -22,17 +31,44 @@ import { SlackAgentService } from "../services/slack-agent-service";
  * spending Slack's rate limit to redraw an emoji nobody was waiting for.
  */
 const StartRequestSchema = z.object({
+  workspaceId: z.string().min(1),
   sessionId: z.string().min(1),
+  /**
+   * The session's delivery key when the rotation started, or "" for a session
+   * that has never delivered. Delivery stamps a new key, so a value that has
+   * moved is the signal that this run is over — and unlike "has ever
+   * delivered", it stays correct for a follow-up prompt in the same thread,
+   * which inherits the previous run's key.
+   */
+  deliveryKey: z.string(),
   intervalMs: z.number().int().min(3_000).max(60_000),
 });
 
 const TickerStateSchema = z.object({
-  sessionId: z.string().min(1),
-  intervalMs: z.number().int().positive(),
+  workspace_id: z.string().min(1),
+  session_id: z.string().min(1),
+  delivery_key: z.string(),
+  interval_ms: z.number().int().positive(),
   ticks: z.number().int().nonnegative(),
 });
 
-const STATE_KEY = "slackReactionTicker";
+const MIGRATION_COMPONENT = "slack_reaction_ticker";
+
+export const SLACK_REACTION_TICKER_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
+  version: 1,
+  description: "Slack session reaction rotation cursor",
+  statements: [
+    `CREATE TABLE slack_reaction_rotation (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      delivery_key TEXT NOT NULL,
+      interval_ms INTEGER NOT NULL CHECK (interval_ms > 0),
+      ticks INTEGER NOT NULL CHECK (ticks >= 0),
+      started_at INTEGER NOT NULL
+    ) STRICT`,
+  ],
+}];
 
 /**
  * How many steps a rotation takes before parking on its current reaction.
@@ -45,12 +81,30 @@ const STATE_KEY = "slackReactionTicker";
 const MAXIMUM_TICKS = 50;
 
 export class SlackReactionTicker {
+  private readonly initialized: Promise<void>;
+
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env
-  ) {}
+  ) {
+    this.initialized = state.blockConcurrencyWhile(async () => {
+      await withMigrationReport({
+        state,
+        env,
+        component: MIGRATION_COMPONENT,
+        className: "SlackReactionTicker",
+        latestVersion: latestMigrationVersion(SLACK_REACTION_TICKER_SCHEMA_MIGRATIONS),
+      }, () => applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: SLACK_REACTION_TICKER_SCHEMA_MIGRATIONS,
+        component: MIGRATION_COMPONENT,
+        workerVersionId: env.APP_VERSION ?? "unknown",
+      }));
+    });
+  }
 
   async fetch(request: Request): Promise<Response> {
+    await this.initialized;
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/start") {
       let input: unknown;
@@ -61,7 +115,26 @@ export class SlackReactionTicker {
       }
       const parsed = StartRequestSchema.safeParse(input);
       if (!parsed.success) return responseJson({ error: "invalid_request" }, 400);
-      await this.state.storage.put(STATE_KEY, { ...parsed.data, ticks: 0 });
+      // A restart resets the cursor rather than resuming: the reaction has just
+      // moved to a newer message, and continuing the previous run's position
+      // would read as a rotation that skipped a step.
+      this.state.storage.sql.exec(
+        `INSERT INTO slack_reaction_rotation
+           (id, workspace_id, session_id, delivery_key, interval_ms, ticks, started_at)
+         VALUES (1, ?, ?, ?, ?, 0, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           workspace_id = excluded.workspace_id,
+           session_id = excluded.session_id,
+           delivery_key = excluded.delivery_key,
+           interval_ms = excluded.interval_ms,
+           ticks = 0,
+           started_at = excluded.started_at`,
+        parsed.data.workspaceId,
+        parsed.data.sessionId,
+        parsed.data.deliveryKey,
+        parsed.data.intervalMs,
+        Date.now(),
+      );
       await this.state.storage.setAlarm(Date.now() + parsed.data.intervalMs);
       return responseJson({ started: true });
     }
@@ -73,7 +146,12 @@ export class SlackReactionTicker {
   }
 
   async alarm(): Promise<void> {
-    const stored = TickerStateSchema.safeParse(await this.state.storage.get(STATE_KEY));
+    await this.initialized;
+    const stored = TickerStateSchema.safeParse(
+      this.state.storage.sql
+        .exec("SELECT workspace_id, session_id, delivery_key, interval_ms, ticks FROM slack_reaction_rotation WHERE id = 1")
+        .toArray()[0],
+    );
     if (!stored.success) {
       await this.clear();
       return;
@@ -85,7 +163,11 @@ export class SlackReactionTicker {
     }
     let live: boolean;
     try {
-      live = await new SlackAgentService(this.env).advanceSessionReaction(state.sessionId);
+      live = await new SlackAgentService(this.env).advanceSessionReaction({
+        workspaceId: state.workspace_id,
+        sessionId: state.session_id,
+        deliveryKey: state.delivery_key,
+      });
     } catch {
       // `advanceSessionReaction` is written not to throw. If it does anyway, the
       // rotation stops rather than retrying: the outcome reaction does not
@@ -96,13 +178,13 @@ export class SlackReactionTicker {
       await this.clear();
       return;
     }
-    await this.state.storage.put(STATE_KEY, { ...state, ticks: state.ticks + 1 });
-    await this.state.storage.setAlarm(Date.now() + state.intervalMs);
+    this.state.storage.sql.exec("UPDATE slack_reaction_rotation SET ticks = ticks + 1 WHERE id = 1");
+    await this.state.storage.setAlarm(Date.now() + state.interval_ms);
   }
 
   private async clear(): Promise<void> {
     await this.state.storage.deleteAlarm();
-    await this.state.storage.delete(STATE_KEY);
+    this.state.storage.sql.exec("DELETE FROM slack_reaction_rotation WHERE id = 1");
   }
 }
 

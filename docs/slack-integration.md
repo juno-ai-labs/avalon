@@ -271,8 +271,10 @@ A transition removes only the emoji Avalon itself last placed, recorded in
 message survives. The reaction sits on the *triggering* message rather than the
 thread root, and each new prompt in a thread moves it and restarts the rotation.
 
-The rotation is a Durable Object alarm keyed by session. **The outcome reaction
-never depends on it**: delivery applies that transition, and delivery runs on
+The rotation is a Durable Object alarm keyed by session, holding its cursor in
+its own SQLite database and stopping when the session's delivery key moves —
+which is delivery's own stamp that the run is over. **The outcome reaction never
+depends on it**: delivery applies that transition, and delivery runs on
 every terminal status whether or not a ticker ever started. That is what lets the
 rotation be treated as decoration — an alarm that is lost costs a cycling emoji,
 not a member's ability to tell that their task finished.
@@ -708,8 +710,8 @@ run is live, and delivery swaps in one naming the outcome — `white_check_mark`
 message at a time, and a transition removes only what Avalon placed. The sets are
 configurable per installation. Separately, every delivery path now renders agent
 output through Slack's `markdown` block instead of posting it as `text`, and
-`slack_agent_sessions` gained four columns recording where the reaction sits and
-which one it is.
+`slack_agent_sessions` — WorkspaceDO's, since the object cutover — gained four
+columns recording where the reaction sits and which one it is.
 
 **Why:** Two defects in the same surface, both visible to everyone in a channel
 rather than only to the member who asked. The reaction was added once and removed

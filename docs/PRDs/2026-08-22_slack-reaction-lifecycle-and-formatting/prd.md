@@ -299,6 +299,29 @@ These land in [`e2e.md`](../../e2e.md) as durable checks.
 
 ## Decision log
 
+### 2026-08-22 — The reaction's columns live in WorkspaceDO, not regional D1
+
+**Decided:** The four columns are added by WorkspaceDO schema migration version
+8, and the ticker's liveness signal is the session's `last_delivery_key` rather
+than a `harness_runs` status.
+
+**Why:** This change was written against a base where `slack_agent_sessions` was
+a regional D1 table. Rebasing onto `main` landed after the workspace Durable
+Object cutover: migration `0090` drops that D1 table and
+`workspace-domain-schema.ts` owns it now, so a D1 migration adding the columns
+applies to a table that no longer exists. `harness_runs` moved too, to
+WorkstreamDO — a different object — so the original liveness query would have
+had to reach across an object boundary for a decorative effect. The delivery key
+answers the same question from the row already being read, and comparing it
+against the value captured when the rotation started is what keeps a follow-up
+prompt in an existing thread rotating, where "has ever delivered" would stop it
+immediately.
+
+**Changes:** Supersedes the entry below, which recorded the same columns as a
+D1 migration. Nothing in the agreed scope moves; the columns and their meanings
+are unchanged. Design decision 4 (delivery owns the outcome reaction) is
+untouched and is what makes the weaker liveness signal acceptable.
+
 ### 2026-08-22 — The reaction's position is a migration, not derived state
 
 **Decided:** `slack_agent_sessions` gains `reaction_channel_id`,
