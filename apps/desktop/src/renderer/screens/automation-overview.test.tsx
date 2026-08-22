@@ -277,7 +277,9 @@ describe('Automation template updates', () => {
     await waitFor(() => expect(api.deleteAutomation).toHaveBeenCalledWith(automationId));
     // The screen the automation was deleted from cannot stay open on it.
     expect(await screen.findByText('New work stream')).toBeVisible();
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['automations'] });
+    // The automation list is pushed by WorkspaceDO off the delete's own write,
+    // so invalidating it here would refetch nothing and imply that it does.
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['automations'] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workstreams'] });
     // Nothing may render the deleted automation from cache on a later mount.
     expect(queryClient.getQueryData(['automation', automationId])).toBeUndefined();

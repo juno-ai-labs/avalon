@@ -5580,7 +5580,7 @@ async function assertRunAuthorityStillValid(
   const automation = await db.prepare(
     `SELECT s.status AS subscription_status, s.lifecycle_state AS subscription_lifecycle_state,
             s.template_version_id,
-            s.email_route_status, t.archived_at AS template_archived_at,
+            t.archived_at AS template_archived_at,
             r.id AS automation_run_id, r.status AS automation_run_status,
             r.trigger_type, r.trigger_activity_id,
             EXISTS (
@@ -5605,7 +5605,6 @@ async function assertRunAuthorityStillValid(
     subscription_status: string;
     subscription_lifecycle_state: string;
     template_version_id: string;
-    email_route_status: string | null;
     template_archived_at: string | null;
     automation_run_id: string;
     automation_run_status: string;
@@ -5633,7 +5632,11 @@ async function assertRunAuthorityStillValid(
   if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {
     throw new ConnectorError("unauthorized", "The scheduled trigger was disabled");
   }
-  if (automation.trigger_type === "inbound_email" && automation.email_route_status !== "active") {
+  if (automation.trigger_type === "inbound_email"
+    && !(automation.subscription_status === "active"
+      && automation.subscription_lifecycle_state === "visible")) {
+    // The subscription's own state, not a mirrored route marker. It is the
+    // same test the inbound resolver applies, so the two cannot disagree.
     throw new ConnectorError("unauthorized", "The email trigger was disabled");
   }
   const snapshot: RunAuthoritySnapshot = {

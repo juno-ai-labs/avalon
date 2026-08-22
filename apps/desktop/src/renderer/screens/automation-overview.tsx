@@ -206,7 +206,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     mutationFn: (action: 'pause' | 'resume') => api!.setAutomationStatus(id, action),
     onSuccess: (updated) => {
       queryClient.setQueryData(['automation', id], updated);
-      void queryClient.invalidateQueries({ queryKey: ['automations'] });
     },
   });
   const runNow = useMutation({
@@ -233,12 +232,10 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     mutationFn: () => api!.deleteAutomation(id),
     onSuccess: async () => {
       // Deleting closes any run that was opened ahead of its planned time, so
-      // the work-stream list is stale too, not just the automation list. The
-      // sidebar's copy of this action invalidates both for the same reason.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['automations'] }),
-        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-      ]);
+      // the work-stream list is stale too. The automation list is not
+      // invalidated here: the delete writes `automation_subscriptions`, and
+      // WorkspaceDO pushes the rewritten list off the back of that write.
+      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       setDeleteOpen(false);
       // Replace rather than push: this screen is showing the automation that
       // was just deleted, so leaving its route in history means Back lands on a
@@ -254,7 +251,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     mutationFn: (versionId: string) => api!.adoptAutomationUpdate(id, versionId, adoptSourcePluginIds),
     onSuccess: (updated) => {
       queryClient.setQueryData(['automation', id], updated);
-      void queryClient.invalidateQueries({ queryKey: ['automations'] });
       setUpdateOpen(false);
     },
   });

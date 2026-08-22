@@ -322,7 +322,9 @@ no projection fallback when that object is unavailable.
   rather than inserting a second one — [`automation-drafts.md`](automation-drafts.md)
   owns that lifecycle and the reasons a draft carries no schedule, no address, and
   no workspace scope. Archiving is restricted to drafts; deleting is allowed at any
-  status and also disables the schedules and the email route. A deleted row is
+  status and also disables the schedules. The address is not released — the
+  Global ledger records only that a local part is taken — so nothing is written
+  there. A deleted row is
   kept, never removed: automation runs, generated work streams, the memory scope,
   and the permanent email tombstone all reference it. Every path that starts a run
   — scheduler alarm, activity matching, inbound email — requires

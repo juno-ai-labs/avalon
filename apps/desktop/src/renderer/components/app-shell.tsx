@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
@@ -8,7 +8,7 @@ import { useUiStore } from '../lib/ui-store';
 import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 
@@ -116,6 +116,34 @@ export function applyPinnedWorkstreamsIfCurrent(
   return true;
 }
 
+/**
+ * Read a list the workspace socket owns and nothing here fetches.
+ *
+ * `useWorkstreamsQuery`'s opening batch seeds it and WorkspaceDO re-sends it
+ * whole on every change, so there is no fetch to make and no staleness for
+ * React Query to police. The query exists only to subscribe this component to
+ * the cache entry; the fetcher is unreachable and says so, because a silent
+ * `undefined` from an accidentally enabled query would look like an empty
+ * sidebar rather than a bug. Invalidating one of these keys does nothing by
+ * design — the socket is the only *authority* for the contents.
+ *
+ * `onChangeNoteScope` below patches `['notes']` directly, which is the single
+ * exception and not a second authority: it holds no waterline, cannot advance
+ * the ledger, and is overwritten by the push the same write earns. It is a
+ * latency hedge against one visible reorder, and the push behind it is what
+ * makes the row correct.
+ */
+function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
+  return useQuery<T[]>({
+    queryKey,
+    queryFn: () => {
+      throw new Error(`${String(queryKey[0])} is pushed by the workspace socket, never fetched`);
+    },
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
   const navigate = useNavigate();
@@ -141,13 +169,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // and is still fading out, which is on screen and has to be laid out for.
   const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
-  const automations = useQuery({
-    queryKey: ['automations'],
-    queryFn: ({ signal }) => api!.getAutomations(signal),
-    enabled: Boolean(api),
-    staleTime: 20_000,
-  });
+  // Nothing here loads the sidebar. Subscribing to the workspace socket is
+  // answered with the whole of it — the first page of work streams, the
+  // automations and the notes — and WorkspaceDO pushes each list again whenever
+  // it changes a row. This query exists for what a person asks for afterwards:
+  // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
+  const automations = useSocketOwnedList<AutomationSummary>(['automations']);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(0);
@@ -167,12 +195,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     return true;
   };
-  const notes = useQuery({
-    queryKey: ['notes'],
-    queryFn: ({ signal }) => api!.getNotes(signal),
-    enabled: Boolean(api),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+  const notes = useSocketOwnedList<NoteSummary>(['notes']);
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   const backgroundRealtimeIds = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
@@ -207,12 +230,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
-        loading={automations.isLoading || workstreams.isLoading || notes.isLoading}
+        // Not `isLoading`: the first page is not fetched, so there is no
+        // in-flight request to report. The sidebar is waiting exactly while it
+        // has no list yet — which also keeps the skeletons up rather than
+        // claiming an empty workspace when the socket cannot connect.
+        loading={workstreams.data === undefined}
         notes={notes.data ?? []}
         onArchiveDraftAutomation={async (automation) => {
           if (!api) return;
           await api.archiveDraftAutomation(automation.id);
-          await queryClient.invalidateQueries({ queryKey: ['automations'] });
+          // No list invalidation: archiving writes `automation_subscriptions`,
+          // and WorkspaceDO pushes the rewritten list off the back of that write.
           leaveAutomationScreen(automation.id);
         }}
         onArchiveNote={async (note) => {
@@ -221,9 +249,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // An archived note's resource stops being served everywhere, not just
           // in the note queries: an open work stream it was attached to holds it
           // in a cache that nothing else invalidates, and archiving emits no
-          // socket event to shake it loose.
+          // socket event to shake it loose. The note list itself is not here —
+          // the write to `notes` pushes it.
           await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['notes'] }),
             queryClient.invalidateQueries({ queryKey: ['workstream'] }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
             queryClient.invalidateQueries({ queryKey: ['resources'] }),
@@ -240,6 +268,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // sidebar's sort key. Patching the scope alone would leave the row in
           // its old position until the next refetch moved it for no visible
           // reason, so the timestamps travel with it.
+          //
+          // Deliberately not through `applyVersionedSidebarList`: this patch has
+          // no waterline to offer, and inventing one would corrupt the ledger
+          // that orders the real pushes. It is an optimistic local edit, valid
+          // only until WorkspaceDO re-sends the list off this same write — see
+          // the note on `useSocketOwnedList`.
           queryClient.setQueryData<NoteSummary[]>(['notes'], (current) =>
             current?.map((item) => item.id === updated.id ? {
               ...item,
@@ -271,11 +305,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) return;
           await api.deleteAutomation(automation.id);
           // Deleting closes any run that was opened ahead of its planned time,
-          // so the work-stream list is stale too, not just the automation list.
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['automations'] }),
-            queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-          ]);
+          // so the work-stream list is stale too — and that one is not pushed
+          // off the automation write the way the automation list is.
+          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
           // Leaving the deleted automation's route replaces it rather than
           // pushing, so Back cannot return to it, and the detail query goes
           // with it so nothing can render the automation from cache.
