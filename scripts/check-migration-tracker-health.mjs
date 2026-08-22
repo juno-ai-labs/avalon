@@ -40,7 +40,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseWranglerConfig } from './ensure-cloudflare-queues.mjs';
+import { parseWranglerConfig } from './wrangler-config.mjs';
 import { isEntryPoint } from './entry-point.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');

@@ -34,7 +34,10 @@ Create independent resource sets for `global` and `eu`:
 - An R2 payload bucket
 - A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
   EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
-- An activity Queue and dead-letter Queue
+- Queues need no manual step: the deployment preflight creates every queue the
+  Wrangler files declare, and Cloudflare creates each dead-letter queue on first
+  deploy (see [the migration tracker section](#the-durable-object-migration-tracker)).
+  R2 is the one preflighted resource still created by hand.
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
@@ -44,9 +47,12 @@ The checked-in regional Wrangler files reference the provisioned Avalon resource
 
 Wrangler validates an R2 binding without proving its named bucket exists. Run
 `pnpm cloudflare:resources:check` after provisioning or changing either regional
-Wrangler file; the API deployment runs the same read-only check before any
-remote migration or Worker deploy and logs every required region, binding,
-bucket, and jurisdiction. A missing bucket is an infrastructure failure even if
+Wrangler file. It is read-only: the R2 half proves each bucket exists, and the
+queue half reports any queue a deployment would create without creating it
+(`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
+only). The API deployment runs the same R2 check before any remote migration or
+Worker deploy and logs every required region, binding, bucket, and
+jurisdiction, then creates the missing queues. A missing bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
@@ -239,7 +245,9 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
-- Account: Queues Write/Edit
+- Account: Queues Write/Edit — to attach a consumer on deploy and for the
+  preflight to create a declared queue. A token that can only list queues fails
+  the create with `Authentication error [code: 10000]`.
 - Account: Flagship Write/Edit — the permission is still in open beta and is
   absent from the published permissions reference; find it by searching
   `Flagship` in the dashboard's API-token editor. Read access alone lists apps
@@ -397,16 +405,22 @@ deployment provisions its own queues as a preflight:
 pnpm cloudflare:resources:check
 ```
 
-That reads all three Wrangler files and creates any queue they declare that the
-account does not hold — `scripts/ensure-cloudflare-queues.mjs`, making the same
-`POST …/queues` call `wrangler queues create` makes. It runs in both the API and
-the tracker deployment before anything is deployed, so a release that adds a
-binding ships its queue with it and no queue is ever created by hand. It never
-deletes: retiring a queue is a deliberate operator action. A dead-letter queue
-needs no action either way, because Cloudflare creates one named in a consumer's
-`dead_letter_queue` on first deploy. The create needs **Queues Edit** on the
-token, listed above; a token that can only list queues gets `Authentication
-error [code: 10000]` on the create, and the script says so.
+Locally that is read-only: it reads all three Wrangler files and reports any
+queue they declare that the account does not hold. Both the API and the tracker
+deployment run the same script without `--check` —
+`scripts/ensure-cloudflare-queues.mjs`, making the same `POST …/queues` call
+`wrangler queues create` makes — before anything is deployed, so a release that
+adds a binding ships its queue with it and no queue is created by hand.
+`pnpm cloudflare:queues:ensure` is the break-glass form of the same create from
+a laptop. The script refuses a queue that only a producer or only a consumer
+names anywhere across the three files, because that is a misspelling and the
+deploy that attached it would go green with nothing draining the queue. It
+never deletes: retiring a queue is a deliberate operator action. A dead-letter
+queue needs no action either way, because Cloudflare creates one named in a
+consumer's `dead_letter_queue` on first deploy. The create needs **Queues
+Edit** on the token, as the permission list above records; a token that can
+only list queues gets `Authentication error [code: 10000]` on the create, and
+the script names the permission.
 
 There is one report queue for both regions, not one per region as with the
 activity queues: every report converges on the single registry object regardless
@@ -432,8 +446,8 @@ deployment or a rollback.
 The tracker workflow runs against the same **`api-production`** environment as
 the API deploy, and uses the same `CLOUDFLARE_API_TOKEN` secret and
 `CLOUDFLARE_ACCOUNT_ID` variable. It needs no permission the API deploy does not
-already have: Workers Scripts to upload, and Queues to attach a consumer, which
-the API deploy uses for its own activity queues. A separate environment would be
+already have: Workers Scripts to upload, and Queues to attach a consumer and to
+create a declared queue, which the API deploy uses for its own queues. A separate environment would be
 a second copy of the same credential to rotate and would isolate nothing, since
 a token that can deploy `avalon-api-global` can already deploy anything in the
 account. Note this is the *deployment* token, and a different one from the
@@ -636,7 +650,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing; it does not create other resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 

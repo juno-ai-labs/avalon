@@ -12,9 +12,9 @@ name: Deploy Avalon API
 # by hand — never deploy a caller before its target entrypoint exists.
 #
 # Prerequisites this workflow does not perform (one-time, per the runbook):
-# regional resource creation other than Queues — those are created from the
-# Wrangler files by the preflight below — confirming each configured D1 ID
-# belongs to its intended region, and setting the regional Worker secrets.
+# regional resource creation other than Queues (the preflight below creates
+# those from the Wrangler files), confirming each configured D1 ID belongs to
+# its intended region, and setting the regional Worker secrets.
 #
 # Merging to main deploys both regions and applies pending migrations without a
 # human in the loop. The api-production environment exists to scope the
@@ -229,16 +229,6 @@ jobs:
           test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
           test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
 
-      - name: Require every R2 bucket declared by the regional Wrangler configs
-        run: node scripts/check-cloudflare-r2-buckets.mjs
-
-      # Wrangler applies a consumer's settings but will not create the queue a
-      # binding names, so a release that adds a queue would fail halfway through.
-      # Read every Wrangler file and create whatever is missing first; nothing
-      # about a queue is a manual step.
-      - name: Create every Queue the Wrangler configs declare that does not exist
-        run: node scripts/ensure-cloudflare-queues.mjs
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -250,6 +240,21 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # Both preflights run on the pinned Node but before any third-party code
+      # is installed: they import nothing outside this repository, and they are
+      # the first use of the production token in this job.
+      - name: Require every R2 bucket declared by the regional Wrangler configs
+        run: node scripts/check-cloudflare-r2-buckets.mjs
+
+      # Wrangler applies a consumer's settings but will not create the queue a
+      # binding names, so a release that adds a queue would fail halfway through.
+      # Read every Wrangler file and create whatever is missing first; nothing
+      # about a queue is a manual step. The tracker deployment runs the same
+      # script and declares the same report queue, so the two can race on one
+      # create; the loser re-lists and passes if the queue exists.
+      - name: Ensure every Queue the Wrangler configs declare exists
+        run: node scripts/ensure-cloudflare-queues.mjs
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
