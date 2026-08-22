@@ -2161,6 +2161,7 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
+  const toolEffectIntents = createToolEffectIntents();
   const attachmentGrounding = new AttachmentGroundingGuard();
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
@@ -2635,6 +2636,7 @@ export async function runWorkstreamHarness(
       try {
         const recovered = await reconcileRecoverableTerminalWrite({
           row: {
+            id: row.id,
             status: row.status,
             inputHash: row.input_hash,
             inputJson: row.input_json,
@@ -2753,6 +2755,7 @@ export async function runWorkstreamHarness(
       }
       return null;
     },
+    resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
       if (Date.now() - lastStopCheck > 750) {
         lastStopCheck = Date.now();
@@ -2850,6 +2853,7 @@ export async function runWorkstreamHarness(
               : {}),
             mode,
           });
+          toolEffectIntents.record(event.toolCallId, receipt.invocationId);
           if (receipt.state === "ambiguous_external_write") {
             ambiguousToolOutcome = true;
             const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
@@ -3712,6 +3716,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         );
 
         let childText = "";
+        const childToolEffectIntents = createToolEffectIntents();
         const childModelRouting = await resolveAgentModelRouting(options.env, "inline_child", {
           workspaceId: childInput.workspaceId,
           workstreamId: childInput.workstreamId,
@@ -3911,6 +3916,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               stream_seq: event.streamSeq,
             });
           },
+          resolveToolEffectIntentId: childToolEffectIntents.resolve,
           onEvent: async (event) => {
             switch (event.type) {
               case "stream_delta":
@@ -3951,6 +3957,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   mode,
                 });
                 await assertChildOwned();
+                childToolEffectIntents.record(event.toolCallId, receipt.invocationId);
                 if (receipt.state === "ambiguous_external_write") {
                   throw new Error("tool_receipt_input_mismatch");
                 }
@@ -5911,13 +5918,47 @@ function isLoadableBuiltinHarnessPlugin(
     && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
 }
 
+/**
+ * The receipt each dispatched tool call was planned against.
+ *
+ * A tool that starts provider-side work keys it to the receipt row rather than
+ * to the call coordinate, so a resumed attempt reattaches instead of starting
+ * a second one. The host has that id in hand from `persistToolExecutionPlan`
+ * while it handles `tool_started`; Bind asks for it immediately afterwards.
+ *
+ * Keyed rather than a single latest slot: `runsSerially` lets tool calls
+ * within one turn execute concurrently, so a host that remembered only the
+ * most recent `tool_started` would hand one tool another's receipt.
+ *
+ * Extracted so the seam has somewhere to be tested. Inline, the two `.set`
+ * calls were reachable only by running a whole harness, and deleting either
+ * one left every suite green while breaking every Terminal write in
+ * production with `tool_receipt_missing`.
+ */
+export function createToolEffectIntents(): {
+  record: (toolCallId: string, effectIntentId: string) => void;
+  resolve: (toolCallId: string) => string | undefined;
+} {
+  const intents = new Map<string, string>();
+  return {
+    record: (toolCallId, effectIntentId) => { intents.set(toolCallId, effectIntentId); },
+    resolve: (toolCallId) => intents.get(toolCallId),
+  };
+}
+
 async function reconcileRecoverableTerminalWrite(input: {
-  row: { status: string; inputHash: string; inputJson: string };
+  row: { id: string; status: string; inputHash: string; inputJson: string };
   expectedInputHash: string;
   policyMatches: boolean;
   expectedPolicy: { pluginId: string; definition: ToolDefinition };
   plugins: readonly HarnessPlugin[];
-  context: HarnessToolContext;
+  /**
+   * Everything but the effect identity, which this function supplies from the
+   * receipt it is reconciling. Recovery exists to re-enter a tool over the
+   * provider work an interrupted attempt already started, and only this row
+   * names it; letting a caller pass its own would make that a coincidence.
+   */
+  context: Omit<HarnessToolContext, "effectIntentId">;
 }): Promise<HarnessToolResult | null> {
   const recoverableTerminalWrite = (
     input.expectedPolicy.definition.name === "run_command"
@@ -5945,7 +5986,10 @@ async function reconcileRecoverableTerminalWrite(input: {
     candidate.definition.name === input.expectedPolicy.definition.name
   ));
   if (!tool) return null;
-  return tool.execute(parseJson(input.row.inputJson, {}), input.context);
+  return tool.execute(parseJson(input.row.inputJson, {}), {
+    ...input.context,
+    effectIntentId: input.row.id,
+  });
 }
 
 type ToolPolicyIdentity = { pluginId: string } & HarnessToolPolicyIdentity;
@@ -7333,6 +7377,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  createToolEffectIntents,
   loadWorkstreamContextCompaction,
   persistWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,

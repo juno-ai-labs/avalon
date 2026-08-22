@@ -482,9 +482,12 @@ describe("Durable Objects in the Workers runtime", () => {
 
       await product.initialize(auth, input);
 
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
-      ).one().count).toBe(2);
+      // `projection_keys`, not `durable_outbox`. Both rows are written per
+      // effect in the same transaction, so this count proves the repair
+      // re-enqueued two — but only this one is stable to observe from a test:
+      // the object's delivery alarm deletes an outbox row the moment it
+      // forwards it to the parent, so counting those races a drain that is
+      // the effect *succeeding*. Nothing ever deletes a projection key.
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM projection_keys`,
       ).one().count).toBe(2);
