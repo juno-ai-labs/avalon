@@ -138,10 +138,10 @@ export function parseObjectQuery(url: string): ObjectQuery {
   if (parsed.success) return parsed.data;
 
   // One bad parameter used to drop every filter on the request: a pasted link
-  // with `component=workstream&limit=99999` returned the whole unfiltered fleet,
-  // which reads as "this component has everything in it" rather than "your limit
-  // was out of range". Drop only the fields Zod actually rejected, so the rest of
-  // the operator's query survives.
+  // with `component=substream_agent_do&limit=99999` returned the whole unfiltered
+  // fleet, which reads as "this component has everything in it" rather than
+  // "your limit was out of range". Drop only the fields Zod actually rejected,
+  // so the rest of the operator's query survives.
   const rejected = new Set(parsed.error.issues.map((issue) => String(issue.path[0])));
   const kept = Object.fromEntries(
     Object.entries(candidate).filter(([field]) => !rejected.has(field)),
