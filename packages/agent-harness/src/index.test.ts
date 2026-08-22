@@ -21,6 +21,7 @@ import {
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessTool,
+  type HarnessToolContext,
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
   type PluginAuthorization,
@@ -2940,6 +2941,91 @@ describe("agent harness", () => {
     expect(events.find((event) => event.type === "tool_started")).toMatchObject({
       providerIdempotencyKey: expectedKey,
     });
+  });
+
+  it("hands a tool the receipt identity the host recorded, resolved after tool_started", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "effect-write", "effect_write")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let startedSeen = false;
+    let resolvedAfterStarted: boolean | undefined;
+    let contextEffectIntentId: string | undefined;
+    const tool: HarnessTool = {
+      definition: {
+        name: "effect_write",
+        description: "Start provider-side work",
+        inputSchema: { type: "object", additionalProperties: false },
+        capability: "records.write",
+        mode: "write",
+        idempotency: "record_before_execute",
+      },
+      execute: async (_input, context) => {
+        contextEffectIntentId = context.effectIntentId;
+        return { output: { ok: true }, summary: "Started work" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      // A host writes the receipt while handling `tool_started`, so before
+      // that event it has nothing to answer with.
+      resolveToolEffectIntentId: (toolCallId) => {
+        resolvedAfterStarted = startedSeen;
+        return `receipt-for-${toolCallId}`;
+      },
+      onEvent: (event) => { if (event.type === "tool_started") startedSeen = true; },
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(contextEffectIntentId).toBe("receipt-for-run-1:turn:1:tool:0");
+    expect(resolvedAfterStarted).toBe(true);
+  });
+
+  it("leaves the receipt identity absent when the host implements no receipt port", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "effect-write", "effect_write")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let sawContext: HarnessToolContext | undefined;
+    const tool: HarnessTool = {
+      definition: {
+        name: "effect_write",
+        description: "Start provider-side work",
+        inputSchema: { type: "object", additionalProperties: false },
+        capability: "records.write",
+        mode: "write",
+        idempotency: "record_before_execute",
+      },
+      execute: async (_input, context) => {
+        sawContext = context;
+        return { output: { ok: true }, summary: "Started work" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+    });
+
+    expect(outcome.status).toBe("completed");
+    // Absent, not substituted: keying an external effect to `toolCallId` would
+    // name a coordinate no recorded receipt ever used.
+    expect(sawContext).toBeDefined();
+    expect("effectIntentId" in (sawContext as object)).toBe(false);
   });
 
   it("persists dynamic credential-plugin activation before exposing or executing its tools", async () => {

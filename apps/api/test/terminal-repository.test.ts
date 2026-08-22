@@ -154,6 +154,9 @@ function fixture(message = "Please publish these changes and open a pull request
   };
   const context: HarnessToolContext = {
     workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "publish-call",
+    // The publication's durable identity: the bundle path, the grant it
+    // consumes, and its `terminal_publications` row all key to this.
+    effectIntentId: I,
     executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
   };
   return { database, objectStore, env, gateway, provider, context };
@@ -367,6 +370,26 @@ describe("Terminal repository publication", () => {
     )).toEqual({ count: 1 });
   });
 
+  it("refuses to publish when the harness supplied no receipt identity", async () => {
+    const { env, gateway, provider, context } = fixture();
+    await admitTerminalPublicationGrant(env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    const publisher = createTerminalRepositoryPublisher(env, gateway);
+    const unreceipted: HarnessToolContext = { ...context };
+    delete unreceipted.effectIntentId;
+
+    await expect(publisher.publishBranchAndPr(unreceipted, { title: "Ship it", body: "Automated change" }, {
+      providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
+      authorityFingerprint: "authority", networkRevision: 1,
+    }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
+    // The receipt is what makes a publication replayable. Without it nothing
+    // may reach GitHub, or a retry opens a second pull request.
+    expect(provider.publishGitBundle).not.toHaveBeenCalled();
+    expect(gateway.createPullRequest).not.toHaveBeenCalled();
+  });
+
   it("publishes later commits from the same authorized run to the existing open PR", async () => {
     const { objectStore, env, gateway, provider, context } = fixture();
     await admitTerminalPublicationGrant(env, {
@@ -414,7 +437,7 @@ describe("Terminal repository publication", () => {
     });
 
     await expect(publisher.publishBranchAndPr(
-      { ...context, toolCallId: "publish-call-2" },
+      { ...context, toolCallId: "publish-call-2", effectIntentId: secondInvocationId },
       { title: "Ship it again", body: "Second commit" },
       sandbox,
       provider,
