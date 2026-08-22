@@ -9,9 +9,12 @@
 // change to this email should be checked here before it is called done.
 //
 // It takes no database. Unlike a digest, an automation result needs nothing but
-// its own body — the sample below is the shape a real competitor briefing
-// arrives in, including the constructs that used to break: a ranked list,
-// nested source links, a table, a fenced block, and emphasis inside a URL.
+// its own body — the sample below has the shape a competitor briefing arrives
+// in, including the constructs that used to break: a ranked list, nested source
+// links, a table, a fenced block, and emphasis inside a URL. Its companies and
+// links are deliberately invented: a fixture that named real accounts would rot
+// when a post was deleted, and a preview has no business asserting who anyone's
+// competitors are.
 //
 // Run it through tsx, because it imports the real template rather than a copy:
 //   pnpm exec tsx scripts/preview-automation-email.mjs
@@ -57,26 +60,26 @@ export const SAMPLE_BODY = [
   "",
   "## Executive summary",
   "",
-  "1. **SuperApp (Instabase rebrand)** — staking out *\"AI was single-player; SuperApp makes it multiplayer\"*.",
-  "2. **Hyperagent** — priced against the GPT-5.6 Sol cut within hours.",
-  "3. **Grok Bot** — shipped inside Cursor, which is the distribution story.",
+  "1. **Northwind** — rebranded, staking out *\"single-player AI is over\"*.",
+  "2. **Contoso** — repriced against the model cut within hours.",
+  "3. **Fabrikam** — shipped inside a popular editor, which is the distribution story.",
   "",
   "## Deep dive",
   "",
-  "### Hyperagent",
+  "### Contoso",
   "",
   "- **Latest tagline:** *\"Build agent teams that ship real work.\"*",
   "- **Sources:**",
-  "  - [Pricing thread on X](https://x.com/hyperagentapp/status/2090961355029246396)",
-  "  - [Inbound Monitor showcase](https://x.com/hyperagentapp/status/2084655607496237394)",
-  "- **Sentiment:** growth leads are convinced; ML engineers are not — `tracking_id` collisions on duplicate contacts come up repeatedly.",
+  "  - [Pricing thread](https://example.com/contoso/pricing)",
+  "  - [Product showcase](https://example.com/contoso/showcase)",
+  "- **Sentiment:** growth leads are convinced; engineers are not — `tracking_id` collisions on duplicate contacts come up repeatedly.",
   "",
   "> Community pushback centred on CRM write fragility rather than on the agents themselves.",
   "",
   "| Rank | Company | Move |",
   "| --- | --- | --- |",
-  "| 1 | SuperApp | Rebrand complete |",
-  "| 2 | Hyperagent | Price-led campaign |",
+  "| 1 | Northwind | Rebrand complete |",
+  "| 2 | Contoso | Price-led campaign |",
   "",
   "The webhook payload they publish:",
   "",
