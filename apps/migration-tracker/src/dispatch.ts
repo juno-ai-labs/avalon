@@ -58,15 +58,28 @@ export function dispatchableRegions(env: Env): ("global" | "eu")[] {
 /**
  * Dispatch one forced-migration run and record what it reached.
  *
- * The run is recorded whatever happens, including a send that threw partway:
- * the count in the row is the messages the queue accepted, not the messages
- * this function meant to send, so a half-finished fan-out is visible as one
- * rather than disappearing. That is the same rule the reporter follows on the
- * other side — nothing is recorded as delivered until the queue has taken it.
+ * The run is recorded after the sends, including a send that threw partway: the
+ * count in the row is the messages the queue accepted, not the messages this
+ * function meant to send, so a half-finished fan-out is visible as one rather
+ * than disappearing. That is the same rule the reporter follows on the other
+ * side — nothing is recorded as delivered until the queue has taken it.
+ *
+ * The one case that leaves no row is the registry write itself failing after
+ * the queue accepted the messages. A `pending` row written before the dispatch
+ * and finalized afterwards would close it, and is deliberately not done: it
+ * trades a run with no record for a run stuck pending, on a subsystem where
+ * forcing an object twice is documented as harmless, so the cost of the missing
+ * row is a duplicate fan-out rather than anything corrupted. The registry being
+ * unavailable also means the page that would show the row is down anyway.
  *
  * A region with no binding is not a failure of the run; it is a region this
  * deployment cannot reach at all. Its objects are counted as unroutable, which
  * is what the page shows, rather than being sent nowhere and reported as sent.
+ *
+ * `dispatched + unroutable` does not have to add up to `matched` when a send
+ * failed: the objects a refused region never reached are neither dispatched nor
+ * unroutable, and the run's `errorMessage` names the region rather than leaving
+ * the gap unexplained.
  */
 export async function dispatchMigrationRun(
   env: Env,
@@ -91,11 +104,17 @@ export async function dispatchMigrationRun(
   }
 
   let dispatched = 0;
-  let errorMessage: string | null = null;
-  try {
-    for (const [region, targets] of byRegion) {
-      const queue = migrationCommandQueue(env, region);
-      if (!queue) continue;
+  const failures: string[] = [];
+  // One try per region, not one around the whole walk. The two regions are
+  // separate queues in separate accounts of the platform's attention, and a
+  // Global queue refusing says nothing about the EU one — failing both because
+  // the first was reached first would turn one region's outage into two. Within
+  // a region the loop does stop at the first refusal: the batches after it are
+  // going at the same queue that just said no.
+  for (const [region, targets] of byRegion) {
+    const queue = migrationCommandQueue(env, region);
+    if (!queue) continue;
+    try {
       for (let index = 0; index < targets.length; index += QUEUE_SEND_BATCH) {
         const slice = targets.slice(index, index + QUEUE_SEND_BATCH);
         await queue.sendBatch(slice.map((target) => ({
@@ -111,10 +130,11 @@ export async function dispatchMigrationRun(
         })));
         dispatched += slice.length;
       }
+    } catch (error) {
+      failures.push(`${region}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  } catch (error) {
-    errorMessage = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
   }
+  const errorMessage = failures.length > 0 ? failures.join("; ").slice(0, 1_000) : null;
 
   const run: MigrationRun = {
     runId,

@@ -213,7 +213,17 @@ export function durableObjectMigrationCommandQueue(region: "global" | "eu"): str
   return `avalon-${region}-migration-commands`;
 }
 
-/** True for a queue carrying forced-migration commands, in either region. */
+/**
+ * True for one of the two queues carrying forced-migration commands.
+ *
+ * An exact match against the two names rather than a suffix test, because this
+ * predicate chooses a Worker's queue handler: a queue added later whose name
+ * merely ended the same way — `avalon-apac-migration-commands`, or a
+ * `…-migration-commands-replay` — would be parsed as forced-migration traffic
+ * and silently bypass the handler it was meant for. The dead-letter queues are
+ * excluded by the same exactness rather than by accident of their suffix.
+ */
 export function isDurableObjectMigrationCommandQueue(queue: string): boolean {
-  return queue.endsWith("-migration-commands");
+  return queue === durableObjectMigrationCommandQueue("global")
+    || queue === durableObjectMigrationCommandQueue("eu");
 }

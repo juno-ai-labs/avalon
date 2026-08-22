@@ -167,6 +167,13 @@ describe("the forced migration command queues", () => {
       "avalon-migration-reports",
       "avalon-global-activities",
       "avalon-global-access-revocations",
+      // Near misses. This predicate picks a Worker's queue handler, so a queue
+      // added later that merely ends the same way must not be parsed as
+      // forced-migration traffic.
+      "avalon-apac-migration-commands",
+      "unrelated-migration-commands",
+      "avalon-global-migration-commands-replay",
+      "prefix-avalon-global-migration-commands",
     ].some(isDurableObjectMigrationCommandQueue)).toBe(false);
   });
 });
