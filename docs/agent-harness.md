@@ -71,7 +71,7 @@ After admission Avalon validates the execution principal and persists an immutab
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, and subscription overrides. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Avalon will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
@@ -87,9 +87,11 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
+An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and forbidden to send, draft, or post a copy to one of them through any tool of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice; the destinations travel in the automation context as `resultDelivery`, and only active ones are listed. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
+
 ### Automation compilation
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants.
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
@@ -865,6 +867,23 @@ stale executor cannot mutate attachment replay dependencies before its completio
 is accepted or race that dependency past a successor's preliminary replan check.
 New inference callers must add their source to the typed union and the D1 check
 in the same change.
+
+### 2026-08-22 — A run is told what Avalon will deliver for it
+
+**What changed:** The automation prompt context carries the active destinations
+Avalon delivers the run's result to, and the standing behavior policy forbids
+sending a copy of that result to one of them. The compiler policy says the same
+from the other side: a destination is described, never instructed as a provider
+send.
+
+**Why:** Platform policy outranks saved automation configuration, and the
+automations that already exist have "send me the briefing by email" written into
+their instructions. Fixing only the compiler would leave every one of them
+sending a second copy until its author rewrote it.
+
+**Considered and rejected:** Listing every frozen target regardless of status. A
+disabled or failed target delivers nothing, so naming it would stop a run doing
+the sending its task actually needs.
 
 ### 2026-08-22 — Tools receive the receipt identity their effects are keyed to
 

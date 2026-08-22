@@ -140,11 +140,27 @@ Slack's Agent DM is the one shipped today.
 
 Email delivery resolves the owner's account address when the automation is saved
 and stores that literal address, so a later account change cannot silently redirect
-results. Each result is sent through Resend from the notification sender, keyed for
-idempotency on the delivery target and the run's work stream, and the target records
-the work stream it last received so a workflow retry cannot mail the same result
-twice. Empty results and the "nothing qualified" phrasings suppressed for Slack are
-suppressed for email too.
+results. Each result is sent through Resend from the notification sender —
+`RESEND_NOTIFICATION_FROM_EMAIL`, which is set in both Workers' vars; unset, it
+falls back to the transactional sender and a morning briefing arrives from the
+invitations address. Delivery is keyed for idempotency on the delivery target and
+the run's work stream, and the target records the work stream it last received so a
+workflow retry cannot mail the same result twice. Empty results and the "nothing
+qualified" phrasings suppressed for Slack are suppressed for email too.
+
+**The run itself is told where Avalon will send its result.** The active targets
+are loaded into the automation's prompt context as `resultDelivery`, and the
+platform policy forbids sending, drafting, or posting a copy of the result to any
+destination listed there. Without it a run whose instructions say "email me the
+briefing" reads that as a step, sends it through the mail connector, and Avalon
+then mails the same result to the frozen target — two copies from two senders. The
+compiler is the other half: it writes a destination into `expectedOutputs` rather
+than a provider send into `instructions`.
+
+**The body is the run's final message, which is Markdown**, rendered into email
+HTML by `apps/api/src/services/email-markdown.ts` — the same renderer the digest
+uses. A mail client renders no Markdown of its own, so text that is escaped and
+line-broken instead reaches the reader as `## Heading` and `**bold**`.
 
 `automation_delivery_targets`, its per-run last-delivery fence, and email
 receipts live in WorkspaceDO. The regional sender uses a stable provider
@@ -322,7 +338,9 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, activation, disable/tombstone, and the regional fail-closed path. |
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
-| `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, and the suppressed-empty rule. |
+| `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, the suppressed-empty rule, and that the result's Markdown is rendered rather than mailed as markup. |
+| `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
+| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations, and told nothing when a target is disabled. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/workstream-email-address.test.ts`
@@ -350,6 +368,38 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-22 — One result, rendered, from the notification sender
+
+**What changed:** Three things that together decide what an automation's result
+looks like in an inbox. The run is now told its frozen destinations
+(`resultDelivery` in the automation prompt context) and forbidden by platform
+policy from sending a copy to one of them; the compiler is told that a request to
+be emailed or DMed names a destination rather than a step. The result email's body
+goes through the shared Markdown renderer instead of being escaped with `<br>`
+between lines, and `RESEND_NOTIFICATION_FROM_EMAIL` is now actually configured in
+both Workers.
+
+**Why:** A daily briefing automation delivered two emails — one the run sent
+through the owner's own Gmail because its instructions told it to, and one Avalon
+sent to the frozen target — and both were unreadable: the first was Markdown in a
+`text/plain` body, the second was Markdown escaped into HTML. The sender of the
+second read `invites@`, because the notification sender this document already
+claimed was used had never been set anywhere and silently fell back to the
+transactional one.
+
+**Considered and rejected:** Detecting the duplicate at delivery time — comparing
+what the run sent through a connector against the frozen target — which needs a
+per-run record of every outbound provider write and still only suppresses the
+second copy after the first has left the mailbox. Telling the model is what stops
+the work happening at all. Also rejected: rendering the connector's outbound mail
+as HTML. `gmail.send` builds a `text/plain` body, that mail is sent as the person
+rather than as Avalon, and the tool guidance now says to write plain text; giving
+it a second MIME part is a separate change with its own reasons.
+
+**What a future change has to respect:** `resultDelivery` lists only *active*
+targets. A disabled or failed target sends nothing, so listing it would tell a run
+to stand down on behalf of a delivery that will never happen.
 
 ### 2026-08-22 — The work-stream gate reads the object, not the anchor
 

@@ -12,7 +12,14 @@ const input: AutomationResultEmail = {
   automationSubscriptionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901",
   workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902",
   title: "Daily <Azure> tracker\nInjected",
-  text: "Two new models shipped.\n<script>alert('result')</script>",
+  text: [
+    "## Deep dive",
+    "",
+    "- **Positioning:** they now claim the multiplayer angle",
+    "",
+    "Two new models shipped.",
+    "<script>alert('result')</script>",
+  ].join("\n"),
   outcomeStatus: "completed",
 };
 
@@ -94,6 +101,26 @@ describe("automation result email", () => {
     expect(String(body.html)).not.toContain("<script>alert('result')</script>");
     expect(calls.statements.some((statement) => statement.includes("UPDATE automation_delivery_targets"))).toBe(true);
     expect(calls.bindings.at(-1)).toContain(input.workstreamId);
+  });
+
+  it("renders the result's markdown instead of mailing its markup", async () => {
+    const { env } = environment();
+    const resend = successfulResend();
+
+    await deliverAutomationResultEmail(env, input, resend);
+
+    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
+    const html = String((JSON.parse(String(init.body)) as { html: string }).html);
+    // The body a briefing automation actually produces: before this rendered,
+    // the reader got `## Deep dive` and `**Positioning:**` as literal text.
+    expect(html).toContain("<h2");
+    expect(html).toContain("Deep dive");
+    expect(html).toContain("<strong");
+    expect(html).toContain("<li");
+    expect(html).not.toContain("## Deep dive");
+    expect(html).not.toContain("**Positioning:**");
+    // A stylesheet is stripped by most mail clients, so every rule is inline.
+    expect(html).not.toContain("<style");
   });
 
   it("labels a run that stopped for input", async () => {

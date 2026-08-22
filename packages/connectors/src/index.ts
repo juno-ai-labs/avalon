@@ -774,6 +774,7 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
     GoogleFileWriteAuthorizationGuidance,
     "Resolve an unknown recipient address with gmail.find_contacts before addressing a message, read the connected account's own address with gmail.read_profile rather than inferring it, and prefer gmail.search with its operators over a bare keyword query.",
     "A Gmail search result already carries each hit's sender, recipients, subject, date, and RFC Message-ID; read a message only when you need its body, and reply in thread by passing that Message-ID as inReplyTo alongside threadId.",
+    "A draft or message body is delivered as plain text exactly as written, so write it as plain text rather than Markdown: #, **, and [label](url) reach the recipient as those characters instead of as formatting.",
     "Keep personal and workspace authorization boundaries intact and do not claim a mutation succeeded unless its tool result confirms success.",
   ].join(" "),
   tools: googleTools,
@@ -851,7 +852,7 @@ function emailInputSchema(): Record<string, unknown> {
       to: { type: "array", items: { type: "string", format: "email" }, minItems: 1 },
       cc: { type: "array", items: { type: "string", format: "email" } },
       subject: { type: "string" },
-      body: { type: "string" },
+      body: { type: "string", description: "The message body, delivered as plain text exactly as written. Write plain text, not Markdown." },
       threadId: { type: "string" },
       inReplyTo: { type: "string", description: "RFC Message-ID header of the message being replied to" },
       references: {
