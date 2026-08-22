@@ -217,6 +217,20 @@ workspace with its work streams, automations, and onboarding checklist.
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
+- **A real streaming turn.** A local run has no provider credentials, so a run
+  fails with `harness_execution_failed` rather than streaming, and anything that
+  depends on tokens arriving over time cannot be exercised the ordinary way. A
+  turn can still be played into the live screen: wrap `window.WebSocket` in the
+  renderer to capture the sockets the app opens, take the one whose URL ends in
+  `/substreams/0` — the work-stream socket carries metadata, the substream
+  socket carries the transcript — and dispatch `MessageEvent`s onto it carrying
+  `stream_started` and then `stream_delta` frames in the shape
+  `@avalon/contracts` accepts. Two traps: `sequence` must exceed the room's
+  current one or `applyEvent` discards the frame as replay, and an in-page
+  `setInterval` is throttled to once a second when the window is occluded, so
+  drive the tokens from the CDP side and call `Page.bringToFront` first. A
+  trackpad gesture over the result is `Input.dispatchMouseEvent` with
+  `type: 'mouseWheel'`.
 - **The macOS menu bar status item, and the windowless half of a login launch.**
   The item is created only on darwin, and there is no menu bar to draw it into
   here. The launch skips its window only when a status item is actually present,
