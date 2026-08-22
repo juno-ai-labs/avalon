@@ -35,10 +35,10 @@ import {
 } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import {
-  authorizationKey,
-  permittedWorkspaceSocketIdentities,
-  type ConnectedSocketIdentity,
-} from "./workspace-socket-authorization";
+  revocationClosesSocket,
+  SocketAccessRevocationSchema,
+  type SocketAccessRevocation,
+} from "../services/access-revocation";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -322,24 +322,6 @@ const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const CONNECTOR_EVENT_BODY_RETENTION_MS = 396 * 24 * 60 * 60_000;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const PRODUCT_ALARM_BATCH = 6;
-/**
- * How stale this object lets its picture of who may listen get.
- *
- * A workspace socket is authorized when it connects and then again only when
- * its client sends something. A window that sits and listens — which is what
- * this object asks every window to do — says nothing for hours, so without a
- * bound its authorization is as old as the connection. The sweep is one
- * indexed query over only the sessions currently connected and is gated on a
- * payload actually going out, so a quiet workspace costs nothing and a busy one
- * pays it twice a minute.
- */
-const AUTHORIZATION_REVALIDATE_MS = 30_000;
-/**
- * Topics whose publication can mean somebody just lost access to this
- * workspace. Publishing one sweeps immediately rather than waiting out the
- * interval: for a retraction the sweep is enforcement, not an optimization.
- */
-const ACCESS_RETRACTING_TOPICS: ReadonlySet<WorkspaceSyncTopic> = new Set(["member_directory"]);
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
@@ -696,11 +678,6 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   }
 }
 
-/** One connected authorization identity and the sockets it holds. */
-interface ConnectedIdentity extends ConnectedSocketIdentity {
-  sockets: WebSocket[];
-}
-
 /**
  * Stop sending to a socket, then close it.
  *
@@ -940,23 +917,6 @@ const MIGRATION_COMPONENT = "workspace_do";
 export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
-  /**
-   * When the connected set was last revalidated, in memory on purpose: a
-   * hibernation eviction resets it to zero, and the only consequence is that
-   * the next publication sweeps. The failure direction is toward asking again.
-   */
-  private lastRevalidatedAt = 0;
-  /**
-   * The sweep currently running, so concurrent publications join it instead of
-   * each starting their own. A directory batch fans out to one
-   * `publishWorkstreamState` per changed work stream, all started together,
-   * and every one of them would otherwise pass the interval check before the
-   * first sweep finished and recorded itself.
-   */
-  private sweepInFlight: Promise<void> | null = null;
-  private sweepInFlightCertain = false;
-  /** Tail of the publication queue; see {@link serializePublication}. */
-  private publishQueue: Promise<void> = Promise.resolve();
 
   constructor(
     state: DurableObjectState,
@@ -1388,23 +1348,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!parsed.success) throw new Error("invalid_workspace_sync_topics");
     const requested = new Set(parsed.data);
     const ordered = WORKSPACE_SYNC_TOPICS.filter((topic) => requested.has(topic));
-    return this.serializePublication(() => this.deliverSync(ordered));
-  }
-
-  /**
-   * Allocate this event's waterline and send it, one publication at a time.
-   *
-   * The waterline is a monotonic counter and the desktop discards anything at
-   * or below the last one it applied, so allocation order has to be delivery
-   * order. The sweep between them is a D1 round trip, and the input gate is
-   * open across it: without this queue a cheaper concurrent publication —
-   * one that skips the sweep because the interval is fresh — allocates the
-   * higher waterline and sends first, and the parked payload is then dropped
-   * on arrival along with every topic it named. A `member_directory`
-   * publication is the guaranteed victim, because forcing the sweep is what it
-   * does.
-   */
-  private async deliverSync(ordered: WorkspaceSyncTopic[]): Promise<number> {
     const occurredAtMs = Date.now();
     const occurredAt = new Date(occurredAtMs).toISOString();
     const eventId = uuidV7(occurredAtMs);
@@ -1431,10 +1374,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       reason: "change",
     });
     const payload = JSON.stringify(event);
-    // Before the send, not after: the people this event may have excluded must
-    // not receive it. They are disconnected instead, and their client stops
-    // rather than refetching a workspace it may no longer read.
-    await this.revalidateBeforePublish(ordered.some((topic) => ACCESS_RETRACTING_TOPICS.has(topic)));
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -1447,6 +1386,66 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     return waterline;
+  }
+
+  /**
+   * Drop every socket this object holds for a person whose access ended, and
+   * carry the same revocation to the work streams they could be reading.
+   *
+   * The only way a socket here is closed for lost access. Nothing in this
+   * object can observe a revoked session or an ended membership — both are D1
+   * facts owned by the Worker that wrote them — so it is told, once, by the
+   * access-revocation consumer. See `docs/access-revocation.md`.
+   *
+   * The work streams come back as a list rather than being published from
+   * here: this object holds sockets and a directory, and that is all it needs
+   * to know. The consumer decides what to do with the list, so nothing about
+   * the revocation transport reaches inside the object.
+   */
+  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{ workstreamIds: string[] }> {
+    await this.initialized;
+    const request = SocketAccessRevocationSchema.parse(revocation);
+    let closed = 0;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      // A revoked session closes only the windows that presented it; an ended
+      // membership carries no session and closes all of them. The rule lives in
+      // one place because the four socket roles disagree about their own
+      // attachments — see `revocationClosesSocket`.
+      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
+      closed += 1;
+    }
+    if (closed > 0) {
+      logWarn(this.env, "workspace_socket_access_revoked", {
+        workspace_id: this.workspaceId(),
+        user_id: request.userId,
+        session_id: request.sessionId,
+        sockets: closed,
+      });
+    }
+    return { workstreamIds: this.revocableWorkstreamIds(request.userId) };
+  }
+
+  /**
+   * The work streams this person could be holding a socket on.
+   *
+   * Their own rows, plus every workspace-scoped work stream — those are
+   * readable by any member, so a socket can exist there without this object
+   * ever having written a viewer row for them. Narrower than the directory and
+   * still complete; a personal work stream they never joined cannot have
+   * admitted them in the first place.
+   */
+  private revocableWorkstreamIds(userId: string): string[] {
+    return this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id
+         FROM workspace_workstream_directory directory
+         LEFT JOIN workspace_workstream_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+        WHERE viewer.user_id IS NOT NULL OR directory.scope = 'workspace'
+        ORDER BY directory.workstream_id`,
+      userId,
+    ).toArray().map((row) => row.workstream_id);
   }
 
   /** Pin the workspace identity before any child object can be resolved. */
@@ -3147,10 +3146,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Push the current row; missed intermediate rows are intentionally irrelevant. */
   private async publishWorkstreamState(workstreamId: string, targetUserId?: string): Promise<void> {
     const occurredAt = new Date().toISOString();
-    // Work-stream rows carry titles, previews and unread counts, so this path
-    // needs the same bound as the sync one. It has no topic to judge, so it is
-    // always the interval-gated form.
-    await this.revalidateBeforePublish(false);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -3370,147 +3365,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Revalidate before publishing, at most once per interval unless certain.
+   * The authorization question every admission and every inbound command asks.
    *
-   * `certain` is for a payload that names a topic which can retract access.
-   * There the sweep is the enforcement of that retraction, so it runs whatever
-   * the interval says. Everything else is the backstop for the retractions
-   * nothing publishes at all — a session revoked at sign-out, a session that
-   * simply expired, a membership going inactive — which is why the bound
-   * exists rather than trusting an event to arrive.
+   * Asked on the way in, never on the way out: a socket that is already open is
+   * closed by the access-revocation queue rather than by this being re-asked.
+   * See `docs/access-revocation.md`.
    */
-  /**
-   * Run publications in the order they were requested.
-   *
-   * A rejected publication must not poison the queue for the next one, so the
-   * chain keeps the settled promise rather than the failed one.
-   */
-  private serializePublication<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.publishQueue.then(operation, operation);
-    this.publishQueue = run.then(() => undefined, () => undefined);
-    return run;
-  }
-
-  private async revalidateBeforePublish(certain: boolean): Promise<void> {
-    if (!certain && Date.now() - this.lastRevalidatedAt < AUTHORIZATION_REVALIDATE_MS) return;
-    // A caller joins a sweep already running rather than starting a second one
-    // — except a certain caller behind an uncertain sweep, which must not
-    // inherit the uncertain one's error path: if that sweep's query fails it
-    // leaves everyone connected, which is the wrong answer for a retraction.
-    if (this.sweepInFlight && (!certain || this.sweepInFlightCertain)) {
-      await this.sweepInFlight;
-      return;
-    }
-    const sweep = this.evictListenersWhoMayNoLongerListen(certain);
-    this.sweepInFlight = sweep;
-    this.sweepInFlightCertain = certain;
-    try {
-      await sweep;
-    } finally {
-      if (this.sweepInFlight === sweep) {
-        this.sweepInFlight = null;
-        this.sweepInFlightCertain = false;
-      }
-    }
-  }
-
-  /**
-   * Disconnect every socket whose session or membership no longer permits it.
-   *
-   * This object pushes workspace and work-stream metadata to sockets that have
-   * said nothing since they connected, so without this a person whose session
-   * was revoked or whose membership ended keeps receiving both until they close
-   * the window. The rule applied is exactly the one the connection itself was
-   * checked against in {@link sessionAuth}, asked of the whole connected set in
-   * batched queries rather than one per socket.
-   *
-   * `certain` says whether this sweep is resolving a retraction that just
-   * happened, and it decides only what to do when the query itself fails, which
-   * is the one case where the object does not know who may stay.
-   */
-  private async evictListenersWhoMayNoLongerListen(certain: boolean): Promise<void> {
-    const sockets = this.state.getWebSockets();
-    // Keyed by session *and* user, because a session id is not by itself an
-    // identity: the development bypass gives every user the literal session id
-    // `development`, so grouping on the session alone would let one member's
-    // membership decide every local window's fate. The production query is
-    // still asked by session id — the composite is what the answer is recorded
-    // against.
-    const byIdentity = new Map<string, ConnectedIdentity>();
-    for (const socket of sockets) {
-      const attachment = readAttachment(socket);
-      if (!attachment) continue;
-      const key = authorizationKey(attachment.sessionId, attachment.userId);
-      const existing = byIdentity.get(key);
-      if (existing) existing.sockets.push(socket);
-      else {
-        byIdentity.set(key, {
-          sessionId: attachment.sessionId,
-          userId: attachment.userId,
-          sockets: [socket],
-        });
-      }
-    }
-    if (byIdentity.size === 0) return;
-    const workspaceId = this.workspaceId();
-    // Unreachable from either publish path: `publishSync` runs `ensureIdentity`
-    // first, and `publishWorkstreamState` only has rows to publish once the
-    // object has an identity. It is a guard rather than a case, which is why it
-    // returns quietly instead of logging a skipped sweep.
-    if (!workspaceId) return;
-
-    let permitted: Set<string>;
-    try {
-      permitted = await permittedWorkspaceSocketIdentities(
-        this.env.DB,
-        {
-          workspaceId,
-          region: this.env.AVALON_REGION,
-          devAuth: this.env.APP_ENV === "development" && this.env.AVALON_DEV_AUTH === "true",
-        },
-        byIdentity.values(),
-      );
-    } catch {
-      if (certain) {
-        // A retraction has definitely happened and this object cannot find out
-        // who it applies to. Leaving every socket open would keep serving the
-        // workspace to whoever it was just closed to, so they all go — but as
-        // `1011`, a transient server condition, not as the access-revoked code.
-        // That distinction is the point: a reconnect is authorized against D1
-        // at connect time, so everyone who may still listen is back within a
-        // second, while closing them all as "access revoked" would strand every
-        // legitimate window on an error screen over one failed query.
-        for (const socket of sockets) disconnect(socket, 1011, "Reconnect to continue");
-      }
-      // The sweep is not recorded as having run either way, so the next
-      // publication re-asks rather than waiting out the interval.
-      return;
-    }
-    this.lastRevalidatedAt = Date.now();
-
-    const evictedUsers = new Set<string>();
-    let evictedSockets = 0;
-    for (const [key, identity] of byIdentity) {
-      if (permitted.has(key)) continue;
-      for (const socket of identity.sockets) {
-        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
-        evictedSockets += 1;
-      }
-      evictedUsers.add(identity.userId);
-    }
-
-    // One line for the sweep rather than one per identity: a bulk deactivation
-    // would otherwise log once for every member it touched.
-    if (evictedSockets > 0) {
-      logWarn(this.env, "workspace_socket_access_revoked", {
-        workspace_id: workspaceId,
-        users: evictedUsers.size,
-        sockets: evictedSockets,
-        certain,
-      });
-    }
-  }
-
   private async sessionAuth(identity: Pick<SocketIdentity, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
       && this.env.AVALON_DEV_AUTH === "true"

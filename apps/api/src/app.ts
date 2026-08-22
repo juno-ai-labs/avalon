@@ -19,6 +19,7 @@ import { resourceRoutes } from "./routes/resources";
 import { resendInboundRoutes } from "./routes/resend";
 import { socketRoutes } from "./routes/socket";
 import { workspaceRoutes } from "./routes/workspace";
+import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workstreamRoutes } from "./routes/workstreams";
 import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { slackIngressRoutes } from "./routes/slack";
@@ -132,6 +133,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.use("*", requireAuth);
   protectedApi.use("*", workspaceRealtimeInvalidation);
   protectedApi.route("/workspace", workspaceRoutes);
+  protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/notes", noteRoutes);
