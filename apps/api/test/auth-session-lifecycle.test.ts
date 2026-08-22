@@ -7,6 +7,7 @@ import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result
 const oldRefreshToken = "old-refresh-token-with-more-than-twenty-characters";
 const userId = "00000000-0000-7000-8000-000000000001";
 const createdAt = "2026-08-01T12:00:00.000Z";
+const workspaceId = "00000000-0000-7000-8000-0000000000a1";
 
 class SessionDatabase {
   currentHash = "";
@@ -37,6 +38,10 @@ class SessionDatabase {
             this.rotatedAt = nextRotatedAt!;
             return { id: "session-1", user_id: userId, workspace_id: null } as T;
           }
+          if (sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE id = ?")) {
+            this.revokedSessionIds.push(String(values[1]));
+            return { id: String(values[1]), user_id: userId, workspace_id: workspaceId } as T;
+          }
           if (sql.includes("FROM users WHERE id = ?") && sql.includes("id AS user_id")) {
             return {
               user_id: userId,
@@ -48,15 +53,19 @@ class SessionDatabase {
           }
           throw new Error(`Unexpected first query: ${sql}`);
         },
-        run: async <T>() => {
-          if (sql === "UPDATE sessions SET revoked_at = ? WHERE id = ?") {
-            this.revokedSessionIds.push(String(values[1]));
-          } else if (sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE refresh_token_hash")) {
-            this.refreshRevocations += 1;
-          } else {
-            throw new Error(`Unexpected run query: ${sql}`);
+        all: async <T>() => {
+          if (!sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE refresh_token_hash")) {
+            throw new Error(`Unexpected all query: ${sql}`);
           }
-          return createTestD1Result<T>({ success: true, results: [], meta: { changes: 1 } });
+          this.refreshRevocations += 1;
+          // The statement revoked nothing here: the presented refresh token is
+          // stale, which is the case this test exists for.
+          return createTestD1Result<T>({ success: true, results: [], meta: { changes: 0 } });
+        },
+        // Both logout statements read their rows back now, so nothing here
+        // calls `run`; leaving it throwing keeps that visible.
+        run: async () => {
+          throw new Error(`Unexpected run query: ${sql}`);
         },
       };
       return createTestD1PreparedStatement(statement);
@@ -64,9 +73,10 @@ class SessionDatabase {
   });
 }
 
-function environment(database: SessionDatabase): Env {
+function environment(database: SessionDatabase, published: unknown[] = []): Env {
   return createTestEnv({
     DB: database.binding,
+    ACCESS_REVOCATION_QUEUE: { send: async (body: unknown) => { published.push(body); } },
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     SESSION_SIGNING_KEY: "global-session-signing-key-with-enough-entropy",
@@ -96,9 +106,20 @@ describe("authentication session lifecycle", () => {
   });
 
   it("revokes the verified bearer session even when the supplied refresh token is stale", async () => {
-    await service.logout({ sessionId: "session-1", refreshToken: "stale-refresh-token-longer-than-twenty" });
+    const published: unknown[] = [];
+    await new AuthService(environment(database, published))
+      .logout({ sessionId: "session-1", refreshToken: "stale-refresh-token-longer-than-twenty" });
 
     expect(database.revokedSessionIds).toEqual(["session-1"]);
     expect(database.refreshRevocations).toBe(1);
+    // Revoking the row is half of a logout: the sockets it is holding are
+    // closed only if the revocation is announced. See docs/access-revocation.md.
+    expect(published).toEqual([expect.objectContaining({
+      kind: "access_revoked",
+      reason: "session_revoked",
+      sessionId: "session-1",
+      userId,
+      workspaceId,
+    })]);
   });
 });

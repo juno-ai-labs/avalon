@@ -16,6 +16,11 @@ import {
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
+
+import {
+  SocketAccessRevocationSchema,
+  type SocketAccessRevocation,
+} from "../services/access-revocation";
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
@@ -66,7 +71,6 @@ import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
-const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
 // Generous by design (the 10 GB object ceiling is the only hard bound): a
 // settled terminal dispatch this old is pure history whose product-facing
 // record lives in the parent's run ledger.
@@ -383,7 +387,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     await this.initialized;
     const request = BlockDashboardSocketRetractionRequestSchema.parse(input);
     this.ensureIdentity(request);
-    await this.revalidateSockets(request.userId);
+    await this.revalidateSockets();
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -672,15 +676,46 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     }
   }
 
-  private async authorizedSubscribedSockets(force = false, onlyUserId?: string): Promise<WebSocket[]> {
+  /**
+   * Drop every socket this block holds for a person whose access ended.
+   *
+   * The only way a socket here is closed for lost access; see
+   * `docs/access-revocation.md`.
+   */
+  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
+    await this.initialized;
+    const request = SocketAccessRevocationSchema.parse(revocation);
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = this.readSocketAttachment(socket);
+      if (!attachment || attachment.userId !== request.userId) continue;
+      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      try {
+        socket.serializeAttachment({ ...attachment, subscribed: false });
+      } catch {
+        // An unreadable attachment already fails the publication filter.
+      }
+      try {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this block");
+      } catch {
+        // Already closing; the runtime owns the rest of the teardown.
+      }
+    }
+  }
+
+  private async authorizedSubscribedSockets(force = false): Promise<WebSocket[]> {
     const now = Date.now();
     const authorization = new Map<string, boolean>();
     const permitted: WebSocket[] = [];
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readSocketAttachment(socket);
-      if (!attachment?.subscribed || (onlyUserId && attachment.userId !== onlyUserId)) continue;
+      if (!attachment?.subscribed) continue;
       let allowed = true;
-      if (force || now - attachment.authorizedAt >= SOCKET_AUTHORIZATION_REVALIDATE_MS) {
+      // Only when the caller forces it, which is the block-lifecycle sweep: a
+      // block that stopped existing closes its sockets. Time no longer triggers
+      // this. Somebody losing access is the access-revocation queue's business,
+      // and this object must not hold a second answer to that question — see
+      // docs/access-revocation.md.
+      if (force) {
         const key = `${attachment.userId}\u0000${attachment.sessionId}`;
         const cached = authorization.get(key);
         allowed = cached ?? await this.authorizeViewer(attachment);
@@ -696,8 +731,8 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     return permitted;
   }
 
-  private async revalidateSockets(userId?: string): Promise<void> {
-    await this.authorizedSubscribedSockets(true, userId);
+  private async revalidateSockets(): Promise<void> {
+    await this.authorizedSubscribedSockets(true);
   }
 
   private queueBroadcast(broadcast: () => Promise<void>, phase: string): void {

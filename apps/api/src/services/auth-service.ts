@@ -3,6 +3,7 @@ import { newId, nowIso } from "@avalon/db";
 import { asUserId, asWorkspaceId, type Region, type Session } from "@avalon/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
 
 const encoder = new TextEncoder();
@@ -372,27 +373,44 @@ export class AuthService {
     return this.formatSession(identity, accessToken, newRefreshToken);
   }
 
+  /**
+   * End a session, and close the sockets it is holding.
+   *
+   * The revocation is published for every session this call actually revoked,
+   * read back from the same statements that revoked them. Nothing else can tell
+   * an object that a session ended — see `docs/access-revocation.md` — so a
+   * session revoked without a message here stays connected until the window
+   * closes.
+   */
   async logout(input: { refreshToken?: string; sessionId?: string }): Promise<void> {
     // A verified bearer session is authoritative. A stale or attacker-supplied
     // refresh token must never prevent that authenticated session from being
     // revoked; when both are present, revoke both identifiers idempotently.
+    const revoked: RevokedSessionRow[] = [];
     if (input.sessionId) {
-      await this.env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?")
+      const row = await this.env.DB.prepare(
+        `UPDATE sessions SET revoked_at = ? WHERE id = ?
+         RETURNING id, user_id, workspace_id`,
+      )
         .bind(nowIso(), input.sessionId)
-        .run();
+        .first<RevokedSessionRow>();
+      if (row) revoked.push(row);
     }
     if (input.refreshToken) {
       const at = nowIso();
       const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
       const tokenHash = await sha256(input.refreshToken);
-      await this.env.DB.prepare(
+      const result = await this.env.DB.prepare(
         `UPDATE sessions SET revoked_at = ?
          WHERE refresh_token_hash = ?
-           OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)`,
+           OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
+         RETURNING id, user_id, workspace_id`,
       )
         .bind(at, tokenHash, tokenHash, replayGraceStart)
-        .run();
+        .all<RevokedSessionRow>();
+      revoked.push(...(result.results ?? []));
     }
+    await publishSessionRevocations(this.env, revoked, "session_revoked");
   }
 
   private async claimOAuthState(state: string, purpose: string): Promise<OAuthStateRow> {

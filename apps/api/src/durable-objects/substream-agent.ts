@@ -23,6 +23,11 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 
+import {
+  SocketAccessRevocationSchema,
+  type SocketAccessRevocation,
+} from "../services/access-revocation";
+
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
@@ -260,16 +265,6 @@ const MAX_REPLAY_BYTES = 512_000;
 const MAX_SOCKET_SNAPSHOT_BYTES = 900_000;
 
 const MAX_SOCKET_MESSAGE_PAGE_BYTES = 900_000;
-/**
- * How stale the room lets its picture of who may read this work stream get.
- *
- * The sweep is one indexed query over only the users currently connected, and
- * it is gated on an event actually being delivered, so a quiet room costs
- * nothing and a busy one pays it twice a minute. It is skipped for
- * `stream_delta`, which is the only high-frequency event and is always preceded
- * in the same turn by a `stream_started` that is not skipped.
- */
-const AUTHORIZATION_REVALIDATE_MS = 30_000;
 const BLOCK_DASHBOARD_DEBOUNCE_MS = 1_200;
 const BLOCK_DASHBOARD_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
@@ -333,19 +328,6 @@ const textEncoder = new TextEncoder();
 function minimumTimestamp(...timestamps: Array<number | null>): number | null {
   const present = timestamps.filter((timestamp): timestamp is number => timestamp !== null);
   return present.length === 0 ? null : Math.min(...present);
-}
-
-
-/**
- * Whether this event can have taken somebody's read access away.
- *
- * A work stream becoming `personal` narrows it to its participants, and losing
- * a participant narrows it again — the second only matters while it is already
- * `personal`, but the sweep answers that itself rather than guessing here.
- */
-function retractsReadAccess(event: ServerSocketEvent): boolean {
-  if (event.type === "workstream_scope_changed") return event.scope === "personal";
-  return event.type === "participant_removed";
 }
 
 /**
@@ -457,12 +439,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
   private replayFloorSequence: number | null = null;
-  /**
-   * When the connected set was last checked against D1, in memory only. A
-   * hibernated room wakes at zero and re-checks on its next event, which is the
-   * conservative direction.
-   */
-  private lastRevalidatedAt = 0;
   /**
    * Not `readonly`, and not assigned in the constructor body: the store applies
    * this object's schema when it is constructed, and reporting a failed
@@ -2883,133 +2859,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const event = await this.commitRealtimeEvent(unsequencedEvent.data, requestedSequence);
 
     this.recordRecentEvent(event);
-    // Authorization is decided once, when each socket connects, so anything that
-    // can retract it has to reach the connections already inside the room.
-    // Sweeping before the broadcast means the people this event excluded do not
-    // receive it — they are disconnected instead, and their client stops rather
-    // than resynchronizing into a work stream it may no longer read.
-    let evicted = false;
-    if (retractsReadAccess(event)) {
-      evicted = await this.evictReadersWhoMayNoLongerRead(true);
-    } else if (
-      // The publisher that delivers the event above swallows its own failures,
-      // because for every other event realtime is an optimization. For a
-      // retraction it is enforcement, so the room does not rely on having been
-      // told: it re-asks the question on its own, at most once an interval, and
-      // a retraction that never arrived is applied before the next thing this
-      // room would have sent. That also covers the retractions nothing
-      // publishes at all, such as a workspace membership going inactive.
-      event.type !== "stream_delta"
-      && Date.now() - this.lastRevalidatedAt >= AUTHORIZATION_REVALIDATE_MS
-    ) {
-      evicted = await this.evictReadersWhoMayNoLongerRead(false);
-    }
     this.broadcast(event);
-    // After the event, not inside the sweep. Presence allocates a sequence of
-    // its own, and this event's was allocated before the sweep ran — sending
-    // the roster first would put a higher sequence on the wire ahead of a lower
-    // one, and the client drops anything at or below the last sequence it
-    // applied. The event that closed the work stream would be the one thrown
-    // away. Every other close in this class refreshes the roster too, and this
-    // one must: `webSocketClose` fires for a *client*-initiated close, so
-    // closing a socket here invokes nothing, and the people who remain would go
-    // on seeing the evicted readers listed as present. `disconnect` has already
-    // marked those attachments unsubscribed, which is the filter `loadViewers`
-    // applies, so they drop out without an exclusion argument.
-    if (evicted) {
-      const identity = this.objectStore.identity();
-      if (identity) {
-        await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
-      }
-    }
     if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(event.type)) {
       await this.scheduleBlockDashboardRefresh(event.sequence);
     }
     return jsonResponse({ accepted: true, sequence: event.sequence }, 202);
-  }
-
-  /**
-   * Disconnect every socket whose user may no longer read this work stream.
-   *
-   * A socket is authorized once, when it connects, and then lives for as long
-   * as the window stays open. Narrowing a work stream to its participants, or
-   * taking somebody out of a narrowed one, has to reach the connections already
-   * inside it, or the change would apply to everyone who opens it next and to
-   * nobody who is reading it now.
-   *
-   * The question is asked of the whole connected set in one query rather than
-   * per socket, and it is the same rule the connection itself was checked
-   * against.
-   *
-   * `certain` says whether this sweep is resolving a retraction that just
-   * happened, and it decides only what to do when the query itself fails —
-   * which is the one case where the room does not know who may stay. See
-   * {@link evictEveryReaderPendingReauthorization}.
-   */
-  private async evictReadersWhoMayNoLongerRead(certain: boolean): Promise<boolean> {
-    const sockets = this.state.getWebSockets();
-    const byUserId = new Map<string, WebSocket[]>();
-    for (const socket of sockets) {
-      const attachment = this.readAttachment(socket);
-      if (!attachment) continue;
-      const existing = byUserId.get(attachment.userId);
-      if (existing) existing.push(socket);
-      else byUserId.set(attachment.userId, [socket]);
-    }
-    if (byUserId.size === 0) return false;
-
-    const identity = this.objectStore.identity();
-    if (!identity) return false;
-    const userIds = [...byUserId.keys()];
-    const placeholders = userIds.map(() => "?").join(",");
-    let permitted: Set<string>;
-    try {
-      const result = await this.env.DB.prepare(
-        `SELECT member.user_id
-           FROM workspace_members member
-          WHERE member.workspace_id = ? AND member.status = 'active'
-            AND member.user_id IN (${placeholders})`,
-      ).bind(identity.workspaceId, ...userIds).all<{ user_id: string }>();
-      permitted = new Set((result.results ?? [])
-        .map((row) => row.user_id)
-        .filter((userId) => this.product.canRead(userId)));
-    } catch {
-      if (certain) {
-        this.evictEveryReaderPendingReauthorization(sockets);
-        // Either way the sweep is not recorded as having run, so the next event
-        // re-asks rather than waiting out the interval.
-        return true;
-      }
-      return false;
-    }
-    this.lastRevalidatedAt = Date.now();
-
-    let evicted = false;
-    for (const [userId, userSockets] of byUserId) {
-      if (permitted.has(userId)) continue;
-      for (const socket of userSockets) {
-        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
-        evicted = true;
-      }
-    }
-    return evicted;
-  }
-
-  /**
-   * The answer when a retraction has definitely happened and the room cannot
-   * find out who it applies to.
-   *
-   * Leaving every socket open would keep serving the work stream to the people
-   * it was just closed to, so the room disconnects all of them — but as `1011`,
-   * a transient server condition, not as the access-revoked code. That
-   * distinction is the whole point: a reconnect is authorized against D1 at
-   * connect time, so everyone who may still read it is back within a second,
-   * and only those who genuinely lost access fail to return. Closing them all
-   * as "access revoked" would instead strand every legitimate reader on an
-   * error screen over what may have been one failed query.
-   */
-  private evictEveryReaderPendingReauthorization(sockets: WebSocket[]): void {
-    for (const socket of sockets) disconnect(socket, 1011, "Reconnect to continue reading this work stream");
   }
 
   private async scheduleBlockDashboardRefresh(triggerSequence: number): Promise<void> {
@@ -3477,6 +3331,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       message
     });
     socket.send(JSON.stringify(event));
+  }
+
+  /**
+   * Drop every socket this agent holds for a person whose access ended.
+   *
+   * The only way a socket here is closed for lost access; see
+   * `docs/access-revocation.md`. This agent has no view of D1 membership or
+   * sessions on its own, and deliberately does not acquire one — the transcript
+   * feed is the highest-frequency socket in the product, and an authorization
+   * question on that path would be asked per token frame.
+   */
+  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
+    await this.initialized;
+    const request = SocketAccessRevocationSchema.parse(revocation);
+    let evicted = false;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = this.readAttachment(socket);
+      if (!attachment || attachment.userId !== request.userId) continue;
+      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+      evicted = true;
+    }
+    // The people still here would otherwise go on seeing an evicted reader
+    // listed as present: `webSocketClose` fires for a *client*-initiated close,
+    // so closing one here invokes nothing.
+    if (evicted) {
+      const identity = this.objectStore.identity();
+      if (identity) await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
+    }
   }
 
   private readAttachment(socket: WebSocket): SocketAttachment | null {

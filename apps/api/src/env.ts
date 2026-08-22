@@ -49,6 +49,8 @@ export interface Env {
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
+  /** The one path from a D1 access retraction to an open socket. */
+  ACCESS_REVOCATION_QUEUE: Queue;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
@@ -265,6 +267,7 @@ const EnvContractSchema = z.object({
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
+  ACCESS_REVOCATION_QUEUE: binding<Queue>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
   WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),

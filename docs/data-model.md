@@ -62,7 +62,10 @@ knowing an object's ID is enough to read it — it never is.
   `weur` are migration/background/missing-request-metadata defaults only.
 - `workspace_members` authorizes users as owner, admin, or member.
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
-  sessions, PKCE, and single-use Electron deep-link completion. `oauth_states`
+  sessions, PKCE, and single-use Electron deep-link completion. A session that
+  simply expires is also marked `revoked_at` by the five-minute reaper, which is
+  what makes announcing the expiry exactly-once; see
+  [`access-revocation.md`](access-revocation.md). `oauth_states`
   is the signed pre-workspace callback route/security receipt; the user-visible
   `connector_oauth_attempts` status row lives in the selected WorkspaceDO.
 - `workspace_invitations` supports explicit membership growth without introducing

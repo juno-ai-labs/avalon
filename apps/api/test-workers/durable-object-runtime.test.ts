@@ -224,47 +224,6 @@ type TestableWorkstreamDO = {
   deliverBlockDashboardDispatches(limit?: number): Promise<void>;
 };
 
-/**
- * The object's own binding, so a test can make its authorization sweep slow.
- *
- * The race below is real but not reproducible unaided: the sweep's D1 round
- * trip is fast enough here that a concurrent publication rarely wins it.
- * Delaying the query is what turns "sometimes" into "every run".
- */
-type TestableWorkspaceDO = { env: { DB: D1Database } };
-
-/** A D1 binding whose reads resolve later than the real one. */
-function slowedD1(database: D1Database, delayMs: number): D1Database {
-  const delay = <T>(run: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
-    setTimeout(() => { run().then(resolve, reject); }, delayMs);
-  });
-  return new Proxy(database, {
-    get(target, property, receiver) {
-      if (property !== "prepare") return Reflect.get(target, property, receiver);
-      return (query: string): D1PreparedStatement => {
-        const statement = database.prepare(query);
-        return new Proxy(statement, {
-          get(statementTarget, statementProperty, statementReceiver) {
-            if (statementProperty !== "bind") {
-              return Reflect.get(statementTarget, statementProperty, statementReceiver);
-            }
-            return (...values: unknown[]): D1PreparedStatement => {
-              const bound = statement.bind(...values);
-              return new Proxy(bound, {
-                get(boundTarget, boundProperty, boundReceiver) {
-                  if (boundProperty === "all") return () => delay(() => bound.all());
-                  if (boundProperty === "first") return () => delay(() => bound.first());
-                  return Reflect.get(boundTarget, boundProperty, boundReceiver);
-                },
-              });
-            };
-          },
-        });
-      };
-    },
-  });
-}
-
 async function fetchAndDrain(
   stub: DurableObjectStub,
   input: RequestInfo | URL,
@@ -1532,15 +1491,14 @@ describe("Durable Objects in the Workers runtime", () => {
       blockRunId: queued.id,
       streamCheckpoint: null,
     });
-    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
-      .bind(new Date().toISOString(), SESSION_ID).run();
+    // A block socket is closed by the access-revocation queue and by nothing
+    // else; the agent never re-asks D1 on its own. See docs/access-revocation.md.
     const blockClosed = nextClose(blockSocket);
-    await blockStub.revalidateViewerAccess({
-      region: "global",
+    await blockStub.revokeSocketAccess({
+      reason: "workspace_membership_removed",
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       userId: USER_ID,
+      sessionId: null,
     });
     expect((await blockClosed).code).toBe(1008);
   });
@@ -1845,159 +1803,97 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
-  it("closes a listening workspace socket whose session was revoked", async () => {
+
+  it("closes a workspace socket when told the person lost access, and names their work streams", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000501");
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000601");
     try {
       const closed = nextClose(socket);
-      // The socket says nothing from here on, which is what this object asks a
-      // window to do: every later authorization decision has to come from the
-      // sweep rather than from an inbound frame.
-      await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
-        .bind("2026-08-21T00:00:00.000Z", SESSION_ID).run();
-      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
-      const event = await closed;
-      expect(event.code).toBe(1008);
-    } finally {
-      socket.close(1000, "test complete");
-    }
-  });
-
-  it("keeps publishing to a workspace socket whose session is still valid", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000502");
-    try {
-      const delivered = nextMessage(socket);
-      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
-      expect(JSON.parse(String((await delivered).data))).toMatchObject({
-        type: "workspace_sync",
-        reason: "change",
-        topics: ["automations"],
-      });
-    } finally {
-      socket.close(1000, "test complete");
-    }
-  });
-
-  it("delivers concurrent workspace syncs in the order their waterlines were allocated", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000506");
-    try {
-      // Spend the interval, so the second publication below takes the cheap
-      // path and does no I/O at all.
-      const first = nextMessage(socket);
-      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
-      await first;
-
-      let restore = (): Promise<void> => Promise.resolve();
-      await runInDurableObject(stub, (instance) => {
-        const testable = instance as unknown as TestableWorkspaceDO;
-        const real = testable.env.DB;
-        testable.env.DB = slowedD1(real, 200);
-        // The binding object outlives this test, so it goes back before
-        // anything else runs against it.
-        restore = () => runInDurableObject(stub, (later) => {
-          (later as unknown as TestableWorkspaceDO).env.DB = real;
-        });
-      });
-
-      // One publication that must sweep (`member_directory` is a retraction)
-      // and one that must not. The desktop discards any waterline at or below
-      // the last one it applied, so a publication that allocated first and then
-      // parked on the sweep would lose its payload — and every topic it named —
-      // to the cheaper one behind it.
-      const both = nextMessages(socket, 2);
-      try {
-        await Promise.all([
-          stub.publishSync(["member_directory"], WORKSPACE_ID, "wnam"),
-          stub.publishSync(["notes"], WORKSPACE_ID, "wnam"),
-        ]);
-      } finally {
-        await restore();
-      }
-      const waterlines = (await both)
-        .map((message) => Number(JSON.parse(String(message.data)).waterline));
-      expect(waterlines).toEqual([...waterlines].sort((left, right) => left - right));
-      expect(new Set(waterlines).size).toBe(2);
-    } finally {
-      socket.close(1000, "test complete");
-    }
-  });
-
-  it("closes a revoked listener on the work-stream state path too", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000504");
-    try {
-      const closed = nextClose(socket);
-      await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
-        .bind("2026-08-21T00:00:00.000Z", SESSION_ID).run();
-      // The other publish path. It carries the same viewer-visible fields —
-      // title, preview, unread — so it needs the same sweep, and it has no
-      // topic to judge, which makes this the interval-gated form. The object
-      // is fresh, so the interval has already elapsed.
-      await stub.applyWorkstreamDirectoryEffects({
+      const result = await stub.revokeSocketAccess({
+        reason: "workspace_membership_removed",
         workspaceId: WORKSPACE_ID,
-        envelopes: [effectEnvelope({
-          kind: "directory_common",
-          title: "Published while the session was gone",
-          description: "State path",
-          preview: "idle",
-          scope: "workspace",
-          state: "idle",
-          systemKind: null,
-          lastActivityAt: "2026-08-21T20:00:00.000Z",
-          completedAt: null,
-          archivedAt: null,
-        }, "00000000-0000-7000-8000-000000000505")],
+        userId: USER_ID,
+        sessionId: null,
       });
       expect((await closed).code).toBe(1008);
+      // The consumer carries the revocation onward from this list, so an empty
+      // directory and a missing directory must not look the same.
+      expect(Array.isArray(result.workstreamIds)).toBe(true);
     } finally {
       socket.close(1000, "test complete");
     }
   });
 
-  it("sweeps a suspended member out immediately when a retracting topic is published", async () => {
+  it("closes only the windows that presented a revoked session", async () => {
     await seedOpenAuthority();
+    const otherSessionId = `${SESSION_ID}-second`;
+    await env.DB.prepare(
+      `INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,
+    ).bind(otherSessionId, USER_ID, WORKSPACE_ID).run();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000503");
+    const revoked = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-000000000602");
+    const kept = await openWorkspaceSocket(
+      stub,
+      "00000000-0000-7000-8000-000000000603",
+      otherSessionId,
+    );
     try {
-      // Spend the interval first, so what follows cannot be the timed sweep.
-      const first = nextMessage(socket);
-      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
-      await first;
-
-      await env.DB.prepare(
-        `UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?`,
-      ).bind(WORKSPACE_ID, USER_ID).run();
-
-      // Inside the interval and with no retracting topic, the object does not
-      // re-ask: this payload still arrives. That is the cost the bound accepts.
-      const second = nextMessage(socket);
-      await stub.publishSync(["notes"], WORKSPACE_ID, "wnam");
-      expect(JSON.parse(String((await second).data))).toMatchObject({ topics: ["notes"] });
-
-      // `member_directory` is a retraction, so it sweeps whatever the interval
-      // says, and the payload that announced it is not delivered here.
-      const closed = nextClose(socket);
-      await stub.publishSync(["member_directory"], WORKSPACE_ID, "wnam");
+      const closed = nextClose(revoked);
+      const delivered = nextMessage(kept);
+      await stub.revokeSocketAccess({
+        reason: "session_revoked",
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        sessionId: SESSION_ID,
+      });
       expect((await closed).code).toBe(1008);
+      // The other window is untouched, and proves it by still receiving.
+      await stub.publishSync(["automations"], WORKSPACE_ID, "wnam");
+      expect(JSON.parse(String((await delivered).data))).toMatchObject({ type: "workspace_sync" });
     } finally {
-      socket.close(1000, "test complete");
+      revoked.close(1000, "test complete");
+      kept.close(1000, "test complete");
     }
+  });
+
+  it("names a work stream's substreams and blocks when its access is revoked", async () => {
+    await seedOpenAuthority();
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await fetchAndDrain(parent, "https://workstream.test/health");
+    await parent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [effectEnvelope({
+        kind: "directory_common",
+        title: "Revocation fan-out",
+        description: "Names its own children",
+        preview: "idle",
+        scope: "workspace",
+        state: "idle",
+        systemKind: null,
+        lastActivityAt: "2026-08-22T12:00:00.000Z",
+        completedAt: null,
+        archivedAt: null,
+      }, "00000000-0000-7000-8000-000000000604")],
+    });
+    const result = await parent.revokeSocketAccess({
+      reason: "workspace_membership_removed",
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      sessionId: null,
+    });
+    // The main substream keeps the historical name and is never in the
+    // directory, so a walk that only read the table would skip the one object
+    // holding the transcript.
+    expect(result.substreamIds).toContain("0");
+    expect(Array.isArray(result.blockIds)).toBe(true);
   });
 
   it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
