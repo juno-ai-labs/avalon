@@ -27,7 +27,6 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * One minute, applied to the resolved instant — so it binds an absolute `at`
@@ -671,11 +670,6 @@ export async function refreshAgentTimerAlarm(
   workstreamId: string,
   substreamId = "0",
 ): Promise<void> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase !== "durable_object_open") {
-    await refreshWorkspaceSchedule(env, workspaceId);
-    return;
-  }
   const agent = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
