@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DurableObjectMigrationCommandSchema,
   DurableObjectMigrationReportSchema,
+  durableObjectMigrationCommandQueue,
+  isDurableObjectMigrationCommandQueue,
   isOpaqueDurableObjectName,
 } from "./durable-object-migrations";
 
@@ -100,5 +103,70 @@ describe("DurableObjectMigrationReportSchema", () => {
       .toBe(false);
     expect(DurableObjectMigrationReportSchema.safeParse({ ...report, appEnv: "prod" }).success)
       .toBe(false);
+  });
+});
+
+describe("DurableObjectMigrationCommandSchema", () => {
+  const command = {
+    commandId: "0198f3a2-0000-7000-8000-000000000001",
+    runId: "0198f3a2-0000-7000-8000-000000000002",
+    className: "WorkspaceDO",
+    objectId: "a".repeat(64),
+    objectName: "global:00000000-0000-7000-8000-0000000000a1",
+    region: "global",
+    requestedAt: 1_700_000_000_000,
+  };
+
+  it("accepts a command the tracker would send", () => {
+    expect(DurableObjectMigrationCommandSchema.safeParse(command).success).toBe(true);
+    expect(DurableObjectMigrationCommandSchema
+      .safeParse({ ...command, objectName: null }).success).toBe(true);
+  });
+
+  /**
+   * A command crosses the same regional boundary a report does and clears the
+   * same bar. The name is carried for a log line only, so the day a Durable
+   * Object name grows a workspace slug this stops carrying it rather than
+   * quietly shipping it.
+   */
+  it("refuses a name that is not opaque", () => {
+    expect(DurableObjectMigrationCommandSchema
+      .safeParse({ ...command, objectName: "eu:acme-corporation:payroll" }).success).toBe(false);
+  });
+
+  it("refuses a malformed object ID, class name, or region", () => {
+    expect(DurableObjectMigrationCommandSchema
+      .safeParse({ ...command, objectId: "abc" }).success).toBe(false);
+    expect(DurableObjectMigrationCommandSchema
+      .safeParse({ ...command, className: "not a class" }).success).toBe(false);
+    expect(DurableObjectMigrationCommandSchema
+      .safeParse({ ...command, region: "apac" }).success).toBe(false);
+  });
+});
+
+describe("the forced migration command queues", () => {
+  it("names one queue per region", () => {
+    expect(durableObjectMigrationCommandQueue("global")).toBe("avalon-global-migration-commands");
+    expect(durableObjectMigrationCommandQueue("eu")).toBe("avalon-eu-migration-commands");
+  });
+
+  /**
+   * The dead-letter queues are the ones that matter. They carry the commands
+   * this protocol already failed to apply, so routing them back to the same
+   * consumer would retry the undeliverable forever.
+   */
+  it("recognizes both regions' queues and nothing beside them", () => {
+    expect([
+      durableObjectMigrationCommandQueue("global"),
+      durableObjectMigrationCommandQueue("eu"),
+    ].every(isDurableObjectMigrationCommandQueue)).toBe(true);
+
+    expect([
+      "avalon-global-migration-commands-dead-letter",
+      "avalon-eu-migration-commands-dead-letter",
+      "avalon-migration-reports",
+      "avalon-global-activities",
+      "avalon-global-access-revocations",
+    ].some(isDurableObjectMigrationCommandQueue)).toBe(false);
   });
 });

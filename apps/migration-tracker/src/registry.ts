@@ -21,8 +21,13 @@ import type { Env } from "./env";
 import { ObjectStatusSchema } from "./protocol";
 import type {
   ComponentSummary,
+  ForceableComponent,
   InventorySweep,
   MigrationEvent,
+  MigrationRun,
+  MigrationRunRequest,
+  MigrationTarget,
+  MigrationTargetSelection,
   NamespaceSummary,
   ObjectDetail,
   ObjectQuery,
@@ -47,6 +52,55 @@ const SWEEP_RETENTION = 200;
 const RECENT_EVENT_LIMIT = 25;
 const RECENT_FAILURE_LIMIT = 25;
 const OBJECT_EVENT_LIMIT = 100;
+const MIGRATION_RUN_RETENTION = 200;
+const MIGRATION_RUN_LIMIT = 25;
+
+/**
+ * The most objects one forced run will dispatch to.
+ *
+ * A ceiling on the fan-out rather than a capacity estimate. A queue takes 5,000
+ * messages a second and holds 25 GB, so the messages are not the constraint;
+ * what is, is that each one wakes a Durable Object, and an operator who picks
+ * the wrong class should not be able to cold-start the entire account from one
+ * form. Five thousand is above every class this account holds — the largest is
+ * in the hundreds — so in practice it caps nothing, and a run that does hit it
+ * says so on the page and in its own row rather than reporting a clean sweep of
+ * a class it only partly covered.
+ */
+const MIGRATION_RUN_TARGET_LIMIT = 5_000;
+
+/**
+ * Which region's Worker owns the objects a script name's namespace holds.
+ *
+ * The forced-migration command has to name a region, because that is what picks
+ * the queue, and the region an object reports is the one thing an *unreported*
+ * object does not have — which is exactly the object an operator most wants to
+ * force. The script name comes from the inventory sweep instead, and it always
+ * exists for an enumerated object.
+ *
+ * A second checked-in fact about `apps/api`, alongside `REPORTING_CLASSES`, and
+ * held to the same rule: it is a map rather than a pattern so that a Worker
+ * added to the account does not silently acquire a region. An object whose
+ * script is not here is counted as unroutable and shown, never guessed at.
+ */
+export const REGION_BY_SCRIPT_NAME: Readonly<Record<string, "global" | "eu">> = {
+  "avalon-api-global": "global",
+  "avalon-api-eu": "eu",
+};
+
+/**
+ * `COALESCE(reported region, region implied by the script name)`, as SQL.
+ *
+ * Built from the map above so the two cannot drift, and bound-parameter free:
+ * it is interpolated into statements that already interpolate
+ * `REPORTING_CLASS_LIST`, from the same kind of source — a checked-in constant,
+ * never anything a request carries.
+ */
+const RESOLVED_REGION = `COALESCE(o.region, CASE o.script_name${
+  Object.entries(REGION_BY_SCRIPT_NAME)
+    .map(([script, region]) => ` WHEN '${script}' THEN '${region}'`)
+    .join("")
+} END)`;
 
 type ObjectRow = {
   object_id: string;
@@ -708,6 +762,178 @@ export class MigrationRegistry extends DurableObject<Env> {
       truncatedNamespaces: parseJsonArray(row.truncated_namespaces).map(String),
       errorMessage: row.error_message,
     };
+  }
+
+  /**
+   * The classes an operator may force, per region, with the size of each run.
+   *
+   * Only the classes that run the reporter, because those are the ones the API
+   * Worker holds a `forceMigration` dispatcher for; a class outside that list
+   * has no schema to move. Only live objects, because forcing an `absent` one
+   * would address an ID that no longer has an object behind it and create an
+   * empty one — the opposite of what a migration pass is for.
+   *
+   * `behind`, `failed`, and `unreported` are carried beside the count because
+   * they are why somebody forces a class. A row of zeroes is a class that needs
+   * nothing done to it, which is worth being able to see before dispatching a
+   * few hundred wake-ups at it.
+   */
+  forceableComponents(): ForceableComponent[] {
+    return this.storage.sql.exec<{
+      class_name: string;
+      region: string;
+      objects: number;
+      behind: number;
+      failed: number;
+      unreported: number;
+    }>(
+      `${RESOLVED_OBJECTS}
+       SELECT class_name, region, COUNT(*) AS objects,
+              COALESCE(SUM(status = 'behind'), 0) AS behind,
+              COALESCE(SUM(status = 'failed'), 0) AS failed,
+              COALESCE(SUM(status = 'unreported'), 0) AS unreported
+         FROM (SELECT o.class_name, o.status, ${RESOLVED_REGION} AS region
+                 FROM resolved o
+                WHERE o.absent_since IS NULL
+                  AND o.class_name IN (${REPORTING_CLASS_LIST}))
+        WHERE region IS NOT NULL
+        GROUP BY class_name, region
+        ORDER BY class_name, region`,
+    ).toArray().map((row) => ({
+      className: row.class_name,
+      region: row.region === "eu" ? "eu" : "global",
+      objects: row.objects,
+      behind: row.behind,
+      failed: row.failed,
+      unreported: row.unreported,
+    }));
+  }
+
+  /**
+   * The objects one run will send a command to.
+   *
+   * Two numbers come back beside the list and both describe what the list is
+   * *not*. `matched` is every live object of the class before the cap, so a run
+   * that stopped at `MIGRATION_RUN_TARGET_LIMIT` reports the size of the class
+   * rather than the size of its own slice. `unroutable` is the objects whose
+   * region could not be resolved from either a report or a script name: a
+   * command picks a queue by region, so those have nowhere to go, and counting
+   * them is the difference between a run that covered a class and one that
+   * quietly skipped part of it.
+   */
+  migrationTargets(request: MigrationRunRequest): MigrationTargetSelection {
+    const regionFilter = request.region ?? null;
+    const matched = this.storage.sql.exec<{ matched: number; unroutable: number }>(
+      `SELECT COUNT(*) AS matched,
+              COALESCE(SUM(region IS NULL), 0) AS unroutable
+         FROM (SELECT ${RESOLVED_REGION} AS region
+                 FROM durable_objects o
+                WHERE o.absent_since IS NULL
+                  AND o.class_name = ?)
+        WHERE ?2 IS NULL OR region IS NULL OR region = ?2`,
+      request.className,
+      regionFilter,
+    ).toArray()[0] ?? { matched: 0, unroutable: 0 };
+
+    const targets = this.storage.sql.exec<{
+      object_id: string;
+      object_name: string | null;
+      region: string;
+    }>(
+      `SELECT object_id, object_name, region FROM (
+         SELECT o.object_id, o.object_name, ${RESOLVED_REGION} AS region
+           FROM durable_objects o
+          WHERE o.absent_since IS NULL
+            AND o.class_name = ?
+       )
+        WHERE region IS NOT NULL AND (?2 IS NULL OR region = ?2)
+        ORDER BY object_id
+        LIMIT ?3`,
+      request.className,
+      regionFilter,
+      MIGRATION_RUN_TARGET_LIMIT,
+    ).toArray().map((row): MigrationTarget => ({
+      objectId: row.object_id,
+      objectName: row.object_name,
+      region: row.region === "eu" ? "eu" : "global",
+    }));
+
+    const routable = matched.matched - matched.unroutable;
+    return {
+      targets,
+      matched: matched.matched,
+      unroutable: matched.unroutable,
+      truncated: routable > targets.length,
+    };
+  }
+
+  /**
+   * Record what one run asked for and what it reached.
+   *
+   * Written after the dispatch rather than before it, so the row describes
+   * messages the queue accepted rather than messages somebody intended to send.
+   * A dispatch that threw halfway is recorded too, with `status: "failed"` and
+   * the count that did land — a partial fan-out is the state an operator most
+   * needs to see, and the alternative is a run that vanishes.
+   */
+  recordMigrationRun(run: MigrationRun): void {
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec(
+        `INSERT INTO migration_runs (
+           run_id, class_name, region, requested_by, requested_at, matched_count,
+           dispatched_count, unroutable_count, truncated, status, error_message
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_id) DO NOTHING`,
+        run.runId,
+        run.className,
+        run.region,
+        run.requestedBy,
+        run.requestedAt,
+        run.matched,
+        run.dispatched,
+        run.unroutable,
+        run.truncated ? 1 : 0,
+        run.status,
+        run.errorMessage,
+      );
+      this.storage.sql.exec(
+        `DELETE FROM migration_runs WHERE id <= (SELECT MAX(id) - ? FROM migration_runs)`,
+        MIGRATION_RUN_RETENTION,
+      );
+    });
+  }
+
+  listMigrationRuns(limit: number = MIGRATION_RUN_LIMIT): MigrationRun[] {
+    return this.storage.sql.exec<{
+      run_id: string;
+      class_name: string;
+      region: string | null;
+      requested_by: string;
+      requested_at: number;
+      matched_count: number;
+      dispatched_count: number;
+      unroutable_count: number;
+      truncated: number;
+      status: string;
+      error_message: string | null;
+    }>(
+      `SELECT run_id, class_name, region, requested_by, requested_at, matched_count,
+              dispatched_count, unroutable_count, truncated, status, error_message
+         FROM migration_runs ORDER BY id DESC LIMIT ?`,
+      limit,
+    ).toArray().map((row): MigrationRun => ({
+      runId: row.run_id,
+      className: row.class_name,
+      region: row.region === "global" || row.region === "eu" ? row.region : null,
+      requestedBy: row.requested_by,
+      requestedAt: row.requested_at,
+      matched: row.matched_count,
+      dispatched: row.dispatched_count,
+      unroutable: row.unroutable_count,
+      truncated: row.truncated === 1,
+      status: row.status === "failed" || row.status === "empty" ? row.status : "dispatched",
+      errorMessage: row.error_message,
+    }));
   }
 
   /**

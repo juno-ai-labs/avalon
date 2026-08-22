@@ -136,3 +136,76 @@ export type DurableObjectMigrationReport = z.infer<typeof DurableObjectMigration
  * on `@cloudflare/workers-types`.
  */
 export const DURABLE_OBJECT_MIGRATION_REPORT_QUEUE_BINDING = "MIGRATION_REPORT_QUEUE";
+
+/**
+ * The command that asks one Durable Object to be on the running build's schema.
+ *
+ * This travels the other way to the report above: the tracker sends it, and the
+ * regional API Worker consumes it. An operator picks a class on the tracker's
+ * **Force a migration** page, the tracker turns the objects it knows of into one
+ * message each, and the region's own Worker calls `forceMigration` on the object
+ * the message names. `docs/durable-object-migration-tracking.md` owns the flow.
+ *
+ * One message per object, rather than one message naming a class, is the whole
+ * design. A migration is applied by *waking* an object — the schema runs in the
+ * constructor — so the work is inherently per instance, and a queue is what
+ * turns "wake eight hundred objects" into a paced stream the platform meters
+ * instead of a fan-out one invocation has to hold open.
+ *
+ * It carries the same shapes the report does and clears the same bar: a region,
+ * an opaque object identifier, an opaque name, and a class name. Nothing here
+ * names a workspace, a person, or anything a workspace owns, which is what lets
+ * one account-wide tracker address both regions' fleets.
+ */
+export const DurableObjectMigrationCommandSchema = z.object({
+  /**
+   * Identifies this message. The consumer is naturally idempotent — forcing an
+   * object twice wakes it twice and reports twice — so this is not a dedupe
+   * key; it is what ties a log line to the one message that produced it.
+   */
+  commandId: z.string().uuid(),
+  /** The operator run this message belongs to, as recorded by the tracker. */
+  runId: z.string().uuid(),
+  /**
+   * Selects the Durable Object namespace binding to address the object through.
+   * The consumer holds the map; a class it does not know is dropped rather than
+   * guessed at.
+   */
+  className: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/u),
+  /**
+   * The object to wake, addressed by ID rather than by name. The ID is what
+   * both of the tracker's sources produce, it is the only identifier an object
+   * discovered by the inventory sweep has, and it already carries the
+   * jurisdiction the object lives in.
+   */
+  objectId: DurableObjectIdSchema,
+  /** Carried for the consumer's log only; the ID is what addresses the object. */
+  objectName: OpaqueDurableObjectNameSchema.nullable(),
+  /**
+   * The region whose Worker must handle this. The queue already implies it —
+   * these are split per region because only the region's own Worker holds
+   * bindings to its objects — but a message that states it catches a misrouted
+   * producer that the queue's name never would.
+   */
+  region: z.enum(["global", "eu"]),
+  requestedAt: z.number().int().positive(),
+});
+export type DurableObjectMigrationCommand = z.infer<typeof DurableObjectMigrationCommandSchema>;
+
+/**
+ * The queue each region's API Worker consumes forced-migration commands from.
+ *
+ * Split per region, unlike `avalon-migration-reports`, and for the reason
+ * `docs/choosing-queues-or-rpc.md` gives as decisive: a queue has exactly one
+ * consumer, and the work here can only be done by the Worker that holds
+ * bindings to the objects. The reports converge on one destination and so share
+ * one queue; the commands diverge to two fleets and cannot.
+ */
+export function durableObjectMigrationCommandQueue(region: "global" | "eu"): string {
+  return `avalon-${region}-migration-commands`;
+}
+
+/** True for a queue carrying forced-migration commands, in either region. */
+export function isDurableObjectMigrationCommandQueue(queue: string): boolean {
+  return queue.endsWith("-migration-commands");
+}

@@ -383,8 +383,9 @@ copy/delete count that does not match the plan.
 ### The Durable Object migration tracker
 
 `avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
-at `migrations.internal.rallywith.ai` and receives a migration report from
-every Durable Object in both API Workers.
+at `migrations.internal.rallywith.ai`, receives a migration report from every
+Durable Object in both API Workers, and can send a forced-migration command back
+to any of them.
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
 owns the design; this is the provisioning and deployment procedure.
 
@@ -426,6 +427,22 @@ There is one report queue for both regions, not one per region as with the
 activity queues: every report converges on the single registry object regardless
 of where it came from, so splitting the transport would isolate nothing. The
 region travels in the message body.
+
+The commands going the other way are split — `avalon-global-migration-commands`
+and `avalon-eu-migration-commands` — because a queue has exactly one consumer
+and only the region's own Worker can address its objects. So the tracker holds
+both producer bindings and each regional API file holds one consumer. Neither
+queue needs creating by hand: they are declared in those Wrangler files like
+every other, and the preflight above creates whichever the account does not
+hold. Their dead-letter queues are left to the platform in the usual way, and
+both are worth watching — a message in one is an object a forced migration
+could not move, which is the count of how many are stuck at no instrumentation
+cost.
+
+Deploy order still does not matter. The tracker's producer bindings are optional
+at runtime, so a tracker deployed before the API Workers have their consumers
+reports the region as unreachable on its page rather than dispatching into
+nothing.
 
 Deploy in any order:
 

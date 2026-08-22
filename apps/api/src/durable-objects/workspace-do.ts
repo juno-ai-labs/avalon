@@ -59,12 +59,12 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
-import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
+import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
@@ -1005,13 +1005,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.initialized = state.blockConcurrencyWhile(async () => {
-      await withMigrationReport({
-        state,
-        env,
-        component: MIGRATION_COMPONENT,
-        className: "WorkspaceDO",
-        latestVersion: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
-      }, () => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
@@ -1022,7 +1016,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
-  protected override scheduleReady(): Promise<void> {
+  protected override migrationPlan(): DurableObjectMigrationPlan {
+    return {
+      component: MIGRATION_COMPONENT,
+      className: "WorkspaceDO",
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+    };
+  }
+
+  protected override migrationsReady(): Promise<void> {
     return this.initialized;
   }
 

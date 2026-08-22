@@ -11,6 +11,7 @@ import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
 import type {
   MigrationEvent,
+  MigrationsOverview,
   ObjectDetail,
   ObjectQuery,
   ObjectStatus,
@@ -139,6 +140,16 @@ const STYLES = `
   .banner { border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;
             background: var(--behind-bg); color: var(--behind); }
   .banner.banner-bad { background: var(--failed-bg); color: var(--failed); }
+  /* The run an operator has just started, so the redirect lands on something
+     they can see rather than on a list they have to search. */
+  tr.highlight td { background: var(--behind-bg); }
+  .run-panel { padding: 16px; }
+  .run-panel form { margin-bottom: 0; }
+  /* var(--panel) rather than white: the accent inverts between the two schemes,
+     so a fixed foreground is legible against one of them and washed out
+     against the other. */
+  .run-panel button { background: var(--accent); color: var(--panel); border-color: transparent; }
+  .note { color: var(--muted); font-size: 13px; margin: 12px 0 0; max-width: 72ch; }
 `;
 
 export function layout(
@@ -162,6 +173,7 @@ export function layout(
         <a href="/">Overview</a>
         <a href="/objects">Objects</a>
         <a href="/objects?status=failed">Failures</a>
+        <a href="/migrations">Force a migration</a>
       </nav>
       <span class="who">${principal ?? ""}</span>
     </header>
@@ -446,6 +458,131 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
           ? html`<p class="empty">This object has never reported. The inventory sweep found it,
               and it has not woken since.</p>`
           : eventTable(detail.events, false)}
+      </div>
+    </section>`;
+}
+
+/**
+ * The one page on this site that writes something.
+ *
+ * It is deliberately plain and deliberately explicit about size. Forcing a
+ * class wakes every live object in it, so the number of objects a choice would
+ * reach is rendered next to the choice rather than discovered afterwards, and
+ * the reasons somebody would force a class — objects behind, failed, or never
+ * heard from — are on the same row.
+ */
+export function migrationsPage(
+  overview: MigrationsOverview,
+  highlightRunId: string | null,
+  problem?: string,
+): HtmlEscapedString | Promise<HtmlEscapedString> {
+  const classes = [...new Set(overview.components.map((component) => component.className))].sort();
+  const unreachable = (["global", "eu"] as const)
+    .filter((region) => !overview.dispatchableRegions.includes(region));
+  return html`
+    ${problem ? html`<div class="banner banner-bad">${problem}</div>` : ""}
+    ${unreachable.length === 0
+      ? ""
+      : html`<div class="banner">This deployment holds no command queue for
+          ${unreachable.join(" or ")}, so objects in
+          ${unreachable.length === 1 ? "that region" : "those regions"} cannot be
+          reached. They are counted as unroutable rather than sent.</div>`}
+
+    <section>
+      <h2>Force a migration</h2>
+      <div class="panel">
+        <div class="run-panel">
+        <form class="filters" method="post" action="/migrations">
+          <label>Class
+            <select name="className" required>
+              ${classes.length === 0
+                ? html`<option value="">no class has been enumerated yet</option>`
+                : classes.map((className) => html`<option value="${className}">${className}</option>`)}
+            </select>
+          </label>
+          <label>Region
+            <select name="region">
+              <option value="">both</option>
+              ${overview.dispatchableRegions.map((region) => html`
+                <option value="${region}">${region}</option>`)}
+            </select>
+          </label>
+          <button type="submit" ${classes.length === 0 ? raw("disabled") : ""}>
+            Migrate every object
+          </button>
+        </form>
+        <p class="note">Every live object of the class is sent one message, and each
+          message wakes that object so it applies whatever its schema ledger is
+          missing. Objects already marked absent are not woken. Nothing here is
+          instant: the objects report back as they wake, and the
+          <a href="/">overview</a> is where that arrives.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>What a run would reach</h2>
+      <div class="panel scroll">
+        ${overview.components.length === 0
+          ? html`<p class="empty">No inventory sweep has enumerated a migrating class yet.</p>`
+          : html`<table>
+              <thead>
+                <tr>
+                  <th>Class</th><th>Region</th><th>Objects</th><th>Behind</th>
+                  <th>Failed</th><th>Unreported</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${overview.components.map((component) => html`
+                  <tr>
+                    <td>${component.className}</td>
+                    <td class="muted">${component.region}</td>
+                    <td>${component.objects}</td>
+                    <td>${component.behind > 0
+                      ? html`<span class="pill behind">${component.behind}</span>`
+                      : "0"}</td>
+                    <td>${component.failed > 0
+                      ? html`<span class="pill failed">${component.failed}</span>`
+                      : "0"}</td>
+                    <td class="muted">${component.unreported}</td>
+                  </tr>`)}
+              </tbody>
+            </table>`}
+      </div>
+    </section>
+
+    <section>
+      <h2>Recent runs</h2>
+      <div class="panel scroll">
+        ${overview.runs.length === 0
+          ? html`<p class="empty">No migration has been forced from this site.</p>`
+          : html`<table>
+              <thead>
+                <tr>
+                  <th>Started</th><th>Class</th><th>Region</th><th>Dispatched</th>
+                  <th>Unroutable</th><th>Status</th><th>By</th><th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${overview.runs.map((run) => html`
+                  <tr class="${run.runId === highlightRunId ? "highlight" : ""}">
+                    <td class="muted">${timestamp(run.requestedAt)}</td>
+                    <td>${run.className}</td>
+                    <td class="muted">${run.region ?? "both"}</td>
+                    <td class="mono">${run.dispatched} of ${run.matched}</td>
+                    <td class="muted">${run.unroutable}</td>
+                    <td><span class="pill ${run.status === "failed" ? "failed" : "current"}">
+                      ${run.status}</span></td>
+                    <td class="muted">${run.requestedBy}</td>
+                    <td class="failure">
+                      ${run.truncated
+                        ? html`<strong>capped — the class holds more objects than one run
+                            sends; run it again to continue.</strong> `
+                        : ""}
+                      ${run.errorMessage ?? ""}</td>
+                  </tr>`)}
+              </tbody>
+            </table>`}
       </div>
     </section>`;
 }

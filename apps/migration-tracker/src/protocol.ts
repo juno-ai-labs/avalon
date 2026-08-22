@@ -199,3 +199,75 @@ export interface InventoryObject {
   objectId: string;
   hasStoredData: boolean;
 }
+
+/**
+ * What an operator asked for on the **Force a migration** page.
+ *
+ * The class is the unit because a migration belongs to a class: one schema
+ * list, one component key, one head version. The region is optional and means
+ * "both" when absent, which is the ordinary case — the same classes are
+ * deployed in both Workers and a schema change lands in both.
+ */
+export const MigrationRunRequestSchema = z.object({
+  className: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/u),
+  region: z.enum(["global", "eu"]).nullish(),
+});
+export type MigrationRunRequest = z.infer<typeof MigrationRunRequestSchema>;
+
+/** One object a forced migration will be sent to, and the region that owns it. */
+export interface MigrationTarget {
+  objectId: string;
+  objectName: string | null;
+  region: "global" | "eu";
+}
+
+/**
+ * The objects a run will reach, and everything about it that is not those.
+ *
+ * `matched` counts every live object of the class before the cap, so a
+ * truncated run reports the size it could not cover rather than the size it
+ * did. `unroutable` counts the objects whose region could not be resolved: a
+ * command is addressed to a region's queue, so an object that has never
+ * reported and whose script name is unrecognised has nowhere to be sent.
+ */
+export interface MigrationTargetSelection {
+  targets: MigrationTarget[];
+  matched: number;
+  unroutable: number;
+  truncated: boolean;
+}
+
+/** One class an operator may force, per region, with what it would reach. */
+export interface ForceableComponent {
+  className: string;
+  region: "global" | "eu";
+  /** Live objects of this class in this region — the size of a run. */
+  objects: number;
+  behind: number;
+  failed: number;
+  unreported: number;
+}
+
+/** One recorded run, as the page lists it. */
+export interface MigrationRun {
+  runId: string;
+  className: string;
+  /** Null means every region the class runs in. */
+  region: "global" | "eu" | null;
+  requestedBy: string;
+  requestedAt: number;
+  matched: number;
+  dispatched: number;
+  unroutable: number;
+  truncated: boolean;
+  status: "dispatched" | "empty" | "failed";
+  errorMessage: string | null;
+}
+
+/** Everything the **Force a migration** page renders. */
+export interface MigrationsOverview {
+  components: ForceableComponent[];
+  runs: MigrationRun[];
+  /** Regions whose command queue this Worker actually holds a binding for. */
+  dispatchableRegions: ("global" | "eu")[];
+}
