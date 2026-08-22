@@ -36,19 +36,24 @@ export interface SchemaSnapshot {
 }
 
 /**
- * Replaying all 95 migrations costs ~800ms, and the suite asks for a fresh
- * database once per test — which was the whole runtime of the Node suite, not a
- * part of it. The migrations spend that time rebuilding the same tables over and
- * over: every `ALTER`, every copy-into-a-new-shape-and-rename, every index
- * dropped and recreated a dozen files later. None of that history is observable
- * once the last file has run; only the shape it ends in is.
+ * Replaying every checked-in migration costs ~800ms, and the suite asks for a
+ * fresh database once per test — which was the whole runtime of the Node suite,
+ * not a part of it. The migrations spend that time rebuilding the same tables
+ * over and over: every `ALTER`, every copy-into-a-new-shape-and-rename, every
+ * index dropped and recreated a dozen files later. None of that history is
+ * observable once the last file has run; only the shape it ends in is.
  *
- * So the sequence runs once per worker process and the *result* is what gets
- * reproduced per test — the surviving `sqlite_master` entries replayed directly
- * against an empty database, which lands in ~7ms. The schema is still derived
- * from the checked-in migrations on every run rather than transcribed into a
- * fixture, so it cannot drift from them: a migration that changes a column
- * changes this snapshot in the same run, with nothing to keep in sync.
+ * So the sequence runs once per run, in `test/global-setup.ts`, and the *result*
+ * is what gets reproduced per test — the surviving `sqlite_master` entries
+ * replayed directly against an empty database, which lands in ~7ms. Once per
+ * *run* rather than per worker: Vitest gives each file its own module registry,
+ * so a cache living in this module would be rebuilt by every file that opens a
+ * database. See `migrated-schema-snapshots.ts`.
+ *
+ * The schema is still derived from the checked-in migrations on every run rather
+ * than transcribed into a fixture, so it cannot drift from them: a migration
+ * that changes a column changes this snapshot in the same run, with nothing to
+ * keep in sync.
  */
 export function captureSchemaSnapshot(template: DatabaseSync): SchemaSnapshot {
   // An FTS5 table is declared once and brings its own `_data`/`_idx`/`_config`

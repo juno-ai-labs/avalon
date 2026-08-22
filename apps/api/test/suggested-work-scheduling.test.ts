@@ -1,6 +1,5 @@
 import { asWorkspaceId } from "@avalon/contracts";
-import type { DatabaseSync} from "node:sqlite";
-import { type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import {
