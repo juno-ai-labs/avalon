@@ -443,25 +443,37 @@ export class WorkspaceService {
     if (member.role === "owner" && this.auth.role !== "owner") {
       throw new ApiError(403, "forbidden", "Only an owner can remove an owner");
     }
-    // The delete re-asserts the caller's own standing, because the checks above
-    // read it in an earlier round trip. Two owners removing each other at the
-    // same time both pass those checks — and without this clause both deletes
-    // land, leaving a workspace with no owner at all. SQLite serializes the two
-    // statements, so whichever runs second finds its actor already gone and
-    // removes nothing. There is still no last-owner count: this is what makes
-    // "the remover is an active owner who remains one" true under concurrency,
-    // which is the only condition it was ever in doubt under.
+    // The delete re-asserts both roles the checks above read, because it reads
+    // them in an earlier round trip and D1 auto-commits in between.
+    //
+    // The caller's: two owners removing each other at the same time both pass
+    // those checks, and without this clause both deletes land, leaving a
+    // workspace with no owner at all. SQLite serializes the two statements, so
+    // whichever runs second finds its actor already gone and removes nothing.
+    // There is still no last-owner count — this is what makes "the remover is
+    // an active owner who remains one" true under concurrency.
+    //
+    // The target's: an admin may remove a member but not an owner. Reading the
+    // target as a member and deleting unconditionally lets a promotion land in
+    // between, and the admin removes an owner they were never allowed to touch.
+    // Either lost race removes nothing and answers 409.
     const removal = await this.env.DB.prepare(
       `DELETE FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ?
+        WHERE workspace_id = ? AND user_id = ? AND role = ?
           AND EXISTS (
             SELECT 1 FROM workspace_members actor
              WHERE actor.workspace_id = ? AND actor.user_id = ?
                AND actor.status = 'active' AND actor.role = ?
           )
         RETURNING user_id`,
-    ).bind(this.auth.workspaceId, userId, this.auth.workspaceId, this.auth.userId, this.auth.role)
-      .first<{ user_id: string }>();
+    ).bind(
+      this.auth.workspaceId,
+      userId,
+      member.role,
+      this.auth.workspaceId,
+      this.auth.userId,
+      this.auth.role,
+    ).first<{ user_id: string }>();
     if (!removal) {
       // Either the caller's own standing went away underneath them, or somebody
       // else removed this person first. Both mean this request did not do what
