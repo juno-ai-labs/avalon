@@ -30,7 +30,7 @@ import {
   workstreamSummaryState,
 } from './workstream-state-store';
 import { applyVersionedSidebarList } from './sidebar-list-store';
-import { mergeCachedWorkstreamPage, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
@@ -231,19 +231,29 @@ export function WorkspaceSocketProvider({
      * replacing it: a reader who had scrolled keeps the pages below it instead
      * of watching the list collapse and refill. The cost of merging is that a
      * cached row page one no longer returns is kept, and a work stream archived
-     * while the socket was away is exactly that. Page one cannot say which of
-     * the two it is — a later page the reader scrolled to, or a tombstone — so
-     * when any cached row is unaccounted for, the directory invalidation is
-     * left to run and the query's own full walk decides. On a cold connect
-     * there is nothing resident, the merge is a replacement, and no refetch is
-     * asked for; that is the round trip this payload exists to remove.
+     * while the socket was away is exactly that.
+     *
+     * A payload with no `nextCursor` is not page one, it is the whole
+     * directory, so a resident row missing from it is a tombstone with no other
+     * reading and the merge is replaced by the payload outright. Otherwise page
+     * one cannot say which of the two an unaccounted-for row is — a later page
+     * the reader scrolled to, or a tombstone — and the directory invalidation
+     * is left to run so the query's own full walk decides. Deciding that here
+     * would mean reproducing the server's `last_activity_at DESC,
+     * workstream_id` ordering on the client, a second copy of the cursor
+     * arithmetic that can drift from the first.
+     *
+     * A cold connect has nothing resident either way, so it asks for nothing;
+     * that is the round trip this payload exists to remove.
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
       const page = applyDirectoryPage(queryClient, sidebar.workstreams);
       const returned = new Set(page.items.map((workstream) => workstream.id));
       const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
         .some((workstream) => !returned.has(workstream.id));
-      mergeCachedWorkstreamPage(queryClient, page.items);
+      const wholeDirectory = page.nextCursor === null;
+      if (wholeDirectory) setCachedWorkstreams(queryClient, () => page.items);
+      else mergeCachedWorkstreamPage(queryClient, page.items);
       applyVersionedSidebarList(
         queryClient,
         'automations',
@@ -255,7 +265,7 @@ export function WorkspaceSocketProvider({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
       }));
-      return unaccountedFor;
+      return unaccountedFor && !wholeDirectory;
     };
     const sendPending = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
