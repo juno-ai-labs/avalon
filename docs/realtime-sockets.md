@@ -514,12 +514,22 @@ refetch, skipped to save a round trip, was the only thing retiring a work stream
 archived while the socket was away: page one merges rather than replaces, so the
 tombstone survived.
 
+A payload with no `nextCursor` needs no refetch at all: it is the whole
+directory rather than page one, so a resident row missing from it has only one
+reading and is dropped outright. The ledger the pushed lists are ordered by is
+also pinned against garbage collection — nothing observes it, so React Query
+would have collected it after five idle minutes and reset the guard to -1,
+leaving the lists looking right while the total order they depend on quietly
+stopped holding.
+
 **Considered and rejected:** Reproducing the server's `last_activity_at DESC,
 workstream_id` ordering on the client to decide whether an unaccounted-for row
 belongs to a later page — it duplicates the cursor arithmetic in a second place
 that can drift from it, to save a request that only a reader who has scrolled,
 on a reconnect, will pay. Letting the client ask instead keeps one authority for
-the ordering. A future change must not restore the unconditional skip: a cold
+the ordering. Also rejected: keeping the waterlines in a module-level `Map`
+instead of pinning the cache entry, which leaks state between workspaces and
+between tests. A future change must not restore the unconditional skip: a cold
 connect has nothing resident and still pays nothing, which is the case the
 payload exists for.
 

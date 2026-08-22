@@ -536,10 +536,66 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.open());
     invalidations.mockClear();
 
+    // A `nextCursor` means this really is page one, so the resident row could
+    // still be a later page the reader had scrolled to.
     act(() => socket.message({
       type: 'workspace_sync',
       eventId: '00000000-0000-7000-8000-00000000001b',
       waterline: 12,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: {
+          directoryWaterline: 1,
+          nextCursor: '1755460800000:00000000-0000-7000-8000-0000000000aa',
+          stateVersions: [],
+          items: [],
+        },
+        automations: { waterline: 0, items: [] },
+        notes: { waterline: 0, items: [] },
+      },
+    }));
+
+    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
+    expect(roots).toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
+  });
+
+  it('drops a resident row the whole directory no longer lists, without a refetch', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, () => [summary({
+      id: '00000000-0000-7000-8000-0000000000ff',
+      title: 'Archived while the socket was away',
+    })]);
+    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    invalidations.mockClear();
+
+    // No `nextCursor`: the payload is not page one, it is the whole directory.
+    // A resident row missing from it has no second reading, so it goes here and
+    // the refetch that would have decided is not worth asking for.
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-00000000001c',
+      waterline: 13,
       occurredAt: '2026-08-17T20:00:00.000Z',
       topics: ['workstream_directory'],
       reason: 'initial',
@@ -550,8 +606,9 @@ describe('WorkspaceSocketProvider', () => {
       },
     }));
 
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
     const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
-    expect(roots).toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
+    expect(roots).not.toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
   });
 
   it('takes the sidebar off a resume whose waterline is not newer', async () => {
