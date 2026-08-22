@@ -6,7 +6,10 @@ import type { Env } from "../../env";
 import { numericEnv } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
-import { attachWorkstreamRuntimeResource } from "../workstream-object-client";
+import {
+  attachWorkstreamRuntimeResource,
+  type WorkstreamRuntimeResourceAttacher,
+} from "../workstream-object-client";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalResourceBridge } from "./runtime";
@@ -73,11 +76,14 @@ async function invocationFor(database: D1Database, context: HarnessToolContext):
 export function createTerminalResourceBridge(
   env: Env,
   terminalPort: TerminalPortFactory,
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
   // no query may join across those object-local databases.
   const workspace = env.DB;
+  const attachResource = inObjectResourceAttacher
+    ?? ((input) => attachWorkstreamRuntimeResource(env, input));
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(env.DB, {
@@ -266,7 +272,7 @@ export function createTerminalResourceBridge(
             WHERE workstream_id = ? AND resource_id = ?`,
         ).bind(context.workstreamId, existing.id).first<{ linked: number }>();
         if (link) return publishedOutput(existing, bytes.byteLength);
-        await attachWorkstreamRuntimeResource(env, {
+        await attachResource({
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
           resourceId: existing.id,
@@ -325,7 +331,7 @@ export function createTerminalResourceBridge(
             timestamp,
             timestamp,
           ).run();
-        await attachWorkstreamRuntimeResource(env, {
+        await attachResource({
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
           resourceId,

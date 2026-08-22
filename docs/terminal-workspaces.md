@@ -421,6 +421,49 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-22 — Resident agents keep Terminal authority in their owning event
+
+**What changed:** A Bind loop already running inside the main `SubstreamAgent`
+receives an in-object `TerminalPortFactory` and resource-link attacher. Terminal
+coordination, task receipts, repository selection/bootstrap, resource
+publication, and publication grants therefore use the same local operation and
+product mutation bodies as their RPC endpoints without RPCing back into the
+object that is currently executing them. Worker and scheduler callers still use
+the typed RPC ports. Both Terminal paths retain the same identity check,
+`commitRuntimeMutation` directory effect, typed not-committed failure, and
+post-commit alarm scheduling boundary; generated-resource links retain
+`WorkstreamObjectProductService.attachRuntimeResource` and its regional effect.
+The local port uses the identity requested at the factory boundary, and both
+local mutation bodies reject any object whose external substream ID is not the
+main child `0`. Plugin construction accepts the local Terminal and resource
+boundaries only as a complete pair, so future harness wiring cannot localize
+one while silently leaving the other on same-object RPC.
+
+**Why:** The production check after #224 deployed still completed the first
+command and failed the second before `terminal_tool_finished`. The live trace
+showed the alarm owned the complete run from its first instruction, so no
+heartbeat ever joined it; instead, the first command generated a chain of
+nested `executeTerminalOperation` events against the same object. Returning
+from those self-RPC events and then resuming receipt, D1, and provider work in
+the outer alarm recreated the request-context violation that the heartbeat fix
+had removed in the opposite event ordering.
+
+**Considered and rejected:** Another retry, extending leases, suppressing the
+receipt failure, or moving Terminal state back to D1. Those respectively repeat
+an unsafe write workflow, leave request ownership unchanged, hide the safety
+fence, or undo the object-authority cutover. Calling raw storage directly was
+also rejected because it would skip directory effects and post-commit alarm
+semantics; the local port uses the same operation boundary as RPC.
+
+**Consequences:** A resident main-child run performs sequential Terminal
+operations and generated-resource attachment in one Durable Object event and no
+longer pays or crosses a self-RPC per storage call. Non-main substreams and
+external callers keep the serialized typed ports, and real-workerd plus plugin
+integration tests pin both local authority paths and their propagation through
+Terminal setup, resource publication, and repository backup. A future wiring
+error cannot silently create a second Terminal or resource-link authority in a
+non-main child.
+
 ### 2026-08-21 — Production recovery distinguishes execution, persistence, and commit state
 
 **What changed:** Keep-alive alarms no longer join an already active agent

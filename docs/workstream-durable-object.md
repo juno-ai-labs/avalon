@@ -1035,6 +1035,44 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
+
+**What changed:** The main `SubstreamAgent` exposes its resident Bind execution
+to the Terminal stack through an in-object Terminal port and resource-link
+attacher. The Terminal port dispatches into the same identity-fenced
+`runTerminalOperation` used by `/internal/terminal`, so transaction rollback,
+directory outbox publication, stable failures, and alarm scheduling remain
+identical while the executing alarm stays the sole request context. Generated
+resource publication and repository backup dispatch into the same
+`WorkstreamObjectProductService.attachRuntimeResource` body used by the resource
+RPC. Repository helpers receive both resident boundaries rather than quietly
+constructing new remote ones.
+The factory forwards its caller-supplied workspace/work-stream identity, and
+both direct mutation bodies independently fence on external substream ID `0`.
+Terminal plugin construction rejects a partial resident boundary rather than
+falling one of the two paths back to same-object RPC.
+
+**Why:** Post-deploy verification of #224 proved the active alarm was the
+original drain owner for the whole 25-second failed run. It never encountered
+the inverse heartbeat ordering covered by the earlier fix. The trace instead
+showed repeated same-object Terminal RPC events during the successful first
+command, followed by a second tool failing before its executor log. The
+resident loop already had an in-object runtime-SQL executor for this reason;
+Terminal authority was the remaining self-call path.
+
+**Considered and rejected:** Treating self-RPC as harmless because Durable
+Objects serialize storage, or bypassing `commitRuntimeMutation` with direct
+storage calls. Serialization does not make promises and I/O portable between
+events, while a raw call would strand directory deadlines and blur the
+pre-/post-commit retry contract.
+
+**Consequences:** Worker-originated and non-main-substream calls still cross the
+RPC boundary to the main child, but a run executing inside that authority never
+leaves and re-enters it for Terminal state or generated-resource links. The
+operation authority stays single-writer without transferring later D1/provider
+work between Durable Object events, and an accidental local port on another
+child fails closed instead of creating split product state.
+
 ### 2026-08-21 — Heartbeats never join a live run's request context
 
 **What changed:** Both agent objects defer an alarm drain request when their
