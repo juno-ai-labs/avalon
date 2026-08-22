@@ -70,7 +70,12 @@ export function applyWorkstreamRegionalEnvelope(
       }
       return {
         replayed: true,
-        notificationIntentId: effect.kind === "mention_notification" ? effect.intentId : null,
+        // Every person notification, not only a mention. The caller schedules
+        // delivery from this id, so returning null for a kind that has one
+        // means a redelivery is acknowledged without anything being sent —
+        // which is exactly the path a transient Slack or email failure takes
+        // to get its second attempt.
+        notificationIntentId: isPersonNotificationEffect(effect) ? effect.intentId : null,
       };
     }
     let notificationIntentId: string | null = null;
