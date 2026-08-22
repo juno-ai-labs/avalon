@@ -2975,8 +2975,8 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       corePlugins: [testCorePlugin([tool])],
-      // A host writes the receipt while handling `tool_started`, so a harness
-      // that asked any earlier would read whatever the previous attempt left.
+      // A host writes the receipt while handling `tool_started`, so before
+      // that event it has nothing to answer with.
       resolveToolEffectIntentId: (toolCallId) => {
         resolvedAfterStarted = startedSeen;
         return `receipt-for-${toolCallId}`;

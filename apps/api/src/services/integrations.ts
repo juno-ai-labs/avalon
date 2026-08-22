@@ -2161,12 +2161,7 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
-  // The receipt row each dispatched tool call was planned against, so a tool
-  // that starts provider-side work can key it to that row without reading
-  // `tool_invocations` itself. Bind asks for one immediately after the
-  // `tool_started` event that fills this in, and tool calls within a turn may
-  // run concurrently, so this is keyed rather than a single latest slot.
-  const toolEffectIntents = new Map<string, string>();
+  const toolEffectIntents = createToolEffectIntents();
   const attachmentGrounding = new AttachmentGroundingGuard();
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
@@ -2760,7 +2755,7 @@ export async function runWorkstreamHarness(
       }
       return null;
     },
-    resolveToolEffectIntentId: (toolCallId) => toolEffectIntents.get(toolCallId),
+    resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
       if (Date.now() - lastStopCheck > 750) {
         lastStopCheck = Date.now();
@@ -2858,7 +2853,7 @@ export async function runWorkstreamHarness(
               : {}),
             mode,
           });
-          toolEffectIntents.set(event.toolCallId, receipt.invocationId);
+          toolEffectIntents.record(event.toolCallId, receipt.invocationId);
           if (receipt.state === "ambiguous_external_write") {
             ambiguousToolOutcome = true;
             const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
@@ -3721,7 +3716,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         );
 
         let childText = "";
-        const childToolEffectIntents = new Map<string, string>();
+        const childToolEffectIntents = createToolEffectIntents();
         const childModelRouting = await resolveAgentModelRouting(options.env, "inline_child", {
           workspaceId: childInput.workspaceId,
           workstreamId: childInput.workstreamId,
@@ -3921,7 +3916,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               stream_seq: event.streamSeq,
             });
           },
-          resolveToolEffectIntentId: (toolCallId) => childToolEffectIntents.get(toolCallId),
+          resolveToolEffectIntentId: childToolEffectIntents.resolve,
           onEvent: async (event) => {
             switch (event.type) {
               case "stream_delta":
@@ -3962,7 +3957,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   mode,
                 });
                 await assertChildOwned();
-                childToolEffectIntents.set(event.toolCallId, receipt.invocationId);
+                childToolEffectIntents.record(event.toolCallId, receipt.invocationId);
                 if (receipt.state === "ambiguous_external_write") {
                   throw new Error("tool_receipt_input_mismatch");
                 }
@@ -5923,6 +5918,34 @@ function isLoadableBuiltinHarnessPlugin(
     && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
 }
 
+/**
+ * The receipt each dispatched tool call was planned against.
+ *
+ * A tool that starts provider-side work keys it to the receipt row rather than
+ * to the call coordinate, so a resumed attempt reattaches instead of starting
+ * a second one. The host has that id in hand from `persistToolExecutionPlan`
+ * while it handles `tool_started`; Bind asks for it immediately afterwards.
+ *
+ * Keyed rather than a single latest slot: `runsSerially` lets tool calls
+ * within one turn execute concurrently, so a host that remembered only the
+ * most recent `tool_started` would hand one tool another's receipt.
+ *
+ * Extracted so the seam has somewhere to be tested. Inline, the two `.set`
+ * calls were reachable only by running a whole harness, and deleting either
+ * one left every suite green while breaking every Terminal write in
+ * production with `tool_receipt_missing`.
+ */
+export function createToolEffectIntents(): {
+  record: (toolCallId: string, effectIntentId: string) => void;
+  resolve: (toolCallId: string) => string | undefined;
+} {
+  const intents = new Map<string, string>();
+  return {
+    record: (toolCallId, effectIntentId) => { intents.set(toolCallId, effectIntentId); },
+    resolve: (toolCallId) => intents.get(toolCallId),
+  };
+}
+
 async function reconcileRecoverableTerminalWrite(input: {
   row: { id: string; status: string; inputHash: string; inputJson: string };
   expectedInputHash: string;
@@ -7354,6 +7377,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  createToolEffectIntents,
   loadWorkstreamContextCompaction,
   persistWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
