@@ -33,6 +33,13 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-api.yml"
+      # The scripts the deploy job itself runs: the two preflights, the module
+      # they share, and the health check. A change to any of them is a change
+      # to the deployment, and a redeploy is idempotent.
+      - "scripts/check-cloudflare-r2-buckets.mjs"
+      - "scripts/ensure-cloudflare-queues.mjs"
+      - "scripts/wrangler-config.mjs"
+      - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
   workflow_dispatch:
     inputs:
