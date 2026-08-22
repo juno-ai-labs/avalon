@@ -429,6 +429,15 @@ it has no R2 credentials and no network egress.
 tokens never cross regions or enter URLs; its stored principal is the only source
 of operator identity and role for `/internal/telemetry`.
 
+`OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are optional independent
+secrets in each region: the bot token of a small internal Slack app with
+`chat:write` alone, and the one channel it posts operator notifications to. The
+token is sent in an `Authorization` header to a fixed Slack endpoint — never in
+a URL, because the platform's automatic tracing records outbound URLs and
+Global exports them — and the notifier sends only codes, counts, and opaque
+ids, escaped for Slack markup: the channel is outside Avalon's trust boundary
+([`ops-alerting.md`](ops-alerting.md)).
+
 Exceptions to the Gitleaks scan live in `.gitleaks.toml` as narrowly bounded
 patterns rather than as suppressed paths or fingerprints, because those two fail in
 opposite directions. A path exemption is permanent and total: it suppresses

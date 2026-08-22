@@ -61,6 +61,7 @@ import {
   launchBlockDashboardRefresh,
 } from "../services/block-dashboard-service";
 import { logError, logInfo, logWarn } from "../observability/logger";
+import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   identityAttributes,
   inFlowSpan,
@@ -2539,13 +2540,33 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
     const identity = this.objectStore.identity();
-    logWarn(this.env, "substream_scheduled_alarm_failed", {
-      workspace_id: identity?.workspaceId ?? null,
-      workstream_id: identity?.workstreamId ?? null,
-      alarm_kind: alarm.kind,
-      alarm_key: alarm.key,
+    reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
+      event: "substream_scheduled_alarm_failed",
+      summary: "An agent object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry.",
       attempt,
-      code: error instanceof Error ? error.message : "unknown_error",
+      fields: {
+        workspace_id: identity?.workspaceId ?? null,
+        workstream_id: identity?.workstreamId ?? null,
+        alarm_kind: alarm.kind,
+        alarm_key: alarm.key,
+      },
+      error,
+    });
+  }
+
+  protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
+    const identity = this.objectStore.identity();
+    reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
+      event: "substream_scheduled_alarm_stalled",
+      summary: "An agent object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key` is not moving. Find why.",
+      attempt,
+      fields: {
+        workspace_id: identity?.workspaceId ?? null,
+        workstream_id: identity?.workstreamId ?? null,
+        alarm_kind: alarm.kind,
+        alarm_key: alarm.key,
+        due_at: new Date(alarm.dueAt).toISOString(),
+      },
     });
   }
 
