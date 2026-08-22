@@ -32,6 +32,7 @@ import {
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
+const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
 const CREATOR_ID = "00000000-0000-7000-8000-0000000006a3";
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
@@ -92,9 +93,9 @@ beforeEach(async () => {
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
 });
 
-function agentStub(): DurableObjectStub {
+function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    substreamAgentName("global", WORKSPACE_ID, workstreamId),
   ));
 }
 
@@ -110,22 +111,26 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
   return { status: response.status, body: await response.json() };
 }
 
-async function openWorkstream(stub: DurableObjectStub): Promise<void> {
+async function openWorkstream(
+  stub: DurableObjectStub,
+  workstreamId = WORKSTREAM_ID,
+  title = "Quarterly planning",
+): Promise<void> {
   const opened = await product(stub, {
     operation: "initialize",
     auth: AUTH,
     input: {
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      workstreamId,
       generation: 1,
-      title: "Quarterly planning",
+      title,
       objective: "Draft the quarterly plan",
       descriptionSource: "authored",
       titleStatus: "settled",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
       openingMessage: "starting the plan",
-      clientMessageId: "participant-open-1",
+      clientMessageId: `participant-open-${workstreamId}`,
       participantUserIds: [],
       attachmentIds: [],
       modelOverride: null,
@@ -153,11 +158,14 @@ async function outbox(stub: DurableObjectStub): Promise<WorkstreamRegionalEffect
  * path uses drains the child outbox on demand instead of waiting for the alarm
  * that would otherwise empty it underneath the assertion.
  */
-async function notificationReceipts(stub: DurableObjectStub): Promise<string[]> {
+async function notificationReceipts(
+  stub: DurableObjectStub,
+  workstreamId = WORKSTREAM_ID,
+): Promise<string[]> {
   await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
     .flushEffectsToWorkstreamDO();
   const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    workstreamDOName("global", WORKSPACE_ID, workstreamId),
   ));
   return runInDurableObject(parent, (_instance, state) =>
     state.storage.sql.exec<{ message_id: string }>(
@@ -246,6 +254,28 @@ describe("adding somebody to a work stream", () => {
       `effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`,
       `effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:2`,
     ]);
+  });
+
+  it("keeps one person's adds to two work streams apart", async () => {
+    const first = agentStub();
+    const second = agentStub(SECOND_WORKSTREAM_ID);
+    await openWorkstream(first);
+    await openWorkstream(second, SECOND_WORKSTREAM_ID, "Hiring loop");
+
+    await product(first, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    await product(second, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+
+    // The ordinary use of the feature, and the one an object-local identity
+    // gets wrong: `participant_epoch` is zero in both rooms, so an identity
+    // without the work stream in it makes these two adds one identity. The
+    // workspace holds both — `workspace_workstream_effect_receipts.message_id`
+    // is a primary key, `workspace_activity_events.dedupe_key` is unique, and
+    // the intents table is fenced on the source — so the second add would be
+    // refused as a hash conflict and retried forever instead of delivered.
+    expect(await notificationReceipts(first))
+      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+    expect(await notificationReceipts(second, SECOND_WORKSTREAM_ID))
+      .toEqual([`effect:participant_added:${SECOND_WORKSTREAM_ID}:${INVITEE_ID}:0`]);
   });
 
   it("says nothing when somebody adds themselves", async () => {
