@@ -79,8 +79,11 @@ before a full re-arm.
    the regional-authority gate. A deferral sets the alarm *outright* to the
    recheck instant, because the re-arm in step 2 usually points at an instant
    already past.
-4. Drain every entry whose effective instant has come, up to
-   `SCHEDULED_ALARM_DRAIN_LIMIT` (100), each through `runScheduledAlarm(entry)`.
+4. Drain every entry whose effective instant had come **as of the instant this
+   alarm started**, up to `SCHEDULED_ALARM_DRAIN_LIMIT` (100), each through
+   `runScheduledAlarm(entry)`. The instant is snapshotted rather than re-read
+   per entry, so a slow handler cannot extend its own pass indefinitely; what
+   comes due during it is caught by step 6.
 5. Run `runDueAlarmWork(now)` — whatever the object derives rather than stores,
    **including re-deriving the whole index**. A handler that just ran has
    usually advanced its own canonical row, and it writes that row through the
@@ -226,6 +229,13 @@ time moved, go reconcile" entry points.
 - **More than 100 entries are due at once.** The first 100 run and the re-arm
   points at the next instant, which is already past, so the rest run in the
   following wake. Nothing is dropped; the cost is one extra alarm.
+- **An entry comes due while the previous handler is still running.** It is not
+  in that pass — the drain works from the instant the alarm started — and the
+  re-arm at the end sees it overdue, so it is floored at `now + 1` and the
+  runtime re-enters immediately. The entry runs late by however long the first
+  handler took, which is inherent to one alarm and one thread, but it is never
+  skipped. Alarm invocations are serialized by the runtime, so the second wake
+  cannot overlap the first.
 - **The region is closed for maintenance.** `scheduledAlarmDeferral` holds the
   whole drain and rechecks every 5 minutes. Entries keep their due times, so a
   workspace whose entire schedule is overdue resumes when the region reopens.
@@ -262,7 +272,8 @@ a failing target a free immediate attempt.
   handler invocation, and SQLite. It covers arming exactly, pulling an alarm in
   when an earlier entry is scheduled, pushing it back out and deleting it when
   entries are cancelled, per-entry backoff isolation, repeat advancement,
-  draining a tie wider than one wake allows, and the agent-timer index.
+  draining a tie wider than one wake allows, re-waking for an entry a slow
+  handler overran, and the agent-timer index.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
 - Driving an alarm in a test: `runDurableObjectAlarm(stub)` from
@@ -272,6 +283,12 @@ a failing target a free immediate attempt.
 - Trap: `getAlarm()` returns `null` inside a running alarm handler until
   `setAlarm` is called again. A test that asserts on the armed instant has to do
   it after the handler returns, not from inside one.
+- Trap: a test that sleeps inside a live object must have nothing armed in the
+  past while it sleeps. `instance.alarm()` is a plain method call, so the
+  runtime does not know an alarm is in progress and will deliver a real one on
+  top of it — which re-enters `alarm()` and drains entries the first pass had
+  not settled yet, something that cannot happen in production. Drive the drain
+  directly, or park the alarm first.
 - Trap: an alarm armed for `now + 1` — which `enqueueAgentRun` does on purpose —
   fires while the test is still setting up, and the work it drains can settle
   the very rows the next assertion reads. Park it in the *same* invocation that
