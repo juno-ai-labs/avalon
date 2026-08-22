@@ -185,6 +185,53 @@ const V2_NAMESPACE_RETIREMENT = [
   `ALTER TABLE durable_object_namespaces ADD COLUMN last_sweep_id INTEGER`,
 ] as const;
 
+/**
+ * The `SubstreamAgent` component key, renamed from `workstream`.
+ *
+ * The key is the tracker's own identifier and nothing else: no Durable Object
+ * stores it — `_sql_schema_migrations` records a version, a hash, and a build,
+ * never a component — so this migration moves the whole of what the rename
+ * touches. Without it the new key would arrive as a *second* component starting
+ * at head 0, leaving the fleet split between two rows: every object that has
+ * not woken since the deploy stranded under `workstream` at v15, and every
+ * object that has, silently `current` under a head no build has raised yet.
+ *
+ * The report log is rewritten along with the live rows. Its component column
+ * says which schema a receipt belongs to, and that is the same schema before
+ * and after — leaving history under the old key would only mean the object page
+ * and the filter list disagree about what to call it. Nothing a report actually
+ * witnessed (its version, status, build, or time) is touched.
+ *
+ * The `component_versions` write is a merge rather than an UPDATE because the
+ * two Workers deploy from independent workflows: if the API lands first, its
+ * reports have already created the new row, and renaming onto it would collide
+ * with the primary key and take the registry down inside its own constructor.
+ * `MAX` keeps the head monotonic through the merge, which is the one property
+ * the fleet's `behind` count depends on.
+ */
+const V3_SUBSTREAM_AGENT_COMPONENT = [
+  `UPDATE durable_objects SET component = 'substream_agent_do'
+     WHERE component = 'workstream'`,
+  `UPDATE migration_events SET component = 'substream_agent_do'
+     WHERE component = 'workstream'`,
+  `INSERT INTO component_versions
+     (component, region, class_name, latest_version, worker_version_id, observed_at)
+   SELECT 'substream_agent_do', region, class_name, latest_version, worker_version_id,
+          observed_at
+     FROM component_versions
+    WHERE component = 'workstream'
+   ON CONFLICT(component, region) DO UPDATE SET
+     class_name = excluded.class_name,
+     worker_version_id = CASE
+       WHEN excluded.latest_version >= component_versions.latest_version
+         THEN excluded.worker_version_id
+       ELSE component_versions.worker_version_id
+     END,
+     observed_at = MAX(component_versions.observed_at, excluded.observed_at),
+     latest_version = MAX(component_versions.latest_version, excluded.latest_version)`,
+  `DELETE FROM component_versions WHERE component = 'workstream'`,
+] as const;
+
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
   description: "durable object inventory, migration reports, and sweep receipts",
@@ -211,6 +258,10 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 2,
   description: "retire namespaces that have left the account",
   statements: V2_NAMESPACE_RETIREMENT,
+}, {
+  version: 3,
+  description: "rename the SubstreamAgent migration component to substream_agent_do",
+  statements: V3_SUBSTREAM_AGENT_COMPONENT,
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;
