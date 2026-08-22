@@ -783,6 +783,28 @@ describe("durable harness attempt runtime", () => {
       plan: { pluginId: "terminal", canonicalToolName: "terminal.execute", mode: "write" },
       mode: "write",
     });
+    sqlite.object.prepare(
+      `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type,
+          message_type, text_content, structured_content_json, sequence_number,
+          harness_run_id, created_at)
+       VALUES (?, ?, ?, ?, 'agent', 'tool', '', ?, 1, ?, ?)`,
+    ).run(
+      "invocation-stale-parent",
+      "tool:invocation-stale-parent",
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      JSON.stringify({ invocation: {
+        id: "invocation-stale-parent",
+        toolName: "terminal.execute",
+        status: "started",
+        outputSummary: null,
+        completedAt: null,
+        error: null,
+      } }),
+      RUN_ONE,
+      "2026-08-03T00:00:00.000Z",
+    );
     await persistToolExecutionPlan(sqlite.binding, claim.lease, {
       invocationId: "invocation-stale-read",
       harnessRunId: RUN_ONE,
@@ -835,6 +857,16 @@ describe("durable harness attempt runtime", () => {
         code: "ambiguous_external_write",
         message: "The parent run lost its durable lease while an external write was in flight",
       }),
+    });
+    expect(sqlite.objectDatabase.prepare(
+      `SELECT tool_status,
+              json_extract(structured_content_json, '$.invocation.status') AS visible_status,
+              json_extract(structured_content_json, '$.invocation.error.code') AS visible_error_code
+         FROM parts WHERE id = ?`,
+    ).get("invocation-stale-parent")).toEqual({
+      tool_status: "ambiguous",
+      visible_status: "ambiguous",
+      visible_error_code: "ambiguous_external_write",
     });
     expect(sqlite.object.prepare(
       "SELECT id, status FROM tool_invocations WHERE id IN (?, ?) ORDER BY id",

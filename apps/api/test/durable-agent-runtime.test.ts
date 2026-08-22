@@ -73,6 +73,30 @@ describe("DurableAgentDrain", () => {
     expect(operation).toHaveBeenCalledTimes(2);
     expect(settled).toHaveBeenCalledTimes(2);
   });
+
+  it("lets a durably fenced successor replace a stranded promise", async () => {
+    const drain = new DurableAgentDrain();
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondHeld = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const first = drain.resume(() => firstHeld, () => undefined);
+
+    expect(drain.activeSince).not.toBeNull();
+    expect(drain.lastProgress).not.toBeNull();
+    expect(drain.abandonActive()).toBe(true);
+
+    const second = drain.resume(() => secondHeld, () => undefined);
+    releaseFirst();
+    await first;
+    // The abandoned promise's late finally is fenced by promise identity.
+    expect(drain.active).toBe(true);
+
+    releaseSecond();
+    await second;
+    expect(drain.active).toBe(false);
+    expect(drain.abandonActive()).toBe(false);
+  });
 });
 
 describe("DurableAgentPublicationQueue", () => {

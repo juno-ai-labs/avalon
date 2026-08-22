@@ -287,6 +287,10 @@ export class BlockDashboardAgent extends DurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  private activeRunDispatch: {
+    dispatch: BlockDashboardBlockDispatch;
+    leaseToken: string;
+  } | null = null;
   private readonly publicationQueue: DurableAgentPublicationQueue;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -426,9 +430,10 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     // Delivery consumes the alarm. Re-arm from the rows before the drain, so a
     // cancelled or wedged run still leaves a wake-up behind; see the same
     // comment in SubstreamAgent.alarm.
-    await this.scheduleNextAlarm();
-    await this.drainRunsToCompletion();
-    await this.scheduleNextAlarm();
+    await this.armAlarmDuringRunDrain();
+    const disposition = await this.drainRunsToCompletion();
+    if (disposition === "deferred") await this.armAlarmDuringRunDrain();
+    else await this.scheduleNextAlarm();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -859,7 +864,59 @@ export class BlockDashboardAgent extends DurableObject<Env> {
    * never left to a promise the caller abandons: the runtime cancels it, and
    * cancellation raises nothing, so the loss is silent.
    */
-  private async drainRunsToCompletion(): Promise<void> {
+  private async drainRunsToCompletion(): Promise<"drained" | "deferred"> {
+    if (this.agentDrain.active) {
+      const now = Date.now();
+      const lastProgressAt = this.agentDrain.lastProgress;
+      const recentProgress = lastProgressAt !== null
+        && now - lastProgressAt < AGENT_RUN_DISPATCH_LEASE_MS;
+      if (recentProgress) return "deferred";
+
+      const activeRun = this.activeRunDispatch;
+      let harnessLeaseExpiresAt: number | null = null;
+      if (activeRun) {
+        try {
+          const executionEnv = await workstreamExecutionEnvironment(
+            this.env,
+            activeRun.dispatch.workspaceId,
+            activeRun.dispatch.workstreamId,
+          );
+          const row = await executionEnv.DB.prepare(
+            `SELECT lease_expires_at FROM harness_runs
+              WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
+          ).bind(
+            activeRun.dispatch.harnessRunId,
+            activeRun.dispatch.workspaceId,
+            activeRun.dispatch.workstreamId,
+          ).first<{ lease_expires_at: string | null }>();
+          const parsed = row?.lease_expires_at ? Date.parse(row.lease_expires_at) : Number.NaN;
+          harnessLeaseExpiresAt = Number.isFinite(parsed) ? parsed : null;
+        } catch (error) {
+          // Losing the liveness read is not proof that the prior executor is
+          // gone. Fail closed and try again at the next bounded heartbeat.
+          logWarn(this.env, "block_dashboard_active_drain_lease_check_failed", {
+            workspace_id: activeRun.dispatch.workspaceId,
+            workstream_id: activeRun.dispatch.workstreamId,
+            block_id: activeRun.dispatch.blockId,
+            block_run_id: activeRun.dispatch.blockRunId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+          return "deferred";
+        }
+      }
+      if (harnessLeaseExpiresAt !== null && harnessLeaseExpiresAt > now) return "deferred";
+      if (this.agentDrain.abandonActive()) {
+        logWarn(this.env, "block_dashboard_stale_drain_reclaimed", {
+          workspace_id: activeRun?.dispatch.workspaceId ?? null,
+          workstream_id: activeRun?.dispatch.workstreamId ?? null,
+          block_id: activeRun?.dispatch.blockId ?? null,
+          block_run_id: activeRun?.dispatch.blockRunId ?? null,
+          harness_run_id: activeRun?.dispatch.harnessRunId ?? null,
+          last_progress_at: lastProgressAt,
+          harness_lease_expires_at: harnessLeaseExpiresAt,
+        });
+      }
+    }
     await this.agentDrain.resume(
       () => this.drainRunQueue().catch((error: unknown) => {
         logWarn(this.env, "block_dashboard_block_agent_drain_failed", {
@@ -868,10 +925,12 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       }),
       () => undefined,
     );
+    return "drained";
   }
 
   private async drainRunQueue(): Promise<void> {
     while (true) {
+      this.agentDrain.touch();
       const row = this.state.storage.sql.exec<DispatchRow>(
         `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
            FROM agent_run_dispatches
@@ -899,6 +958,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       if (row) {
         const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
         const claimedAt = Date.now();
+        const leaseToken = uuidV7(claimedAt);
         const claimed = this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
              started_at = COALESCE(started_at, ?2), lease_token = ?3,
@@ -908,69 +968,78 @@ export class BlockDashboardAgent extends DurableObject<Env> {
              AND (state = 'queued' OR lease_expires_at IS NULL OR lease_expires_at <= ?2)`,
           row.block_run_id,
           claimedAt,
-          uuidV7(claimedAt),
+          leaseToken,
           claimedAt + AGENT_RUN_DISPATCH_LEASE_MS,
         ).rowsWritten;
         // Another invocation holds it. The alarm derived from the lease will
         // bring this object back when that claim lapses.
         if (claimed === 0) return;
-        this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
-        let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
+        this.agentDrain.touch();
+        this.activeRunDispatch = { dispatch, leaseToken };
         try {
-          result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
-        } catch (error) {
-          const code = error instanceof Error && "code" in error && typeof error.code === "string"
-            ? error.code
-            : "block_dashboard_block_execution_failed";
-          this.state.storage.sql.exec(
-            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-               last_error_code = ?, updated_at = ?, lease_token = NULL,
-               lease_expires_at = NULL WHERE block_run_id = ?
-               AND terminal_outcome_json IS NULL`,
-            Date.now() + durableAgentRetryDelay(row.attempt + 1),
-            code,
-            Date.now(),
+          this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
+          let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
+          try {
+            result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
+          } catch (error) {
+            const code = error instanceof Error && "code" in error && typeof error.code === "string"
+              ? error.code
+              : "block_dashboard_block_execution_failed";
+            this.state.storage.sql.exec(
+              `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+                 last_error_code = ?, updated_at = ?, lease_token = NULL,
+                 lease_expires_at = NULL WHERE block_run_id = ?
+                 AND terminal_outcome_json IS NULL`,
+              Date.now() + durableAgentRetryDelay(row.attempt + 1),
+              code,
+              Date.now(),
+              row.block_run_id,
+            );
+            logWarn(this.env, "block_dashboard_block_agent_run_deferred", {
+              workspace_id: dispatch.workspaceId,
+              workstream_id: dispatch.workstreamId,
+              block_id: dispatch.blockId,
+              block_run_id: dispatch.blockRunId,
+              reason: error instanceof Error ? error.message : "unknown",
+            });
+            return;
+          }
+          const terminalized = this.state.storage.sql.exec<{ terminal_outcome_json: string | null }>(
+            `SELECT terminal_outcome_json FROM agent_run_dispatches WHERE block_run_id = ?`,
             row.block_run_id,
-          );
-          logWarn(this.env, "block_dashboard_block_agent_run_deferred", {
-            workspace_id: dispatch.workspaceId,
-            workstream_id: dispatch.workstreamId,
-            block_id: dispatch.blockId,
-            block_run_id: dispatch.blockRunId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-          return;
-        }
-        const terminalized = this.state.storage.sql.exec<{ terminal_outcome_json: string | null }>(
-          `SELECT terminal_outcome_json FROM agent_run_dispatches WHERE block_run_id = ?`,
-          row.block_run_id,
-        ).toArray()[0]?.terminal_outcome_json ?? null;
-        if (terminalized) continue;
-        if (result.retryAt !== null) {
+          ).toArray()[0]?.terminal_outcome_json ?? null;
+          if (terminalized) continue;
+          if (result.retryAt !== null) {
+            this.state.storage.sql.exec(
+              `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+                 last_error_code = ?, updated_at = ?, lease_token = NULL,
+                 lease_expires_at = NULL WHERE block_run_id = ?
+                 AND terminal_outcome_json IS NULL`,
+              result.retryAt,
+              result.errorCode,
+              Date.now(),
+              row.block_run_id,
+            );
+            return;
+          }
           this.state.storage.sql.exec(
-            `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
+            `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
                last_error_code = ?, updated_at = ?, lease_token = NULL,
                lease_expires_at = NULL WHERE block_run_id = ?
                AND terminal_outcome_json IS NULL`,
-            result.retryAt,
+            result.failed ? "failed" : "completed",
+            Date.now(),
             result.errorCode,
             Date.now(),
             row.block_run_id,
           );
-          return;
+          continue;
+        } finally {
+          if (this.activeRunDispatch?.leaseToken === leaseToken) {
+            this.activeRunDispatch = null;
+          }
+          this.agentDrain.touch();
         }
-        this.state.storage.sql.exec(
-          `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
-             last_error_code = ?, updated_at = ?, lease_token = NULL,
-             lease_expires_at = NULL WHERE block_run_id = ?
-             AND terminal_outcome_json IS NULL`,
-          result.failed ? "failed" : "completed",
-          Date.now(),
-          result.errorCode,
-          Date.now(),
-          row.block_run_id,
-        );
-        continue;
       }
 
       const settlement = this.state.storage.sql.exec<DispatchRow>(
@@ -1363,6 +1432,11 @@ export class BlockDashboardAgent extends DurableObject<Env> {
   private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
     const existing = await this.state.storage.getAlarm();
     if (existing === null || existing > dueAt) await this.state.storage.setAlarm(dueAt);
+  }
+
+  /** Keep one bounded recovery wake-up without redelivering the owned row. */
+  private async armAlarmDuringRunDrain(): Promise<void> {
+    await this.state.storage.setAlarm(Date.now() + KEEP_ALIVE_INTERVAL_MS);
   }
 
   private async scheduleNextAlarm(): Promise<void> {
