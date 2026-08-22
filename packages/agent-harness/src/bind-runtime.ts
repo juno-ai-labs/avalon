@@ -453,8 +453,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         });
         return;
       }
+      const code = event.type === "tool_started"
+          || event.type === "tool_completed"
+          || event.type === "tool_failed"
+        ? "tool_receipt_persistence_failed"
+        : "run_state_persistence_failed";
       throw new FatalHarnessPortError(
-        "run_state_persistence_failed",
+        code,
         "A required host persistence port failed",
         error,
       );
@@ -514,6 +519,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       });
       try {
         await requiredPort(
+          "run_state_persistence_failed",
           "Compaction authorization preparation failed",
           () => input.compaction?.prepare?.(),
         );
@@ -595,6 +601,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         const renderAppendix = input.compaction?.renderAppendix;
         const appendix = renderAppendix
           ? await requiredPort(
+              "run_state_persistence_failed",
               "Compaction resource inventory rendering failed",
               () => renderAppendix(),
             )
@@ -611,7 +618,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           costCents: compactionCostCents,
           persist: async () => {
             try {
-              await requiredPort("Compaction checkpoint persistence failed", () => input.compaction?.persist?.({
+              await requiredPort("run_state_persistence_failed", "Compaction checkpoint persistence failed", () => input.compaction?.persist?.({
                 trigger,
                 summary,
                 // Without the system message: the host replays this as the
@@ -662,7 +669,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       state.lastPromptTokens = 0;
       state.lastOutputTokens = 0;
       await compacted.persist();
-      await requiredPort("Run usage flush failed", () => input.flushProgress?.({
+      await requiredPort("run_state_persistence_failed", "Run usage flush failed", () => input.flushProgress?.({
         inputTokens: state.inputTokens,
         outputTokens: state.outputTokens,
         contextTokens: 0,
@@ -699,7 +706,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         await runtime.skills.activation.activateSkills(refs);
         for (const ref of runtime.skills.activeRefs) {
           if (before.has(ref)) continue;
-          await requiredPort("Skill activation persistence failed", () =>
+          await requiredPort("run_state_persistence_failed", "Skill activation persistence failed", () =>
             input.persistSkillActivation?.(ref));
         }
         replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
@@ -732,7 +739,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         // wire surface here to prevent a just-revoked plugin from remaining
         // visible to the model for one turn.
         const authorizedTools = runtime.buildWireTools();
-        await requiredPort("Run liveness renewal failed", () => input.onLiveness?.("before_model"));
+        await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("before_model"));
         const prepared = validateAndHealMessages(messages);
         await input.onTranscriptIssues?.(prepared.issues.map((issue) => ({
           kind: issue.kind,
@@ -881,6 +888,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           };
         }
         const completed = await requiredPort(
+          "tool_receipt_persistence_failed",
           "Tool receipt lookup failed",
           () => input.findCompletedToolResult?.(receiptId, inputHash, {
             pluginId: dispatched.pluginId,
@@ -998,8 +1006,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // write leaves the provider outcome unknown. Preserve that ambiguity
           // before the run can silently retry the write.
           if (ambiguousExternalWrite) {
-            await requiredPort("Ambiguous write checkpoint persistence failed", () => input.checkpointToolInvocation?.({ toolCallId: receiptId, state: "timed_out" }));
-            await requiredPort("Ambiguous write persistence failed", () => input.onAmbiguousExternalWrite?.({
+            await requiredPort("tool_receipt_persistence_failed", "Ambiguous write checkpoint persistence failed", () => input.checkpointToolInvocation?.({ toolCallId: receiptId, state: "timed_out" }));
+            await requiredPort("tool_receipt_persistence_failed", "Ambiguous write persistence failed", () => input.onAmbiguousExternalWrite?.({
               toolCallId: receiptId,
               pluginId: dispatched.pluginId,
               toolName: dispatched.tool.definition.name,
@@ -1017,7 +1025,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError || error instanceof AmbiguousExternalWriteError) {
             throw error;
           }
-          await requiredPort("Tool failure checkpoint persistence failed", () => input.checkpointToolInvocation?.({
+          await requiredPort("tool_receipt_persistence_failed", "Tool failure checkpoint persistence failed", () => input.checkpointToolInvocation?.({
             toolCallId: receiptId,
             state: toolSignal.aborted ? "timed_out" : "failed",
           }));
@@ -1046,7 +1054,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         }
         const persistedResult = durableHarnessToolResult(toolResult);
         if (toolResult.providerOperationId) {
-          await requiredPort("Tool provider checkpoint persistence failed", () => input.checkpointToolInvocation?.({
+          await requiredPort("tool_receipt_persistence_failed", "Tool provider checkpoint persistence failed", () => input.checkpointToolInvocation?.({
             toolCallId: receiptId,
             state: "provider_acknowledged",
             providerOperationId: toolResult.providerOperationId!,
@@ -1060,12 +1068,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           policy,
           result: persistedResult,
         });
-        await requiredPort("Tool completion checkpoint persistence failed", () => input.checkpointToolInvocation?.({
+        await requiredPort("tool_receipt_persistence_failed", "Tool completion checkpoint persistence failed", () => input.checkpointToolInvocation?.({
           toolCallId: receiptId,
           state: "completed",
           ...(toolResult.providerOperationId ? { providerOperationId: toolResult.providerOperationId } : {}),
         }));
-        await requiredPort("Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
+        await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
         return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
       onAssistantMessage: (message) => {
@@ -1086,7 +1094,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       onProgressUpdate: (outputTokens, toolCalls) => {
         void input.onProgress?.({ outputTokens, toolCalls });
       },
-      flushProgress: () => requiredPort("Run usage flush failed", () => input.flushProgress?.({
+      flushProgress: () => requiredPort("run_state_persistence_failed", "Run usage flush failed", () => input.flushProgress?.({
           inputTokens: state.inputTokens,
           outputTokens: state.outputTokens,
           contextTokens: state.lastPromptTokens + state.lastOutputTokens,
@@ -1094,7 +1102,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           toolCalls: state.toolCalls,
         })),
     });
-    await requiredPort("Run liveness renewal failed", () => input.onLiveness?.("iteration_boundary"));
+    await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("iteration_boundary"));
     const resultStats = terminalCompactionInputTokens === 0 && terminalCompactionOutputTokens === 0
       ? result.stats
       : {
@@ -1303,7 +1311,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal: args.signal,
           }, async (delta) => {
             textStream.observe(delta);
-            await requiredPort("Run liveness renewal failed", () => args.input.onLiveness?.("during_stream"));
+            await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => args.input.onLiveness?.("during_stream"));
             args.onOutputProgress?.(Math.max(1, Math.ceil(delta.length / 4)));
             await streamEventChain;
           });
@@ -1314,7 +1322,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           if (defect && !(args.acceptEmptyCompletion && defect.kind === "empty_completion")) {
             throw new OpenRouterCompletionDefectError(defect.kind);
           }
-          await requiredPort("Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
+          await requiredPort("run_state_persistence_failed", "Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
             inferenceRequestId,
             success: true,
             turnId: args.turnId,
@@ -1352,7 +1360,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             asTransportFailure: classifyOpenRouterFailure,
           });
           const disposition = failureDisposition(classified);
-          await requiredPort("Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
+          await requiredPort("run_state_persistence_failed", "Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
             inferenceRequestId,
             success: false,
             turnId: args.turnId,
@@ -1578,7 +1586,7 @@ async function createPluginRuntime(
     id: string,
     occasion: PluginAuthorizationOccasion,
   ): Promise<PluginAuthorization> =>
-    await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id, occasion))
+    await requiredPort("harness_execution_failed", "Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id, occasion))
       ?? "authorized";
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
@@ -1642,7 +1650,7 @@ async function createPluginRuntime(
             summary: "Plugin tools could not be loaded",
           };
         }
-        await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
+        await requiredPort("run_state_persistence_failed", "Plugin activation persistence failed", () => input.persistActivation?.(id));
         const plugin = activeRegistry.get(id)!;
         const tools = plugin.tools.map((tool) => ({
           name: stableWireToolName(plugin.shortWireName, tool.name),
@@ -2451,16 +2459,15 @@ async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
   }
 }
 
-async function requiredPort<T>(label: string, operation: () => T | Promise<T>): Promise<T> {
+async function requiredPort<T>(
+  code: "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed",
+  label: string,
+  operation: () => T | Promise<T>,
+): Promise<T> {
   try {
     return await operation();
   } catch (error) {
     if (error instanceof FatalHarnessPortError) throw error;
-    const code = /authorization revalidation/iu.test(label)
-      ? "harness_execution_failed"
-      : /^(Tool|Ambiguous write)/.test(label)
-        ? "tool_receipt_persistence_failed"
-        : "run_state_persistence_failed";
     throw new FatalHarnessPortError(code, label, error);
   }
 }

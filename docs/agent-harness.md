@@ -433,6 +433,12 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   the frozen scope and reauthorized before restoration.
 - **Activation is durably recorded before a plugin's tools or trusted guidance
   become visible.**
+- **Required host failures carry an explicit recovery category.** Tool lifecycle
+  events and receipt checkpoints are `tool_receipt_persistence_failed`; run,
+  usage, inference-ledger, compaction, and activation state are
+  `run_state_persistence_failed`; authorization revalidation is
+  `harness_execution_failed`. The category is selected at the call site from
+  the persisted invariant, never inferred from prose in an error label.
 - **A verdict is never derived from a swallowed exception.** `denied` is a
   decision about authority; `indeterminate` means the host could not reach one.
   Reporting the second as the first sends a run off to explain a permission problem
@@ -629,6 +635,28 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-22 — Required host failures name the invariant that did not persist
+
+**What changed:** Every required harness port supplies its failure category
+explicitly. A failed host callback for `tool_started`, `tool_completed`, or
+`tool_failed` now keeps the tool-receipt category instead of falling through to
+run-state persistence.
+
+**Why:** Terminal production recovery depends on knowing whether the durable
+tool receipt or broader run state failed. The previous label regex was an
+unstated API: harmless wording changes could silently change retry guidance,
+and lifecycle event persistence was categorized as run state even though it is
+the authoritative receipt transition.
+
+**Considered and rejected:** Extending the English-label regex and treating
+every event callback as run-state persistence. The first keeps semantics coupled
+to copy; the second hides the exact write whose state a participant must inspect
+before retrying.
+
+**Consequences:** New required ports must choose one of the three durable-host
+failure categories deliberately, and tool lifecycle callback regressions are
+covered at the public `runHarness` boundary.
 
 ### 2026-08-20 — Terminal runs close tools and attachment claims stay grounded
 

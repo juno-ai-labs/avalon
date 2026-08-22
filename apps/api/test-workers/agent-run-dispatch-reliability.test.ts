@@ -270,7 +270,7 @@ describe("a dispatched agent run is never orphaned", () => {
     }
   });
 
-  it("does not join an active drain from a heartbeat alarm", async () => {
+  it("returns without busy-looping when a heartbeat sees an active drain", async () => {
     const stub = substreamStub();
     await boot(stub, "https://object.test/health");
     let release!: () => void;
@@ -280,9 +280,9 @@ describe("a dispatched agent run is never orphaned", () => {
       seedSubstreamDispatch(state, RUN_ID, {
         state: "running",
         startedAt: 1,
-        availableAt: Date.now() + 60_000,
+        availableAt: 1,
         leaseToken: "active-drain",
-        leaseExpiresAt: Date.now() + 60_000,
+        leaseExpiresAt: 1,
       });
       const drain = (instance as unknown as {
         agentDrain: {
@@ -292,6 +292,7 @@ describe("a dispatched agent run is never orphaned", () => {
       void drain.resume(() => held, () => undefined);
     });
 
+    const heartbeatStartedAt = Date.now();
     const heartbeat = runInDurableObject(stub, async (instance) => {
       await (instance as unknown as { alarm(): Promise<void> }).alarm();
     });
@@ -299,6 +300,8 @@ describe("a dispatched agent run is never orphaned", () => {
       heartbeat.then(() => "returned" as const),
       new Promise<"joined">((resolve) => setTimeout(() => resolve("joined"), 250)),
     ]);
+    const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.getAlarm());
     release();
     await heartbeat;
 
@@ -306,6 +309,11 @@ describe("a dispatched agent run is never orphaned", () => {
     // belongs to the request already executing the run can strand both events
     // and invalidates any request-scoped I/O the run performs afterward.
     expect(outcome).toBe("returned");
+    // A due dispatch cannot make progress while the other invocation owns the
+    // drain. Re-arming it at now + 1 turns that row into hundreds of alarms and
+    // authority reads per second; the active owner gets one heartbeat horizon.
+    expect(nextAlarm).not.toBeNull();
+    expect(nextAlarm!).toBeGreaterThanOrEqual(heartbeatStartedAt + 20_000);
   });
 });
 
@@ -497,5 +505,43 @@ describe("the same guarantees hold for a HyperSight block run", () => {
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBeNull();
     });
+  });
+
+  it("returns without busy-looping when a block heartbeat sees an active drain", async () => {
+    const stub = blockStub();
+    await boot(stub, "https://block-dashboard.test/health");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+
+    await runInDurableObject(stub, (instance, state) => {
+      seedBlockDispatch(state, {
+        availableAt: 1,
+        leaseToken: "active-block-drain",
+        leaseExpiresAt: 1,
+      });
+      const drain = (instance as unknown as {
+        agentDrain: {
+          resume(operation: () => Promise<void>, settled: () => void): Promise<void>;
+        };
+      }).agentDrain;
+      void drain.resume(() => held, () => undefined);
+    });
+
+    const heartbeatStartedAt = Date.now();
+    const heartbeat = runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as { alarm(): Promise<void> }).alarm();
+    });
+    const outcome = await Promise.race([
+      heartbeat.then(() => "returned" as const),
+      new Promise<"joined">((resolve) => setTimeout(() => resolve("joined"), 250)),
+    ]);
+    const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.getAlarm());
+    release();
+    await heartbeat;
+
+    expect(outcome).toBe("returned");
+    expect(nextAlarm).not.toBeNull();
+    expect(nextAlarm!).toBeGreaterThanOrEqual(heartbeatStartedAt + 20_000);
   });
 });
