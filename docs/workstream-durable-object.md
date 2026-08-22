@@ -1144,7 +1144,7 @@ Shipped in #220.
 
 **What changed:** WorkspaceDO, WorkstreamDO, and SubstreamAgent now extend
 `ScheduledDurableObject` and each carry `_internal_durable_alarms` (schema
-versions 4, 2, and 14). WorkspaceDO gained `refreshSchedule` and the whole due-
+versions 4, 2, and 15). WorkspaceDO gained `refreshSchedule` and the whole due-
 work loop the `WorkspaceScheduler` object used to run — schedules, resource
 watches, maintenance passes, Terminal deadlines — with its execution code in
 `services/workspace-schedule-execution.ts`. SubstreamAgent's agent timers became
