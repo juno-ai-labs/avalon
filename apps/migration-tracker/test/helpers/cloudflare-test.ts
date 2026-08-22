@@ -86,3 +86,49 @@ export function createTestMessageBatch<Body>(
 
   return { batch: batch as unknown as MessageBatch<Body>, messages };
 }
+
+export interface RecordingQueue<Body> {
+  queue: Queue<Body>;
+  /** Every body the queue accepted, flattened across `send` and `sendBatch`. */
+  sent: Body[];
+  /** One entry per `sendBatch` call, so batching itself can be asserted on. */
+  batches: number[];
+}
+
+/**
+ * A queue binding whose accepted messages are observable.
+ *
+ * Typed as `Queue<Body>` here rather than cast at each call site, for the same
+ * reason `envWithSweepCredentials` exists: a cast would keep compiling if the
+ * binding's shape changed, and the dispatcher's whole contract is what it puts
+ * on the queue.
+ *
+ * `failAfter` makes the queue refuse once a given number of messages have been
+ * accepted, which is the only way to exercise a fan-out that dies partway — the
+ * case where the recorded run has to describe what actually landed rather than
+ * what was intended.
+ */
+export function createRecordingQueue<Body>(
+  options: { failAfter?: number } = {},
+): RecordingQueue<Body> {
+  const sent: Body[] = [];
+  const batches: number[] = [];
+  const guard = (count: number): void => {
+    if (options.failAfter !== undefined && sent.length + count > options.failAfter) {
+      throw new Error("queue_refused");
+    }
+  };
+  const queue = {
+    send: async (body: Body) => {
+      guard(1);
+      sent.push(body);
+    },
+    sendBatch: async (messages: Iterable<{ body: Body }>) => {
+      const bodies = [...messages].map((message) => message.body);
+      guard(bodies.length);
+      batches.push(bodies.length);
+      sent.push(...bodies);
+    },
+  };
+  return { queue: queue as unknown as Queue<Body>, sent, batches };
+}

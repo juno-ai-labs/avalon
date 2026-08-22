@@ -164,7 +164,7 @@ function reportMigrationFailure(
     // what makes the `reported_status !== "failed"` test above reachable.
     () => writeReportState(context.state.storage, schemaVersion, "failed", workerVersionId),
   );
-  return deliver?.() ?? Promise.resolve();
+  return deliver ? deliver().then(() => undefined) : Promise.resolve();
 }
 
 function reportMigrationSuccess(
@@ -212,6 +212,74 @@ function reportMigrationSuccess(
   if (deliver) context.state.waitUntil(deliver());
 }
 
+/**
+ * What one forced migration did, as the queue consumer reads it back.
+ *
+ * `docs/durable-object-migration-tracking.md` owns the flow this belongs to: an
+ * operator picks a class on the tracker, the tracker sends one message per
+ * object, and the region's Worker calls `forceMigration` on each. This is the
+ * value that call returns, and it is the reason that leg is RPC rather than a
+ * second queue — the consumer branches on it, logging an object that came back
+ * still behind the build's head as a warning rather than a success.
+ */
+export interface ForcedMigrationOutcome {
+  objectId: string;
+  objectName: string | null;
+  component: string;
+  className: string;
+  /** The version the object is on now that its constructor's pass has finished. */
+  schemaVersion: number;
+  /** The highest version the running build ships, so a shortfall is visible. */
+  latestVersion: number;
+  /** Whether the confirming report was accepted by the queue. */
+  reported: boolean;
+}
+
+/**
+ * Report an object's schema state because an operator asked, not because it
+ * changed.
+ *
+ * The dedupe in `reportMigrationSuccess` exists so that an ordinary wake on an
+ * unchanged version costs nothing, and it is exactly wrong here: an operator
+ * forcing a class is asking to be told where every object stands, and the
+ * objects that were already current are the ones whose silence is least
+ * informative. So this sends unconditionally.
+ *
+ * It reports `current` with no applied versions because that is what this call
+ * did — the migration itself runs in the constructor, and when it applied
+ * anything the constructor's own report already said so, carrying the version
+ * list. This one is the receipt that the object was reached.
+ *
+ * Awaited rather than fired into `waitUntil`: the caller is a queue consumer
+ * that reports the outcome, and a receipt nobody waited for is a receipt that
+ * can be lost to the invocation ending. It still cannot throw — reporting never
+ * breaks the object — so a refusing queue comes back as `reported: false`.
+ */
+export async function reportForcedMigration(
+  context: DurableObjectMigrationReportContext,
+  objectName: string | null,
+): Promise<ForcedMigrationOutcome> {
+  const schemaVersion = safeCurrentVersion(context.state.storage);
+  const workerVersionId = workerVersionOf(context.env);
+  const deliver = prepareDelivery(
+    context,
+    { status: "current", schemaVersion, appliedVersions: [], failure: null },
+    () => writeReportState(context.state.storage, schemaVersion, "current", workerVersionId),
+  );
+  return {
+    objectId: context.state.id.toString(),
+    objectName,
+    component: context.component,
+    className: context.className,
+    schemaVersion,
+    latestVersion: context.latestVersion,
+    // An unbound queue is the normal state in local development and in tests,
+    // and it is not a failure of the forced migration — the object still woke
+    // and still ran its schema. The consumer logs the difference.
+    reported: deliver === null ? false : await deliver(),
+  };
+}
+
 interface ReportOutcome {
   status: DurableObjectMigrationStatus;
   schemaVersion: number;
@@ -232,7 +300,7 @@ function prepareDelivery(
   context: DurableObjectMigrationReportContext,
   outcome: ReportOutcome,
   onAccepted?: () => void,
-): (() => Promise<void>) | null {
+): (() => Promise<boolean>) | null {
   const queue = context.env.MIGRATION_REPORT_QUEUE;
   // Unbound is the normal state in local development and in every test that
   // builds a partial `Env`. It is not an error, and it must not become one.
@@ -249,8 +317,10 @@ function prepareDelivery(
       // queue owns delivery from this point, with retries and a dead-letter
       // queue, and neither needs this object to be alive.
       onAccepted?.();
+      return true;
     } catch (error) {
       logReportProblem(context, "migration_report_enqueue_failed", error);
+      return false;
     }
   };
 }

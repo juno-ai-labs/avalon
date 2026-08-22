@@ -16,6 +16,14 @@ account** so an object that never wakes is still visible as one nobody has heard
 from. Read it before changing a migration runner, adding a Durable Object class,
 or touching what the tracker stores, serves, or lets in.
 
+It also owns the one thing the site can *do* about the answer. An object applies
+its schema when it wakes, and an object nobody touches does not wake, so a class
+can sit behind a deploy indefinitely with nothing wrong except that nothing has
+asked it. **Force a migration** is that ask: an operator picks a class, and every
+live object of it is sent one queue message that wakes it. The rest of this
+document is in two halves — what the tracker observes, and what it can make
+happen.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -27,10 +35,13 @@ or touching what the tracker stores, serves, or lets in.
 | `apps/migration-tracker/src/registry.ts` | `MigrationRegistry`, the single SQLite Durable Object that holds everything the tracker knows, and every query the site runs. |
 | `apps/migration-tracker/src/schema.ts` | The registry's append-only schema and its own migration runner. |
 | `apps/migration-tracker/src/inventory.ts` | The Cloudflare API sweep: namespaces, then paged object IDs per namespace. |
+| `apps/migration-tracker/src/dispatch.ts` | The fan-out: registry targets in, one command message per object out, one run row recorded. |
+| `apps/api/src/durable-objects/migratable-durable-object.ts` | `MigratableDurableObject` — the base that gives every migrated class its report and its `forceMigration` RPC, and refuses to compile without a declared schema. |
+| `apps/api/src/queues/migration-command-consumer.ts` | The regional consumer that turns one command into one `forceMigration` call, and the map of class names to namespace bindings. |
 | `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification: signature, issuer, audience. Authorization itself is the Access policy's. |
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
-| `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger. |
-| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding in each region. |
+| `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger, and the two regional command-queue producer bindings. |
+| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding and the `avalon-<region>-migration-commands` consumer in each region. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 
 ## How it works
@@ -115,6 +126,125 @@ second request — and hitting the page cap downgrades the sweep to `partial`. A
 namespace payload whose id cannot be read does the same rather than being
 skipped: a namespace whose existence is known and whose identity is not is not
 one fewer namespace.
+
+### Forcing a migration
+
+The tracker's two sources answer *where every object is*. This answers the
+question that follows: **the objects behind the build have not been asked.**
+
+A Durable Object's schema runs in its constructor and nowhere else, so
+"migrating" an object is exactly "waking it". There is no bulk operation to
+reach for and no way to migrate an object without constructing it. That makes
+the work inherently per instance, and it is why the mechanism looks the way it
+does.
+
+An operator picks a class on `/migrations`, optionally narrowed to one region.
+The tracker asks the registry for every **live** object of that class — `absent`
+ones are excluded, because their IDs no longer have objects behind them and
+addressing one creates an empty object rather than migrating anything — and
+writes one message per object onto that region's command queue, in `sendBatch`
+groups of a hundred. The region's own API Worker consumes it, resolves the
+object by ID, and calls `forceMigration` on it.
+
+Three deliberate choices, in the order they matter:
+
+- **A queue, not the tracker calling the objects.** The tracker holds no binding
+  to any object it observes, and could not acquire one that reached both
+  regions: a Durable Object is addressable only from a Worker that binds its
+  namespace, and the EU objects belong to the EU Worker. Even with bindings it
+  would be wrong — the fan-out is hundreds of cold starts, and no single
+  invocation should hold that open. The queue is what turns it into a paced
+  stream: 100 messages a batch, a backlog as the shock absorber, five retries
+  and a dead-letter queue per message.
+- **Split per region, unlike the report queue.** A queue has exactly one
+  consumer, and the consumer here *must* be the region's own Worker. That is the
+  decisive test in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md), and
+  it lands the opposite way to the reports, which converge on one registry
+  object and therefore share one queue. Same document, same test, different
+  answer, because the destination differs.
+- **RPC inside the hop.** The consumer calls `forceMigration` and reads the
+  answer — the version the object ended on — so it can log an object that came
+  back still below the build's head as a warning rather than a success. A queue
+  per hop, RPC inside the hop, is the shape
+  [`access-revocation.md`](access-revocation.md) already uses.
+
+`forceMigration` lives on `MigratableDurableObject`, the base every migrated
+class now extends, so no class can be added that reports but cannot be reached,
+or that is reachable but silently skips the report. A subclass declares its
+schema once — component key, class name, migration list — and both the
+constructor's report and the forced migration read it from there. Both members
+are abstract, so a new Durable Object class that declares neither does not
+compile.
+
+The method itself is three lines of substance: check the command names this
+object and this class, await the constructor's migration pass, and report. There
+is deliberately **no second application of the runner** behind it. Re-running
+migrations here would be a code path taken only by an operator, on the objects
+least able to afford a surprise, and it would not be the path every other wake
+takes. Waking is the migration; this method's job is to make the wake happen and
+to say where it landed.
+
+### What a forced migration does to an object that is already awake
+
+Nothing, to its schema. The constructor runs once per isolate instantiation, so
+an object already in memory does not re-run it: `migrationsReady()` is an
+already-resolved promise, and the call is a report rather than a migration.
+
+That is almost always the outcome to want, because **an awake object is normally
+awake on the current build** — deploying a new Worker version cycles Durable
+Object isolates, so anything running now constructed after the deploy and
+applied that build's migrations on the way up. The forced report is then exactly
+what it claims to be: the receipt that this object was reached and is current.
+
+The case that survives is an object still running the *previous* build while a
+release propagates. It reports `current` at the old version, and its
+`latestVersion` comes from the old build too, so the two agree and the
+consumer's `migration_command_applied` warning does not fire. The registry
+catches it anyway, because the component head it compares against is the highest
+version seen *anywhere* in that region and is monotonic — so the object shows as
+`behind` on the site. What the run row cannot say is that this particular object
+did not move; it counts messages accepted, not objects advanced. Running the
+class again once the release has settled is the remedy, and the `behind` count
+on the overview is what says whether it is still needed.
+
+**`ctx.abort()` is the obvious way to close that gap and is deliberately not
+used.** It would evict the object and guarantee a fresh constructor, at the cost
+of dropping its live sockets and in-memory state — a product-visible outage
+inflicted in service of a monitor, on every object in the class, including the
+ones that were already current. The whole subsystem's first invariant is that
+reporting cannot break an object; a repair that can is worse.
+
+That report is sent **unconditionally**, which is the one place the reporter's
+dedupe is deliberately bypassed. An ordinary wake on an unchanged version says
+nothing, and that is right — it is what keeps the fleet's traffic proportional
+to deploys rather than to hibernation churn. But an operator forcing a class is
+asking to be told where every object stands, and the objects that were already
+current are precisely the ones whose silence is least informative. The forced
+report is the receipt that this object was reached.
+
+### What a run records
+
+The dispatch is fire-and-forget from the tracker's side, so the run row is the
+only thing that can say it happened before the reports start arriving. It holds
+what was asked for, who asked, how many objects matched, how many messages the
+queue actually accepted, and two numbers that exist because they come apart from
+each other:
+
+- **`unroutable`** — matched objects with no resolvable region. A command picks a
+  queue by region, and the region an object *reports* is the one thing an
+  unreported object does not have. The script name from the sweep resolves it
+  instead, through `REGION_BY_SCRIPT_NAME`; an object with neither has nowhere to
+  be sent, and it is counted rather than dropped.
+- **`truncated`** — the class holds more live objects than one run dispatches.
+  The cap is 5,000, which is an order of magnitude above the largest class in
+  this account, so in practice it caps nothing. It exists so that an operator who
+  picks the wrong class cannot cold-start the entire account from one form, and
+  it is recorded rather than silent because a cap nobody sees reads as "this
+  covered the class".
+
+A dispatch that throws partway is recorded too, with the count that actually
+landed. That is the same rule the reporter follows on the other side: nothing is
+counted as delivered until the queue has taken it.
 
 ### What the site shows
 
@@ -215,7 +345,31 @@ full report history. Every page has a JSON twin under `/api/`.
   v3 is the worked example.
 - **The tracker imports nothing from `apps/api`.** A build break in the Worker
   being observed must not take down the thing that reports on it — which is why
-  the migration runner and the structured logger are deliberate copies.
+  the migration runner and the structured logger are deliberate copies. The
+  forced-migration command travels the same way the report does: through a
+  contract in `packages/contracts` that both sides parse, never a shared type.
+- **Every migrated Durable Object class extends `MigratableDurableObject`.** The
+  report and the `forceMigration` RPC come from there and from nowhere else, and
+  both of its members are abstract, so a class that opts out of either does not
+  compile. Adding a class means adding it to that base, to `REPORTING_CLASSES`
+  in the registry, and to the consumer's dispatcher map — the last of those is
+  what decides whether a command naming it can be applied at all.
+- **A forced migration always reports, even when nothing changed.** It is the
+  operator's receipt that this object was reached, and the objects that were
+  already current are exactly the ones whose silence says nothing. This is the
+  one place the reporter's dedupe is bypassed, and it is bypassed deliberately.
+- **A forced migration never applies the runner a second time.** Waking is the
+  migration. A second application would be a code path taken only by an
+  operator, on the objects least able to afford one.
+- **A command is applied by the region that owns the object, or not at all.**
+  The consumer drops a command carrying the other region's name rather than
+  rerouting it, which is the same no-Global-fallback rule every split queue
+  follows.
+- **An `absent` object is never a target.** Its ID no longer has an object
+  behind it, so addressing one creates an empty object instead of migrating
+  anything.
+- **A run records what the queue accepted, not what was intended**, and says so
+  when it was capped. A cap nobody can see reads as "this covered the class".
 
 ## Boundary
 
@@ -224,17 +378,23 @@ versions, the report history, and the operator site over both. It exposes exactl
 one write surface — the two regional report queues it consumes — and reads
 Cloudflare's account API with a read-only token.
 
-`apps/api` owns migrations themselves. The tracker never applies one, never
-repairs an object, and has no binding to any object it tracks — it is a
-read-only observer that objects talk *to*. Fixing a failed migration is a code
-change and a deploy, described in [`runbook.md`](runbook.md); the schemas
-themselves are owned by
+`apps/api` still owns migrations themselves. The tracker does not apply one, does
+not repair an object, and holds no binding to any object it tracks — what it can
+do is *ask*, by writing a message onto a queue the region's own Worker consumes.
+That is the whole of its new authority: it can cause an object to wake on the
+build already deployed to it. It cannot change what that build's schema is, skip
+a version, roll one back, or repair an object whose migration throws. Fixing a
+failed migration is still a code change and a deploy, described in
+[`runbook.md`](runbook.md); the schemas themselves are owned by
 [`workstream-durable-object.md`](workstream-durable-object.md) and
 [`data-model.md`](data-model.md).
 
 The tracker holds no workspace product data: no messages, no names, no member
-identities. It is not a general telemetry sink — [`telemetry.md`](telemetry.md)
-owns that — and adding a product signal to a report is out of scope by design.
+identities. The one identity it stores is the Access email of the operator who
+started a run, and that is an Avalon operator's address rather than anything a
+workspace owns. It is not a general telemetry sink —
+[`telemetry.md`](telemetry.md) owns that — and adding a product signal to a
+report is out of scope by design.
 
 ## Failure modes and limits
 
@@ -252,12 +412,22 @@ owns that — and adding a product signal to a report is out of scope by design.
 | Namespace larger than the page cap | Listing stops at 20 pages of 1,000, the namespace is recorded as truncated, and the site shows the sweep as `partial`. |
 | Access unconfigured | Every request is refused with `access_not_configured`. |
 | Registry object unavailable | The site fails; reports fail and are retried by their objects. The API is unaffected. |
+| A command queue unbound on the tracker | That region cannot be reached. Its objects are counted as `unroutable` on the run and named in a banner on the page; nothing is silently dropped. |
+| A command names a class the API Worker does not deploy | `migration_command_unknown_class`; the message is retried and eventually dead-lettered, because a deploy could still make it valid. |
+| A command names the other region | Logged as `migration_command_misrouted`, acknowledged, dropped. Rerouting it would be a Global fallback. |
+| A forced migration throws | The object reports its failure on the way past and the message is retried, then dead-lettered. The dead-letter queue's depth is the count of objects that are stuck. |
+| A forced migration lands but the report queue refuses | `reported: false` on the outcome and in `migration_command_applied`. The object migrated; the tracker will not show it until its next wake. |
+| The object is already awake | Its constructor does not run again, so nothing is applied; the call reports the version it is already on. Normally that version is current, because a deploy cycles isolates. An object still running the previous build reports the old version and stays `behind` on the site — the run row cannot say it did not move. |
+| The dispatch throws partway through a run | The run is recorded as `failed` with the count that actually landed. The messages already accepted are still delivered. |
+| A class holds more objects than one run sends | The run stops at 5,000, is marked `truncated`, and the page says so. Running it again continues. |
 
 Numeric limits: report heartbeat **24 hours**; sweep cadence **hourly**; object
-listing **20 pages × 1,000**; consumer batch **100 messages / 10 seconds** with
-**5 retries** before the dead-letter queue; retained report events **20,000**,
-sweep receipts **200**, per-object history shown **100**; failure message bounded
-to **1,000 characters**; object list page size **1–200**, default **50**.
+listing **20 pages × 1,000**; report consumer batch **100 messages / 10 seconds**
+with **5 retries** before the dead-letter queue; command consumer the same;
+objects per forced run **5,000**, sent in `sendBatch` groups of **100**; retained
+report events **20,000**, sweep receipts **200**, runs **200**, runs shown
+**25**, per-object history shown **100**; failure message bounded to **1,000
+characters**; object list page size **1–200**, default **50**.
 
 The overview shows a banner when the last sweep that actually **enumerated**
 anything finished more than three hours ago, because a stale sweep makes the
@@ -271,9 +441,10 @@ banner carrying the error.
 
 | Suite | Covers |
 | --- | --- |
-| `pnpm --filter @avalon/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. |
+| `pnpm --filter @avalon/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
 | `pnpm --filter @avalon/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
-| `pnpm --filter @avalon/contracts test` | The report contract and the opaque-name guard. |
+| `pnpm --filter @avalon/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
+| `pnpm --filter @avalon/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
 
 Traps:
 
@@ -295,15 +466,36 @@ Traps:
   consumer's actual contract with the runtime.
 - Report fixtures need a **distinct `reportId` per report**, or the registry's
   dedupe silently collapses them and the test asserts on one row instead of two.
+- **A throw crossing an RPC boundary is delivered twice under the workers pool**
+  — once to the caller and once as an uncaught rejection inside the object — and
+  the second fails the run on an error the production consumer catches and
+  retries. `forceMigration`'s guards are therefore driven through
+  `runInDurableObject` on the instance. What is under test there is the guard,
+  not the transport.
+- **The report queue is deliberately unbound in `wrangler.test.jsonc`.** Binding
+  it would make every object's constructor write its own report ledger row
+  before a test's first assertion, so the reporter suite's "first wake" cases
+  would silently stop being first wakes. The forced-report tests inject a queue
+  double into the context instead.
 
 ## Data model
 
-Five tables in the `MigrationRegistry` object, all `STRICT`:
+Six tables in the `MigrationRegistry` object, all `STRICT`:
 `durable_objects` (one row per object, keyed by Durable Object ID, with
 nullable columns because either source may arrive first), `migration_events`
 (the append-only report log), `component_versions` (the observed head per
-component and region), `durable_object_namespaces`, and `inventory_sweeps`
-(one receipt per sweep, whose row id stamps the objects that sweep saw).
+component and region), `durable_object_namespaces`, `inventory_sweeps`
+(one receipt per sweep, whose row id stamps the objects that sweep saw), and
+`migration_runs` (one row per forced run, added in v4).
+
+`migration_runs` exists because the dispatch is otherwise invisible. The
+objects report their own state afterwards, which is what the rest of the site
+renders — but those reports are indistinguishable from ordinary traffic, so
+without a run row an operator cannot tell a run that dispatched nine hundred
+messages from one that matched nothing. `matched` and `dispatched` are separate
+columns because they come apart in two ways that both need to be visible: an
+object with no resolvable region is matched and never dispatched, and a run over
+a class larger than the cap stops early.
 
 Absence is decided by comparing an object's `last_sweep_id` against the current
 sweep's row id, not by timestamp: two sweeps inside one millisecond would make a
@@ -317,10 +509,12 @@ bound parameters per query**, an account may hold up to 500 Durable Object
 classes, and the statement runs inside the sweep's `transactionSync` — so
 crossing that line would lose the whole sweep, not just the retirement.
 
-The registry's own schema is at v2 and is append-only from v1 onwards, which is
-now deployed: the retirement column reaches the live object as an `ALTER TABLE`
-inside the constructor's `blockConcurrencyWhile`, so a statement it rejected
-would take the tracker down for every read rather than just the new column.
+The registry's own schema is at v4 and is append-only from v1 onwards, which is
+now deployed: every later version reaches the live object inside the
+constructor's `blockConcurrencyWhile` — v2's retirement column as an
+`ALTER TABLE`, v3's component rename as three `UPDATE`s, v4's run log as a
+`CREATE TABLE` — so a statement any of them rejected would take the tracker down
+for every read rather than only for the thing it added.
 
 ## Regional impact
 
@@ -337,7 +531,22 @@ gate a crossing that needs gating today. The report now literally
 travels on a Queue, so it is the same crossing under the same rule rather than an
 analogous one.
 
-The queue is shared between the regions rather than split like
+The command going the other way is split, and the same section of
+[`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) is what decides both.
+Its decisive test is whether splitting the transport would change where the data
+comes to rest or who processes it. For a report the answer is no — one registry
+object either way — so there is one queue. For a command the answer is yes and
+it is not even optional: a queue has exactly one consumer, and only the Global
+Worker can address a Global object. So `avalon-global-migration-commands` and
+`avalon-eu-migration-commands` are separate, each with its own dead-letter
+queue, and neither consumer reaches into the other region's namespaces.
+
+A command carries less than a report does: a class name, an object ID, an opaque
+object name, a region, and two UUIDs the tracker minted. It clears the same bar
+through the same guard, and the same review gate applies — the day a Durable
+Object name grows a legible field, this stops carrying it.
+
+The report queue is shared between the regions rather than split like
 `avalon-eu-activities`. The split there exists because an EU activity's payload
 must be handled in region. Nothing in a migration report has that property, and
 the destination is one account-wide registry object either way, so a second queue
@@ -379,7 +588,27 @@ show in the page header.
 
 The report ingress is not protected by Access at all — it does not need to be. It
 is a Queue consumer, which has no public address: the only way to reach it is a
-producer binding, which only a deployed Worker in this account can hold.
+producer binding, which only a deployed Worker in this account can hold. The
+command egress is the mirror of that: the tracker writes to a queue, and only a
+Worker in this account holds the consumer, so a forced migration has no public
+address either.
+
+**The two writes carry an origin check on top of Access.** Access is
+authentication, not intent: an operator's session cookie travels with a form
+another site submits, so the assertion on such a request is genuine and proves
+the wrong thing. `POST /migrations` and `POST /api/migrations` refuse a request
+whose `Origin` header names another site. The header is checked when present
+rather than required, because `Origin` is a browser header and its absence is
+what a script has — a browser sends it on every cross-origin `POST`, which is
+the case this exists to catch, while a `curl` against the JSON twin is not a
+confused deputy. Every read stays as it was; there is nothing to protect a `GET`
+from.
+
+Who may force a migration is still the Access application's policy, and there is
+still no second copy of it in the Worker. The Worker records the assertion's
+email on the run row, which is the one place it stores an identity rather than
+displaying one, and it does so because a fan-out over a production fleet is the
+one action here that somebody may later need to attribute.
 
 The tracker's Cloudflare API token is read-only and used solely to enumerate
 namespaces and object IDs. Failure text and object names are the two fields that
@@ -391,10 +620,22 @@ goes through `hono/html` escaping.
 - The site itself is the first stop: the overview names every component behind or
   failing, and the object page carries the failure message and the version it
   broke on.
+- **A class is behind and nothing is waking it** is what the *Force a migration*
+  page is for. Pick the class, leave the region on "both" unless the deploy only
+  went to one, and read the run row it creates. The objects report as they wake,
+  so the overview is where the result arrives — not the run row, which only says
+  the ask was made. A run whose `unroutable` count is not zero has objects the
+  tracker cannot address; a run marked `truncated` covered part of the class and
+  should be run again.
 - Workers Logs carry, on the tracker: `migration_reports_recorded` once per
   consumed batch, `migration_report_rejected` for a message the contract refused,
-  and `migration_inventory_sweep_completed` /
+  `migration_run_dispatched` once per forced run, and
+  `migration_inventory_sweep_completed` /
   `migration_inventory_sweep_skipped` for the cron sweep. On the API side:
+  `migration_command_applied` once per forced object — a `warn` when the object
+  came back below the build's head — plus `migration_command_failed`,
+  `migration_command_misrouted`, and `migration_command_invalid`. On the API
+  side also:
   `migration_report_enqueue_failed` means the queue refused the message — not
   that a migration failed — and `migration_report_invalid` means a producer and
   the contract have drifted. Those last two are the pair to search when reports
@@ -424,12 +665,110 @@ throughput nothing needs and turn each read into a scatter-gather.
 The steady state is not the case this is built for. Objects do not wake *because*
 of a deploy, so an ordinary release produces a trickle shaped by user traffic.
 The herd is any fan-out that touches many objects at once on a build whose
-`APP_VERSION` has just changed: an operator pass walking the fleet to seed or
-repair it, or a deploy whose migration arms an immediate alarm in every object
-that carries state — as WorkspaceDO migration 5's `schedule_bootstrap` entry
-does.
+`APP_VERSION` has just changed: a deploy whose migration arms an immediate alarm
+in every object that carries state — as WorkspaceDO migration 5's
+`schedule_bootstrap` entry does — or, now, an operator pressing the button.
+
+A forced run is that herd on purpose, and the arithmetic is what makes it
+affordable. The largest class in this account is in the hundreds of objects, and
+the ceiling is 5,000 messages a second per queue, so the queue is nowhere near
+the constraint; what the run actually costs is one Durable Object cold start per
+object, taken 100 at a time by a consumer with 10 seconds of batch window in
+front of it. Those objects then report, which is a second fan-out into the
+report queue — bounded by the same object count, and folded by that consumer
+into one registry transaction per batch. A run over the whole fleet is therefore
+a few tens of registry writes, not a few hundred.
+
+The run cap of 5,000 is not a capacity estimate; it is a guard on the blast
+radius of a misclick. It sits an order of magnitude above the largest class, so
+it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-08-22 — The tracker can force a class through a migration
+
+**What changed:** the site gained `/migrations`, where an operator picks a
+Durable Object class and every live object of it is sent one message on a new
+per-region queue — `avalon-global-migration-commands` and
+`avalon-eu-migration-commands` — which the region's own API Worker consumes and
+turns into a `forceMigration` RPC on the object. `MigratableDurableObject` is a
+new base that `ScheduledDurableObject` and `BlockDashboardAgent` both extend; it
+owns the migration report every constructor used to wire up by hand and the
+`forceMigration` method, and it requires each class to declare its schema once.
+Registry schema v4 adds `migration_runs`.
+
+**Why:** the tracker could say a class was behind and nothing could be done
+about it from here. A Durable Object applies its schema when it wakes, and an
+object nobody touches does not wake, so a class could sit behind a deploy
+indefinitely with nothing actually wrong — and the only way to move it was to
+find each object and provoke it through the product. The site that knows which
+objects are behind is the right place to ask them to catch up; it already has
+the list, and the list is the hard part.
+
+**The design decisions worth keeping:**
+
+- **A queue, split per region, rather than the tracker calling objects.** The
+  tracker holds no binding to any object it observes and could not hold one that
+  reached both regions — a Durable Object is addressable only from a Worker that
+  binds its namespace. A queue has exactly one consumer, and the consumer here
+  *must* be the region's own Worker, which is the decisive test in
+  [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) and the reason these
+  are split where the report queue is shared. Same document, same test, opposite
+  answer, because the destination differs. The RPC leg inside each hop is there
+  because the consumer reads the version back and logs an object that came back
+  still behind as a warning.
+- **On the base class rather than four times over.** The alternative — adding a
+  `forceMigration` method to each of the four classes — was rejected because the
+  cost is not writing it four times, it is the fifth class. A class added later
+  would have compiled, deployed, and been quietly unreachable, which is exactly
+  the failure the tracker was built to make impossible for reporting. Both
+  members are abstract, so that class does not compile now.
+- **Waking is the migration; the method does not re-run the runner.** A second
+  application would be a code path taken only by an operator, on the objects
+  least able to afford a surprise, and it would not be the path every other wake
+  takes.
+- **The forced report bypasses the dedupe.** An ordinary wake on an unchanged
+  version deliberately says nothing, and the objects that were already current
+  are exactly the ones whose silence tells an operator nothing. The forced report
+  is the receipt that the object was reached.
+- **An `absent` object is never a target.** Its ID has no object behind it, so
+  `get()` would create an empty one — a migration pass that manufactures objects
+  is worse than one that skips them.
+- **The region a command is sent to comes from the script name when no report
+  has ever named one.** This is the detail the feature turns on and it is easy
+  to miss: the object an operator most wants to force is one the sweep found and
+  that has never woken, and that object has no reported region at all. Routing
+  on the reported region alone would have silently skipped precisely the
+  population the page exists for. `REGION_BY_SCRIPT_NAME` is the map, and an
+  object with neither is counted as `unroutable` and shown rather than guessed
+  at.
+
+**What a future change has to respect:**
+
+- The two guards inside `forceMigration` — the class and the object ID — are not
+  defence against a hostile caller; a queue has no public address. They catch a
+  wiring mistake in the consumer's dispatcher map, where a class name paired
+  with the wrong binding would let every ID in it parse cleanly and create empty
+  objects in the wrong namespace. Cloudflare refuses an ID that belongs to a
+  different namespace, which is the outer half of the same protection and is
+  asserted in the suite rather than assumed.
+- `REPORTING_CLASSES` in the registry, the dispatcher map in the consumer, and
+  the set of classes extending the base are three lists that have to agree. A
+  class missing from the first is never offered; missing from the second, a
+  command naming it is retried until it dead-letters.
+- The origin check on the two writes is load-bearing and is not redundant with
+  Access. Access proves who is signed in, not that they meant to submit this
+  form; the cookie travels with a cross-site `POST` either way.
+- The run cap is a guard on the blast radius of a misclick, not a capacity
+  estimate, and `truncated` is what keeps it honest. A cap nobody can see reads
+  as "this covered the class", which is the one thing a run row must never
+  imply.
+- An object that is already awake is reported, not migrated, and the one way to
+  change that — `ctx.abort()` — is rejected rather than merely unimplemented.
+  Evicting an object drops its live sockets and in-memory state, which is a
+  product-visible outage inflicted on every object in the class, including the
+  ones that were already current, in service of a monitor. The section above
+  records what that costs and what catches the gap instead.
 
 ### 2026-08-22 — The queue preflight creates what is missing instead of failing
 
