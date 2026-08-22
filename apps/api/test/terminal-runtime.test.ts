@@ -280,6 +280,30 @@ describe("Daytona Terminal runtime", () => {
     )).toEqual({ state: "completed", started_at: Date.parse("2026-08-13T12:00:00.000Z") });
   });
 
+  it("fails closed when a terminal task lacks complete replay timestamps", async () => {
+    const { objectStore, provider, runtime } = fixture();
+    await runtime.readFile(context, "src/file.txt");
+    vi.mocked(provider.runCommand).mockClear();
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+       (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+        state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+        stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
+        completed_at, created_at, updated_at)
+       VALUES ('task-incomplete', ?, ?, 1, ?, 'completed', ?, ?, 'done', '', '', '',
+               4, 0, NULL, NULL, ?, ?)`,
+      R, I, `avalon-task-${I}`, "a".repeat(64),
+      Date.parse("2026-08-13T12:02:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+      Date.parse("2026-08-13T12:00:00.000Z"),
+    );
+
+    await expect(runtime.runCommand(context, { command: "printf done", timeoutMs: 120_000 }))
+      .rejects.toMatchObject({ code: "command_recovery_unavailable" });
+    expect(provider.runCommand).not.toHaveBeenCalled();
+  });
+
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {
     const { files, provider, resources, runtime } = fixture();
     await expect(runtime.importResource(context, { resourceId: "00000000-0000-4000-8000-000000000099" })).resolves.toMatchObject({

@@ -408,12 +408,20 @@ started it rather than left to `waitUntil`. Runtime ping/pong is handled
 by WebSocket auto-response and does not wake the object.
 
 A keep-alive heartbeat is a separate Durable Object event. When it observes an
-already active drain it returns without awaiting that promise: joining would
-carry the alarm across a model/tool loop that belongs to another request
-context, hold unrelated alarm lanes open, and can invalidate later request-
-scoped I/O. The dispatch row and the alarm armed at drain entry remain the
-durable continuation. This early return never participates in the next-alarm
-calculation.
+already active drain it never awaits that promise: joining would carry the alarm
+across a model/tool loop that belongs to another request context, hold unrelated
+alarm lanes open, and can invalidate later request-scoped I/O. It instead arms
+a heartbeat no sooner than 30 seconds, excluding the already-due run row from
+that calculation so the alarm cannot spin at `now + 1` while the run remains
+active. Recent in-memory drain progress or an unexpired durable harness attempt
+lease proves the owner is still healthy, including legitimate multi-hour runs.
+After five minutes without progress, the agent checks that durable lease; only
+when no live lease remains does it abandon the stranded promise and start a
+fenced successor. The late predecessor cannot clear the successor because the
+single-flight promise and dispatch lease tokens are both identity-fenced. The
+same rule applies to `SubstreamAgent` and `BlockDashboardAgent`; the former
+reads its local harness lease and the latter reads the source WorkstreamDO's
+runtime lease.
 
 The keep-alive alarm lowers the chance of eviction during a long model request,
 external API wait, or computation. It is not correctness state. If an isolate
@@ -1029,9 +1037,13 @@ directory write at all.
 
 ### 2026-08-21 — Heartbeats never join a live run's request context
 
-**What changed:** `SubstreamAgent` returns from an alarm drain request when its
+**What changed:** Both agent objects defer an alarm drain request when their
 in-isolate `DurableAgentDrain` is already active, leaving the existing event to
-finish the run and the durable dispatch/alarm rows to recover it. Workstream
+finish a healthy run. They arm the next heartbeat at least 30 seconds out rather
+than rescheduling against the already-due row. If the promise makes no progress
+for five minutes and its durable harness attempt lease is no longer live, an
+identity-fenced successor replaces it without waiting for isolate eviction.
+Workstream
 schema 14 also projects terminal tool-receipt updates into the visible same-id
 part and repairs receipt-only settlements produced before the new trigger. The
 runtime-SQL port now separates transaction failure from alarm failure after
@@ -1048,13 +1060,16 @@ settled the authoritative receipt, but its generic runtime path had no live
 publisher to rewrite the participant-facing part.
 
 **Considered and rejected:** Letting every alarm await the existing single-
-flight promise, suppressing the heartbeat alarm while a volatile flag is set,
-and repairing only the desktop projection. Those respectively recreate the
-request-context join, make scheduling depend on in-memory state, or leave API
-and reconnect readers inconsistent.
+flight promise, returning forever while a stranded promise stays active,
+rescheduling from the already-due dispatch row, suppressing the heartbeat alarm
+while a volatile flag is set, and repairing only the desktop projection. Those
+respectively recreate the request-context join, permanently stall a living
+isolate, busy-loop its alarm, make scheduling depend on in-memory state, or
+leave API and reconnect readers inconsistent.
 
 **Consequences:** An alarm invocation never adopts work already owned by a
-different event. Recovery remains row-derived and survives eviction, while a
+different live event, but can replace an owner only after durable liveness has
+expired. Recovery remains row-derived and survives eviction, while a
 receipt terminalized by recovery converges the transcript in the same SQLite
 transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
 tests pin both the v13-to-v14 repair and ordinary receipt semantics.

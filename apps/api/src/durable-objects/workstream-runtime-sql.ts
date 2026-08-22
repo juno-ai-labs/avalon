@@ -12,6 +12,7 @@ const RuntimeStatementSchema = z.object({
 export const WorkstreamRuntimeSqlRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
+  harnessRunId: z.string().uuid().nullable().optional(),
   requestId: z.string().uuid(),
   statements: z.array(RuntimeStatementSchema).min(1).max(100),
 }).strict();

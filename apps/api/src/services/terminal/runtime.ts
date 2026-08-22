@@ -59,8 +59,8 @@ interface InvocationRow { id: string }
  * The object stores unix milliseconds; a tool result reports ISO-8601, which
  * is the model-facing contract. This is the only place the two meet.
  */
-function isoAt(epochMs: number | null): string {
-  return new Date(epochMs ?? 0).toISOString();
+function isoAt(epochMs: number): string {
+  return new Date(epochMs).toISOString();
 }
 
 function shellQuote(value: string): string {
@@ -95,6 +95,12 @@ type DurableTerminalCommandOutput = Omit<
 function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommandOutput | null {
   if (task.state !== "completed" && task.state !== "failed"
     && task.state !== "timed_out" && task.state !== "cancelled") return null;
+  if (task.startedAt === null || task.completedAt === null) {
+    throw new TerminalToolError(
+      "command_recovery_unavailable",
+      "The earlier command reached a terminal state without complete timing evidence. Stop and report the ambiguity; do not repeat the command.",
+    );
+  }
   const state = task.state;
   const terminationReason = (task.terminationReason
     ?? (state === "timed_out" ? "timed_out" : state === "cancelled" ? "cancelled" : "exited")
@@ -107,7 +113,7 @@ function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommand
     stderr: joinedCapture(task.stderrHead, task.stderrTail),
     ...(task.outputResourceId ? { outputResourceId: task.outputResourceId } : {}),
     startedAt: isoAt(task.startedAt),
-    completedAt: isoAt(task.completedAt ?? task.startedAt),
+    completedAt: isoAt(task.completedAt),
   };
 }
 
