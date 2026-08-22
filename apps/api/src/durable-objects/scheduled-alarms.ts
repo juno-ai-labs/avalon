@@ -217,11 +217,17 @@ export class ScheduledAlarmStore {
       this.cancelKind(kind);
       return;
     }
-    const placeholders = keys.map(() => "?").join(", ");
+    // The surviving keys travel as one JSON value, not one bound parameter
+    // each. workerd caps bound SQL variables well below the number of targets a
+    // real workspace has — a person's digest is one `schedules` row per
+    // delivery time, so a mid-sized workspace clears 100 on its own — and past
+    // that cap this threw `too many SQL variables`, which rolled back the
+    // enclosing transaction and left the whole index stale.
     this.sql.exec(
-      `DELETE FROM _internal_durable_alarms WHERE kind = ? AND alarm_key NOT IN (${placeholders})`,
+      `DELETE FROM _internal_durable_alarms
+        WHERE kind = ? AND alarm_key NOT IN (SELECT value FROM json_each(?))`,
       kind,
-      ...keys,
+      JSON.stringify(keys),
     );
     for (const target of targets) this.schedule({ ...target, kind }, now);
   }

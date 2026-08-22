@@ -227,6 +227,11 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
  * `scoped` marks the queries that filter on the workspace id; the rest read
  * tables whose every row already belongs to this object's workspace, and
  * binding a parameter they do not reference is an error, not a no-op.
+ *
+ * Every derived due time is emitted through `strftime` rather than `datetime`.
+ * `datetime()` returns `YYYY-MM-DD HH:MM:SS`, which `Date.parse` reads as
+ * *local* time — harmless on a Worker, which runs in UTC, and a silent
+ * hours-wide shift anywhere else that parses one of these.
  */
 const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   {
@@ -249,7 +254,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   {
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'expired_drafts' AS id,
-                 datetime(MIN(created_at), '+24 hours') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(created_at), '+24 hours') AS due_at
             FROM resources
            WHERE workspace_id = ?1 AND provider = 'avalon_upload'
              AND attachment_status = 'draft' HAVING COUNT(*) > 0`,
@@ -282,10 +287,10 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
             FROM (
               SELECT MIN(CASE
                        WHEN status = 'processing' THEN lease_expires_at
-                       WHEN status = 'completed' THEN datetime(completed_at, '+30 days')
+                       WHEN status = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%SZ', completed_at, '+30 days')
                        WHEN status = 'failed' AND attempt_count >= 20
-                         THEN datetime(updated_at, '+30 days')
-                       ELSE datetime(updated_at, '+2 minutes') END) AS due_at
+                         THEN strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+30 days')
+                       ELSE strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+2 minutes') END) AS due_at
                 FROM slack_ingress_jobs WHERE workspace_id = ?1
               UNION ALL SELECT MIN(lease_expires_at) FROM slack_agent_thread_claims
               UNION ALL SELECT MIN(expires_at) FROM slack_agent_pending_prompts
@@ -295,14 +300,14 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   {
     scoped: false,
     sql: `SELECT 'maintenance' AS target_kind, 'slack_unfurls' AS id,
-                 datetime(MIN(refreshed_at), '+5 minutes') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(refreshed_at), '+5 minutes') AS due_at
             FROM slack_unfurled_links
            WHERE shared_at >= datetime('now', '-30 days') HAVING COUNT(*) > 0`,
   },
   {
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'notification_intents' AS id,
-                 datetime(MIN(updated_at), '+30 days') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(updated_at), '+30 days') AS due_at
             FROM workstream_notification_intents
            WHERE workspace_id = ?1 AND state IN ('delivered', 'skipped') HAVING COUNT(*) > 0`,
   },
