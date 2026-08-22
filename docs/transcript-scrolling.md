@@ -1,0 +1,292 @@
+# Transcript scrolling
+
+The work-stream transcript keeps itself at the newest message while a turn
+streams in, so a reply written a token at a time stays visible without anyone
+touching a scroll wheel. That service ends the instant the reader scrolls: from
+then until they ask to go back, the viewport is theirs, and the only thing that
+may move it is a reposition they asked for.
+
+Read this before changing the transcript viewport, the follow, the **Jump to
+latest** control, or anything that writes `scrollTop` on `.transcript-scroll` —
+including code that only means to restore a position.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| [`apps/desktop/src/renderer/lib/use-transcript-follow.ts`](../apps/desktop/src/renderer/lib/use-transcript-follow.ts) | The whole mechanism, and **the only code that writes `scrollTop` on the transcript**: the follow, the reader-intent rules, and the recorded position that tells the two apart. |
+| [`apps/desktop/src/renderer/screens/workstream.tsx`](../apps/desktop/src/renderer/screens/workstream.tsx) | The only caller. Owns the scroll container, decides when following is permitted at all, and asks the hook to move the viewport when the screen needs it somewhere — on open, after an older page is prepended, on **Jump to latest**, and on send. |
+| [`apps/desktop/src/renderer/styles/app.css`](../apps/desktop/src/renderer/styles/app.css) | `.transcript-scroll` and `.transcript-column`, whose bottom padding is what keeps the newest message clear of the composer when the viewport is at the end. |
+
+`@tanstack/react-virtual` measures and positions the rows, and corrects the
+viewport itself when a measurement replaces an estimate. It is not part of the
+follow — see [Boundary](#boundary).
+
+## How it works
+
+### Following
+
+`useTranscriptFollow` holds one piece of truth: whether the transcript is
+following. While it is, a layout effect runs **on every commit of the screen**
+and writes `element.scrollTop = element.scrollHeight - element.clientHeight`
+whenever those have drifted apart by a pixel or more.
+
+Every commit, because a streaming turn grows the last row without changing
+anything an effect could depend on: the row re-measures, the virtualizer
+publishes a new total size, and *that commit* is the only moment at which the end
+of the transcript has moved. A layout effect, because it runs before paint — the
+correction lands in the same frame as the text that caused it, so the bottom edge
+of the reply never appears to lag and then snap.
+
+### Handing the viewport over
+
+Two signals stop the follow, and they exist for different halves of the same
+race:
+
+- **A scroll that moves away from the end.** Any distance greater than the last
+  one recorded means the reader has pulled back, and following stops. This is
+  read *before* the slack, so a single wheel tick that lands 60px from the end
+  counts even though 60px is inside it.
+- **An upward wheel, when the transcript can act on one.** A wheel event reaches
+  the main thread on the input itself, while the scroll it causes is applied by
+  the compositor and its event can arrive a frame later. Reading the intent off
+  the input settles it on the first tick rather than the third. It is ignored
+  when the container is already at its top or cannot scroll, because `wheel`
+  bubbles: a reader scrolling a code block, a wide table, or an expanded tool
+  output inside a message sends one here too, and no scroll event would follow to
+  correct a wrong guess.
+
+A scroll that comes to rest inside `TRANSCRIPT_END_SLACK` (80px) of the end
+*without having moved away to get there* hands the viewport back, and following
+resumes. Both halves matter: pulling back 60px lands inside the slack and stops
+the follow, because moving away is read first.
+
+### Whose scroll it was
+
+Every write to the container goes through the hook — the follow itself,
+`scrollTo`, or `scrollToEnd` — and each records the position it left behind,
+read back from the element rather than taken from the value written. A scroll
+event that reports that position, within 1.5px, is the transcript's own and may
+only update the recorded distance. Anything else is the reader's.
+
+Ownership is decided by the value and not by a flag. A flag has to be spent
+exactly once, and two things routinely stop that from happening: a write the
+browser clamps away emits no scroll event at all, so the flag is spent on the
+reader's next scroll instead; and a reader scroll landing in the same frame as a
+correction is delivered as a single coalesced event, which a flag discards
+wholesale. A recorded position survives both — the coalesced event does not
+report where the transcript put the viewport, so it is read as the reader's,
+which is what it is. This matters most for a keyboard or scrollbar scroll, which
+produces no wheel event and has nothing else to fall back on.
+
+Getting this wrong is the failure the module exists to prevent: read the follow's
+own correction back as the reader asking for the end and the follow re-arms one
+frame after they stopped it, and the reply cannot be read from the top until the
+turn finishes.
+
+### Where the screen puts the viewport
+
+`workstream.tsx` never writes `scrollTop`. It calls:
+
+- `scrollToEnd()` when a work stream opens at the end, when it opens with no
+  transcript at all — a work stream created moments ago, whose first reply is
+  what the person is waiting for — and when the reader sends a message, which is
+  the strongest statement anyone can make that they mean to be at the end.
+- `scrollToEnd({ smooth: true })` for **Jump to latest**. Following is armed when
+  the animation *arrives* rather than when it starts, because each frame of it
+  reports a position further from the end than the last, which is exactly what a
+  reader pulling away looks like.
+- `release()` when it opens at the reader's first unread message, so a run
+  already streaming into that work stream cannot pull them off it.
+- `scrollTo(top)` to restore the reading position after an older page is
+  prepended.
+
+## Invariants
+
+- **Only the reader's own scrolling decides where the viewport sits.** The one
+  exception is a reposition the reader asked for — opening a work stream,
+  **Jump to latest**, sending a message — and each of those goes through the hook.
+- **The transcript's `scrollTop` is written in exactly one file.** Any new
+  reposition calls `scrollTo`, `scrollToEnd`, or `release`; none of them writes
+  the element directly. This is not a style rule: a write from anywhere else is
+  not recorded, so its own scroll event is read as the reader's and re-arms the
+  follow behind them. The protocol used to be a "claim the next event" flag the
+  caller had to remember; it was replaced precisely because remembering is not a
+  property a codebase has.
+- **Nothing follows the end through the virtualizer.** `scrollToIndex` aimed at
+  the last row with `align: 'end'` does not target a fixed offset — it targets
+  `getMaxScrollOffset()`, which the virtualizer recomputes every frame for up to
+  five seconds. Against a row growing with every token that is a second follow,
+  competing with this one and with the reader, and its writes are not recorded so
+  they re-arm this one too. The single sanctioned use is the unread-anchor open,
+  where the rows above have never been measured, only the virtualizer can find
+  the offset, and the row it aims at is not moving — so it settles instead of
+  following.
+- **Following is decided in refs, not state.** A scroll event has to be able to
+  stop the follow before the next commit runs it, and a `setState` scheduled from
+  the scroll handler is not guaranteed to have been applied by then. One late
+  follow has already taken the viewport back off the reader. `atEnd` is state
+  because it only draws a button.
+- **`atEnd` is false whenever the transcript is not following.** It is recomputed
+  only from scroll events, and content growing below the fold fires none — so an
+  `atEnd` that tracked distance alone would freeze at `true` the moment the
+  follow stopped and stay there for the rest of the turn, hiding the only control
+  that leads back to the newest message while it ran away below the fold.
+- **The screen that hosts this hook must re-render for every streamed token**, or
+  the follow does not run. It does today because `transcript` comes from the
+  react-query cache on that component; memoising the row list or moving deltas
+  into a selector would silently stop it, and no test would fail.
+
+## Boundary
+
+`useTranscriptFollow` owns *where the viewport sits* and nothing else. It does
+not know what a message is, when a turn is streaming, or how tall a row is; it
+reads three numbers off a DOM element and writes one back.
+
+It depends on the screen for permission — `canFollow` is false until
+`workstream.tsx` has positioned this work stream, while the transcript is empty,
+and whenever the end of the transcript is a page away rather than loaded, because
+following an end that is not the real end would strand the reader at a boundary.
+It also takes the work stream's id, because the screen is a single component
+across every route under `/workstreams/:id` and is never remounted between them:
+without it, a reader who scrolled away from one work stream would arrive at the
+next already not following it.
+
+Row measurement, virtual positioning, and the scroll corrections applied when a
+row's measured height replaces its estimate belong to `@tanstack/react-virtual`
+and are deliberately left alone: correcting for a row above the fold that turned
+out taller than estimated is what keeps the text under the reader's eye still,
+and it is not the follow. This hook is called *after* `useVirtualizer` in the
+same component, and that order is load-bearing — the virtualizer registers a
+layout effect of its own that can write `scrollTop`, and the follow's correction
+wins only by running second.
+
+The socket events that grow a streaming message are owned by
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md), and the prepend
+whose position `scrollTo` restores is described from the wire side in
+[`realtime-sockets.md`](realtime-sockets.md); how a message body is rendered
+belongs to [`markdown-rendering.md`](markdown-rendering.md).
+
+This document covers the **work-stream transcript only**. The automation-drafts
+screen (`new-automation.tsx`) carries a second, older streaming follow with its
+own thresholds; it is not built on this hook and
+[`automation-drafts.md`](automation-drafts.md) owns it.
+
+## Failure modes and limits
+
+- **`TRANSCRIPT_END_SLACK` is 80px**, and it also decides when the screen pages
+  in newer messages. Inside it, a scroll that did not move away counts as showing
+  the newest message.
+- **A scroll is treated as the transcript's own within 1.5px** of the position it
+  recorded. The tolerance exists because `scrollHeight - clientHeight` is computed
+  from two integers while the reachable maximum is fractional.
+- **A wheel over a nested scroller is ignored** only when the transcript itself
+  cannot scroll up. One that arrives while the transcript *can* scroll — a code
+  block scrolled mid-transcript — still stops the follow. That is the safe
+  direction to be wrong in: the reader gets the viewport, and **Jump to latest**
+  appears.
+- **A work stream opened at an unread anchor does not follow**, even if a turn is
+  streaming into it, until the reader returns to the end. This is deliberate.
+- The follow reads `scrollHeight` on every commit while it is active, which
+  forces layout. It is gated on the follow being on precisely so that a screen
+  that is not following pays nothing.
+
+## Testing
+
+[`apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx`](../apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx),
+in the desktop suite (`pnpm --filter @avalon/desktop test`).
+
+jsdom performs no layout, so a scroll container reports a height of zero and an
+assignment to `scrollTop` is discarded. The test backs `scrollHeight`,
+`clientHeight`, `scrollTop`, and `scrollTo` with a plain object on
+`HTMLElement.prototype`, and the setter recording what the follow writes is the
+assertion surface. It captures and restores the original descriptors rather than
+deleting its own: the three geometry properties live on `Element.prototype`
+today, so deleting the shadow happens to work, but a jsdom that moved them would
+leave the suite with no accessor and a failure nowhere near this file.
+
+The trap that hid a real defect here: a browser dispatches a scroll event for a
+programmatic write **only when the viewport actually moved**. A helper that fires
+one on every simulated token models a browser that does not exist, and it hides
+every bug in which the follow declines to write — which is most of them, because
+declining is what it does once the reader has taken over. `stream()` in that file
+fires the event only when `scrollTop` changed.
+
+There is no test that renders `WorkstreamScreen`, so the wiring in
+`workstream.tsx` — `canFollow`, the **Jump to latest** condition, and which of
+`scrollToEnd`/`release` each open path calls — is covered only by running the
+client. That seam is where the original defect lived.
+
+## Changelog
+
+### 2026-08-22 — The reader's scrolling, not the screen's, decides where the transcript sits
+
+**What changed:** Following the newest message moved out of the work-stream
+screen into `useTranscriptFollow`, which is now the only code that writes
+`scrollTop` on the transcript. It holds the end with a single write in a layout
+effect instead of calling the virtualizer's `scrollToIndex` once per token; it
+stops on the first upward wheel tick as well as on any scroll away from the end;
+it tells its own scrolling from the reader's by the position it recorded rather
+than by a flag; and `atEnd`, which draws **Jump to latest**, now tracks whether
+the transcript is following rather than distance alone.
+
+**Why:** The transcript could not be scrolled away from during a streaming turn.
+The follow re-armed itself: it fired on every token while `atBottom` was true,
+`atBottom` was recomputed from every scroll event, and the follow's own
+correction arrived as a scroll event reporting the end — so a wheel tick that set
+`atBottom` false was undone within a frame by the screen's own scrolling. Driving
+a real ten-tick trackpad gesture into the running client during a streaming turn
+moved the viewport a net **0px**, oscillating between two positions ten times and
+ending pinned at the end; the same gesture after the change travels the full
+600px and stays there. Reading a reply from its beginning meant waiting for the
+turn to finish.
+
+Two things were wrong with the first attempt at the fix, and both are why the
+mechanism here is not the obvious one. A boolean "the next scroll is mine" flag
+has to be spent exactly once, and it is not: a write the browser clamps away
+emits no scroll event, and a reader scroll in the same frame as a correction
+arrives coalesced into one. Either way the flag is spent on the reader and the
+follow drags them back — for a keyboard or scrollbar scroll, which produces no
+wheel event, with nothing to catch it. And `atBottom`'s replacement, `atEnd`,
+was computed from distance alone; because content growing below the fold fires no
+scroll event, it froze at `true` the moment the follow stopped and stayed there,
+hiding the jump control while the reply ran hundreds of pixels below the fold.
+
+**Considered and rejected:**
+
+- *The virtualizer's own `anchorTo: 'end'` and `followOnAppend`.* These exist for
+  this exact case — `virtual-core` carries a comment about "a streaming chat
+  message growing at its bottom" — and would have deleted this module outright,
+  so they were tried rather than argued about. They disengage more cleanly than
+  this hook does (a ten-tick gesture escaped with zero direction reversals
+  against one) but they do not hold the end: measured over 400 tokens with
+  `scrollMargin` set correctly, the gap below the fold oscillated between 130 and
+  179px instead of staying at 0. `anchorTo` engages on
+  `getVirtualDistanceFromEnd()`, which is computed in the virtualizer's
+  coordinates and clamps to zero across the transcript column's bottom padding,
+  so it holds *approximately* the end and wanders inside that band. Approximately
+  is what the reader was complaining about.
+- *Keeping `atBottom` as the single source of truth and only fixing the
+  threshold.* Any threshold is out-scrolled by the correction, because the
+  correction always lands exactly at the end. The signal has to be that the
+  reader moved *away*, not how far they got.
+- *Keeping the follow on `scrollToIndex` and cancelling its reconcile loop when
+  the reader takes over.* The cancel is a scroll write of its own, issued in the
+  middle of a gesture. Not calling `scrollToIndex` to follow anything is both
+  smaller and stronger.
+- *A `setState` rather than refs for the follow decision.* Rejected on ordering:
+  the scroll handler's update is not guaranteed to be applied before the commit
+  the next token schedules, and one late follow is the entire bug.
+
+**Consequences:** The transcript container has exactly one writer, and a
+reposition added later must go through it — `scrollTo`, `scrollToEnd`, or
+`release` — or its scroll event will be read as the reader's. `scrollToIndex` is
+sanctioned only for the unread-anchor open, where it aims at a row that is not
+moving; aimed at the last row with `align: 'end'` it follows the growing end for
+five seconds and re-arms this follow through the scroll events it produces.
+`atEnd` must keep tracking the follow and not distance, or the jump control
+disappears exactly when it is needed. The hook must be called after
+`useVirtualizer` in the same component, and that component must re-render per
+streamed token.
+
+Shipped in #237.
