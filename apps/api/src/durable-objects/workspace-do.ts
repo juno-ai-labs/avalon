@@ -994,7 +994,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // so a helper that addresses "the WorkspaceDO for this workspace" reaches
     // the object it is already running in rather than the namespace. See
     // `lib/durable-object-self.ts`.
-    this.env = withDurableObjectSelf(env, {
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived.
+    this.env = env = withDurableObjectSelf(env, {
       namespace: env.WORKSPACE_DOS,
       name: () => this.selfObjectName(),
       id: state.id,

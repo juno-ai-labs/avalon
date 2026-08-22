@@ -228,8 +228,12 @@ inherited executor is not lent to a different work stream or workspace.
 **What a future change has to respect.** A new Durable Object class registers
 itself in its constructor, or it is silently exempt. A name thunk must return
 `null` until the object's identity is durably its own, because a name derived too
-early is a name for a different object. And the comparison is binding identity
-plus name equality, which is what keeps a genuine sibling call a genuine hop.
+early is a name for a different object. The comparison is binding identity plus
+name equality, which is what keeps a genuine sibling call a genuine hop. And the
+registration line rebinds the constructor's `env` parameter, not just the field:
+the first draft of this fix handed the raw parameter to
+`WorkstreamObjectProductService`, which kept it for the object's whole life and
+left finding 1d in place.
 
 ## Scope checked
 
