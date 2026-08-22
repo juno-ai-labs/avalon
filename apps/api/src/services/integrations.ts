@@ -181,6 +181,7 @@ import {
   refreshAgentTimerAlarm,
   resolveWakeupInstant,
 } from "./workstream-wakeup-service";
+import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
@@ -755,20 +756,6 @@ type ModelTranscriptProjectionIssue = {
   healed: true;
 };
 
-type ModelProtocolToolRow = {
-  invocation_id: string;
-  message_id: string;
-  harness_run_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  input_json: string;
-  output_ref: string | null;
-  output_summary: string | null;
-  status: "pending" | "started" | "completed" | "failed" | "ambiguous";
-  error_json: string | null;
-  execution_plan_json: string | null;
-};
-
 type ProjectedProtocolTool = {
   groupKey: string;
   order: number;
@@ -1079,61 +1066,61 @@ async function projectModelProtocolTranscript(
   const issues: ModelTranscriptProjectionIssue[] = [];
 
   if (toolMessageIds.length > 0) {
-    const toolRows: ModelProtocolToolRow[] = [];
+    // The routed statement joined `messages` here, which read like a dependency
+    // on the messages slice and was not one: the join was `ti.id = m.id`, and
+    // every id in it came from `storedMessages`, already filtered to tool
+    // messages. The workspace and work-stream predicates were the object's own
+    // identity, which the port now enforces. So this is a receipt lookup by id
+    // and nothing more.
+    const receipts = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId);
+    const toolRows: ToolReceiptRecord[] = [];
+    // The batch bound is kept: the request envelope caps its arguments, and one
+    // work stream's transcript can carry more tool messages than that.
     for (const idBatch of arrayBatches(toolMessageIds, 80)) {
-      const placeholders = idBatch.map(() => "?").join(", ");
-      const rows = await env.DB.prepare(
-        `SELECT m.id AS message_id, ti.id AS invocation_id, ti.harness_run_id,
-                ti.tool_call_id, ti.tool_name, ti.input_json, ti.output_ref,
-                ti.output_summary, ti.status, ti.error_json, ti.execution_plan_json
-           FROM messages m
-           JOIN tool_invocations ti ON ti.id = m.id
-          WHERE m.workspace_id = ? AND m.workstream_id = ?
-            AND m.message_type = 'tool'
-            AND m.id IN (${placeholders})`,
-      ).bind(input.workspaceId, input.workstreamId, ...idBatch)
-        .all<ModelProtocolToolRow>();
-      toolRows.push(...(rows.results ?? []));
+      toolRows.push(...await receipts.receiptsByIds({ effectIntentIds: idBatch }));
     }
 
     const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
     for (const row of toolRows) {
-      if (row.status === "pending" || row.status === "started") {
-        intentionallyOmittedToolMessageIds.add(row.message_id);
+      // A receipt id *is* its tool message id — the join proved as much — so the
+      // message a projection issue names is the receipt's own id.
+      const messageId = row.effectIntentId;
+      if (row.status === "admitted" || row.status === "executing") {
+        intentionallyOmittedToolMessageIds.add(messageId);
         issues.push({ kind: "dangling_tool_invocation", healed: true });
         continue;
       }
 
       let argumentsJson: string;
       try {
-        argumentsJson = JSON.stringify(JSON.parse(row.input_json));
+        argumentsJson = JSON.stringify(JSON.parse(row.inputJson));
       } catch {
-        intentionallyOmittedToolMessageIds.add(row.message_id);
+        intentionallyOmittedToolMessageIds.add(messageId);
         issues.push({ kind: "invalid_tool_arguments", healed: true });
         continue;
       }
 
-      const stablePosition = /:turn:(\d+):tool:(\d+)$/u.exec(row.tool_call_id);
+      const stablePosition = /:turn:(\d+):tool:(\d+)$/u.exec(row.toolCallId);
       if (!stablePosition) {
-        intentionallyOmittedToolMessageIds.add(row.message_id);
+        intentionallyOmittedToolMessageIds.add(messageId);
         issues.push({ kind: "unlinked_tool_invocation", healed: true });
         continue;
       }
-      const groupKey = `${row.harness_run_id}:turn:${stablePosition[1]}`;
+      const groupKey = `${row.runId}:turn:${stablePosition[1]}`;
       const order = Number(stablePosition[2]);
       let resultContent: unknown;
       if (row.status === "completed") {
-        const executionPlan = parseJson<Record<string, unknown> | null>(row.execution_plan_json, null);
+        const executionPlan = parseJson<Record<string, unknown> | null>(row.executionPlanJson, null);
         const capability = typeof executionPlan?.capability === "string" ? executionPlan.capability : null;
         const canonicalToolName = typeof executionPlan?.canonicalToolName === "string"
           ? executionPlan.canonicalToolName
           : null;
         const attachmentTool = capability?.startsWith("workstream.resources.") === true
-          || /^workstream_(?:list|read|search|view|summarize)_resources?$/u.test(row.tool_name);
+          || /^workstream_(?:list|read|search|view|summarize)_resources?$/u.test(row.toolName);
         let exactOutput: unknown | null;
         if (attachmentTool) {
           if (!capability || !canonicalToolName || !input.executionPrincipal) {
-            intentionallyOmittedToolMessageIds.add(row.message_id);
+            intentionallyOmittedToolMessageIds.add(messageId);
             issues.push({ kind: "unauthorized_attachment_tool_omitted", healed: true });
             continue;
           }
@@ -1141,32 +1128,32 @@ async function projectModelProtocolTranscript(
             ...input,
             executionPrincipal: input.executionPrincipal,
           }, {
-            invocationId: row.invocation_id,
+            invocationId: row.effectIntentId,
             capability,
             canonicalToolName,
-            rawInput: parseJson(row.input_json, {}),
-            outputRef: row.output_ref,
+            rawInput: parseJson(row.inputJson, {}),
+            outputRef: row.outputRef,
           });
           if (!replay) {
-            intentionallyOmittedToolMessageIds.add(row.message_id);
+            intentionallyOmittedToolMessageIds.add(messageId);
             issues.push({ kind: "unauthorized_attachment_tool_omitted", healed: true });
             continue;
           }
           exactOutput = replay.output;
         } else {
-          exactOutput = row.output_ref
-            ? await loadToolReplayOutput(env, row.output_ref, replayDeadline)
+          exactOutput = row.outputRef
+            ? await loadToolReplayOutput(env, row.outputRef, replayDeadline)
             : null;
         }
         resultContent = {
           success: true,
           data: exactOutput ?? {
-            summary: row.output_summary ?? "The prior tool call completed, but its detailed result is no longer available.",
+            summary: row.outputSummary ?? "The prior tool call completed, but its detailed result is no longer available.",
             resultAvailability: "summary_only",
           },
         };
       } else {
-        const durableError = parseJson<{ code?: unknown; message?: unknown; data?: unknown }>(row.error_json, {});
+        const durableError = parseJson<{ code?: unknown; message?: unknown; data?: unknown }>(row.errorJson, {});
         const structured = readStructuredFailure(durableError.data);
         resultContent = {
           success: false,
@@ -1182,17 +1169,17 @@ async function projectModelProtocolTranscript(
         };
       }
 
-      toolsByMessageId.set(row.message_id, {
+      toolsByMessageId.set(messageId, {
         groupKey,
         order,
         call: {
-          id: row.tool_call_id,
+          id: row.toolCallId,
           type: "function",
-          function: { name: row.tool_name, arguments: argumentsJson },
+          function: { name: row.toolName, arguments: argumentsJson },
         },
         result: {
           role: "tool",
-          tool_call_id: row.tool_call_id,
+          tool_call_id: row.toolCallId,
           content: JSON.stringify(resultContent),
         },
       });
@@ -2620,54 +2607,45 @@ export async function runWorkstreamHarness(
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
-      const row = await env.DB.prepare(
-        `SELECT id, tool_name, input_hash, input_json, status, output_ref, output_summary, execution_plan_json
-         FROM tool_invocations WHERE harness_run_id = ? AND tool_call_id = ?`,
-      )
-        .bind(input.harnessRunId, toolCallId)
-        .first<{
-          id: string;
-          tool_name: string;
-          input_hash: string;
-          input_json: string;
-          status: string;
-          output_ref: string | null;
-          output_summary: string | null;
-          execution_plan_json: string | null;
-      }>();
+      const row = await createToolReceiptObjectPort(
+        env,
+        input.workspaceId,
+        input.workstreamId,
+      ).receiptForCall({ runId: input.harnessRunId, toolCallId });
       if (!row) return null;
-      const policyMatches = storedToolPolicyMatches(row.execution_plan_json, expectedPolicy);
-      if (row.status === "completed" && row.input_hash === inputHash && policyMatches) {
+      const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
+      if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
         const attachmentReplay = await loadAuthorizedAttachmentReplay(env, input, {
-          invocationId: row.id,
+          invocationId: row.effectIntentId,
           capability: expectedPolicy.definition.capability,
           canonicalToolName: expectedPolicy.definition.name,
-          rawInput: parseJson(row.input_json, {}),
-          outputRef: row.output_ref,
+          rawInput: parseJson(row.inputJson, {}),
+          outputRef: row.outputRef,
         });
         if (attachmentReplay === null) return null;
-        const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
+        const invocation = await loadToolInvocation(env, input, toolCallId);
         if (invocation) {
           if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
           await emit({ type: "tool_completed", invocation });
         }
-        const replayedOutput = attachmentReplay?.output ?? (row.output_ref
-          ? await loadToolReplayOutput(env, row.output_ref)
+        const replayedOutput = attachmentReplay?.output ?? (row.outputRef
+          ? await loadToolReplayOutput(env, row.outputRef)
           : null);
         const contentParts = attachmentReplay?.contentParts ?? [];
         return {
-          output: replayedOutput ?? { summary: row.output_summary },
-          summary: row.output_summary ?? "Completed",
+          output: replayedOutput ?? { summary: row.outputSummary },
+          summary: row.outputSummary ?? "Completed",
           ...(contentParts.length > 0 ? { contentParts } : {}),
         };
       }
       try {
         const recovered = await reconcileRecoverableTerminalWrite({
           row: {
-            id: row.id,
-            status: row.status,
-            inputHash: row.input_hash,
-            inputJson: row.input_json,
+            id: row.effectIntentId,
+            // The reconciler reads the wire spelling; the object stores its own.
+            status: wireToolStatus(row.status),
+            inputHash: row.requestHash,
+            inputJson: row.inputJson,
           },
           expectedInputHash: inputHash,
           policyMatches,
@@ -2684,7 +2662,7 @@ export async function runWorkstreamHarness(
         });
         if (recovered) {
           await persistSuccessfulToolResult(env, input, liveness.lease, {
-            invocationId: row.id,
+            invocationId: row.effectIntentId,
             toolCallId,
             output: durableToolReplayOutput(
               expectedPolicy.definition.capability,
@@ -2692,20 +2670,20 @@ export async function runWorkstreamHarness(
               recovered.summary,
             ),
             outputSummary: recovered.summary,
-            memberSafePayload: { toolName: row.tool_name, recovered: true },
+            memberSafePayload: { toolName: row.toolName, recovered: true },
             allowAmbiguousReconciliation: row.status === "ambiguous",
           });
-          const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
+          const invocation = await loadToolInvocation(env, input, toolCallId);
           if (invocation) {
             if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_completed", invocation });
-            await recordToolAudit(env, input, invocation.id, row.tool_name, "write", "completed");
+            await recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed");
           }
           logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
             workspace_id: input.workspaceId,
             workstream_id: input.workstreamId,
             harness_run_id: input.harnessRunId,
-            tool_invocation_id: row.id,
+            tool_invocation_id: row.effectIntentId,
           });
           return recovered;
         }
@@ -2722,7 +2700,7 @@ export async function runWorkstreamHarness(
           workspace_id: input.workspaceId,
           workstream_id: input.workstreamId,
           harness_run_id: input.harnessRunId,
-          tool_invocation_id: row.id,
+          tool_invocation_id: row.effectIntentId,
         });
       }
       // Classify replay safety from the canonical policy persisted in the
@@ -2736,12 +2714,12 @@ export async function runWorkstreamHarness(
       if (
         row.status === "completed"
         && mode === "read"
-        && row.input_hash !== inputHash
-        && recordedReceiptMode(row.execution_plan_json) === "read"
+        && row.requestHash !== inputHash
+        && recordedReceiptMode(row.executionPlanJson) === "read"
       ) {
         return null;
       }
-      if (mode === "write" || row.input_hash !== inputHash || !policyMatches) {
+      if (mode === "write" || row.requestHash !== inputHash || !policyMatches) {
         ambiguousToolOutcome = true;
         const newlyAmbiguous = row.status !== "ambiguous";
         // A completed receipt cannot be finalized again: an ambiguous finalize
@@ -2755,12 +2733,12 @@ export async function runWorkstreamHarness(
             createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
             liveness.lease, {
             harnessRunId: input.harnessRunId,
-            invocationId: row.id,
+            invocationId: row.effectIntentId,
             status: "ambiguous",
             phase: "ambiguous_external_write",
             error: {
               code: "ambiguous_external_write",
-              message: row.input_hash !== inputHash
+              message: row.requestHash !== inputHash
                 ? "A stable tool-call ID was reused with different input"
                 : !policyMatches
                   ? "A stable tool-call ID was reused with a different canonical tool policy"
@@ -2769,16 +2747,16 @@ export async function runWorkstreamHarness(
             memberSafePayload: { code: "ambiguous_external_write" },
           });
         }
-        const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
+        const invocation = await loadToolInvocation(env, input, toolCallId);
         if (invocation) {
           if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
           await emit({ type: "tool_failed", invocation });
           if (newlyAmbiguous) {
-            await recordToolAudit(env, input, invocation.id, row.tool_name, mode, "ambiguous");
+            await recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous");
           }
         }
         return {
-          output: { error: "ambiguous_external_write", invocationId: row.id },
+          output: { error: "ambiguous_external_write", invocationId: row.effectIntentId },
           summary: "Existing write invocation requires human resolution",
           halt: "needs_input",
         };
@@ -2888,7 +2866,7 @@ export async function runWorkstreamHarness(
           toolEffectIntents.record(event.toolCallId, receipt.invocationId);
           if (receipt.state === "ambiguous_external_write") {
             ambiguousToolOutcome = true;
-            const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+            const invocation = await loadToolInvocation(env, input, event.toolCallId);
             if (invocation) {
               if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
               await emit({ type: "tool_failed", invocation });
@@ -2922,7 +2900,7 @@ export async function runWorkstreamHarness(
             stopController.abort("tool_receipt_replay_race");
             throw new Error("tool_receipt_replay_race");
           }
-          const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             await emitAgentToolStartedTelemetry(env, {
               workspaceId: input.workspaceId,
@@ -2957,7 +2935,7 @@ export async function runWorkstreamHarness(
           }, harnessTools);
           const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
           if (transientSlackSearch) suppressInferencePayloadLogging = true;
-          const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+          const plannedInvocation = await loadToolInvocation(env, input, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
           await settleRootHarnessToolCompletion(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
@@ -2977,7 +2955,7 @@ export async function runWorkstreamHarness(
           });
           // The durable replay payload and fenced completed receipt now exist;
           // only after this awaited boundary may Bind observe the tool result.
-          const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_completed", invocation });
@@ -3038,7 +3016,7 @@ export async function runWorkstreamHarness(
             ));
             if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
           } else {
-            const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+            const plannedInvocation = await loadToolInvocation(env, input, event.toolCallId);
             if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
             invocationId = plannedInvocation.id;
           }
@@ -3060,7 +3038,7 @@ export async function runWorkstreamHarness(
               },
             );
           }
-          const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_failed", invocation });
@@ -3861,40 +3839,32 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             if (expectedPolicy.definition.mode !== "read") {
               throw new ConnectorError("unauthorized", "Sub-agents may only replay read-only receipts");
             }
-            const row = await options.env.DB.prepare(
-              `SELECT id, input_hash, input_json, status, output_ref, output_summary, execution_plan_json
-                 FROM tool_invocations
-                WHERE harness_run_id = ? AND tool_call_id = ?`,
-            ).bind(childInput.harnessRunId, toolCallId).first<{
-              id: string;
-              input_hash: string;
-              input_json: string;
-              status: string;
-              output_ref: string | null;
-              output_summary: string | null;
-              execution_plan_json: string | null;
-            }>();
+            const row = await createToolReceiptObjectPort(
+              options.env,
+              childInput.workspaceId,
+              childInput.workstreamId,
+            ).receiptForCall({ runId: childInput.harnessRunId, toolCallId });
             if (!row) return null;
-            if (row.input_hash !== inputHash) throw new Error("tool_receipt_input_mismatch");
-            if (!storedToolPolicyMatches(row.execution_plan_json, expectedPolicy)) {
+            if (row.requestHash !== inputHash) throw new Error("tool_receipt_input_mismatch");
+            if (!storedToolPolicyMatches(row.executionPlanJson, expectedPolicy)) {
               throw new Error("tool_receipt_execution_plan_mismatch");
             }
             if (row.status !== "completed") return null;
             const attachmentReplay = await loadAuthorizedAttachmentReplay(options.env, childInput, {
-              invocationId: row.id,
+              invocationId: row.effectIntentId,
               capability: expectedPolicy.definition.capability,
               canonicalToolName: expectedPolicy.definition.name,
-              rawInput: parseJson(row.input_json, {}),
-              outputRef: row.output_ref,
+              rawInput: parseJson(row.inputJson, {}),
+              outputRef: row.outputRef,
             });
             if (attachmentReplay === null) return null;
-            const replay = attachmentReplay?.output ?? (row.output_ref
-              ? await loadToolReplayOutput(options.env, row.output_ref)
+            const replay = attachmentReplay?.output ?? (row.outputRef
+              ? await loadToolReplayOutput(options.env, row.outputRef)
               : null);
             const contentParts = attachmentReplay?.contentParts ?? [];
             return {
-              output: replay ?? { summary: row.output_summary },
-              summary: row.output_summary ?? "Completed",
+              output: replay ?? { summary: row.outputSummary },
+              summary: row.outputSummary ?? "Completed",
               ...(contentParts.length > 0 ? { contentParts } : {}),
             };
           },
@@ -4009,7 +3979,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 }
                 const invocation = await loadToolInvocation(
                   options.env,
-                  childInput.harnessRunId,
+                  childInput,
                   event.toolCallId,
                 );
                 if (invocation) await emitAgentToolStartedTelemetry(options.env, {
@@ -4042,7 +4012,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 if (transientSlackSearch) suppressChildInferencePayloadLogging = true;
                 const invocation = await loadToolInvocation(
                   options.env,
-                  childInput.harnessRunId,
+                  childInput,
                   event.toolCallId,
                 );
                 if (!invocation) throw new Error("tool_execution_plan_missing");
@@ -4129,7 +4099,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 } else {
                   const invocation = await loadToolInvocation(
                     options.env,
-                    childInput.harnessRunId,
+                    childInput,
                     event.toolCallId,
                   );
                   if (!invocation) throw new Error("tool_execution_plan_missing");
@@ -7444,42 +7414,72 @@ function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPlu
   };
 }
 
-async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: string): Promise<ToolInvocation | null> {
-  const row = await workspaceRegionalDatabase(env).prepare(env.WORKSPACE_DOS
-    ? `SELECT * FROM tool_invocations
-        WHERE harness_run_id = ? AND tool_call_id = ?`
-    : `SELECT invocation.*,
-              owner.connector_type AS owner_connector_type,
-              owner.display_name AS owner_display_name,
-              owner.model_plugin_id AS owner_model_plugin_id
-         FROM tool_invocations invocation
-         LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id
-        WHERE invocation.harness_run_id = ? AND invocation.tool_call_id = ?`)
-    .bind(harnessRunId, toolCallId).first<Record<string, unknown>>();
-  if (!row) return null;
-  if (env.WORKSPACE_DOS && row.connection_id != null) {
-    const owner = await env.DB.prepare(
-      `SELECT connector_type, display_name, model_plugin_id
-         FROM connector_connections WHERE id = ?`,
-    ).bind(row.connection_id).first<{
-      connector_type: string;
-      display_name: string;
-      model_plugin_id: string;
-    }>();
-    row.owner_connector_type = owner?.connector_type ?? null;
-    row.owner_display_name = owner?.display_name ?? null;
-    row.owner_model_plugin_id = owner?.model_plugin_id ?? null;
-  }
-  const error = parseJson<{ code: string; message: string } | null>(row.error_json, null);
-  const status = String(row.status) as ToolInvocation["status"];
-  const plugin = toolInvocationOwningPlugin(row);
+/**
+ * The wire spelling of a receipt status.
+ *
+ * `ToolInvocationSchema` publishes `pending`/`started`, which the object has
+ * never stored — the retired compatibility view remapped them in SQL. That
+ * translation does not disappear when the view does; it moves here, to the one
+ * boundary that serves the wire. Changing the published enum is a separate,
+ * deliberate change and must not ride along with the port conversion.
+ */
+function wireToolStatus(status: ToolReceiptRecord["status"]): ToolInvocation["status"] {
+  if (status === "admitted") return "pending";
+  if (status === "executing") return "started";
+  return status;
+}
+
+/** The other half of that translation: the object counts unix ms, the wire reads ISO. */
+function wireTimestamp(at: number | null): string | null {
+  return at == null ? null : new Date(at).toISOString();
+}
+
+async function loadToolInvocation(
+  env: Env,
+  target: { workspaceId: string; workstreamId: string; harnessRunId: string },
+  toolCallId: string,
+  // The smallest capability this needs, rather than the whole port: it reads one
+  // receipt and never settles anything, and saying so is what lets a caller —
+  // or a test — supply exactly that.
+  receipts: Pick<ToolReceiptObjectPort, "receiptForCall"> = createToolReceiptObjectPort(
+    env,
+    target.workspaceId,
+    target.workstreamId,
+  ),
+): Promise<ToolInvocation | null> {
+  const receipt = await receipts.receiptForCall({
+    runId: target.harnessRunId,
+    toolCallId,
+  });
+  if (!receipt) return null;
+  // Connector attribution stays a separate workspace-authority read. It was
+  // already one whenever `WORKSPACE_DOS` was bound, which every deployed config
+  // does; the `LEFT JOIN connector_connections` alternative was the unbound
+  // arm, and it is deleted rather than carried across the boundary — the two
+  // tables live in different objects and no join can span them.
+  const owner = receipt.connectionId == null ? null : await env.DB.prepare(
+    `SELECT connector_type, display_name, model_plugin_id
+       FROM connector_connections WHERE id = ?`,
+  ).bind(receipt.connectionId).first<{
+    connector_type: string;
+    display_name: string;
+    model_plugin_id: string;
+  }>();
+  const error = parseJson<{ code: string; message: string } | null>(receipt.errorJson, null);
+  const status = wireToolStatus(receipt.status);
+  const plugin = toolInvocationOwningPlugin({
+    connection_id: receipt.connectionId,
+    owner_connector_type: owner?.connector_type ?? null,
+    owner_display_name: owner?.display_name ?? null,
+    owner_model_plugin_id: owner?.model_plugin_id ?? null,
+  });
   return {
-    id: String(row.id),
-    harnessRunId: String(row.harness_run_id),
-    toolCallId: String(row.tool_call_id),
-    toolName: String(row.tool_name),
+    id: receipt.effectIntentId,
+    harnessRunId: receipt.runId,
+    toolCallId: receipt.toolCallId,
+    toolName: receipt.toolName,
     activityName: toolActivityName({
-      toolName: String(row.tool_name),
+      toolName: receipt.toolName,
       // `ambiguous` keeps settled wording on purpose: the write may well have
       // landed, and the row carries its own "could not confirm" warning. Only a
       // definite failure gets failure prose.
@@ -7488,13 +7488,15 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
         : status === "failed" ? "failed" : "completed",
       plugin,
     }),
-    connectionId: row.connection_id == null ? null : String(row.connection_id),
+    connectionId: receipt.connectionId,
     plugin,
     status,
-    inputSummary: summarize(parseJson(row.input_json, {}), 1_000),
-    outputSummary: row.output_summary == null ? null : summarize(String(row.output_summary), 4_000),
-    startedAt: row.started_at == null ? null : String(row.started_at),
-    completedAt: row.completed_at == null ? null : String(row.completed_at),
+    inputSummary: summarize(parseJson(receipt.inputJson, {}), 1_000),
+    outputSummary: receipt.outputSummary == null
+      ? null
+      : summarize(receipt.outputSummary, 4_000),
+    startedAt: wireTimestamp(receipt.startedAt),
+    completedAt: wireTimestamp(receipt.settledAt),
     error,
   };
 }
