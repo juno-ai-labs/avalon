@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import type { WorkstreamRuntimeResourceAttacher } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
@@ -32,7 +33,7 @@ const context: HarnessToolContext = {
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
-function fixture() {
+function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   // Publishing attaches resources through the object's RPC surface, which
@@ -136,7 +137,19 @@ function fixture() {
     }),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
-  return { database, objectStore, objects, put, env, provider, bridge: createTerminalResourceBridge(env, testTerminalPortFactory(objectStore)) };
+  return {
+    database,
+    objectStore,
+    objects,
+    put,
+    env,
+    provider,
+    bridge: createTerminalResourceBridge(
+      env,
+      testTerminalPortFactory(objectStore),
+      inObjectResourceAttacher,
+    ),
+  };
 }
 
 describe("Terminal resource bridge", () => {
@@ -247,6 +260,25 @@ describe("Terminal resource bridge", () => {
     expect(objects.has(String((row as { content_ref: string }).content_ref))).toBe(true);
     expect(put).toHaveBeenCalledOnce();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get()).toEqual({ count: 0 });
+  });
+
+  it("uses the resident resource attacher instead of same-object RPC", async () => {
+    const attachResource = vi.fn(async () => undefined);
+    const { bridge } = fixture(attachResource);
+
+    const result = await bridge.publishResource(
+      context,
+      { filePath: "resident-report.md" },
+      new TextEncoder().encode("resident output\n"),
+    );
+
+    expect(attachResource).toHaveBeenCalledOnce();
+    expect(attachResource).toHaveBeenCalledWith({
+      workspaceId: W,
+      workstreamId: S,
+      resourceId: result.resourceId,
+      attachedByUserId: U,
+    });
   });
 
   it("publishes opaque binaries as download-only resources", async () => {

@@ -99,7 +99,7 @@ async function loadSelection(
   env: Env,
   workspaceId: string,
   workstreamId: string,
-  terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
+  terminalPortFactory: TerminalPortFactory,
 ): Promise<TerminalRepositorySelection | null> {
   const row = await terminalPortFactory(workspaceId, workstreamId)
     .selectedRepository();

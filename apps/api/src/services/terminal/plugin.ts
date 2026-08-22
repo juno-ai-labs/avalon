@@ -37,12 +37,17 @@ import {
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
+import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
   inObjectTerminalPort?: TerminalPortFactory,
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<HarnessPlugin | null> {
+  if ((inObjectTerminalPort === undefined) !== (inObjectResourceAttacher === undefined)) {
+    throw new Error("terminal_resident_runtime_incomplete");
+  }
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
@@ -90,7 +95,7 @@ export async function createAvalonTerminalPlugin(
     env.DB,
     coordinator,
     provider,
-    createTerminalResourceBridge(env, terminalPort),
+    createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
     createTerminalRepositorySelector(
       env,
@@ -98,6 +103,7 @@ export async function createAvalonTerminalPlugin(
       createGitHubTerminalCatalogGateway(env),
       coordinator,
       terminalPort,
+      inObjectResourceAttacher,
     ),
     async (context, sandbox, sandboxProvider) => {
       try {
