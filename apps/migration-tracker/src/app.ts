@@ -10,13 +10,21 @@
  */
 import { Hono } from "hono";
 import { readAccessConfiguration, accessFailureMessage, verifyAccessRequest } from "./access";
+import { dispatchMigrationRun, dispatchableRegions } from "./dispatch";
 import { devAuthEnabled, type Env } from "./env";
 import { logEvent } from "./logger";
-import { ObjectQuerySchema, type ObjectQuery } from "./protocol";
+import {
+  MigrationRunRequestSchema,
+  ObjectQuerySchema,
+  type MigrationRunRequest,
+  type MigrationsOverview,
+  type ObjectQuery,
+} from "./protocol";
 import { REGISTRY_OBJECT_NAME } from "./registry";
 import type { MigrationRegistry } from "./registry";
 import {
   layout,
+  migrationsPage,
   notFoundPage,
   objectPage,
   objectsPage,
@@ -90,6 +98,57 @@ app.get("/objects/:objectId", async (context) => {
   ));
 });
 
+app.get("/migrations", async (context) => {
+  const url = new URL(context.req.url);
+  return context.html(layout(
+    "Force a migration",
+    context.get("principal"),
+    migrationsPage(await migrationsOverview(context.env), url.searchParams.get("run")),
+  ));
+});
+
+/**
+ * Start a run, then redirect to the page that lists it.
+ *
+ * Post/redirect/get, so that the browser reload an operator reaches for while
+ * waiting for reports to arrive does not dispatch the whole class a second
+ * time. The run id travels in the query string, which is what the page uses to
+ * point at the row that was just created.
+ */
+app.post("/migrations", async (context) => {
+  const refusal = sameOriginRefusal(context.req.raw);
+  if (refusal) return context.html(refusalPage(refusal), 403);
+  const parsed = MigrationRunRequestSchema.safeParse(
+    migrationRunFields(await context.req.parseBody()),
+  );
+  if (!parsed.success) {
+    return context.html(layout(
+      "Force a migration",
+      context.get("principal"),
+      migrationsPage(await migrationsOverview(context.env), null, "Pick a class to migrate."),
+    ), 400);
+  }
+  const run = await startMigrationRun(context.env, parsed.data, context.get("principal"));
+  return context.redirect(`/migrations?run=${encodeURIComponent(run.runId)}`, 303);
+});
+
+app.get("/api/migrations", async (context) => context.json(await migrationsOverview(context.env)));
+
+app.post("/api/migrations", async (context) => {
+  const refusal = sameOriginRefusal(context.req.raw);
+  if (refusal) return context.json({ error: "cross_origin_write", message: refusal }, 403);
+  const parsed = MigrationRunRequestSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({
+      error: "invalid_migration_run_request",
+      issues: parsed.error.issues.map((issue) => issue.path.map(String).join(".") || "(root)"),
+    }, 400);
+  }
+  return context.json(
+    await startMigrationRun(context.env, parsed.data, context.get("principal")),
+  );
+});
+
 app.get("/api/overview", async (context) => context.json(await registry(context.env).overview()));
 
 app.get("/api/objects", async (context) => context.json(
@@ -152,4 +211,77 @@ export function parseObjectQuery(url: string): ObjectQuery {
 
 export function registry(env: Env): DurableObjectStub<MigrationRegistry> {
   return env.MIGRATION_REGISTRY.get(env.MIGRATION_REGISTRY.idFromName(REGISTRY_OBJECT_NAME));
+}
+
+async function migrationsOverview(env: Env): Promise<MigrationsOverview> {
+  const stub = registry(env);
+  const [components, runs] = await Promise.all([stub.forceableComponents(), stub.listMigrationRuns()]);
+  return { components, runs, dispatchableRegions: dispatchableRegions(env) };
+}
+
+/**
+ * Dispatch a run and log it, in the one place both entry points share.
+ *
+ * The log line is not decoration: a forced fan-out is the only write this site
+ * performs, and Workers Logs is where it is visible without opening the page
+ * that started it.
+ */
+async function startMigrationRun(
+  env: Env,
+  request: MigrationRunRequest,
+  principal: string | null,
+): Promise<Awaited<ReturnType<typeof dispatchMigrationRun>>> {
+  const run = await dispatchMigrationRun(
+    env,
+    registry(env),
+    request,
+    principal ?? "unknown",
+  );
+  logEvent(run.status === "failed" ? "error" : "info", "migration_run_dispatched", {
+    message: `migration_run_dispatched ${run.className} ${run.status}`
+      + ` ${run.dispatched}/${run.matched} objects`,
+    run_id: run.runId,
+    class_name: run.className,
+    region: run.region,
+    matched_count: run.matched,
+    dispatched_count: run.dispatched,
+    unroutable_count: run.unroutable,
+    truncated: run.truncated,
+    status: run.status,
+    error_message: run.errorMessage,
+  });
+  return run;
+}
+
+/**
+ * Refuse a write that a browser reports as coming from somewhere else.
+ *
+ * Cloudflare Access is authentication, not intent: an operator's session cookie
+ * travels with a form another site submits, so the assertion on such a request
+ * is genuine and proves nothing about who asked for it. Every read here is
+ * harmless, so only the two writes carry this.
+ *
+ * Checked when present rather than required, because `Origin` is a browser
+ * header and its absence is what a script has. A browser omits it on a
+ * same-origin `GET` and sends it on every cross-origin `POST`, which is the
+ * case this exists to catch; a `curl` against the JSON twin sends none and is
+ * not a confused deputy.
+ */
+function sameOriginRefusal(request: Request): string | null {
+  const origin = request.headers.get("origin");
+  if (origin === null) return null;
+  return origin === new URL(request.url).origin
+    ? null
+    : "This request came from another site. Start a migration from this page.";
+}
+
+/** The two fields the form submits, as `MigrationRunRequestSchema` reads them. */
+function migrationRunFields(body: Record<string, unknown>): {
+  className: unknown;
+  region: unknown;
+} {
+  const region = typeof body.region === "string" && body.region.trim() !== ""
+    ? body.region.trim()
+    : null;
+  return { className: body.className, region };
 }

@@ -25,7 +25,10 @@ import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
-import { DurableObject } from "cloudflare:workers";
+import {
+  MigratableDurableObject,
+  type DurableObjectMigrationPlan,
+} from "./migratable-durable-object";
 
 import type { Env } from "../env";
 import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -71,7 +74,6 @@ import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
-import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
@@ -299,7 +301,7 @@ function blockRunFromRow(row: RuntimeBlockRow): BlockDashboardBlockRun {
  */
 const MIGRATION_COMPONENT = "block_dashboard_block_agent";
 
-export class BlockDashboardAgent extends DurableObject<Env> {
+export class BlockDashboardAgent extends MigratableDurableObject<Env> {
   private readonly state: DurableObjectState;
   /** This object's own `BLOCK_DASHBOARD_AGENTS` name; see {@link selfObjectName}. */
   private objectName: string | null = null;
@@ -341,13 +343,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       (drain) => this.state.waitUntil(drain),
     );
     this.initialized = state.blockConcurrencyWhile(async () => {
-      await withMigrationReport({
-        state,
-        env,
-        component: MIGRATION_COMPONENT,
-        className: "BlockDashboardAgent",
-        latestVersion: latestMigrationVersion(BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS),
-      }, () => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
@@ -365,6 +361,18 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       await this.scheduleNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  protected override migrationPlan(): DurableObjectMigrationPlan {
+    return {
+      component: MIGRATION_COMPONENT,
+      className: "BlockDashboardAgent",
+      migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
+    };
+  }
+
+  protected override migrationsReady(): Promise<void> {
+    return this.initialized;
   }
 
   override async fetch(request: Request): Promise<Response> {

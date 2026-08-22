@@ -119,11 +119,11 @@ import {
   WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
   WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
 } from "./workstream-object-schema";
-import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
 import {
   ScheduledDurableObject,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
+import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
@@ -545,13 +545,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // input gate, and a report still in flight dies with it. The construction
       // itself is unchanged and still synchronous: this is the first statement
       // of a callback that `blockConcurrencyWhile` invokes immediately.
-      this.objectStore = await withMigrationReport({
-        state,
-        env,
-        component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-        className: "SubstreamAgent",
-        latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
-      }, () => new WorkstreamObjectStore(
+      this.objectStore = await this.applyMigrations(() => new WorkstreamObjectStore(
         state.storage,
         env.APP_VERSION ?? "unknown",
         env.AVALON_REGION,
@@ -2520,7 +2514,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return delivered;
   }
 
-  protected override scheduleReady(): Promise<void> {
+  protected override migrationPlan(): DurableObjectMigrationPlan {
+    return {
+      component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+      className: "SubstreamAgent",
+      migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+    };
+  }
+
+  protected override migrationsReady(): Promise<void> {
     return this.initialized;
   }
 
