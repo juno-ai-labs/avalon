@@ -89,13 +89,7 @@ async function objectStub(
 
 export async function attachWorkstreamRuntimeResource(
   env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    resourceId: string;
-    attachedByUserId: string | null;
-    relationshipType?: string;
-  },
+  input: WorkstreamRuntimeResourceAttachment,
 ): Promise<void> {
   const authority = await readWorkstreamAuthorityControl(env);
   if (authority.phase !== "durable_object_open") {
@@ -120,6 +114,18 @@ export async function attachWorkstreamRuntimeResource(
     throw new Error(typeof body?.error === "string" ? body.error : "runtime_resource_attach_failed");
   }
 }
+
+export interface WorkstreamRuntimeResourceAttachment {
+  workspaceId: string;
+  workstreamId: string;
+  resourceId: string;
+  attachedByUserId: string | null;
+  relationshipType?: string;
+}
+
+export type WorkstreamRuntimeResourceAttacher = (
+  input: WorkstreamRuntimeResourceAttachment,
+) => Promise<void>;
 
 export async function createWorkstreamRuntimeSuggestion(
   env: Env,

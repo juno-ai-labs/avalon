@@ -3,7 +3,10 @@ import { createTerminalPortFactory, type TerminalPortFactory } from "./object-po
 
 import type { Env } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
-import { attachWorkstreamRuntimeResource } from "../workstream-object-client";
+import {
+  attachWorkstreamRuntimeResource,
+  type WorkstreamRuntimeResourceAttacher,
+} from "../workstream-object-client";
 import { regionalDatabase } from "../workstream-runtime-database";
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
@@ -250,6 +253,7 @@ export function createTerminalWorkspaceBackup(
     generation: number;
     signal: AbortSignal;
   },
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<TerminalWorkspaceBackup | null> {
   return createWorkspaceBackup();
 
@@ -401,7 +405,8 @@ export function createTerminalWorkspaceBackup(
       await env.DB.batch([resourceStatement, attachmentStatement, cleanupStatement]);
     } else {
       await resourceStatement.run();
-      await attachWorkstreamRuntimeResource(env, {
+      await (inObjectResourceAttacher ?? ((attachment) =>
+        attachWorkstreamRuntimeResource(env, attachment)))({
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         resourceId,
