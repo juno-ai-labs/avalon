@@ -37,7 +37,11 @@ import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-menti
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
-import { pinnedModelRouting, resolveAgentModelRouting } from "../services/agent-model-flags";
+import {
+  pinnedModelRouting,
+  resolveAgentModelRouting,
+  resolveNewWorkstreamModelRouting,
+} from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
 import { memberSafeHarnessError } from "../services/workstream-service";
 import {
@@ -441,7 +445,7 @@ export class WorkstreamObjectProductService {
     const runId = asHarnessRunId(uuidV7(now));
     const model = input.modelOverride
       ? pinnedModelRouting(input.modelOverride).model
-      : (await resolveAgentModelRouting(this.env, "workstream", {
+      : (await resolveNewWorkstreamModelRouting(this.env, {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
         })).model;

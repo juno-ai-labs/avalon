@@ -369,6 +369,13 @@ carve-out.
   work stream" would leave those work streams unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
+- A brand-new Durable Object keeps its work-stream id in the first model
+  evaluation for identity and bucketing, but loads only workspace attributes
+  until the atomic authoritative root, opening message, and first run commit.
+  Querying work-stream facts while the root is still `preparing` is not a miss:
+  it crosses the authority fence, logs an operational error, and suppresses the
+  now-readable row for ten seconds. Later runs load the complete work-stream
+  attributes normally.
 - A **failed read is held down for ten seconds**, keyed by entity and subject.
   That is the one case where retrying immediately helps nobody: while D1 is
   unhealthy, every agent path would otherwise re-issue its reads and warn again
@@ -923,6 +930,38 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-22 — A preparing work stream is identity, not readable attributes
+
+**What changed:** The first-run model resolver keeps the new work-stream id in
+Flagship's evaluation context but asks the attribute loader only for the
+already-authoritative workspace facts. Once the atomic object creation commits,
+the ordinary resolver again loads the complete work-stream attributes.
+
+**Why:** Production Computer Use QA created four fresh private work streams and
+all four logged `workstream_runtime_sql_commit_failed` with
+`workstream_runtime_authority_fenced` before creation completed. The object had
+an identity row, but that row was deliberately still `preparing` while the root,
+opening message, and first run were assembled. Model selection tried to read it
+through the authoritative runtime port anyway. The attribute loader recovered,
+but rules on work-stream facts could not match the first run and its ten-second
+failure suppression could also hide the row from an inline child that started
+immediately afterward.
+
+**Considered and rejected:** Allowing runtime SQL reads through the preparing
+authority fence would expose placeholder `personal`, `restoring`, and null
+creator/origin facts as if they described the finished work stream. Splitting
+creation so the root becomes authoritative before model selection would expose
+an incomplete object and break the atomic root/message/run invariant. Omitting
+the work-stream id from the evaluation would avoid the read but also change its
+identity and any explicit bucketing rule. Separating the evaluation subject from
+the attribute-read subject preserves the identity without inventing facts.
+
+**Consequences:** Workspace-level rules and the recommended workspace-id rollout
+remain available on the first run. Rules that require work-stream product facts
+begin matching only after creation commits, which is the first point those facts
+are authoritative. A future creation path must use this resolver while its root
+is preparing rather than relaxing the runtime authority fence.
 
 ### 2026-08-20 — Work-stream targeting follows the final authority boundary
 

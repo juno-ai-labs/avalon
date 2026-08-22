@@ -9,6 +9,7 @@ import {
   agentModelOverride,
   defaultAgentModelRouting,
   resolveAgentModelRouting,
+  resolveNewWorkstreamModelRouting,
   resolveWorkstreamModelRouting,
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
@@ -23,13 +24,18 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
  * that collides with the run's identity — while every other case keeps the
  * loader that reads the seeded database.
  */
-const servedAttributes = vi.hoisted(() => ({ value: null as FlagTargetingAttributes | null }));
+const servedAttributes = vi.hoisted(() => ({
+  value: null as FlagTargetingAttributes | null,
+  subjects: [] as Array<Record<string, string | undefined>>,
+}));
 vi.mock("../src/services/flag-targeting-attributes", async (importOriginal) => {
   const actual = await importOriginal<typeof FlagTargetingModule>();
   return {
     ...actual,
-    loadFlagTargetingAttributes: async (env: Env, subject: Parameters<typeof actual.loadFlagTargetingAttributes>[1]) =>
-      servedAttributes.value ?? actual.loadFlagTargetingAttributes(env, subject),
+    loadFlagTargetingAttributes: async (env: Env, subject: Parameters<typeof actual.loadFlagTargetingAttributes>[1]) => {
+      servedAttributes.subjects.push({ ...subject });
+      return servedAttributes.value ?? actual.loadFlagTargetingAttributes(env, subject);
+    },
   };
 });
 
@@ -129,6 +135,7 @@ describe("agent model flags", () => {
   beforeEach(() => {
     clearFlagTargetingAttributeCache();
     servedAttributes.value = null;
+    servedAttributes.subjects = [];
   });
 
   afterEach(() => {
@@ -228,6 +235,33 @@ describe("agent model flags", () => {
       workstreamIsSystem: false,
       workstreamCreatedByUserId: "00000000-0000-4000-8000-000000000011",
       workstreamCreatorEmailDomain: "dogfood.example",
+    });
+  });
+
+  it("keeps a new work-stream id for bucketing without reading its preparing object", async () => {
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    const env = seededEnv(envWithFlags(getObjectDetails));
+
+    await resolveNewWorkstreamModelRouting(env, {
+      workspaceId: "ws-1",
+      workstreamId: "wst-preparing",
+    });
+
+    expect(servedAttributes.subjects).toEqual([{ workspaceId: "ws-1" }]);
+    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
+      agent: "workstream",
+      region: "global",
+      appEnv: "production",
+      workspaceId: "ws-1",
+      workstreamId: "wst-preparing",
+      workspaceSlug: "dogfood",
+      workspaceMemberCount: 1,
+      workspaceAgeDays: 0,
+      workspaceOwnerEmailDomain: "dogfood.example",
     });
   });
 
