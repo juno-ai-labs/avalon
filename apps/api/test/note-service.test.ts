@@ -1,7 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerateMeetingNotesRequest } from "@avalon/contracts";
 import type { AuthContext, Env } from "../src/env";
@@ -19,8 +17,8 @@ import {
   workstreamObjectAll,
   workstreamObjectGet,
 } from "./helpers/durable-authority";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const userId = asUserId("00000000-0000-4000-8000-000000000201");
 const otherUserId = asUserId("00000000-0000-4000-8000-000000000202");
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000203");
@@ -104,12 +102,8 @@ function fixture(options: { openAuthority?: boolean } = {}): {
   objectStores: Map<string, DatabaseSync>;
   env: Env;
 } {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   // Resource visibility and note privacy notification branch on the open
   // Durable-Object authority, so the fixture opens it the way a production
   // stack runs. A test of the pre-cutover D1 arms opts out.

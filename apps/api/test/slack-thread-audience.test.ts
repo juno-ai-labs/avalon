@@ -1,6 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
@@ -14,7 +12,7 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
  * Who can talk to a work stream that was started from a Slack thread.
@@ -37,7 +35,6 @@ const CREDENTIALS_KEY = "test-connector-credentials-key";
 const TAYLOR = "019fc4e0-0000-7000-8000-000000000001";
 const ADAM = "019fc4e0-0000-7000-8000-000000000002";
 const KAT = "019fc4e0-0000-7000-8000-000000000003";
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations", import.meta.url));
 
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -403,13 +400,8 @@ function insertEventJob(database: DatabaseSync, id: string, payload: unknown): v
 }
 
 async function seededDatabase(): Promise<DatabaseSync> {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   const encrypted = await encryptString(
     JSON.stringify({ botAccessToken: "xoxb-test", botUserId: "UBOT" }),
     CREDENTIALS_KEY,

@@ -1,6 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { runHarness, type HarnessTool } from "@avalon/agent-harness";
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type HarnessRunId } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,8 +39,8 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000003");
@@ -153,11 +151,7 @@ interface RuntimeFixture {
 }
 
 function fixture(): RuntimeFixture {
-  const database = new DatabaseSync(":memory:");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
+  const database = legacyProductSqliteDatabase();
   database.exec(`
     INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at)
