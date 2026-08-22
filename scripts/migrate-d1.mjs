@@ -41,6 +41,7 @@ import { isEntryPoint } from "./entry-point.mjs";
 import {
   describePlan,
   digestMigrations,
+  duplicateBoundaries,
   internalTableExclusionSql,
   listMigrationFiles,
   parseWranglerJson,
@@ -274,10 +275,22 @@ export function loadCatalog({
   // does not exist, which is a confusing failure for something the chain can do
   // perfectly well.
   const baselines = declared.filter((baseline) => existsSync(join(baselinesDirectory, baseline.file)));
+  // Both ways a manifest can be wrong end the same way — the chain replays and
+  // nothing says why — so they are reported rather than only dropped. A slow
+  // setup is what a broken manifest looks like from the outside, and that is
+  // exactly the failure nobody investigates.
+  const anomalies = [
+    ...declared
+      .filter((baseline) => !baselines.includes(baseline))
+      .map((baseline) => `${baseline.file} is in manifest.json but not on disk`),
+    ...duplicateBoundaries(baselines)
+      .map((through) => `manifest.json claims ${through} twice, and there is no way to tell which snapshot is right`),
+  ].map((detail) => `${detail} — ignoring it and replaying the migration chain instead`);
   return {
     migrationsOnDisk,
     baselines,
     baselinesDirectory,
+    anomalies,
     digestFor: (files) => digestMigrations(migrationsDirectory, files),
   };
 }
@@ -331,6 +344,7 @@ async function main() {
   assertRegionalEnvFilesExist(targets);
 
   const catalog = loadCatalog();
+  for (const anomaly of catalog.anomalies) console.warn(`baselines: ${anomaly}`);
 
   for (const target of targets) {
     if (options.list) {
