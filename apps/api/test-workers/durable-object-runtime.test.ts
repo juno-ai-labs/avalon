@@ -9,7 +9,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
@@ -21,7 +21,11 @@ import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstre
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
-import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import type { Env } from "../src/env";
+import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import {
   substreamAgentName,
   blockDashboardAgentName,
@@ -491,6 +495,95 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM projection_keys`,
       ).one().count).toBe(2);
+    });
+  });
+
+  it("does not read a preparing work stream while resolving its first model", async () => {
+    await seedOpenAuthority();
+    clearFlagTargetingAttributeCache();
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const auth = {
+      sessionId: SESSION_ID,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+
+    await runInDurableObject(child, async (instance, state) => {
+      const residentProduct = (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product as unknown as {
+        objectStore: WorkstreamObjectStore;
+        env: Env;
+      };
+      const getObjectDetails = vi.fn(async (flagKey: string, defaultValue: unknown) => ({
+        flagKey,
+        value: defaultValue,
+        reason: "DEFAULT",
+      }));
+      const flags = {
+        getObjectDetails,
+      };
+      const observedAuthorityModes: string[] = [];
+      const runtimeEnv = withWorkstreamRuntimeDatabase(
+        residentProduct.env,
+        WORKSPACE_ID,
+        WORKSTREAM_ID,
+        "0",
+        async () => {
+          observedAuthorityModes.push(state.storage.sql.exec<{ authority_mode: string }>(
+            `SELECT authority_mode FROM workstream WHERE id = 1`,
+          ).one().authority_mode);
+          throw new Error("preparing_workstream_targeting_read");
+        },
+      );
+      const product = new WorkstreamObjectProductService(
+        state.storage,
+        residentProduct.objectStore,
+        new Proxy(runtimeEnv, {
+          get(target, property, receiver) {
+            if (property === "FLAGS") return flags;
+            return Reflect.get(target, property, receiver) as unknown;
+          },
+        }),
+      );
+
+      await product.initialize(auth, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+        title: "Authority-safe model targeting",
+        objective: "Resolve the first model without querying a preparing object",
+        descriptionSource: "authored",
+        titleStatus: "settled",
+        emailAddress: null,
+        creatorUserId: USER_ID,
+        openingMessage: "Start",
+        openingStructuredContent: null,
+        clientMessageId: "authority-safe-model-targeting",
+        participantUserIds: [],
+        attachmentIds: [],
+        originResourceIds: [],
+        scope: "personal",
+        modelOverride: null,
+        originType: "ad_hoc",
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        systemKind: null,
+        createdFromOpportunityId: null,
+        opportunityVersion: null,
+        opportunityDisplayPromptHash: null,
+        opportunityExecutionPromptHash: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+
+      expect(getObjectDetails).toHaveBeenCalledOnce();
+      expect(observedAuthorityModes).not.toContain("preparing");
     });
   });
 

@@ -4,7 +4,7 @@
 
 The 2026-08-21 production pass found that Terminal was not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout worked, but repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
 
-The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. The owning Terminal module's separate EU functional and concurrent cold-start acceptance gates remain open.
+The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. A later signed-in Global pass cleared the concurrent cold-start, alarm-during-sleep, and timeout/recovery gates. It also exposed a separate fresh-workstream model-targeting authority violation and a documented inline-child limit that disagreed with the enforced contract. The owning Terminal module's separate EU functional gate remains open.
 
 The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout.
 
@@ -78,6 +78,61 @@ change follows from them. This run clears the reproduced Global sequential
 receipt failure; it does not replace the required EU functional matrix or the
 two-way cold-start concurrency pass with health checks.
 
+## 2026-08-22 Global concurrency, alarms, subagents, and timeout acceptance
+
+The signed-in production desktop updated to Avalon 1.132.0, then exercised the
+Global Worker deployed from main revision
+`5c830bf7fb23dbb19277ccca662f79c3454acc5b` by successful deployment run
+`32601569285`. A read-only Worker tail correlated every fresh work stream with
+its durable run. The two Terminal sleeps overlapped from 22:30:20Z through
+22:31:05Z, proving two cold sandboxes were active at the same time rather than
+merely finishing near each other.
+
+| Area | Result | Production evidence |
+|---|---|---|
+| Parallel inline subagents | PASS at the enforced three-child ceiling | Workstream `01a02b96-eafd-7661-befd-67a5a04cd533`, parent run `01a02b96-f24c-7c87-8821-f9135b1f9f65`. Three child inference requests began within 272 ms (22:28:42.128Z–22:28:42.400Z), completed in 7–10 s, and returned correct independent results. The parent issued all four requested tool calls in one turn; the fourth was deterministically refused as `chain_budget_exhausted`. |
+| Child ceiling | PASS in code; documentation defect found | `HARNESS_CHILD_MAX_CHAIN_RUNS=4` counts the root run, so production admits at most three inline children. Admission, UI, and the existing unit test agree. The runbook incorrectly said “four children per chain”; it now says four total runs, root plus three children. |
+| Two cold Terminal sandboxes | PASS | Workstream `01a02b97-b5cb-7242-ae1e-1cb207835334`, run `01a02b97-bc67-7b4b-927d-a0859347bf10`, slept from 22:29:52Z to 22:31:07Z. Workstream `01a02b98-34b9-7807-a300-fd802c2a0697`, run `01a02b98-3be9-7c79-84d5-a1c9ac28b018`, slept from 22:30:20Z to 22:31:05Z. Both exited 0 and immediately completed a second command in the same sandbox. |
+| Keep-alive alarms during a long tool | PASS | The 75-second command crossed the 30-second and 60-second keep-alive windows and returned `QA_SLEEP_75_COMPLETE`, exit 0, provider 78,302 ms, acquisition 11,328 ms, total 89,824 ms. Its follow-up returned `QA_POST_SLEEP_RECOVERY_OK` in 1,892 ms total. |
+| Scheduled wake-up due during active sleep | PASS | Wake-up `01a02b97-e88b-7ba5-ae73-60fcc0975e99` was due at 22:30:30.891Z while the 75-second command was active. It did not interrupt or duplicate the live run, appeared once after that run completed, and produced the requested scheduled-test response without tools. |
+| Timeout and process termination | PASS | Workstream `01a02b9a-d74e-7717-85f8-3f2522a2fd2a`, run `01a02b9a-dcf7-7308-9fb0-1e4ad8ca28a9`, returned `state=timed_out`, `terminationReason=timed_out`, and `exitCode=null` for a 3-second deadline. The immediate command returned `QA_TIMEOUT_RECOVERY_OK` and `LATE_ABSENT`; a second check 22 seconds later still returned `LATE_ABSENT`, proving GNU `timeout` terminated the original process rather than only abandoning observation. |
+| Visible desktop state | PASS | Computer Use inspected the completed tool cards, exact timing fields, scheduled wake-up transcript, sidebar terminal states, and timeout report in the production window. No card remained `started`, no run needed intervention, and no duplicate wake-up appeared. |
+
+Every fresh work stream also emitted an otherwise hidden error before its
+creation request completed:
+
+```text
+workstream_runtime_sql_commit_failed
+code=workstream_runtime_sql_not_committed
+reason=workstream_runtime_authority_fenced
+harness_run_id=null
+```
+
+This was not caused by Terminal, alarms, or parallel execution; the same event
+preceded all four fresh runs. During `createFromRegionalReservation`, the object
+creates an identity row in `preparing` mode and must commit the authoritative
+root, opening message, and first run atomically. Before that transaction,
+first-run model selection called the ordinary flag resolver with the new
+work-stream id. The targeting loader routed its work-stream-fact query back to
+the object, where `executeWorkstreamRuntimeSql` correctly rejected every access
+before `authority_mode='authoritative'`. The loader degraded to the remaining
+workspace attributes, but rules requiring loaded work-stream product facts
+could not match and the failed-read cache suppressed the now-readable row for
+ten seconds, including a possible immediately-started inline child. Explicit
+rules on the work-stream id could still match because the id remained in the
+evaluation context.
+
+The branch-local repair keeps the work-stream id in the Flagship evaluation
+context for identity and bucketing, while loading only already-authoritative
+workspace attributes during the preparing window. Later runs use the ordinary
+full attribute resolver. Allowing reads through the fence was rejected because
+the preparing row contains placeholder scope/state/origin facts; committing the
+root early was rejected because it would expose an incomplete object. Focused
+unit and real-workerd creation-path tests pin the distinct evaluation and
+attribute-read subjects. At this point in the acceptance record, those tests
+were green but the repair had not yet deployed or received its fresh-workstream
+production retest.
+
 ## Follow-up remediation status
 
 The first remediation merged and deployed through PR #224, but the signed-in
@@ -117,9 +172,10 @@ Regression evidence is recorded in real-workerd and Node tests. The new heartbea
 
 ## Test results
 
-These are the original 2026-08-21 results. See the 2026-08-22 Global
-production acceptance above for the post-#228 sequential state and its remaining
-EU, concurrency, timeout, and stale-attempt gaps.
+These are the original 2026-08-21 results. See the later 2026-08-22 Global
+production acceptance above: it subsequently closed the Global concurrency and
+timeout gaps while retaining EU functional, stale-attempt, and injected-error
+follow-up work.
 
 | Area | Result | Production evidence |
 |---|---|---|
@@ -181,10 +237,13 @@ Implemented validation:
 2. Real workerd proves both Terminal-operation and runtime-receipt commits remain successful when their follow-up alarm scheduling fails.
 3. Caught object-port and receipt failures log IDs, operation/request, stable code, and a private cause without command, output, or statement text.
 4. Bind retains participant-safe durable-host failure categories.
-5. The final production Global pass reran the exact two-command control and then
-   continued through 26 additional Terminal tool calls. The deployment workflow
-   verified both regional health endpoints for the exact merge revision, but
-   the EU functional and two-way cold-start concurrency gates remain open.
+5. The first final production Global pass reran the exact two-command control
+   and then continued through 26 additional Terminal tool calls. The deployment
+   workflow verified both regional health endpoints for the exact merge
+   revision. At that checkpoint the EU functional and two-way cold-start
+   concurrency gates remained open; the later 2026-08-22 acceptance above
+   closed the Global concurrency gate, while EU functional execution remains
+   open.
 
 ## Issue 2 — P1: a Terminal write can remain “started” until stale-run reaping
 
@@ -239,10 +298,12 @@ Confidence: high.
 
 Implemented: `durationMs` remains the provider-command duration for compatibility; Terminal results now add and document `acquisitionDurationMs` and `totalDurationMs`. Tests require all three meanings and require total runtime duration to be at least acquisition duration.
 
-Production status: not explicitly revalidated. The Global pass recorded normal
-and delayed commands, not a timeout boundary, and its summary retained provider
-`durationMs` without recording all three clock fields. Timeout behavior and the
-participant-visible clock comparison remain open production acceptance items.
+Production status: revalidated in the later 2026-08-22 Global pass above. A
+three-second deadline returned `state=timed_out`, `terminationReason=timed_out`,
+`exitCode=null`, provider `durationMs=5531`, `acquisitionDurationMs=13718`, and
+`totalDurationMs=19447`. Immediate and delayed recovery commands both proved the
+timed-out process stayed terminated, and Computer Use inspected all three clock
+fields in the visible card/report. EU functional execution remains separate.
 
 ## Issue 4 — P2: production error reporting prevents exact RCA and safe recovery
 
@@ -288,9 +349,11 @@ commands, mutations, expected-failure recovery, local Git, delayed execution,
 binary handling, and generated-resource publication/import. Historical
 production passes remain the evidence for package installation, output
 overflow/sanitization, and authorized read-only checkout; those were not
-repeated in this acceptance run. EU Terminal execution, two-way cold-start
-concurrency, the timeout boundary, and stale-attempt recovery/UX were also not
-repeated, so the owning module's broader production acceptance gate remains
-open; EU health alone is not functional Terminal evidence. A future change to
-resident tool authority must retain the rule that the main child uses
-object-local ports while external callers use RPC.
+repeated in this acceptance run. The later production pass proves two-way cold
+Terminal startup, overlapping sleeps, keep-alive heartbeats, a scheduled wake-up
+due during an active tool, timeout termination, and post-timeout recovery.
+EU Terminal execution, stale-attempt recovery/UX, and injected durable-host
+error guidance remain open, so the owning module's broader production
+acceptance gate remains open; EU health alone is not functional Terminal
+evidence. A future change to resident tool authority must retain the rule that
+the main child uses object-local ports while external callers use RPC.
