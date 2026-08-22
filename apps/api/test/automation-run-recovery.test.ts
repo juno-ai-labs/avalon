@@ -30,14 +30,12 @@ interface StoredEmailRoute {
   region: "global";
   workspace_id: string;
   workstream_id: string;
-  status: "reserved" | "active" | "disabled";
 }
 
 interface StoredWorkstreamEmailOwner {
   id: string;
   workspace_id: string;
   email_address: string;
-  email_route_status: "reserved" | "active" | "disabled";
   archived_at: string | null;
 }
 
@@ -131,16 +129,12 @@ class ManualRunStatement {
           : null,
       } as T;
     }
-    if (normalized.includes("SELECT email_address, email_route_status, archived_at FROM workstreams")) {
+    if (normalized.includes("archived_at FROM workstreams WHERE id = ? AND workspace_id = ?")) {
       const owner = this.database.workstreamEmailOwner;
       if (!owner || owner.id !== this.values[0] || owner.workspace_id !== this.values[1]) {
         return null;
       }
-      return {
-        email_address: owner.email_address,
-        email_route_status: owner.email_route_status,
-        archived_at: owner.archived_at,
-      } as T;
+      return { email_address: owner.email_address, archived_at: owner.archived_at } as T;
     }
     if (normalized.includes("SELECT id AS run_id, workstream_id, status AS run_status")
       && normalized.includes("FROM automation_runs")) {
@@ -236,7 +230,6 @@ class ManualRunStatement {
         id: String(this.values[0]),
         workspace_id: String(this.values[1]),
         email_address: String(this.values[4]),
-        email_route_status: "reserved",
         archived_at: null,
       };
     } else if (normalized.startsWith("INSERT INTO workstream_email_routes")) {
@@ -246,35 +239,8 @@ class ManualRunStatement {
           region: String(this.values[1]) as "global",
           workspace_id: String(this.values[2]),
           workstream_id: String(this.values[3]),
-          status: "reserved",
         };
       }
-    } else if (normalized.startsWith("UPDATE workstream_email_routes SET status")) {
-      const route = this.database.emailRoute;
-      const matches = route
-        && route.region === this.values[4]
-        && route.workspace_id === this.values[5]
-        && route.workstream_id === this.values[6];
-      if (matches) route.status = String(this.values[0]) as StoredEmailRoute["status"];
-      return createTestD1Result<T>({
-        success: true,
-        results: [],
-        meta: { changes: matches ? 1 : 0 },
-      });
-    } else if (normalized.startsWith("UPDATE workstreams SET email_route_status")) {
-      const owner = this.database.workstreamEmailOwner;
-      const matches = owner
-        && owner.id === this.values[2]
-        && owner.workspace_id === this.values[3]
-        && owner.email_address.toLowerCase() === String(this.values[4]).toLowerCase();
-      if (matches) {
-        owner.email_route_status = String(this.values[0]) as StoredWorkstreamEmailOwner["email_route_status"];
-      }
-      return createTestD1Result<T>({
-        success: true,
-        results: [],
-        meta: { changes: matches ? 1 : 0 },
-      });
     } else if (normalized.startsWith("INSERT INTO automation_runs")) {
       this.database.automationRunInsertCount += 1;
       this.database.run = {
@@ -457,11 +423,7 @@ describe("manual automation run recovery", () => {
 
     expect(database.run).toMatchObject({ status: "scheduled", workflowInstanceId: null });
     expect(database.harnessRun).toMatchObject({ status: "scheduled", workflowInstanceId: null });
-    expect(database.emailRoute).toMatchObject({ status: "active" });
-    expect(database.workstreamEmailOwner).toMatchObject({
-      email_route_status: "active",
-      archived_at: null,
-    });
+    expect(database.workstreamEmailOwner).toMatchObject({ archived_at: null });
     const originalRunId = database.run?.id;
     const originalWorkstreamId = database.run?.workstreamId;
     const originalHarnessRunId = database.harnessRun?.id;
@@ -479,13 +441,9 @@ describe("manual automation run recovery", () => {
     expect(database.run).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
     expect(database.harnessRun).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
     expect(database.workstreamStatus).toBe("running");
-    expect(database.emailRoute).toMatchObject({
-      workstream_id: originalWorkstreamId,
-      status: "active",
-    });
+    expect(database.emailRoute).toMatchObject({ workstream_id: originalWorkstreamId });
     expect(database.workstreamEmailOwner).toMatchObject({
       id: originalWorkstreamId,
-      email_route_status: "active",
       archived_at: null,
     });
 

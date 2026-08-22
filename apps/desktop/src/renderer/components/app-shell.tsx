@@ -170,19 +170,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
   const automations = useSocketOwnedList<AutomationSummary>(['automations']);
-  // The automation list endpoint has a second job the sidebar never wanted: it
-  // retries an email-route transition to Global that a pause or resume left
-  // stale, which `AutomationService.pause` explicitly defers to it. Now that
-  // the sidebar reads its rows from the socket, that repair would have no
-  // caller, so it keeps one of its own — deliberately not wired to anything the
-  // sidebar renders. Its cadence matches what the list query used to have: once
-  // per session, and again whenever the `automations` topic reports a change.
-  useQuery({
-    queryKey: ['automation-email-reconciliation'],
-    queryFn: ({ signal }) => api!.getAutomations(signal),
-    enabled: Boolean(api),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(0);

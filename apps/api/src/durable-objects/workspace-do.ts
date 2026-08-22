@@ -218,6 +218,7 @@ import {
   executeWorkspaceRuntimeSql,
   WorkspaceRuntimeSqlRequestSchema,
   type WorkspaceRuntimeSqlRequest,
+  type WorkspaceRuntimeSqlResult,
 } from "./workspace-runtime-sql";
 
 const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
@@ -705,6 +706,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('automations', 0)`,
     `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('notes', 0)`,
   ],
+}, {
+  version: 7,
+  description: "drop the automation email-route marker Global no longer mirrors",
+  statements: [
+    // The column existed to track a lifecycle Global held a second copy of, so
+    // that an interrupted transition could be reconciled. Global now records
+    // only that an address is claimed, and every reader of this marker already
+    // had the real answer beside it: inbound mail resolves an automation with
+    // `status = 'active' AND lifecycle_state = 'visible'`, which is what the
+    // marker was derived from in the first place.
+    `ALTER TABLE automation_subscriptions DROP COLUMN email_route_status`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -1019,15 +1032,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
-      const lists = new Set<SidebarList>();
-      for (const statement of request.statements) {
-        const target = workspaceMutationTarget(statement.sql);
-        const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
-        if (list) lists.add(list);
-      }
-      // The counters advance inside the write's own transaction, so a version
-      // can never describe rows that rolled back.
-      const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
+      const results = this.runWorkspaceSql(request);
       if (request.statements.some((statement) => {
         const target = workspaceMutationTarget(statement.sql);
         return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
@@ -1043,9 +1048,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }));
       }
-      // Published after it commits, so a socket is never sent a list built
-      // from rows that are about to disappear.
-      for (const list of lists) this.publishSidebarList(list);
       return responseToRpcResult(json({ results }));
     } catch (error) {
       return responseToRpcResult(json({
@@ -1295,14 +1297,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private localWorkspaceEnv(workspaceId: string): Env {
     return withWorkspaceRuntimeDatabase(this.env, workspaceId, (statements) =>
-      Promise.resolve(executeWorkspaceRuntimeSql(
-        this.state.storage,
-        WorkspaceRuntimeSqlRequestSchema.parse({
-          workspaceId,
-          requestId: uuidV7(),
-          statements,
-        }),
-      )));
+      Promise.resolve(this.runWorkspaceSql(WorkspaceRuntimeSqlRequestSchema.parse({
+        workspaceId,
+        requestId: uuidV7(),
+        statements,
+      }))));
+  }
+
+  /**
+   * Every write this object makes to its own product tables, from either
+   * direction: the Worker's RPC port and the schedule work that runs inside the
+   * alarm. Both go through here so neither can quietly stop pushing.
+   *
+   * That is not hypothetical. The schedule loop advancing an automation's
+   * `next_run_at` after a run is the write with no request behind it, and it
+   * reaches these tables through `localWorkspaceEnv` rather than the RPC —
+   * exactly the writer a check on the RPC alone would miss.
+   */
+  private runWorkspaceSql(request: WorkspaceRuntimeSqlRequest): WorkspaceRuntimeSqlResult[] {
+    const lists = new Set<SidebarList>();
+    for (const statement of request.statements) {
+      const target = workspaceMutationTarget(statement.sql);
+      const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
+      if (list) lists.add(list);
+    }
+    // The counters advance inside the write's own transaction, so a version can
+    // never describe rows that rolled back; the publish waits for the commit,
+    // so a socket is never sent a list built from rows about to disappear.
+    const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
+    for (const list of lists) this.publishSidebarList(list);
+    return results;
   }
 
   /**

@@ -823,6 +823,14 @@ describe("Durable Objects in the Workers runtime", () => {
             "waterline",
             "source_event_id",
           ]));
+          // Global records only that an address is claimed, so there is no
+          // route lifecycle for this object to mirror. A fresh chain must not
+          // recreate the column the drop migration removed.
+          const subscriptionColumns = state.storage.sql.exec<{ name: string }>(
+            `PRAGMA table_info(automation_subscriptions)`,
+          ).toArray().map((column) => column.name);
+          expect(subscriptionColumns).toContain("email_address");
+          expect(subscriptionColumns).not.toContain("email_route_status");
         }
       });
     }

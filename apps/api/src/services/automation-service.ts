@@ -152,39 +152,19 @@ export class AutomationService {
   }
 
   /**
-   * The automations the sidebar lists, with their email routes reconciled.
+   * The automations the sidebar lists.
    *
-   * The statement and the row mapping are shared with the socket batch, which
-   * WorkspaceDO answers from the same table without this reconciliation pass —
-   * it is a Global-registry call and cannot run inside the object. This path
-   * keeps it, so the address converges on the next `automations` refresh.
+   * A plain read: the statement and the row mapping are shared with the socket
+   * payload WorkspaceDO builds, and there is no longer any reconciliation for
+   * one path to do and the other to skip. Global records only that an address
+   * is taken, so a stored address is the whole truth about it.
    */
   async list() {
     const result = await this.env.DB.prepare(AUTOMATION_SIDEBAR_SQL)
       .bind(this.auth.workspaceId, this.auth.userId, SIDEBAR_LIST_LIMIT)
       .all<Record<string, unknown>>();
-    const rows = (result.results ?? []).map((row) => ({
-      ...AutomationSidebarRowSchema.parse(row),
-      email_route_status: row.email_route_status == null ? null : String(row.email_route_status),
-    }));
-    const emailRouting = new WorkstreamEmailRoutingService(this.env);
-    const routesById = new Map(rows.flatMap((row) =>
-      row.email_address == null ? [] : [[row.id, row.email_address] as const]));
-    const needsReconciliation = rows.filter((row) => {
-      // A draft has no address to reconcile and is not owed one: an address is
-      // a way to reach an automation, and this one cannot run yet. Reserving
-      // here would also make listing the sidebar depend on the Global registry.
-      if (row.status === "draft") return false;
-      const desiredStatus = row.status === "active" ? "active" : "disabled";
-      return row.email_address == null || row.email_route_status !== desiredStatus;
-    });
-    for (let offset = 0; offset < needsReconciliation.length; offset += 512) {
-      const inputs = needsReconciliation.slice(offset, offset + 512)
-        .map((row) => this.automationRouteInput(row.id));
-      const routes = await emailRouting.backfillAutomationAddresses(inputs);
-      for (const route of routes) routesById.set(route.automationSubscriptionId, route.emailAddress);
-    }
-    return { items: rows.map((row) => toAutomationSummary(row, routesById.get(row.id) ?? null)) };
+    const rows = (result.results ?? []).map((row) => AutomationSidebarRowSchema.parse(row));
+    return { items: rows.map((row) => toAutomationSummary(row)) };
   }
 
   async compile(
@@ -660,7 +640,7 @@ export class AutomationService {
          SET scope = ?, owner_user_id = ?, execution_principal_json = ?,
              connector_bindings_json = ?, activity_trigger_bindings_json = ?,
              default_plugins_json = ?, status = 'active', draft_conversation_json = NULL,
-             email_address = ?, email_route_status = 'reserved', model_override = ?,
+             email_address = ?, model_override = ?,
              next_run_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ? AND status = 'draft' AND lifecycle_state = 'visible'`,
       ).bind(input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, input.modelOverride ?? null, nextRunAt, at, subscriptionId, this.auth.workspaceId).run();
@@ -699,9 +679,9 @@ export class AutomationService {
                (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
                 execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
                 default_plugins_json, overrides_json, status,
-                email_address, email_route_status, model_override,
+                email_address, model_override,
                 next_run_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, ?, ?, ?, ?)`,
             ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, input.modelOverride ?? null, nextRunAt, at, at),
           ]),
       ...memoryTables.statements,
@@ -988,15 +968,9 @@ export class AutomationService {
       this.env.DB.prepare("UPDATE schedules SET enabled = ?, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?")
         .bind(paused ? 0 : 1, at, id),
     ]);
-    try {
-      await new WorkstreamEmailRoutingService(this.env)
-        .ensureAutomationAddress(this.automationRouteInput(id));
-    } catch (error) {
-      if (!isRecoverableEmailRouteTransition(error)) throw error;
-      // The durable regional lifecycle marker intentionally remains stale.
-      // list/get reconciliation will retry the Global transition without
-      // replaying this idempotent pause/resume mutation.
-    }
+    // No route work: pausing changes whether mail is accepted, and that is read
+    // from this row when a message arrives. Global holds only the claim on the
+    // address, which a pause does not alter.
     await this.refreshScheduler();
     await this.recordAutomationAction(subscription, paused ? 'pause' : 'resume', paused ? 'paused' : 'active');
   }
@@ -1116,28 +1090,10 @@ export class AutomationService {
         regionalStatements[2]!,
       ]);
     }
-    const emailRouting = new WorkstreamEmailRoutingService(this.env);
-    try {
-      // Only an automation that has an address has a route to close. A draft
-      // never took one, and reserving one here purely to disable it would mint
-      // a permanent tombstone for an automation that never existed.
-      if (subscription.email_address != null) {
-        await emailRouting.ensureAutomationAddress(this.automationRouteInput(id));
-      }
-      for (const workstreamId of plannedWorkstreamIds) {
-        await emailRouting.ensureWorkstreamAddress({
-          region: this.env.AVALON_REGION,
-          workspaceId: this.auth.workspaceId,
-          workstreamId,
-        });
-      }
-    } catch (error) {
-      if (!isRecoverableEmailRouteTransition(error)) throw error;
-      // The Global lifecycle marker stays stale rather than replaying the
-      // deletion. Inbound mail is rejected regardless: automation ingestion
-      // requires a visible, active subscription, and work-stream ingestion
-      // rejects an archived owner.
-    }
+    // No route to close. The address stays claimed forever — that is the point
+    // of the Global ledger — and mail to it is refused by the same checks that
+    // always refused it: automation ingestion requires a visible, active
+    // subscription, and work-stream ingestion rejects an archived owner.
     try {
       await this.refreshScheduler();
     } catch {

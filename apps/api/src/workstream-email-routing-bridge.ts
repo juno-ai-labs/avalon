@@ -7,9 +7,7 @@ import {
 } from "./services/workstream-email-routing-service";
 import {
   AutomationEmailRouteInputSchema,
-  AutomationEmailRouteStatusInputSchema,
   WorkstreamEmailRouteInputSchema,
-  WorkstreamEmailRouteStatusInputSchema,
   parseRpcInput,
   rpcBatch,
 } from "./lib/rpc-contracts";
@@ -32,18 +30,6 @@ export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
     ));
   }
 
-  activateMany(inputs: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateManyInGlobalRegistry(
-      parseRpcInput(rpcBatch(WorkstreamEmailRouteInputSchema), inputs, "activateMany"),
-    ));
-  }
-
-  setStatus(input: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setStatus(
-      parseRpcInput(WorkstreamEmailRouteStatusInputSchema, input, "setStatus"),
-    ));
-  }
-
   reserveAutomation(input: unknown) {
     return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationInGlobalRegistry(
       parseRpcInput(AutomationEmailRouteInputSchema, input, "reserveAutomation"),
@@ -56,17 +42,6 @@ export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
     ));
   }
 
-  activateAutomations(inputs: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateAutomationsInGlobalRegistry(
-      parseRpcInput(rpcBatch(AutomationEmailRouteInputSchema), inputs, "activateAutomations"),
-    ));
-  }
-
-  setAutomationStatuses(inputs: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setAutomationStatusesInGlobalRegistry(
-      parseRpcInput(rpcBatch(AutomationEmailRouteStatusInputSchema), inputs, "setAutomationStatuses"),
-    ));
-  }
 }
 
 async function rpcResult<T>(operation: () => Promise<T>): Promise<WorkstreamEmailRouterRpcResult<T>> {
