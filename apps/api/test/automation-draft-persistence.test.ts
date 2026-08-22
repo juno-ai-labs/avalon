@@ -351,7 +351,7 @@ describe("automation drafts", () => {
     ).get(compiled.draftId)).toEqual({ lifecycle_state: "deleted", email_address: null });
   });
 
-  it("still closes the address of an automation that has one", async () => {
+  it("leaves the address of a deleted automation claimed", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
     const service = serviceFor(database);
@@ -371,7 +371,17 @@ describe("automation drafts", () => {
 
     await service.deleteAutomation(compiled.draftId);
 
-    expect(ensureAutomationAddress).toHaveBeenCalled();
+    // Global records only that the address was taken, and an address is never
+    // handed to a second owner — so a delete has no route state to move. The
+    // row keeps the address, and mail to it is refused by the lifecycle check
+    // the inbound resolver already makes.
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT lifecycle_state, email_address FROM automation_subscriptions WHERE id = ?",
+    ).get(compiled.draftId)).toEqual({
+      lifecycle_state: "deleted",
+      email_address: "quiet-amber-steady-heron@automation.with-avalon.com",
+    });
   });
 
   it("drops a compile turn that lands after the draft was created", async () => {

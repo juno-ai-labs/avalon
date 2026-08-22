@@ -192,7 +192,7 @@ describe("automation lifecycle", () => {
       .toEqual(["00000000-0000-7000-8000-000000000007", "00000000-0000-7000-8000-000000000008"]);
   });
 
-  it("deletes a running automation, disabling its schedule and closing its address", async () => {
+  it("deletes a running automation and disables its schedule", async () => {
     const database = seededDatabase();
     const service = serviceFor(database);
 
@@ -204,9 +204,10 @@ describe("automation lifecycle", () => {
     expect(database.prepare(
       "SELECT enabled FROM schedules WHERE automation_subscription_id = ?",
     ).get("00000000-0000-7000-8000-000000000007")).toEqual({ enabled: 0 });
-    // The route transition is reconciled through the routing service, which
-    // derives "disabled" from the deleted lifecycle state.
-    expect(ensureAutomationAddress).toHaveBeenCalledTimes(1);
+    // The Global ledger records only that the address was taken, so a delete
+    // has no route state to move: the claim outlives the automation and the
+    // address is never handed to anything else.
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
     expect((await service.list()).items.map((item) => item.id)).toEqual(["00000000-0000-7000-8000-000000000008"]);
     await expect(service.get("00000000-0000-7000-8000-000000000007")).rejects.toMatchObject({ status: 404 });
     await expect(service.runNow("00000000-0000-7000-8000-000000000007", "idempotency-key-1")).rejects.toMatchObject({ status: 404 });
@@ -415,14 +416,14 @@ function seededDatabase(): DatabaseSync {
       ('00000000-0000-7000-8000-000000000006', '00000000-0000-7000-8000-000000000004', 1, 'Scan competitors', '[]', '00000000-0000-7000-8000-000000000002', '2026-01-01');
     INSERT INTO automation_subscriptions
       (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-       execution_principal_json, status, email_address, email_route_status, created_at, updated_at)
+       execution_principal_json, status, email_address, created_at, updated_at)
     VALUES
       ('00000000-0000-7000-8000-000000000007', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000005', 'personal', '00000000-0000-7000-8000-000000000002',
        '{"type":"user","userId":"00000000-0000-7000-8000-000000000002"}', 'active', 'calm-bright-gentle-otter@automation.with-avalon.com',
-       'active', '2026-01-01', '2026-01-01'),
+       '2026-01-01', '2026-01-01'),
       ('00000000-0000-7000-8000-000000000008', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000006', 'personal', '00000000-0000-7000-8000-000000000002',
        '{"type":"user","userId":"00000000-0000-7000-8000-000000000002"}', 'draft', 'quiet-amber-steady-heron@automation.with-avalon.com',
-       'disabled', '2026-01-01', '2026-01-01');
+       '2026-01-01', '2026-01-01');
     INSERT INTO schedules
       (id, workspace_id, automation_subscription_id, schedule_type, rrule, timezone,
        next_run_at, enabled, version, created_at, updated_at)

@@ -26,7 +26,7 @@ export const SIDEBAR_LIST_LIMIT = 250;
  * A draft is included: it is an automation someone is still setting up, and the
  * sidebar is where they get back to it.
  */
-export const AUTOMATION_SIDEBAR_SQL = `SELECT s.id, s.email_address, s.email_route_status, t.name, t.description,
+export const AUTOMATION_SIDEBAR_SQL = `SELECT s.id, s.email_address, t.name, t.description,
     s.scope, s.status, s.next_run_at, s.last_run_at, s.updated_at,
     CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
   FROM automation_subscriptions s
@@ -47,13 +47,10 @@ export const NOTE_SIDEBAR_SQL = `SELECT * FROM notes
 /**
  * Columns `AUTOMATION_SIDEBAR_SQL` promises, checked rather than cast.
  *
- * `email_address` is nullable here and stays null in the socket answer. The
- * REST list reconciles a missing address against the Global registry before
- * returning, which is a network call and cannot happen inside the object's
- * single-threaded socket handler — so the batch serves the address as stored.
- * Nothing in the sidebar renders it; the automation screen reads the detail
- * endpoint, and the next `automations` invalidation refetches a reconciled
- * list. See the changelog in `docs/realtime-sockets.md`.
+ * `email_address` is nullable and is served exactly as stored, by both callers.
+ * There is nothing to reconcile it against: Global records only that an address
+ * is claimed, so a stored address is the whole truth and a missing one means
+ * none was ever reserved.
  */
 export const AutomationSidebarRowSchema = z.object({
   id: z.string().min(1),

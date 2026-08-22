@@ -152,7 +152,7 @@ complete topic catalog is:
 | `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
 | `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
-| `automations` | Automation detail, drafts, and the email-route repair pass. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
+| `automations` | Automation detail and drafts. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
 | `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
 | `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
@@ -184,7 +184,7 @@ Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
 event shape allowed to name no topics, because it exists to hand over state
 rather than to report news. That matters because a push can be missed while a
-socket is away and produce no topic at all: `WorkspaceScheduler` advancing an
+socket is away and produce no topic at all: the workspace alarm advancing an
 automation's next run is exactly that. A resume that missed nothing costs the
 bytes and applies nothing, since every list carries the waterline its pushes
 carry and the client's comparison drops it. Receivers must apply the sidebar
@@ -211,13 +211,16 @@ also why *every* first page is a batch, not just the cold one: a reconnect or a
 debug toggle reloads the directory, and those two lists have nothing else to
 reload them.
 
-Change detection sits at `executeRuntimeSql`, the one entry point every write to
-these tables passes through — a desktop REST write, a Workflow, and
-`WorkspaceScheduler` advancing `next_run_at` after a scheduled run. That last
-one is why the push exists rather than another topic: the scheduler carries no
-HTTP request, so the mutation middleware that derives topics from a request path
+Change detection sits in `runWorkspaceSql`, the one entry point every write to
+these tables passes through — a desktop REST write, a Workflow, and the
+workspace alarm advancing `next_run_at` after a scheduled run. That last one is
+why the push exists rather than another topic: the alarm carries no HTTP
+request, so the mutation middleware that derives topics from a request path
 never saw it, and a sidebar row's next-run time stayed stale until something
-unrelated refetched the list.
+unrelated refetched the list. The alarm reaches its own SQL through
+`localWorkspaceEnv` rather than the RPC method, so both callers go through
+`runWorkspaceSql` — a check on the RPC method alone would miss the writer that
+motivated it.
 
 The event carries the whole list and a waterline for that list, monotonic within
 WorkspaceDO and advanced inside the transaction of the write that earned it. Two
@@ -533,7 +536,7 @@ topics keep only the detail surfaces REST still serves.
 
 **Why:** Those topics were derived from the method and path of a mutating REST
 request, so the socket's correctness depended on the REST surface existing —
-and any writer without a request was invisible to it. `WorkspaceScheduler`
+and any writer without a request was invisible to it. The workspace alarm
 updating `last_run_at`/`next_run_at` after a scheduled run is exactly that
 case: the sidebar's next-run time stayed stale until an unrelated automation
 write or an app restart. Pushing from the write itself fixes the staleness and
@@ -541,7 +544,7 @@ removes the inverted dependency at once.
 
 **Considered and rejected:** Keeping invalidation and adding a publish call at
 every service that writes these tables — many call sites, each able to forget,
-and the scheduler is in a different object; per-row waterlines and tombstones
+and the alarm's writes do not pass any of them; per-row waterlines and tombstones
 mirroring the work-stream row — the list is the unit here and a removed row is
 expressed by its absence; and diffing the list to push only changed rows, which
 buys nothing at 250 summaries and adds a way to be wrong. Shipping with *no*

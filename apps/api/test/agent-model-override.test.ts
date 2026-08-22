@@ -294,15 +294,15 @@ function seededDatabase(): Fixture {
       ('00000000-0000-7000-8000-000000000006', '00000000-0000-7000-8000-000000000004', 1, 'Scan competitors', '[]', '${USER_ID}', '2026-01-01');
     INSERT INTO automation_subscriptions
       (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-       execution_principal_json, status, email_address, email_route_status,
+       execution_principal_json, status, email_address,
        model_override, created_at, updated_at)
     VALUES
       ('${PINNED_SUBSCRIPTION_ID}', '${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000005', 'personal', '${USER_ID}',
        '{"type":"user","userId":"${USER_ID}"}', 'active', 'calm-bright-gentle-otter@automation.with-avalon.com',
-       'active', 'openai/gpt-5.6-terra', '2026-01-01', '2026-01-01'),
+       'openai/gpt-5.6-terra', '2026-01-01', '2026-01-01'),
       ('${UNPINNED_SUBSCRIPTION_ID}', '${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000006', 'personal', '${USER_ID}',
        '{"type":"user","userId":"${USER_ID}"}', 'active', 'quiet-amber-steady-heron@automation.with-avalon.com',
-       'active', NULL, '2026-01-01', '2026-01-01');
+       NULL, '2026-01-01', '2026-01-01');
   `);
   return { database, objectStore };
 }
