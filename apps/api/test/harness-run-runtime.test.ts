@@ -858,6 +858,7 @@ describe("durable harness attempt runtime", () => {
     ).run(RUN_ONE);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([RUN_ONE]);
@@ -2873,6 +2874,7 @@ describe("durable harness attempt runtime", () => {
     });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -3608,6 +3610,7 @@ describe("inline child-run durability", () => {
     ).run(child.childInput.harnessRunId);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -3714,6 +3717,7 @@ describe("inline child-run durability", () => {
     ).run(RUN_ONE);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([child.childInput.harnessRunId]);
@@ -3798,6 +3802,7 @@ describe("inline child-run durability", () => {
     ).run(child.childInput.harnessRunId);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([child.childInput.harnessRunId]);
@@ -3864,6 +3869,7 @@ describe("inline child-run durability", () => {
     });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);

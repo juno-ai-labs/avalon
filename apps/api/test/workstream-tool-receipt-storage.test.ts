@@ -790,6 +790,40 @@ describe("abandoning the receipts of a reaped run", () => {
       .toEqual([{ status: "completed" }]);
   });
 
+  it("settles the tool card the member is looking at, not just the receipt", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    // A rendered tool part carrying the same id as its receipt, mid-flight.
+    sql.exec(
+      `INSERT INTO parts (id, substream_id, sequence_number, role, kind, author_type,
+         content, visibility, pinned, message_type, tool_name, tool_mode, tool_status,
+         structured_content_json, created_at, updated_at)
+       VALUES ('effect-1', '0', 2, 'assistant', 'tool_call', 'agent',
+         '', 'both', 0, 'tool', 'read_resource', 'read', 'pending',
+         json('{"invocation":{"status":"started","completedAt":null,"error":null}}'), 1, 1)`,
+    );
+    reaped(sql);
+
+    storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW });
+
+    // Without this the receipt goes terminal and the card spins forever. It
+    // used to be the compatibility trigger's job — object schema migration 14
+    // taught it to project a settled receipt into the same-id part, because the
+    // sweep has no event publisher and never writes the transcript row again.
+    // Dropping that trigger is therefore not a pure deletion, and this is the
+    // spec that says so.
+    expect(sql.exec(
+      `SELECT tool_status,
+              json_extract(structured_content_json, '$.invocation.status') AS visible_status,
+              json_extract(structured_content_json, '$.invocation.error.code') AS visible_error
+         FROM parts WHERE id = 'effect-1'`,
+    ).toArray()).toEqual([{
+      tool_status: "failed",
+      visible_status: "failed",
+      visible_error: "parent_run_terminated",
+    }]);
+  });
+
   it("refuses when the run was not terminalized at the instant claimed", () => {
     const { storage, sql } = open();
     storage.admit(plan());
