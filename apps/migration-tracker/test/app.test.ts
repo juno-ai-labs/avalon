@@ -23,7 +23,7 @@ function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableO
     objectId: OBJECT_ID,
     objectName: OBJECT_NAME,
     className: "SubstreamAgent",
-    component: "workstream",
+    component: "substream_agent_do",
     region: "global",
     appEnv: "production",
     workerVersionId: "0.24.0",
@@ -137,7 +137,7 @@ describe("the operator site", () => {
 
     expect(response.status).toBe(200);
     expect(body).toContain("Avalon Durable Object migrations");
-    expect(body).toContain("workstream");
+    expect(body).toContain("substream_agent_do");
     expect(body).toContain("Current");
   });
 
@@ -146,7 +146,7 @@ describe("the operator site", () => {
       status: "failed",
       schemaVersion: 3,
       appliedVersions: [],
-      failure: { message: "workstream_schema_hash_mismatch:4", version: 4 },
+      failure: { message: "substream_agent_do_schema_hash_mismatch:4", version: 4 },
     }));
 
     const response = await get(`/objects/${OBJECT_ID}`);
@@ -154,7 +154,7 @@ describe("the operator site", () => {
 
     expect(response.status).toBe(200);
     expect(body).toContain(OBJECT_NAME);
-    expect(body).toContain("workstream_schema_hash_mismatch:4");
+    expect(body).toContain("substream_agent_do_schema_hash_mismatch:4");
     expect(body).toContain("Failed");
   });
 
@@ -251,13 +251,13 @@ describe("the operator site", () => {
 describe("parseObjectQuery", () => {
   it("reads every filter the site offers", () => {
     const query = parseObjectQuery(
-      "https://x/objects?status=behind&component=workstream&region=eu&script=avalon-api-eu"
+      "https://x/objects?status=behind&component=substream_agent_do&region=eu&script=avalon-api-eu"
       + "&search=abc&limit=10&offset=20",
     );
 
     expect(query).toMatchObject({
       status: "behind",
-      component: "workstream",
+      component: "substream_agent_do",
       region: "eu",
       scriptName: "avalon-api-eu",
       search: "abc",
@@ -267,9 +267,9 @@ describe("parseObjectQuery", () => {
   });
 
   it("treats the filter form's empty selections as absent", () => {
-    const query = parseObjectQuery("https://x/objects?status=&component=workstream&region=&search=");
+    const query = parseObjectQuery("https://x/objects?status=&component=substream_agent_do&region=&search=");
 
-    expect(query.component).toBe("workstream");
+    expect(query.component).toBe("substream_agent_do");
     expect(query.status).toBeUndefined();
     expect(query.limit).toBe(50);
   });
@@ -288,10 +288,10 @@ describe("parseObjectQuery", () => {
    */
   it("keeps the filters that are valid when one value is not", () => {
     const query = parseObjectQuery(
-      "https://x/objects?component=workstream&region=eu&status=nonsense&limit=99999",
+      "https://x/objects?component=substream_agent_do&region=eu&status=nonsense&limit=99999",
     );
 
-    expect(query.component).toBe("workstream");
+    expect(query.component).toBe("substream_agent_do");
     expect(query.region).toBe("eu");
     expect(query.status).toBeUndefined();
     expect(query.limit).toBe(50);
