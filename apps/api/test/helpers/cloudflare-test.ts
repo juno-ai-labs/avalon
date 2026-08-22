@@ -71,6 +71,15 @@ export function createInvalidTestEnv(value: { [Key in keyof Env]?: unknown }): E
   return value as unknown as Env;
 }
 
+/**
+ * A partial Durable Object *instance*, for the one place production code is
+ * handed the object rather than a stub: the self-reference registry an object
+ * writes itself into so a helper addressing its name does not leave the isolate.
+ */
+export function createTestDurableObjectInstance<T extends object>(value: TestDouble<T>): T {
+  return value as unknown as T;
+}
+
 export function createTestD1Database<T extends TestDouble<D1Database>>(
   value: T,
 ): D1Database {

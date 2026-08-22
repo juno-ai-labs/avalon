@@ -39,6 +39,7 @@ import {
   assertDurableObjectJurisdiction,
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   AGENT_RUN_DISPATCH_LEASE_MS,
@@ -95,7 +96,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { workstreamDOName } from "./names";
+import { substreamAgentName, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -387,7 +388,7 @@ function userFromRow(row: UserRow): User {
   };
 }
 
-export { substreamAgentName } from "./names";
+export { substreamAgentName };
 
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
   attachments: T[],
@@ -487,6 +488,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Everything downstream is handed this environment or one derived from it,
+    // so a helper that addresses "the agent that owns this work stream" reaches
+    // the object it is already running in rather than the namespace. See
+    // `lib/durable-object-self.ts`.
+    this.env = withDurableObjectSelf(env, {
+      namespace: env.SUBSTREAM_AGENTS,
+      name: () => this.selfObjectName(),
+      id: state.id,
+      instance: this,
+    });
     this.keepAliveLease = new DurableAgentKeepAlive(async () => { await this.armNextAlarm(); });
     this.initialized = state.blockConcurrencyWhile(async () => {
       // The store applies this object's schema in its own constructor, so the
@@ -552,6 +563,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       substreamId,
       now,
       now,
+    );
+  }
+
+  /**
+   * This object's own name in `SUBSTREAM_AGENTS`, or `null` before it has one.
+   *
+   * Not memoized: the external substream id is written on the object's first
+   * scoped request, so a name derived before that would be the main child's and
+   * would stay wrong. Both reads are against this object's own SQLite.
+   */
+  private selfObjectName(): string | null {
+    // Genuinely absent, definite-assignment notwithstanding: the environment
+    // carrying this object's self-registration exists from the first statement
+    // of the constructor, and the store is built inside the callback below it.
+    if (!this.objectStore) return null;
+    const identity = this.objectStore.identity();
+    if (!identity) return null;
+    return substreamAgentName(
+      this.env.AVALON_REGION,
+      identity.workspaceId,
+      identity.workstreamId,
+      this.externalSubstreamId(),
     );
   }
 

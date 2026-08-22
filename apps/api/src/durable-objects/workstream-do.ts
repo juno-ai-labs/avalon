@@ -21,6 +21,7 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
@@ -52,7 +53,12 @@ import {
   blockDashboardBlockResultHash,
   type BlockDashboardContextFence,
 } from "./block-dashboard-protocol";
-import { blockDashboardAgentName, substreamAgentName, workspaceDOName } from "./names";
+import {
+  blockDashboardAgentName,
+  substreamAgentName,
+  workspaceDOName,
+  workstreamDOName,
+} from "./names";
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 import {
@@ -470,7 +476,7 @@ function newestCommon(effects: WorkstreamRegionalEffect[]): Extract<WorkstreamRe
   return [...common].sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt))[0]!;
 }
 
-export { workstreamDOName } from "./names";
+export { workstreamDOName };
 
 /**
  * WorkstreamDO is the non-agent parent/control object.
@@ -494,6 +500,8 @@ const MIGRATION_COMPONENT = "workstream_do";
 
 export class WorkstreamDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
+  /** This object's own `WORKSTREAM_DOS` name; see {@link selfObjectName}. */
+  private objectName: string | null = null;
   private readonly initialized: Promise<void>;
   /**
    * Whether an eager directory delivery is already running. In memory only: a
@@ -510,6 +518,16 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Everything downstream is handed this environment or one derived from it,
+    // so a helper that addresses "the WorkstreamDO for this work stream"
+    // reaches the object it is already running in rather than the namespace.
+    // See `lib/durable-object-self.ts`.
+    this.env = withDurableObjectSelf(env, {
+      namespace: env.WORKSTREAM_DOS,
+      name: () => this.selfObjectName(),
+      id: state.id,
+      instance: this,
+    });
     // Before the migrations below, not after: the child's cold start is the
     // expensive half and it does not depend on anything this object is about to
     // do. A work stream and its main substream are always opened together — the
@@ -563,6 +581,33 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       attempt,
       code: error instanceof Error ? error.message : "unknown_error",
     });
+  }
+
+  /**
+   * This object's own name in `WORKSTREAM_DOS`, or `null` before it has one.
+   *
+   * Memoized: the metadata row's identity is written once and never changes,
+   * and this is read on every name resolution the object performs. The read is
+   * guarded the same way {@link wakeMainSubstream} guards its own, because a
+   * first wake reaches here before the schema exists.
+   */
+  private selfObjectName(): string | null {
+    if (this.objectName !== null) return this.objectName;
+    let identity: { workspace_id: string; workstream_id: string } | null;
+    try {
+      identity = first(this.state.storage.sql.exec<{ workspace_id: string; workstream_id: string }>(
+        `SELECT workspace_id, workstream_id FROM workstream_metadata WHERE id = 1`,
+      ));
+    } catch {
+      return null;
+    }
+    if (!identity) return null;
+    this.objectName = workstreamDOName(
+      this.env.AVALON_REGION,
+      asWorkspaceId(identity.workspace_id),
+      asWorkstreamId(identity.workstream_id),
+    );
+    return this.objectName;
   }
 
   /**
