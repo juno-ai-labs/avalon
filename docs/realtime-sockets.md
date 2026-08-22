@@ -464,6 +464,26 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-22 — The sidebar push does not re-ask who may listen
+
+**What changed:** Rebasing this branch onto `main` landed it on top of the
+access-revocation queue. The sweep this branch had added to `publishSidebarList`
+is gone with the mechanism it belonged to, and that publish is synchronous
+again, as are `runWorkspaceSql` and its callers.
+
+**Why:** The finding it answered was real — a revoked session kept receiving a
+viewer's whole automation and note list — but the answer is no longer the
+publisher's. `docs/access-revocation.md` closes an open socket from a queue
+message written by whoever ended the access, and names re-checking authorization
+on the way out as the mechanism it replaced. A publisher that asks again is the
+thing that is not to come back, whatever it is publishing: the bound belongs to
+the socket, not to any one payload sent over it.
+
+**Considered and rejected:** Keeping an interval-gated sweep on this one path
+because it is the widest payload the object sends. Width is not the argument —
+if the socket is still open it is authorized, and if it is not it has already
+been closed, so a second opinion here can only disagree with the queue.
+
 ### 2026-08-22 — An admitted socket is never re-authorized, only closed
 
 **What changed:** Block sockets no longer cache an authorization decision for 60
