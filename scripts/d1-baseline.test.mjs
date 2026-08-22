@@ -25,6 +25,7 @@ import {
   assertVolatileValuesAreTimestamps,
   assertWranglerWillNotRewrite,
   compareFingerprints,
+  compareMigrationPaths,
   detectVolatileColumns,
   digestMigrations,
   fingerprintsMatch,
@@ -46,6 +47,7 @@ import {
 } from "./d1-baseline.mjs";
 import { MIGRATIONS_DIRECTORY, baselineFileNameFor, buildBaseline, snapshotChain } from "./create-d1-baseline.mjs";
 import { verifyAgainstRegions, chainFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
+import { discoverRegions } from "./migrate-d1.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinesDirectory = join(repositoryRoot, "packages", "db", "baselines");
@@ -99,8 +101,8 @@ test("the boundary migration is itself included, and nothing after it is", () =>
   const all = listMigrationFiles(MIGRATIONS_DIRECTORY);
   const subsumed = subsumedMigrations(all, manifest.through);
   assert.equal(subsumed.at(-1), manifest.through);
-  assert.ok(subsumed.every((name) => name <= manifest.through));
-  const excluded = all.filter((name) => name > manifest.through);
+  assert.ok(subsumed.every((name) => compareMigrationPaths(name, manifest.through) <= 0));
+  const excluded = all.filter((name) => compareMigrationPaths(name, manifest.through) > 0);
   assert.ok(excluded.every((name) => !subsumed.includes(name)));
 });
 
@@ -393,15 +395,46 @@ test("the migration chain reproduces the schema recorded from the hosted databas
   // it to production would then report every newer migration as drift.
   // `packages/db/test/baseline-migration.test.ts` ties the baselines to the
   // chain; this ties the chain to production.
+  // Compared against the chain **truncated at what was recorded**, not the whole
+  // chain. Recording needs Cloudflare credentials and needs the migration to
+  // already be live, neither of which a PR that adds `0091_*.sql` can have — so
+  // fingerprinting the full chain here would redden this suite on every
+  // migration PR with the only sanctioned repair being to merge and deploy it
+  // first. Truncating keeps the assertion enforced on everything production is
+  // known to have while staying silent about what it has not been given yet.
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  const comparison = compareFingerprints(recorded.objects, chainFingerprint());
+  const comparison = compareFingerprints(recorded.objects, chainFingerprint(MIGRATIONS_DIRECTORY, {
+    through: recorded.through,
+  }));
   assert.ok(fingerprintsMatch(comparison), describeComparison("chain vs recorded production", comparison).join("\n"));
-  assert.equal(recorded.through, listMigrationFiles(MIGRATIONS_DIRECTORY).at(-1));
+  // A floor rather than an equality: the recording may lag the chain, but it may
+  // never name a migration this checkout does not have. That happens when a
+  // migration is deleted or renamed after being deployed, which is the one way
+  // the truncation above could quietly start comparing a different chain.
+  assert.ok(
+    listMigrationFiles(MIGRATIONS_DIRECTORY).includes(recorded.through),
+    `production-fingerprint.json was recorded through ${recorded.through}, which is no longer on disk`,
+  );
 });
 
 test("the recorded production fingerprint covers every object the chain creates", () => {
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.equal(Object.keys(recorded.objects).length, Object.keys(chainFingerprint()).length);
+  const truncated = chainFingerprint(MIGRATIONS_DIRECTORY, { through: recorded.through });
+  assert.equal(Object.keys(recorded.objects).length, Object.keys(truncated).length);
+});
+
+test("the recorded production fingerprint covers every region this checkout has", () => {
+  // One baseline serves every region, which is only sound if every region was
+  // actually looked at. Region discovery is config-driven now, so adding
+  // `wrangler.apac.jsonc` would otherwise leave this suite green against a
+  // recording captured from Global and EU alone.
+  const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
+  assert.deepEqual(
+    [...(recorded.regions ?? [])].sort(),
+    discoverRegions().map((entry) => entry.region).sort(),
+    "a region was added or removed since production-fingerprint.json was recorded; rerun "
+      + "`pnpm db:baseline:verify -- --record`",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -667,16 +700,81 @@ test("normalization leaves every real schema object in the baseline unchanged", 
   // moves any of the 129 objects invalidates `production-fingerprint.json`,
   // which then has to be re-recorded against the hosted databases rather than
   // regenerated locally.
-  const database = new DatabaseSync(":memory:");
-  database.exec(baselineSql);
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.deepEqual(chainFingerprint(), recorded.objects);
-  database.close();
+  // Truncated at the recording for the same reason as the parity test above: a
+  // migration that is on disk but not yet in production is not a normalization
+  // change, and this assertion exists to catch normalization changes.
+  assert.deepEqual(chainFingerprint(MIGRATIONS_DIRECTORY, { through: recorded.through }), recorded.objects);
 });
 
 // ---------------------------------------------------------------------------
 // The generator refuses what it cannot render faithfully
 // ---------------------------------------------------------------------------
+
+test("a seeded TEXT value SQLite hands back truncated stops generation", () => {
+  // `node:sqlite` returns TEXT only as far as its first embedded NUL, and the
+  // shortened string is indistinguishable from a real one afterwards. Both
+  // replays truncate the same way, so volatility detection reports nothing and
+  // the baseline is written with the short value — the one failure in this file
+  // that produces a file which applies cleanly and is silently wrong.
+  withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE a (id TEXT PRIMARY KEY, note TEXT);\n"
+      + "INSERT INTO a (id, note) VALUES ('1', CAST(X'610062' AS TEXT));",
+  }, (directory) => {
+    const files = ["0001_a.sql"];
+    const snapshot = snapshotChain(directory, files);
+    assert.equal(snapshot.rows.a[0].note, "a", "the probe must be truncated on the way out");
+    assert.equal(Number(snapshot.byteLengths.a[0].note), 3, "SQLite must still hold all three bytes");
+    assert.throws(
+      () => renderBaselineSql({ through: "0001_a.sql", files, digest: "sha256:x", snapshot }),
+      /a\.note holds 3 bytes but reads back as 1/u,
+    );
+  });
+});
+
+test("an AUTOINCREMENT counter beyond 2\u00b3 survives the round trip exactly", () => {
+  // `seq` is the highest id ever *issued*, so one explicit insert of an external
+  // id — a snowflake, a millisecond timestamp — puts a value past 2^53 there
+  // permanently. Reading it without BigInt support throws mid-snapshot, and
+  // narrowing through `Number()` rounds it down, which reissues exactly the
+  // retired ids the sequence block exists to protect.
+  const big = 9007199254740993n;
+  withTemporaryMigrations({
+    "0001_a.sql": `CREATE TABLE a (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT);\n`
+      + `INSERT INTO a (id, note) VALUES (${big}, 'issued');\n`
+      + "DELETE FROM a;",
+  }, (directory) => {
+    const files = ["0001_a.sql"];
+    const snapshot = snapshotChain(directory, files);
+    const sequence = snapshot.sequences.find((entry) => entry.name === "a");
+    assert.equal(sequence.seq, big, "the counter must survive the read as an exact integer");
+
+    const sql = renderBaselineSql({ through: "0001_a.sql", files, digest: "sha256:x", snapshot });
+    assert.match(sql, new RegExp(`VALUES \\('a', ${big}\\)`, "u"));
+
+    // And the rebuilt database issues the next id after it, not a reused one.
+    const rebuilt = new DatabaseSync(":memory:");
+    rebuilt.exec(sql);
+    rebuilt.prepare("INSERT INTO a (note) VALUES ('after')").run();
+    const statement = rebuilt.prepare("SELECT id FROM a");
+    statement.setReadBigInts(true);
+    assert.equal(statement.get().id, big + 1n);
+    rebuilt.close();
+  });
+});
+
+test("a REAL too large for decimal notation renders as SQL that parses", () => {
+  // `${value}.0` is only a REAL literal while `String` stays in decimal form; at
+  // 1e21 it switches to exponent notation and the suffix lands after the
+  // exponent. The generated file would be committed and reviewed before
+  // anything tried to apply it.
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE t (v ANY) STRICT; INSERT INTO t VALUES (${sqlLiteral(1e21, "real")});`);
+  assert.equal(database.prepare("SELECT typeof(v) AS t FROM t").get().t, "real");
+  database.close();
+  assert.equal(sqlLiteral(1e21, "real"), "1e+21");
+  assert.equal(sqlLiteral(2, "real"), "2.0", "decimal-form integers still need the suffix");
+});
 
 test("an object type the renderer cannot emit stops generation instead of vanishing", () => {
   // A view would be read from `sqlite_schema`, partitioned into nothing, and
