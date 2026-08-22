@@ -111,6 +111,44 @@ export class TerminalToolError extends Error {
   }
 }
 
+/**
+ * The receipt identity a Terminal effect is keyed to, or a typed refusal.
+ *
+ * Read this *before* anything reaches the provider. It used to be a query, so
+ * the three call sites did their sandbox work first and checked afterwards;
+ * now that the identity arrives on the tool context the check is a field read,
+ * and running it late means a call that was always going to be rejected can
+ * still create or start a sandbox, claim the mutation lease, and burn a
+ * generation on the way out.
+ *
+ * The message differs per path because it tells the model which call to
+ * retry, and those strings are participant-facing.
+ */
+const MISSING_RECEIPT = {
+  command: {
+    message: "Avalon could not find the durable tool receipt. Retry the command so it can be recorded safely.",
+    reason: "Retry the same command call so Avalon can create its durable receipt first.",
+  },
+  publication: {
+    message: "Avalon could not find the durable tool receipt. Retry publication so it can be recorded safely.",
+    reason: "Retry the same publication call so Avalon can create its durable receipt first.",
+  },
+  repositoryPublication: {
+    message: "Avalon could not find the durable publication receipt. Retry publication.",
+    reason: "Retry the same publication call so Avalon can create its durable receipt first.",
+  },
+} as const;
+
+export function requireTerminalEffectIntent(
+  context: HarnessToolContext,
+  path: keyof typeof MISSING_RECEIPT,
+): string {
+  const effectIntentId = context.effectIntentId;
+  if (effectIntentId) return effectIntentId;
+  const { message, reason } = MISSING_RECEIPT[path];
+  throw new TerminalToolError("tool_receipt_missing", message, { reason });
+}
+
 function pathOutsideRoot(field: "filePath" | "cwd"): never {
   throw new TerminalToolError(
     "path_outside_root",

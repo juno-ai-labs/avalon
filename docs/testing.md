@@ -201,6 +201,33 @@ beforeEach(async () => {
   addresses on a completely green run. Read the summary line, and capture the
   output to a file as [AGENTS.md](../AGENTS.md#capturing-command-output) requires
   rather than judging it through a truncating pipe.
+- **An assertion placed after an `await` is racing the object's own background
+  work.** A real Durable Object keeps running between your awaits: its alarm
+  fires, and anything it dispatched keeps executing. Two tests here asserted
+  through that gap and passed only because they were faster — one counted
+  `durable_outbox` rows that the delivery alarm drains as soon as it forwards
+  them, the other read a run's status after `POST /internal/run-dispatch`, which
+  *starts* that run, and a run started in this suite dies on the bare D1 and
+  terminalizes its own row. Both stayed green in isolation and failed under
+  whole-monorepo load; both were reproduced on demand by inserting a two-second
+  wait before the assertion, which is how to check whether a green test here is
+  proving anything.
+
+  Two fixes work. **Assert on state the background work cannot reach** —
+  `durable-object-runtime.test.ts` counts `projection_keys`, written per effect
+  in the same transaction as the outbox row it stands for and deleted by
+  nothing, rather than counting the outbox rows themselves. Or **keep the call
+  and its check inside one invocation the object cannot interleave**, as
+  `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
+  and parking the alarm in a single `runInDurableObject`.
+
+  **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
+  object initializing itself, and calling it re-entrantly from inside
+  `runInDurableObject` holds the very input gate `reset()` needs in order to
+  clear storage between tests. It was tried here: the guarded test passed, and
+  the *next* test in the file started finding a work stream the previous one had
+  left behind, failing with `workstream_create_replay_incomplete` — in CI only,
+  where the object is under enough load for it to matter.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 

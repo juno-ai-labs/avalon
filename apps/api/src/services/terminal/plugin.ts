@@ -92,7 +92,6 @@ export async function createAvalonTerminalPlugin(
   const readGateway = createGitHubRestReadGateway(env);
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,
-    env.DB,
     coordinator,
     provider,
     createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher),
@@ -132,7 +131,11 @@ export async function createAvalonTerminalPlugin(
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
-          tool_invocation_id: context.toolCallId,
+          // `tool_invocation_id` names the receipt row everywhere else it is
+          // logged, and until the identity arrived on the context this had no
+          // way to get it. A read tool has no receipt, hence the null.
+          tool_invocation_id: context.effectIntentId ?? null,
+          tool_call_id: context.toolCallId,
           tool_name: name,
           state: "completed",
           duration_ms: Date.now() - startedAt,
@@ -148,7 +151,11 @@ export async function createAvalonTerminalPlugin(
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
-          tool_invocation_id: context.toolCallId,
+          // `tool_invocation_id` names the receipt row everywhere else it is
+          // logged, and until the identity arrived on the context this had no
+          // way to get it. A read tool has no receipt, hence the null.
+          tool_invocation_id: context.effectIntentId ?? null,
+          tool_call_id: context.toolCallId,
           tool_name: name,
           state: "failed",
           code,

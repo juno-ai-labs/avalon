@@ -14,7 +14,7 @@ import { executionPrincipalKey } from "../workstream-resource-visibility";
 import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./daytona-provider";
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
-import { TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
+import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
 
 const MAX_BUNDLE_BYTES = 50 * 1_048_576;
 const MAX_CHANGED_PATHS = 500;
@@ -82,8 +82,6 @@ export interface TerminalGitHubReadGateway {
     signal: AbortSignal,
   ): Promise<string>;
 }
-
-interface InvocationRow { id: string }
 
 interface CompletedPublicationRow {
   published_sha: string;
@@ -417,13 +415,9 @@ export function createTerminalRepositoryPublisher(
         );
       }
       await assertRepositoryRemoteAccess(env.DB, selection, "full_access");
-      const invocation = await env.DB.prepare(
-        `SELECT id FROM tool_invocations
-          WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
-      ).bind(context.workspaceId, context.workstreamId, context.harnessRunId, context.toolCallId).first<InvocationRow>();
-      if (!invocation) throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable publication receipt. Retry publication.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
+      const effectIntentId = requireTerminalEffectIntent(context, "repositoryPublication");
       const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
-      const completed = await terminal.completedPublication(invocation.id);
+      const completed = await terminal.completedPublication(effectIntentId);
       // A row in `completed` always carries these three; the columns are
       // nullable because the row exists from `publishing` onward. Replaying a
       // receipt that somehow lacks them would report a publish that cannot be
@@ -499,7 +493,7 @@ export function createTerminalRepositoryPublisher(
       if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
         throw new TerminalToolError("publication_policy_denied", "Terminal cannot publish GitHub Actions workflow changes. Remove `.github/workflows/` changes and ask a coding workflow with elevated review to publish them.");
       }
-      const bundlePath = `/workspace/.avalon/publications/${invocation.id}.bundle`;
+      const bundlePath = `/workspace/.avalon/publications/${effectIntentId}.bundle`;
       const bundle = await runInspection(
         provider,
         sandbox.providerSandboxId,
@@ -532,14 +526,14 @@ export function createTerminalRepositoryPublisher(
         const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
         const consumed = await terminal.consumePublicationGrant({
           grantId: grant.grantId,
-          effectIntentId: invocation.id,
+          effectIntentId,
           now: Date.now(),
         });
         if (!consumed) throw new TerminalToolError("publication_not_authorized", "This run no longer has repository publication authority. Continue from an active participant run with full repository access.");
         const publicationId = newId();
         await terminal.beginPublication({
           publicationId,
-          effectIntentId: invocation.id,
+          effectIntentId,
           grantId: grant.grantId,
           repositoryFullName: selection.repositoryFullName,
           baseRef: selection.baseRef,
@@ -576,7 +570,7 @@ export function createTerminalRepositoryPublisher(
             throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Avalon can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Avalon can reconcile the branch and pull request." });
           }
           await terminal.completePublication({
-            effectIntentId: invocation.id,
+            effectIntentId,
             publishedSha: published.publishedSha,
             pullRequestNumber: pullRequest.number,
             pullRequestUrl: pullRequest.url,
@@ -598,7 +592,7 @@ export function createTerminalRepositoryPublisher(
           };
         } catch (error) {
           await terminal.markPublicationAmbiguous({
-            effectIntentId: invocation.id,
+            effectIntentId,
             failureCode: error instanceof TerminalToolError
               ? error.code
               : "provider_publication_failed",
