@@ -19,11 +19,14 @@ being real.
 
 ## The rule
 
-1. **Define the limit fully** — its name, its single definition site, where it is
+1. **Justify it, or do not add it** — a limit nobody can say the cost of
+   omitting is a limit that should not exist. See
+   [Premature limits are not preferred](#premature-limits-are-not-preferred).
+2. **Define the limit fully** — its name, its single definition site, where it is
    enforced, and what a caller sees when it trips.
-2. **Set it to the open value** — the value at which the guard changes nothing —
+3. **Set it to the open value** — the value at which the guard changes nothing —
    and leave it there for the whole change.
-3. **Hand every limit you opened back to the team** in the report at the end of
+4. **Hand every limit you opened back to the team** in the report at the end of
    the change, with the arithmetic they need to choose a number.
 
 A real number reaches the branch in exactly three ways, and no others:
@@ -53,6 +56,52 @@ decide one of those, ask before writing the code.
 
 When a number both shapes the product and defends it, it is a product limit: the
 PRD wins, you set it, and the comment says the bound is doing double duty.
+
+## Premature limits are not preferred
+
+**The default answer to "should there be a limit here?" is no.** A limit is not
+free and it is not neutral. It is a branch to maintain, a rejection to surface, a
+test to keep honest, and a number that outlives everyone who understood it — and
+its characteristic failure is not letting an attacker through, it is cutting off
+a legitimate user on a day nobody was watching, for a threat that never arrived.
+Avalon builds for the product that exists ([`AGENTS.md`](../AGENTS.md#where-we-are));
+that applies to guards as much as to features.
+
+Add one only when you can write down all four of these, in the constant's comment
+and in the pull request:
+
+- **What goes wrong without it** — concretely, as cause and effect: a caller
+  sends X and the result is Y. A Durable Object out of memory, a run that never
+  terminates, a bill that scales with somebody else's input, a provider that
+  rate-limits the whole workspace. Not "unbounded input is bad".
+- **Who can cause it** — an untrusted caller, a provider response, the model's
+  own output, or only our own code. **If only our own code can reach it, a limit
+  is usually the wrong tool**: fix the code or write a test, and do not install a
+  permanent runtime guard against a bug you could delete.
+- **Why nothing already stops it** — name the bound you checked and found
+  insufficient: the platform's own request, response, or object limits, the
+  provider's page size, a cap already applied upstream in the same path. Most
+  candidate limits die here, and that is the section doing its job.
+- **What the trip looks like, and why it beats the alternative** — a guard that
+  turns a rare slow request into a routine visible error has made the product
+  worse, not safer.
+
+If those four do not write themselves, do not add the constant. "Defensive
+depth", "just in case", "it looked unbounded", and "a reviewer might ask" are not
+justifications; they are how a codebase fills with numbers nobody can change and
+nobody dares to raise. **An open placeholder is not a way around this bar** — it
+is cheap to add, which is exactly why an unjustified one still costs: it lands on
+the handover report, spends somebody's attention, and gets a number attached to
+it precisely because it was asked about.
+
+Where the bar is already met, do not litigate it — add the guard, open it, and
+report it: anything sized by untrusted input and held in memory, any loop with a
+model or a provider inside it, anything that spends money per iteration, anything
+that fans out per caller.
+
+The two failures are opposite and both real: a guard nobody needed, and an
+unbounded path nobody guarded. This section is the bar against the first; the
+rest of this document is what happens once a limit clears it.
 
 ## The open value
 
@@ -128,6 +177,9 @@ trip while the constant is open, and the shape already in the tree —
  *
  * Bounds: bytes of one hosted-MCP tool result held in memory before it is
  *   returned to the model.
+ * Without it: a server that returns a 40 MB document fills the isolate's memory
+ *   and kills the run for everyone in that work stream. The caller is a third
+ *   party we do not control, and no other bound in this path caps a tool result.
  * Direction: upper bound; the open value is +Infinity.
  * Trips: the call fails with `result_too_large`, the run continues, and the
  *   model is told the result was too large to return.
@@ -147,8 +199,10 @@ export const MAX_HOSTED_MCP_RESULT_BYTES = Number.POSITIVE_INFINITY;
   call site, no per-caller override that quietly reintroduces a number. The
   constant is the single edit point, which is the whole reason this works.
 - **Export it**, so the open-value test can read it without importing a private.
-- The four fields are the handover. `Trips:` in particular is the part a reader
-  cannot recover from the code once the value is real.
+- The fields are the handover. `Without it:` is the
+  [justification](#premature-limits-are-not-preferred) in one place a reviewer
+  will actually see, and `Trips:` is the part a reader cannot recover from the
+  code once the value is real.
 
 ## Keeping it open
 
@@ -199,6 +253,11 @@ rg -n "LIMIT UNSET" --glob '!docs/**'
 | Constant | File | Bounds | Open value | On trip | Derive from | Safe open? |
 | --- | --- | --- | --- | --- | --- | --- |
 | `MAX_HOSTED_MCP_RESULT_BYTES` | `packages/connectors/src/hosted-mcp.ts` | bytes of one tool result | `+Infinity` | call fails `result_too_large`, run continues | context window ÷ plausible results per run | yes — path was already unbounded |
+
+Every row carries its `Without it:` justification into the pull request. A row
+that cannot state one does not belong on this table, and the constant behind it
+does not belong in the tree — delete it rather than asking somebody to price a
+limit nobody needed.
 
 **Propose a number for each row, and say where it comes from.** A recommendation
 is the useful half of the handover; installing it is not yours to do. Frame it as
