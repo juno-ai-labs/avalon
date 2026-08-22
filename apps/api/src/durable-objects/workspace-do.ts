@@ -1032,7 +1032,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
-      const results = this.runWorkspaceSql(request);
+      const results = await this.runWorkspaceSql(request);
       if (request.statements.some((statement) => {
         const target = workspaceMutationTarget(statement.sql);
         return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
@@ -1297,11 +1297,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private localWorkspaceEnv(workspaceId: string): Env {
     return withWorkspaceRuntimeDatabase(this.env, workspaceId, (statements) =>
-      Promise.resolve(this.runWorkspaceSql(WorkspaceRuntimeSqlRequestSchema.parse({
+      this.runWorkspaceSql(WorkspaceRuntimeSqlRequestSchema.parse({
         workspaceId,
         requestId: uuidV7(),
         statements,
-      }))));
+      })));
   }
 
   /**
@@ -1314,7 +1314,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * reaches these tables through `localWorkspaceEnv` rather than the RPC —
    * exactly the writer a check on the RPC alone would miss.
    */
-  private runWorkspaceSql(request: WorkspaceRuntimeSqlRequest): WorkspaceRuntimeSqlResult[] {
+  private async runWorkspaceSql(request: WorkspaceRuntimeSqlRequest): Promise<WorkspaceRuntimeSqlResult[]> {
     const lists = new Set<SidebarList>();
     for (const statement of request.statements) {
       const target = workspaceMutationTarget(statement.sql);
@@ -1325,7 +1325,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // never describe rows that rolled back; the publish waits for the commit,
     // so a socket is never sent a list built from rows about to disappear.
     const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
-    for (const list of lists) this.publishSidebarList(list);
+    for (const list of lists) await this.publishSidebarList(list);
     return results;
   }
 
@@ -3342,9 +3342,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().waterline;
   }
 
-  private publishSidebarList(list: SidebarList): void {
+  private async publishSidebarList(list: SidebarList): Promise<void> {
     const occurredAt = new Date().toISOString();
     const waterline = this.sidebarListWaterline(list);
+    // The same bound `publishWorkstreamState` holds, for the same reason: this
+    // sends a viewer's whole automation or note list to a socket that has said
+    // nothing since it connected. Without the sweep, a session revoked without
+    // a membership retraction to publish keeps receiving product rows until
+    // some unrelated publication happens to sweep. No topic to judge here, so
+    // it is always the interval-gated form.
+    await this.revalidateBeforePublish(false);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;

@@ -89,6 +89,14 @@ address and then read that regional row, returning the address or refusing with
 `workstream_email_owner_archived` / `automation_not_active`. They are
 a gate, not a transition.
 
+**Each gate reads through the database that owns its row.** An automation's
+`status` and `lifecycle_state` come from the workspace facade, because
+`automation_subscriptions` is a workspace-local table and the facade routes it
+into WorkspaceDO. A work stream's `archived_at` must come from
+`workstreamExecutionEnvironment` instead: `workstreams` is *not* workspace-local,
+so the facade would send the read to regional D1, where migration 0090 left only
+the identity anchor and dropped that column.
+
 ### Inbound delivery
 
 Mail sent to a **work-stream** address is attached to that existing work stream as
@@ -342,6 +350,25 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-22 — The work-stream gate reads the object, not the anchor
+
+**What changed:** `activateWorkstreamRoute` reads `archived_at` through
+`workstreamExecutionEnvironment` rather than `workspaceDatabase`.
+
+**Why:** The entry below replaced a Global `status` filter with a read of the
+owner's own row, and took the wrong database to it. `workstreams` is not in
+`WORKSPACE_LOCAL_TABLES`, so the workspace facade passes the statement to
+regional D1 — which after migration 0090 holds only the routing columns. The
+gate would have thrown `no such column: archived_at` after the address was
+already reserved, on the automation-run and Slack work-stream create paths that
+call it. `ensureWorkstreamAddress`, two lines above, already read the same table
+through the execution environment; this brings the pair back into agreement.
+
+**Considered and rejected:** Adding `workstreams` to `WORKSPACE_LOCAL_TABLES`,
+which would claim WorkspaceDO owns a table the work-stream object owns and
+misroute every other reader of it. A future gate on work-stream state has to
+take the execution environment; the anchor answers nothing about the product.
 
 ### 2026-08-22 — Global holds the claim, the region holds the lifecycle
 

@@ -64,6 +64,8 @@ class ManualRunDatabase {
   harnessRun: StoredHarnessRun | null = null;
   workstreamStatus: string | null = null;
   workstreamEmailOwner: StoredWorkstreamEmailOwner | null = null;
+  /** Every statement that arrived on the work-stream object's port. */
+  readonly objectPortSql: string[] = [];
   emailRoute: StoredEmailRoute | null = null;
   openingMessage: StoredOpeningMessage | null = null;
   attachedResourceId: string | null = null;
@@ -339,6 +341,7 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
     executeRuntimeSql: async (input: { statements: Array<{ sql: string; params: unknown[] }> }) => {
       const results = [];
       for (const { sql, params } of input.statements) {
+        database.objectPortSql.push(sql);
         const statement = database.binding.prepare(sql).bind(...params as never[]);
         if (/^\s*(?:SELECT|WITH)/iu.test(sql)) {
           const row = await statement.first<Record<string, string | number | null>>();
@@ -424,6 +427,14 @@ describe("manual automation run recovery", () => {
     expect(database.run).toMatchObject({ status: "scheduled", workflowInstanceId: null });
     expect(database.harnessRun).toMatchObject({ status: "scheduled", workflowInstanceId: null });
     expect(database.workstreamEmailOwner).toMatchObject({ archived_at: null });
+    // `archived_at` left regional D1 with migration 0090 — the work-stream
+    // object owns it now. Both reads of it on the create path must therefore
+    // arrive on the object's port; one issued against `env.DB` would ask the
+    // identity anchor for a column it no longer has, and fail the route gate
+    // with `no such column` after the address was already reserved.
+    const archiveReads = database.objectPortSql
+      .filter((sql) => /archived_at[\s\S]*FROM workstreams/u.test(sql));
+    expect(archiveReads.length).toBeGreaterThanOrEqual(2);
     const originalRunId = database.run?.id;
     const originalWorkstreamId = database.run?.workstreamId;
     const originalHarnessRunId = database.harnessRun?.id;
