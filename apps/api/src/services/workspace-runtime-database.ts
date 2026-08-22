@@ -318,7 +318,16 @@ export function withWorkspaceRuntimeDatabase(
   });
 }
 
-/** Escape hatch for explicitly global/regional control-plane SQL. */
+/**
+ * Escape hatch for explicitly global/regional control-plane SQL.
+ *
+ * Strictly, this peels off *this* port rather than every port: it answers with
+ * whatever `DB` was before `withWorkspaceRuntimeDatabase` replaced it. Where the
+ * two environments are nested — `runWorkstreamHarness` layers this over an
+ * agent's work-stream port — that is the work-stream database, not regional D1,
+ * and `loadHarnessTools` depends on exactly that to reach `workstream_resources`.
+ * Said here because the name reads like an unconditional route to D1 and is not.
+ */
 export function workspaceRegionalDatabase(env: Env): D1Database {
   return (env as Env & { [REGIONAL_DATABASE]?: D1Database })[REGIONAL_DATABASE] ?? env.DB;
 }

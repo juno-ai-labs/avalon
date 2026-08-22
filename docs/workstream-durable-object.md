@@ -1080,6 +1080,12 @@ statement that could not join the caller's `transactionSync`, and local invarian
 violations arriving as foreign-object errors. The report is
 [`durable-object-self-rpc-audit-2026-08-22.md`](durable-object-self-rpc-audit-2026-08-22.md).
 
+**How it is proved:** the routing decision in the Node suite, and the four
+registrations and name derivations against real objects in
+`test-workers/durable-object-self-registration.test.ts` — including that the
+collaborators an object builds and keeps hold a registered environment, which is
+the case the first draft of this change failed.
+
 **Considered and rejected:** *Threading a local port per method*, as the Terminal
 port and the two SQL executors already do. That is the right shape for a hot path
 and stays, but there were fourteen distinct methods across thirteen service

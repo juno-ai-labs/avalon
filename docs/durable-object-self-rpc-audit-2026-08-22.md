@@ -219,11 +219,24 @@ threaded, the resolver everywhere else); findings 2 through 5 by the resolver.
 All four Durable Object classes are registered, including the two that had no
 self-call, so the next path added is covered before it is written.
 
-The tests are `apps/api/test/durable-object-self-reference.test.ts`. They prove
-both directions — that the object's own name resolves locally, and that a
-sibling's name, the same name under another binding, and any name before the
-object has an identity all still resolve through the namespace — and that the
-inherited executor is not lent to a different work stream or workspace.
+The tests come in two halves, because the mechanism does.
+
+`apps/api/test/durable-object-self-reference.test.ts` proves the routing
+decision, which is plain JavaScript: the object's own name resolves locally,
+while a sibling's name, the same name under another binding, an absent binding,
+and any name before the object has an identity all still resolve through the
+namespace. It also proves the inherited executor is never lent to a different
+work stream or workspace, and that a name is withheld until *both* of an agent's
+durable facts — its work stream and its external substream id — are recorded.
+
+`apps/api/test-workers/durable-object-self-registration.test.ts` proves the other
+half on real workerd: that each of the four classes actually registers in its
+constructor, and that its name thunk derives the name a shared helper would
+resolve from identity written to its own storage. That half was covered only
+incidentally before, and incidental coverage is what let the product service keep
+an unregistered environment through the first draft of this change — so the last
+case there asserts that the collaborators an object builds and keeps hold a
+registered environment too, not just the object itself.
 
 **What a future change has to respect.** A new Durable Object class registers
 itself in its constructor, or it is silently exempt. A name thunk must return

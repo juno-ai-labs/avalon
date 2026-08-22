@@ -87,6 +87,11 @@ function registrations(env: object): readonly RegisteredSelf[] {
  * `DurableObjectStub<T>` describes T's own methods as they look across an RPC
  * boundary; this is the same object with the boundary removed, which is why the
  * conversion is a narrowing of the instance rather than an erasure of it.
+ *
+ * Only `get` is trapped, which is what every caller of a stub uses. `in`,
+ * `Object.keys`, and property descriptors therefore see the instance rather than
+ * the stub, and would not show the `id` and `name` answered here. Nothing reads
+ * a stub that way today; a generic wrapper that did would need the other traps.
  */
 function selfStub<T extends RpcDurableObject>(
   reference: DurableObjectSelfReference<T>,
