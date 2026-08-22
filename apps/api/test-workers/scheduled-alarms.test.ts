@@ -314,7 +314,8 @@ describe("the shared Durable Object alarm list", () => {
       const gatedAt = Date.now();
       scheduling(instance).gateStalledScheduledAlarms(ran, gatedAt);
 
-      expect(stalled).toEqual(["stuck", "bad-wait"]);
+      // In drain order — the store orders a tie by key.
+      expect(stalled).toEqual(["bad-wait", "stuck"]);
       const stuck = store.get("test_stall", "stuck");
       expect(stuck?.attempt).toBe(1);
       expect(stuck!.retryAt).toBeGreaterThanOrEqual(gatedAt + scheduledAlarmRetryDelay(1, () => 0));
