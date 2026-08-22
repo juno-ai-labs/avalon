@@ -109,21 +109,25 @@ export async function publishAccessRevocation(
   env: Env,
   message: Omit<AccessRevocationMessage, "kind" | "occurredAt" | "target"> & { occurredAt?: string },
 ): Promise<boolean> {
-  const parsed = AccessRevocationMessageSchema.parse({
-    kind: "access_revoked",
-    occurredAt: new Date().toISOString(),
-    target: { scope: "workspace" },
-    ...message,
-  });
+  // The parse is inside the try, not before it. It is practically unreachable —
+  // every field is a UUID this Worker just read out of D1 — but the invariant
+  // above is absolute, and a schema failure thrown from here would escape into
+  // a caller whose D1 write has already committed.
   try {
+    const parsed = AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      occurredAt: new Date().toISOString(),
+      target: { scope: "workspace" },
+      ...message,
+    });
     await env.ACCESS_REVOCATION_QUEUE.send(parsed);
     return true;
   } catch (error) {
     logWarn(env, "access_revocation_publish_failed", {
-      workspace_id: parsed.workspaceId,
-      user_id: parsed.userId,
-      session_id: parsed.sessionId,
-      reason: parsed.reason,
+      workspace_id: message.workspaceId,
+      user_id: message.userId,
+      session_id: message.sessionId,
+      reason: message.reason,
       error: error instanceof Error ? error.message : "unknown",
     });
     return false;
@@ -189,12 +193,26 @@ export async function publishSessionRevocations(
 ): Promise<RevokedSessionRow[]> {
   const announced = await Promise.all(sessions.map(async (session) => {
     if (!session.workspace_id) return session;
-    const published = await publishAccessRevocation(env, {
-      reason,
-      workspaceId: WorkspaceIdSchema.parse(session.workspace_id),
-      userId: IdSchema.parse(session.user_id),
-      sessionId: session.id,
-    });
+    // Parsed inside the same guard as the publish, for the reason
+    // `publishAccessRevocation` states: nothing on this path may throw into a
+    // caller whose D1 write has already committed.
+    let published = false;
+    try {
+      published = await publishAccessRevocation(env, {
+        reason,
+        workspaceId: WorkspaceIdSchema.parse(session.workspace_id),
+        userId: IdSchema.parse(session.user_id),
+        sessionId: session.id,
+      });
+    } catch (error) {
+      logWarn(env, "access_revocation_publish_failed", {
+        workspace_id: session.workspace_id,
+        user_id: session.user_id,
+        session_id: session.id,
+        reason,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
     return published ? session : null;
   }));
   return announced.filter((session): session is RevokedSessionRow => session !== null);
