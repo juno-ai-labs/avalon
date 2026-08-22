@@ -206,8 +206,8 @@ refreshed once per workspace rather than once per digest.
 Each **time** gets its own `schedules` row, not each digest. A single RRULE
 cannot carry a list of times: `BYHOUR` and `BYMINUTE` multiply out, so 09:00 plus
 12:30 would also fire at 09:30 and 12:00. One rule per time says exactly what was
-asked for, and the workspace scheduler already advances, retries and disables
-each row independently.
+asked for, and the workspace's alarm already advances, retries and disables each
+row independently.
 
 A digest is recurring timing with no payload, which is what `schedules` is for —
 unlike `workstream_wakeups`, which is one-shot and carries a prompt, and so keeps

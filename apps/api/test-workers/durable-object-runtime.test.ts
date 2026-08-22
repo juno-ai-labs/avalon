@@ -20,6 +20,7 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-obje
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
+import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
@@ -2761,7 +2762,7 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
     const windowId = "00000000-0000-7000-8000-000000000443";
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO opportunity_batch_windows
            (window_id, partition_key, audience_scope, audience_user_id,
@@ -2771,6 +2772,12 @@ describe("Durable Objects in the Workers runtime", () => {
                  NULL, NULL, 1, 1, NULL)`,
         windowId,
       );
+      // Every production writer of this table arms the product entry in the
+      // same RPC. This fixture writes the row directly to fix its due time in
+      // the past, so it arms it the same way afterwards; without an entry the
+      // alarm has nothing to run, which is the contract, not a gap.
+      await (instance as unknown as { refreshProductAlarm(): Promise<void> })
+        .refreshProductAlarm();
     });
     await env.DB.prepare(
       `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
@@ -2790,19 +2797,24 @@ describe("Durable Objects in the Workers runtime", () => {
 
     // The gate is the phase and nothing else: once the region opens, the same
     // alarm walks straight into the admission Workflow launch. This
-    // environment binds no Workflow, so reaching it surfaces as that binding's
-    // absence — which is the proof the window was claimed rather than held.
+    // environment binds no Workflow, so reaching it fails — and the shared
+    // alarm base holds that failure against the product entry alone rather
+    // than letting it throw the whole alarm, which is why the claim below is
+    // the proof the window was reached rather than held.
     await env.DB.prepare(
       `UPDATE workstream_authority_control SET phase = 'durable_object_open' WHERE id = 1`,
     ).run();
     await runInDurableObject(stub, async (instance) => {
-      await expect(instance.alarm()).rejects.toThrow(/WORK_OPPORTUNITY_WORKFLOW|create/u);
+      await instance.alarm();
     });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ status: string }>(
         `SELECT status FROM opportunity_batch_windows WHERE window_id = ?`,
         windowId,
       ).one().status).toBe("processing");
+      const gated = new ScheduledAlarmStore(state.storage.sql).get("product", "workspace");
+      expect(gated?.attempt).toBe(1);
+      expect(gated!.retryAt).toBeGreaterThan(Date.now());
     });
   });
 

@@ -18,7 +18,7 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
-import { substreamAgentName } from "../durable-objects/names";
+import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
@@ -620,19 +620,27 @@ export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPri
  * Recompute the workspace alarm.
  *
  * Every canonical mutation of a due time has to do this, or the row sits in its
- * durable authority until some unrelated schedule wakes the same scheduler.
+ * durable authority until some unrelated target wakes the same workspace. The
+ * name is historical: WorkspaceDO owns the alarm, and reconciles every target
+ * it can see from its own tables when this is called.
  */
 export async function refreshWorkspaceSchedulerAlarm(
-  env: Pick<Env, "DB" | "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,
+  env: Pick<Env, "DB" | "WORKSPACE_DOS" | "AVALON_REGION" | "APP_ENV">,
   workspaceId: string,
 ): Promise<void> {
-  const scheduler = await durableObjectStubForWorkspace(
+  // Focused unit environments omit the namespace deliberately — the same
+  // allowance `withWorkspaceRuntimeDatabase` makes, and for the same reason:
+  // binding it pulls this workspace's whole SQL surface into the test. The
+  // environment contract requires it before request dispatch, so production
+  // never reaches this branch.
+  if (!env.WORKSPACE_DOS) return;
+  const workspace = await durableObjectStubForWorkspace(
     env,
-    env.WORKSPACE_SCHEDULERS,
+    env.WORKSPACE_DOS,
     workspaceId,
-    `${env.AVALON_REGION}:${workspaceId}`,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
   );
-  await scheduler.refresh(workspaceId);
+  await workspace.refreshSchedule(workspaceId);
 }
 
 /**

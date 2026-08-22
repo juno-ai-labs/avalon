@@ -22,7 +22,7 @@ describe("ordinary harness-run selection", () => {
   });
 
   it("keeps inline child and HyperSight rows out of scheduler reuse and socket snapshots", () => {
-    const scheduler = source("../src/durable-objects/workspace-scheduler.ts");
+    const scheduler = source("../src/services/workspace-schedule-execution.ts");
     expect(scheduler).toMatch(
       /FROM harness_runs WHERE workspace_id = \?1 AND workstream_id = \?2 AND origin = 'automation' AND parent_tool_call_id IS NULL AND status IN \('scheduled', 'running'\)/u,
     );

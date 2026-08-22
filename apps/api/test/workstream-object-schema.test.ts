@@ -25,6 +25,7 @@ const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
 const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
 
 const EXPECTED_TABLES = [
+  "_internal_durable_alarms",
   "_runtime_statement_changes",
   "_sql_schema_migrations",
   "active_agent_compaction",

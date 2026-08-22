@@ -18,7 +18,6 @@ import {
 } from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import { z } from "zod";
-import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
@@ -30,6 +29,11 @@ import {
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
 import { latestMigrationVersion, withMigrationReport } from "./migration-reporting";
+import {
+  SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+  ScheduledDurableObject,
+  type ScheduledAlarm,
+} from "./scheduled-alarms";
 import {
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -346,6 +350,10 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       updated_at INTEGER NOT NULL
     ) STRICT`,
   ],
+}, {
+  version: 2,
+  description: "shared multi-alarm index behind this object's single alarm",
+  statements: [...SCHEDULED_ALARM_SCHEMA_STATEMENTS],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -479,7 +487,7 @@ export { workstreamDOName } from "./names";
  */
 const MIGRATION_COMPONENT = "workstream_do";
 
-export class WorkstreamDO extends DurableObject<Env> {
+export class WorkstreamDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   /**
@@ -517,10 +525,39 @@ export class WorkstreamDO extends DurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
-      const next = this.nextAlarmAt();
-      if (next !== null) await state.storage.setAlarm(next);
+      await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  protected override scheduleReady(): Promise<void> {
+    return this.initialized;
+  }
+
+  /**
+   * This object schedules no stored entries of its own yet.
+   *
+   * Throwing rather than ignoring is deliberate: an entry with no handler is a
+   * caller that scheduled work this object cannot do, and the retry gate makes
+   * that visible in `_internal_durable_alarms` instead of settling it silently.
+   */
+  protected override runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
+    return Promise.reject(new Error(`workstream_object_unknown_alarm_kind:${alarm.kind}`));
+  }
+
+  /** No authority gate here: this object forwards effects it already committed. */
+  protected override scheduledAlarmDeferral(): Promise<number | null> {
+    return Promise.resolve(null);
+  }
+
+  protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
+    logWarn(this.env, "workstream_object_scheduled_alarm_failed", {
+      workstream_id: this.metadataRow()?.workstream_id ?? null,
+      alarm_kind: alarm.kind,
+      alarm_key: alarm.key,
+      attempt,
+      code: error instanceof Error ? error.message : "unknown_error",
+    });
   }
 
   /**
@@ -704,7 +741,7 @@ export class WorkstreamDO extends DurableObject<Env> {
     if (this.dueWorkspaceDirectoryEffects(1).length > 0) {
       throw new Error("workspace_directory_activation_flush_limit");
     }
-    await this.armAlarm();
+    await this.armNextAlarm();
     return delivered;
   }
 
@@ -771,8 +808,14 @@ export class WorkstreamDO extends DurableObject<Env> {
     // The desktop reconnects with a new one-time ticket.
   }
 
-  override async alarm(): Promise<void> {
-    await this.initialized;
+  /**
+   * This object's derived wake reasons: outbox rows whose `not_before` has come.
+   *
+   * The base has already armed the next alarm and drained any stored entry, so
+   * everything below is free to await the network — a throw here costs this
+   * object nothing but the attempt counters the outbox itself keeps.
+   */
+  protected override async runDueAlarmWork(): Promise<void> {
     const due = this.dueEffects();
     if (due.length > 0) {
       try {
@@ -821,7 +864,6 @@ export class WorkstreamDO extends DurableObject<Env> {
     }
     await this.deliverBlockDashboardSourceRefresh();
     await this.deliverBlockDashboardDispatches();
-    await this.armAlarm();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -1060,7 +1102,7 @@ export class WorkstreamDO extends DurableObject<Env> {
       );
       this.state.waitUntil((async () => {
         await this.deliverBlockDashboardDispatches();
-        await this.armAlarm();
+        await this.armNextAlarm();
       })());
     }
     return launched;
@@ -1142,7 +1184,7 @@ export class WorkstreamDO extends DurableObject<Env> {
         );
         this.state.waitUntil((async () => {
           await this.deliverBlockDashboardSourceRefresh();
-          await this.armAlarm();
+          await this.armNextAlarm();
         })());
         return json({ blockDashboard, runs: [] });
       }
@@ -1532,7 +1574,7 @@ export class WorkstreamDO extends DurableObject<Env> {
         this.applyChildEnvelope(parsed.data.substreamId, envelope);
         accepted += 1;
       }
-      await this.armAlarm();
+      await this.armNextAlarm();
       await this.broadcastMetadata();
       // `broadcastMetadata` has just told everyone reading *this* work stream.
       // The same transition is what a sidebar row, a second window, and every
@@ -2195,16 +2237,6 @@ export class WorkstreamDO extends DurableObject<Env> {
     ).toArray().length === 1;
   }
 
-  private async armAlarm(): Promise<void> {
-    const next = this.nextAlarmAt();
-    if (next === null) {
-      await this.state.storage.deleteAlarm();
-      return;
-    }
-    const existing = await this.state.storage.getAlarm();
-    if (existing === null || existing > next) await this.state.storage.setAlarm(next);
-  }
-
   private async deliverWorkspaceDirectoryEffects(
     effects: WorkstreamRegionalEffectEnvelope[],
   ): Promise<number> {
@@ -2257,7 +2289,7 @@ export class WorkstreamDO extends DurableObject<Env> {
     }
   }
 
-  private nextAlarmAt(): number | null {
+  protected override nextDerivedAlarmAt(): number | null {
     const regional = first(this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
     ))?.due_at ?? null;

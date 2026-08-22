@@ -1,13 +1,17 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
-import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
+import {
+  recordWorkspaceScheduleFailure,
+  runWorkspaceScheduleTarget,
+  workspaceScheduleTargets,
+  type WorkspaceScheduleContext,
+} from "../src/services/workspace-schedule-execution";
 import { AutomationService } from "../src/services/automation-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { createTestSqlStorage } from "./helpers/sql-storage";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -61,66 +65,70 @@ function serviceFor(database: DatabaseSync): AutomationService {
     AVALON_REGION: "global",
     APP_ENV: "test",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ refresh: async () => undefined }) }),
-    },
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
   return new AutomationService(env, auth);
 }
 
-/** The scheduler Durable Object, wired to the same database, with storage and
- * alarms captured so a test can see whether the workspace timer is still armed. */
+/** The same service, against a workspace object that refuses to reconcile. */
 function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ refresh: async () => { throw new Error("scheduler unreachable"); } }),
-    },
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        refreshSchedule: async () => { throw new Error("workspace object unreachable"); },
+      },
+    }),
   });
   return new AutomationService(env, auth);
 }
 
-function schedulerFor(database: DatabaseSync) {
-  const objectDatabase = new DatabaseSync(":memory:");
-  databases.push(objectDatabase);
-  const setAlarm = vi.fn(async (at: number) => { void at; });
-  const deleteAlarm = vi.fn(async () => undefined);
-  const storage = createCloudflareTestBinding<DurableObjectStorage>({
-    getAlarm: async () => null,
-    setAlarm,
-    deleteAlarm,
-    transactionSync: <T>(body: () => T) => body(),
-    sql: createTestSqlStorage(objectDatabase),
+/**
+ * The workspace's schedule, wired to the same database.
+ *
+ * WorkspaceDO owns the alarm itself; what this exercises is the half a
+ * lifecycle change can break — which targets a workspace reports as due, and
+ * what running one does. The arming, the retry gates, and the drain are the
+ * shared base's, and are covered on real workerd in
+ * `test-workers/scheduled-alarms.test.ts`.
+ */
+function scheduleRunnerFor(database: DatabaseSync) {
+  const env = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
-  const scheduler = new WorkspaceScheduler(
-    createCloudflareTestBinding<DurableObjectState>({
-      blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
-      storage,
-    }),
-    createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
-      // Post-cutover the scheduler reads work-stream alarm targets from the
-      // WorkspaceDO directory and serves workspace product SQL through its
-      // port. The stub keeps the seeded rows in the same database while
-      // answering the directory RPCs with no extra targets.
-      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: {
-          workstreamScheduleTargets: async () => ({ items: [] }),
-          dueWorkstreamDirectory: async () => [],
-          plannedWorkstream: async () => null,
-        },
-      }),
-    }),
-  );
-  return { scheduler, setAlarm, deleteAlarm };
+  const ctx: WorkspaceScheduleContext = {
+    env,
+    workspaceEnv: env,
+    workspaceId: "00000000-0000-7000-8000-000000000001",
+    directory: {
+      workstreamScheduleTargets: async () => ({ items: [] }),
+      plannedWorkstream: async () => null,
+    },
+  };
+  return {
+    dueTargets: () => workspaceScheduleTargets(ctx),
+    /** One alarm's worth of work, with the same per-target failure handling. */
+    runDue: async (now = new Date()) => {
+      for (const target of await workspaceScheduleTargets(ctx)) {
+        if (Date.parse(target.dueAt) > now.getTime()) continue;
+        try {
+          await runWorkspaceScheduleTarget(ctx, target, now);
+        } catch (error) {
+          await recordWorkspaceScheduleFailure(ctx, target, error);
+        }
+      }
+    },
+  };
 }
 
 function runCount(database: DatabaseSync): number {
@@ -161,10 +169,12 @@ describe("automation lifecycle", () => {
     expect(database.prepare(
       "SELECT enabled FROM schedules WHERE automation_subscription_id = ?",
     ).get("00000000-0000-7000-8000-000000000008")).toEqual({ enabled: 0 });
-    const { scheduler } = schedulerFor(database);
-    expect(await scheduler.refresh("00000000-0000-7000-8000-000000000001"))
-      .toMatchObject({ alarmAt: expect.any(String) });
-    await scheduler.alarm();
+    const runner = scheduleRunnerFor(database);
+    // The other automation's schedule is still enabled, so the workspace still
+    // has a schedule target; the archived one must simply not be among them.
+    expect((await runner.dueTargets()).map((target) => target.id))
+      .not.toContain("00000000-0000-7000-8000-00000000000c");
+    await runner.runDue();
     expect(Number((database.prepare(
       "SELECT COUNT(*) AS count FROM automation_runs WHERE automation_subscription_id = ?",
     ).get("00000000-0000-7000-8000-000000000008") as { count: number }).count)).toBe(0);
@@ -214,8 +224,7 @@ describe("automation lifecycle", () => {
       "SELECT lifecycle_state FROM automation_subscriptions WHERE id = ?",
     ).get("00000000-0000-7000-8000-000000000007")).toEqual({ lifecycle_state: "deleted" });
     // A stale armed alarm is harmless: the alarm re-reads enabled schedules.
-    const { scheduler } = schedulerFor(database);
-    await scheduler.alarm();
+    await scheduleRunnerFor(database).runDue();
     expect(runCount(database)).toBe(0);
   });
 
@@ -231,20 +240,23 @@ describe("automation lifecycle", () => {
 
   it("disarms the workspace timer so a calendar or interval trigger stops firing", async () => {
     const database = seededDatabase();
-    const { scheduler, setAlarm, deleteAlarm } = schedulerFor(database);
+    const runner = scheduleRunnerFor(database);
 
-    // The schedule is due, so before the delete the workspace alarm is armed.
-    expect(await scheduler.refresh("00000000-0000-7000-8000-000000000001")).toMatchObject({ alarmAt: expect.any(String) });
-    expect(setAlarm).toHaveBeenCalledTimes(1);
+    // The schedule is due, so before the delete the workspace has a target to
+    // arm its alarm for.
+    expect((await runner.dueTargets()).filter((target) => target.kind === "schedule"))
+      .toHaveLength(1);
 
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
-    expect(await scheduler.refresh("00000000-0000-7000-8000-000000000001")).toEqual({ alarmAt: null });
-    expect(deleteAlarm).toHaveBeenCalled();
+    // Nothing left to arm for: the reconcile this drives deletes the entry and
+    // the alarm goes with it.
+    expect((await runner.dueTargets()).filter((target) => target.kind === "schedule"))
+      .toHaveLength(0);
 
-    // Firing the alarm anyway must not open a run: the due-target query only
+    // Running the drain anyway must not open a run: the due-target query only
     // sees enabled schedules.
-    await scheduler.alarm();
+    await runner.runDue();
     expect(runCount(database)).toBe(0);
   });
 
@@ -255,9 +267,7 @@ describe("automation lifecycle", () => {
     // a writer that raced the delete. The alarm must still refuse to run it.
     database.exec("UPDATE schedules SET enabled = 1 WHERE automation_subscription_id = '00000000-0000-7000-8000-000000000007'");
 
-    const { scheduler } = schedulerFor(database);
-    await scheduler.refresh("00000000-0000-7000-8000-000000000001");
-    await scheduler.alarm();
+    await scheduleRunnerFor(database).runDue();
 
     expect(runCount(database)).toBe(0);
     const failure = database.prepare(

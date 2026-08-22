@@ -26,6 +26,8 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+
 import { asSubstreamId } from "@avalon/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
@@ -69,6 +71,29 @@ function agent(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`)),
   ));
+}
+
+/**
+ * Dispatch a run and park the alarm it arms, in one invocation.
+ *
+ * `enqueueAgentRun` arms `now + 1` deliberately, so that a queued run is never
+ * stranded by an isolate that dies before it drains. A test that wants to
+ * observe the queue *before* the executor touches it therefore has to park that
+ * alarm without letting the object's input gate open in between — two separate
+ * calls leave a window in which the drain starts, fails the seeded run against
+ * this fixture's bare D1, and turns the assertion into a coin flip.
+ */
+async function dispatchWithoutDraining(stub: DurableObjectStub, runId: string): Promise<void> {
+  await runInDurableObject(stub, async (instance, state) => {
+    // The stub is untyped here, so the object's own `fetch` is optional on the
+    // base type; this file drives one class and that class defines it.
+    await (instance as SubstreamAgent).fetch(new Request("https://object.test/internal/run-dispatch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(runInput(runId)),
+    }));
+    await state.storage.setAlarm(Date.now() + 600_000);
+  });
 }
 
 async function readyAgent(): Promise<DurableObjectStub> {
@@ -293,7 +318,7 @@ describe("a work stream wedged by an earlier build", () => {
       seedRun(state, FRESH, "admitted", Date.now());
       seedRun(state, RUN_A, "admitted", Date.now());
     });
-    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
+    await dispatchWithoutDraining(stub, RUN_A);
 
     await runInDurableObject(stub, (instance, state) => {
       const product = (instance as unknown as {
@@ -312,7 +337,7 @@ describe("a work stream wedged by an earlier build", () => {
     });
     // RUN_B is mid-flight with work still prepared for it, so it is not
     // abandoned however long it has held the slot.
-    await post(stub, "/internal/run-dispatch", runInput(RUN_B));
+    await dispatchWithoutDraining(stub, RUN_B);
 
     await runInDurableObject(stub, (instance, state) => {
       const product = (instance as unknown as {
