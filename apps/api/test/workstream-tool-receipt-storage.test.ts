@@ -13,6 +13,7 @@ const RUN = "00000000-0000-7000-8000-0000000000r1";
 const ATTEMPT = "attempt-1";
 const OWNER = "owner-1";
 const NOW = 1_787_000_000_000;
+const WORKSPACE = "00000000-0000-7000-8000-0000000000w1";
 
 const fence: ToolReceiptFence = { runId: RUN, attemptId: ATTEMPT, owner: OWNER };
 
@@ -448,5 +449,366 @@ describe("one receipt per tool call", () => {
     expect(replay).toEqual({ state: "resume_read", effectIntentId: "effect-1" });
     expect(sql.exec(`SELECT effect_intent_id FROM tool_effects`).toArray())
       .toEqual([{ effect_intent_id: "effect-1" }]);
+  });
+});
+
+// ------------------------------------------------------------------- reading
+
+/**
+ * Reading a receipt back, in the object's own vocabulary.
+ *
+ * The retired view answered these questions in compat spellings — `id`,
+ * `harness_run_id`, `pending`/`started`, ISO-8601 — and the callers were written
+ * against that. The translation does not disappear: `ToolInvocationSchema` is a
+ * published wire shape, so it moves into the Worker-side port. What these
+ * operations owe is the *real* value, once, without a correlated subquery for a
+ * column nothing reads.
+ */
+describe("reading a receipt by its call coordinate", () => {
+  it("returns the stored receipt for a run and tool call", () => {
+    const { storage } = open();
+    storage.admit(plan());
+
+    expect(storage.receiptForCall({ runId: RUN, toolCallId: "call-1" })).toMatchObject({
+      effectIntentId: "effect-1",
+      runId: RUN,
+      toolCallId: "call-1",
+      toolName: "read_resource",
+      mode: "read",
+      status: "executing",
+      requestHash: "request-hash",
+      checkpointIndex: 0,
+    });
+  });
+
+  it("returns null for a call that has no receipt", () => {
+    const { storage } = open();
+    storage.admit(plan());
+
+    expect(storage.receiptForCall({ runId: RUN, toolCallId: "call-2" })).toBeNull();
+  });
+
+  it("answers in real statuses, not the view's spellings", () => {
+    const { storage } = open();
+    storage.admit(plan());
+
+    // `executing`, never `started`. A caller that wants the wire spelling
+    // translates at the port; the object does not lie about its own column.
+    expect(storage.receiptForCall({ runId: RUN, toolCallId: "call-1" })?.status).toBe("executing");
+  });
+
+  it("carries settlement through as unix milliseconds", () => {
+    const { storage } = open();
+    storage.admit(plan());
+    storage.complete({
+      effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+      outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+      allowAmbiguousReconciliation: false, fence, now: NOW,
+    });
+
+    const receipt = storage.receiptForCall({ runId: RUN, toolCallId: "call-1" });
+    expect(receipt).toMatchObject({ status: "completed", outputRef: "ref", settledAt: NOW });
+  });
+});
+
+describe("reading receipts by id", () => {
+  it("returns only the ids it was given, in id order", () => {
+    const { storage } = open();
+    storage.admit(plan());
+    storage.admit(plan({ effectIntentId: "effect-2", toolCallId: "call-2" }));
+    storage.admit(plan({ effectIntentId: "effect-3", toolCallId: "call-3" }));
+
+    const found = storage.receiptsByIds({ effectIntentIds: ["effect-3", "effect-1"] });
+
+    expect(found.map((r) => r.effectIntentId)).toEqual(["effect-1", "effect-3"]);
+  });
+
+  it("silently omits an id with no receipt rather than failing", () => {
+    const { storage } = open();
+    storage.admit(plan());
+
+    // The transcript projection asks about every tool message it holds; a
+    // message whose receipt was discarded is an ordinary state, not an error.
+    expect(storage.receiptsByIds({ effectIntentIds: ["effect-1", "missing"] })
+      .map((r) => r.effectIntentId)).toEqual(["effect-1"]);
+  });
+
+  it("returns nothing for an empty request without touching the database", () => {
+    const { storage } = open();
+    storage.admit(plan());
+
+    expect(storage.receiptsByIds({ effectIntentIds: [] })).toEqual([]);
+  });
+});
+
+// -------------------------------------------------- attachment dependencies
+
+/**
+ * The resource versions a replayable attachment read depended on.
+ *
+ * These rows live in `attachment_tool_receipts`, which is a real table the
+ * compatibility schema happens to create — not a view, and not debris. The
+ * comparison they support is now the *only* mechanism invalidating a stale
+ * attachment replay: the D1 trigger that once deleted receipts eagerly when a
+ * derivative changed has no cross-object successor, because receipts and
+ * resources now live in different Durable Objects.
+ */
+describe("recording what an attachment read depended on", () => {
+  it("records one row per resource against a live receipt", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+
+    expect(storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [
+        { resourceId: "resource-b", derivativeSha256: "sha-b" },
+        { resourceId: "resource-a", derivativeSha256: "sha-a" },
+      ],
+      now: NOW,
+    })).toBe("recorded");
+
+    expect(sql.exec(
+      `SELECT resource_id, derivative_sha256 FROM attachment_tool_receipts ORDER BY resource_id`,
+    ).toArray()).toEqual([
+      { resource_id: "resource-a", derivative_sha256: "sha-a" },
+      { resource_id: "resource-b", derivative_sha256: "sha-b" },
+    ]);
+  });
+
+  it("refuses to record against a receipt that does not exist", () => {
+    const { storage, sql } = open();
+
+    expect(storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      now: NOW,
+    })).toBe("receipt_missing");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
+  });
+
+  it("overwrites the digest when the same resource is recorded again", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    const record = (sha: string) => storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: sha }],
+      now: NOW,
+    });
+    record("sha-old");
+
+    record("sha-new");
+
+    expect(sql.exec(`SELECT derivative_sha256 FROM attachment_tool_receipts`).toArray())
+      .toEqual([{ derivative_sha256: "sha-new" }]);
+  });
+
+  it("clears every dependency of one receipt", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [
+        { resourceId: "resource-a", derivativeSha256: "sha-a" },
+        { resourceId: "resource-b", derivativeSha256: "sha-b" },
+      ],
+      now: NOW,
+    });
+
+    expect(storage.clearAttachmentDependencies({
+      workspaceId: WORKSPACE, effectIntentId: "effect-1",
+    })).toBe(2);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
+  });
+});
+
+describe("reading what an attachment replay depends on", () => {
+  it("lists dependencies of a completed receipt, in resource order", () => {
+    const { storage } = open();
+    storage.admit(plan());
+    storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [
+        { resourceId: "resource-b", derivativeSha256: "sha-b" },
+        { resourceId: "resource-a", derivativeSha256: "sha-a" },
+      ],
+      now: NOW,
+    });
+    storage.complete({
+      effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+      outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+      allowAmbiguousReconciliation: false, fence, now: NOW,
+    });
+
+    expect(storage.attachmentDependencies({
+      workspaceId: WORKSPACE, effectIntentId: "effect-1",
+    })).toEqual([
+      { resourceId: "resource-a", derivativeSha256: "sha-a" },
+      { resourceId: "resource-b", derivativeSha256: "sha-b" },
+    ]);
+  });
+
+  it("returns nothing while the receipt is still executing", () => {
+    const { storage } = open();
+    storage.admit(plan());
+    storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      now: NOW,
+    });
+
+    // The caller reads an empty list as "not replayable". An in-flight receipt
+    // has nothing to replay, so the two answers must not be distinguishable
+    // here — the routed statement joined on `status = 'completed'` for exactly
+    // this reason.
+    expect(storage.attachmentDependencies({
+      workspaceId: WORKSPACE, effectIntentId: "effect-1",
+    })).toEqual([]);
+  });
+});
+
+describe("discarding a receipt whose replay is no longer valid", () => {
+  it("returns the output ref it held and deletes the row", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    storage.complete({
+      effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "receipts/output.json",
+      outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+      allowAmbiguousReconciliation: false, fence, now: NOW,
+    });
+
+    // The ref comes back so the Worker can queue the stored payload for
+    // deletion *after* the row is gone. The routed version enqueued first and
+    // could strand an outbox row pointing at a receipt that still existed.
+    expect(storage.discardReceipt({ workspaceId: WORKSPACE, effectIntentId: "effect-1" }))
+      .toEqual({ outputRef: "receipts/output.json", deleted: true });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM tool_effects`).one().count).toBe(0);
+  });
+
+  it("reports a receipt that was already gone without inventing a ref", () => {
+    const { storage } = open();
+
+    expect(storage.discardReceipt({ workspaceId: WORKSPACE, effectIntentId: "effect-1" }))
+      .toEqual({ outputRef: null, deleted: false });
+  });
+
+  it("takes the receipt's attachment dependencies with it", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      now: NOW,
+    });
+
+    storage.discardReceipt({ workspaceId: WORKSPACE, effectIntentId: "effect-1" });
+
+    // By `ON DELETE CASCADE`, which is load-bearing and was never covered.
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
+  });
+});
+
+// ------------------------------------------------------------ the lease sweep
+
+/**
+ * Settling the receipts of a run whose lease was reaped.
+ *
+ * This one cannot be `fail()` with different arguments. Every other operation
+ * here opens with `#fence`, which requires a live lease — and the sweep's whole
+ * premise is that no lease exists, so all four would answer `ownership_lost` by
+ * construction. Its guard is the run's own `terminalized_at` instead, re-read
+ * here rather than trusted from the caller, so the method is safe to call
+ * outside the batch that terminalized the run.
+ */
+describe("abandoning the receipts of a reaped run", () => {
+  function reaped(sql: ReturnType<typeof createTestSqlStorage>, at = NOW): void {
+    sql.exec(
+      `UPDATE runs SET status = 'failed', terminalized_at = ?, lease_owner = NULL WHERE run_id = ?`,
+      at,
+      RUN,
+    );
+  }
+
+  it("fails a read receipt that never started talking to a provider", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    reaped(sql);
+
+    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(1);
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "failed" }]);
+  });
+
+  it("leaves a write receipt ambiguous, because the provider may have been reached", () => {
+    const { storage, sql } = open();
+    storage.admit(plan({
+      mode: "write",
+      incomingIsRead: false,
+      executionPlanJson: '{"mode":"write"}',
+    }));
+    reaped(sql);
+
+    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(1);
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "ambiguous" }]);
+  });
+
+  it("treats a receipt with no readable plan as possibly a write", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    // The mode column says `read` for an unreadable plan; the sweep does not
+    // trust it. Demoting these to `failed` would turn "we could not confirm the
+    // write" into "it definitely failed", which is the wrong direction for a
+    // call whose provider request may have landed.
+    sql.exec(`UPDATE tool_effects SET execution_plan_json = NULL`);
+    reaped(sql);
+
+    storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW });
+
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "ambiguous" }]);
+  });
+
+  it("never touches a receipt that already settled", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    storage.complete({
+      effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+      outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+      allowAmbiguousReconciliation: false, fence, now: NOW,
+    });
+    reaped(sql);
+
+    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(0);
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "completed" }]);
+  });
+
+  it("refuses when the run was not terminalized at the instant claimed", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    reaped(sql, NOW);
+
+    // The guard is the sweep's own fence, re-proved here. A caller passing a
+    // stale timestamp is describing a different terminalization than the one
+    // that happened, and must move nothing.
+    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW - 1 })).toBe(0);
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "executing" }]);
+  });
+
+  it("refuses while the run is still live", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+
+    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(0);
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "executing" }]);
   });
 });
