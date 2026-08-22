@@ -503,6 +503,57 @@ describe('WorkspaceSocketProvider', () => {
     expect(roots).toContain(JSON.stringify(['workspace']));
   });
 
+  it('asks for the directory when the payload leaves a resident row unaccounted for', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    // A row already resident from before the socket dropped. The reconnect
+    // payload is page one and does not carry it, which page one alone cannot
+    // explain: it is either a later page the reader had scrolled to, or a work
+    // stream archived while the socket was away. Merging keeps it either way,
+    // so the refetch has to run and let the full walk decide.
+    setCachedWorkstreams(queryClient, () => [summary({
+      id: '00000000-0000-7000-8000-0000000000ff',
+      title: 'Archived while the socket was away',
+    })]);
+    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    invalidations.mockClear();
+
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-00000000001b',
+      waterline: 12,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+        automations: { waterline: 0, items: [] },
+        notes: { waterline: 0, items: [] },
+      },
+    }));
+
+    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
+    expect(roots).toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
+  });
+
   it('takes the sidebar off a resume whose waterline is not newer', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

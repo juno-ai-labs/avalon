@@ -224,11 +224,25 @@ export function WorkspaceSocketProvider({
         }, PONG_TIMEOUT_MS);
       }, HEARTBEAT_MS);
     };
-    const applyConnectedSidebar = (sidebar: WorkspaceSidebar): void => {
-      // Merged over whatever is resident rather than replacing it: this is page
-      // one, and a reader who had scrolled keeps the pages below it instead of
-      // watching the list collapse and refill.
+    /**
+     * @returns whether the directory still needs a reconciling refetch.
+     *
+     * The payload is page one, merged over whatever is resident rather than
+     * replacing it: a reader who had scrolled keeps the pages below it instead
+     * of watching the list collapse and refill. The cost of merging is that a
+     * cached row page one no longer returns is kept, and a work stream archived
+     * while the socket was away is exactly that. Page one cannot say which of
+     * the two it is — a later page the reader scrolled to, or a tombstone — so
+     * when any cached row is unaccounted for, the directory invalidation is
+     * left to run and the query's own full walk decides. On a cold connect
+     * there is nothing resident, the merge is a replacement, and no refetch is
+     * asked for; that is the round trip this payload exists to remove.
+     */
+    const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
       const page = applyDirectoryPage(queryClient, sidebar.workstreams);
+      const returned = new Set(page.items.map((workstream) => workstream.id));
+      const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+        .some((workstream) => !returned.has(workstream.id));
       mergeCachedWorkstreamPage(queryClient, page.items);
       applyVersionedSidebarList(
         queryClient,
@@ -241,6 +255,7 @@ export function WorkspaceSocketProvider({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
       }));
+      return unaccountedFor;
     };
     const sendPending = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
@@ -322,7 +337,9 @@ export function WorkspaceSocketProvider({
             // answer to `subscribe`, and a resume where no topic moved carries
             // the waterline the client already has — so a guard that ran first
             // would drop the state this event exists to deliver.
-            if (sync.data.sidebar) applyConnectedSidebar(sync.data.sidebar);
+            const directoryNeedsReconciling = sync.data.sidebar
+              ? applyConnectedSidebar(sync.data.sidebar)
+              : false;
             if (sync.data.waterline <= lastWaterline) return;
             lastWaterline = sync.data.waterline;
             setTopicWaterlines((current) => {
@@ -336,7 +353,10 @@ export function WorkspaceSocketProvider({
               // same breath undoes the whole point of the payload. `initial`
               // names every topic, so without this the connect answer is
               // followed immediately by the `list_workstreams` it replaced.
-              if (topic === 'workstream_directory' && sync.data.sidebar) continue;
+              // Unless the payload left a resident row unaccounted for — then
+              // the refetch is the only thing that can retire a tombstone the
+              // socket was away for.
+              if (topic === 'workstream_directory' && sync.data.sidebar && !directoryNeedsReconciling) continue;
               invalidateTopic(queryClient, topic);
             }
             return;

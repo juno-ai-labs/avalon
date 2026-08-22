@@ -226,10 +226,22 @@ export class WorkstreamEmailRoutingService {
   }
 
   /** The address, refused if the work stream is archived — the same test the
-   * inbound resolver applies when a message actually arrives. */
+   * inbound resolver applies when a message actually arrives.
+   *
+   * Read through {@link workstreamExecutionEnvironment}, never
+   * `workspaceDatabase`. `workstreams` is not a workspace-local table, so the
+   * workspace facade sends the statement to regional D1 — where migration 0090
+   * left only the identity anchor and dropped `archived_at`. The column lives
+   * in the work-stream object now, and asking the wrong database for it fails
+   * the gate with `no such column` after the address was already reserved. */
   async activateWorkstreamRoute(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
     const route = await this.ensureWorkstreamAddress(input);
-    const owner = await this.workspaceDatabase(input.workspaceId).prepare(
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      input.workspaceId,
+      input.workstreamId,
+    );
+    const owner = await executionEnv.DB.prepare(
       `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
     ).bind(input.workstreamId, input.workspaceId).first<{ archived_at: string | null }>();
     if (owner?.archived_at) {
