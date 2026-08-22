@@ -38,6 +38,7 @@ import {
   parseWranglerJson,
   schemaFingerprint,
   snapshotDatabase,
+  subsumedMigrations,
 } from "./d1-baseline.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -92,10 +93,18 @@ export async function readRemoteSchema(region, { run = execFileAsync } = {}) {
  * baseline equals chain there, so baseline equals production by composition —
  * and each half is checked where it can actually be checked.
  */
-export function chainFingerprint(directory = MIGRATIONS_DIRECTORY) {
+export function chainFingerprint(directory = MIGRATIONS_DIRECTORY, { through } = {}) {
+  const onDisk = listMigrationFiles(directory);
+  // `through` truncates the replay at a migration that has actually been
+  // deployed. The live run wants the whole chain — it is asking whether
+  // production is current. The offline run wants the chain as it stood when the
+  // fingerprint was captured, because a migration merged five minutes ago is
+  // legitimately not in production yet and must not be reported as drift by a
+  // test with no way to reach a live database.
+  const files = through === undefined ? onDisk : subsumedMigrations(onDisk, through);
   const database = new DatabaseSync(":memory:");
   try {
-    applyMigrations(database, directory, listMigrationFiles(directory));
+    applyMigrations(database, directory, files);
     return schemaFingerprint(snapshotDatabase(database).objects);
   } finally {
     database.close();
@@ -120,6 +129,13 @@ export function describeComparison(label, comparison) {
 export function verifyAgainstRegions({ expected, regionSchemas }) {
   const lines = [];
   let ok = true;
+
+  // A pass has to mean something was compared. Every loop below iterates over
+  // `regionSchemas`, so an empty one runs none of them and leaves `ok` at its
+  // initial `true` — a green result reporting on nothing at all.
+  if (Object.keys(regionSchemas).length === 0) {
+    return { ok: false, lines: ["no hosted schemas to compare against"], fingerprints: {} };
+  }
 
   const fingerprints = Object.fromEntries(
     Object.entries(regionSchemas).map(([region, objects]) => [region, schemaFingerprint(objects)]),
@@ -149,6 +165,13 @@ async function main() {
 
   const regionSchemas = {};
   const discovered = regions();
+  // Without this, a discovery regression turns the whole check into a pass: an
+  // empty `regionSchemas` has nothing to disagree with, `verifyAgainstRegions`
+  // reports `ok`, and the command exits 0 having never contacted Cloudflare.
+  if (discovered.length === 0) {
+    throw new Error("no regions discovered — every wrangler.<region>.jsonc is missing or its D1 binding "
+      + "declares no migrations_dir, so there is nothing to verify against");
+  }
   for (const region of discovered) {
     process.stderr.write(`Reading ${region} schema…\n`);
     regionSchemas[region] = await readRemoteSchema(region);

@@ -46,6 +46,9 @@ import { buildBaseline, mergeIntoManifest } from "./create-d1-baseline.mjs";
 import {
   API_DIRECTORY,
   discoverRegions,
+  assertRegionalEnvFilesExist,
+  inspectDatabase,
+  inspectForPlan,
   loadCatalog,
   parseArguments,
   resolveTargets,
@@ -528,6 +531,191 @@ test("a URL inside a config string is not mistaken for a comment", () => {
   assert.ok(JSON.parse(real).routes?.length > 0, "the real config must still parse with its routes intact");
 });
 
+test("a string ending in an escaped backslash does not swallow its own closing quote", () => {
+  // Looking one character back cannot tell `\"` from `\\` followed by a real
+  // closing quote. Getting it wrong runs the scanner on inside a string that
+  // was already closed, so the `//` after it stops being recognised as a
+  // comment and the whole file fails to parse — and since `discoverRegions`
+  // reads every `wrangler.*.jsonc`, one such value anywhere takes down
+  // `pnpm db:migrate` for every region, hosted path included.
+  const source = String.raw`{"a": "C:\\", "b": 1} // trailing`;
+  assert.deepEqual(JSON.parse(stripJsonComments(source)), { a: "C:\\", b: 1 });
+  const quoted = String.raw`{"a": "say \"hi\"", "b": "back\\slash\"quote"} // trailing`;
+  assert.deepEqual(JSON.parse(stripJsonComments(quoted)), { a: 'say "hi"', b: 'back\\slash"quote' });
+});
+
+// ---------------------------------------------------------------------------
+// Reading a database's state through the wrangler seam
+// ---------------------------------------------------------------------------
+
+/**
+ * A stand-in for `wrangler d1 execute` that runs the query it is given against
+ * a real SQLite database and answers in Wrangler's JSON shape.
+ *
+ * The transport is the only thing faked. The SQL in `inspectDatabase` is real
+ * SQL against a real engine here, which is the half that can be wrong — an
+ * inventory query that miscounts internal tables, or a ledger query naming a
+ * table that does not exist, would both pass a test built on canned responses.
+ */
+function wranglerAgainst(database, { failOn = null } = {}) {
+  return async (_command, args) => {
+    const sql = args[args.indexOf("--command") + 1];
+    if (failOn && sql.includes(failOn)) throw new Error("D1 is temporarily unavailable");
+    return { stdout: JSON.stringify([{ results: database.prepare(sql).all() }]) };
+  };
+}
+
+const LOCAL_TARGET = { region: "eu", config: "wrangler.eu.jsonc", binding: "DB", remote: false };
+
+test("a database that already has tables still has its ledger read", async () => {
+  // The whole value of `outOfOrder` and `unknownApplied` is on databases that
+  // have tables — an established local one, and production. Skipping the ledger
+  // read there left both unreachable everywhere they can actually fire.
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+                 CREATE TABLE _cf_KV (key TEXT PRIMARY KEY);
+                 CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
+                 INSERT INTO d1_migrations (name) VALUES ('0001_a.sql'), ('0090_b.sql')`);
+  const state = await inspectDatabase(LOCAL_TARGET, { run: wranglerAgainst(database) });
+  assert.equal(state.userTables, 1, "the platform's own tables are not user schema");
+  assert.ok(state.ledgerRead);
+  assert.deepEqual(state.applied, ["0001_a.sql", "0090_b.sql"]);
+  database.close();
+});
+
+test("an out-of-order migration is reported on a populated database, end to end", async () => {
+  // The reviewer's scenario: production already ran 0090, a PR inserts 0084.
+  // A fresh or baselined database applies 0084 before 0090; this one applies it
+  // after. Nothing stops the apply — but it has to be *said*, and before this
+  // the ledger it needs was never read.
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+                 CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
+                 INSERT INTO d1_migrations (name) VALUES ('0001_a.sql'), ('0090_b.sql')`);
+  const state = await inspectDatabase(LOCAL_TARGET, { run: wranglerAgainst(database) });
+  const plan = planMigration({
+    applied: state.applied,
+    userTables: state.userTables,
+    baselines: [],
+    migrationsOnDisk: ["0001_a.sql", "0084_inserted_later.sql", "0090_b.sql"],
+    digestFor: () => "sha256:x",
+    allowBaseline: false,
+  });
+  assert.equal(plan.action, "migrate");
+  assert.deepEqual(plan.outOfOrder, ["0084_inserted_later.sql"]);
+  assert.match(describePlan("eu", plan), /0084_inserted_later\.sql/u);
+  database.close();
+});
+
+test("a ledger row with no file on disk is reported rather than ignored", async () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+                 CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
+                 INSERT INTO d1_migrations (name) VALUES ('0001_a.sql'), ('0002_deleted_since.sql')`);
+  const state = await inspectDatabase(LOCAL_TARGET, { run: wranglerAgainst(database) });
+  const plan = planMigration({
+    applied: state.applied,
+    userTables: state.userTables,
+    baselines: [],
+    migrationsOnDisk: ["0001_a.sql"],
+    digestFor: () => "sha256:x",
+    allowBaseline: false,
+  });
+  assert.deepEqual(plan.unknownApplied, ["0002_deleted_since.sql"]);
+  database.close();
+});
+
+test("a database with tables and no ledger reports nothing rather than nothing-applied", async () => {
+  // `applied: []` here would have the plan announce every migration as pending
+  // on a database that may be entirely up to date.
+  const database = new DatabaseSync(":memory:");
+  database.exec("CREATE TABLE users (id TEXT PRIMARY KEY)");
+  const state = await inspectDatabase(LOCAL_TARGET, { run: wranglerAgainst(database) });
+  assert.equal(state.applied, null);
+  assert.equal(state.ledgerRead, false);
+  const plan = planMigration({
+    applied: state.applied,
+    userTables: state.userTables,
+    baselines: [],
+    migrationsOnDisk: ["0001_a.sql"],
+    digestFor: () => "sha256:x",
+    allowBaseline: true,
+  });
+  assert.equal(plan.pending, null);
+  database.close();
+});
+
+test("an empty database reports an empty ledger, which is what lets it be baselined", async () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("CREATE TABLE _cf_METADATA (key TEXT PRIMARY KEY)");
+  const state = await inspectDatabase(LOCAL_TARGET, { run: wranglerAgainst(database) });
+  assert.equal(state.userTables, 0);
+  assert.deepEqual(state.applied, []);
+  database.close();
+});
+
+test("a hosted database that cannot be inspected still gets its migrations applied", async () => {
+  // Nothing read on the hosted path can change the plan, so an inspection
+  // failure must not abort the deploy before `migrations apply` runs. The
+  // warning is the deliverable; `applied: null` keeps the plan honest about
+  // not having read a ledger.
+  const database = new DatabaseSync(":memory:");
+  database.exec("CREATE TABLE users (id TEXT PRIMARY KEY)");
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (line) => warnings.push(line);
+  try {
+    const state = await inspectForPlan(
+      { ...LOCAL_TARGET, remote: true },
+      { run: wranglerAgainst(database, { failOn: "sqlite_schema" }) },
+    );
+    assert.deepEqual(state, { userTables: 0, applied: null, hasLedger: false, ledgerRead: false });
+    assert.match(warnings.join("\n"), /eu: could not inspect before applying/u);
+  } finally {
+    console.warn = warn;
+  }
+  database.close();
+});
+
+test("a local database that cannot be inspected stops rather than guessing", async () => {
+  // Locally the inspection decides whether the baseline is applied at all, and
+  // the two wrong answers are replaying every migration or handing a snapshot
+  // to a database that already has tables.
+  const database = new DatabaseSync(":memory:");
+  await assert.rejects(
+    () => inspectForPlan(LOCAL_TARGET, { run: wranglerAgainst(database, { failOn: "sqlite_schema" }) }),
+    /D1 is temporarily unavailable/u,
+  );
+  database.close();
+});
+
+test("a discovered region with no env file is named, rather than left to wrangler", () => {
+  // Regions come from the Wrangler configs; `pnpm env:sync` still writes env
+  // files for a hardcoded global and eu. A third region is therefore discovered
+  // and handed an `--env-file` nothing created, and wrangler's message for that
+  // names the file rather than the reason.
+  const directory = mkdtempSync(join(tmpdir(), "envfiles-"));
+  try {
+    writeFileSync(join(directory, ".dev.vars.global"), "A=1\n");
+    const targets = [
+      { region: "global", remote: false },
+      { region: "apac", remote: false },
+    ];
+    assert.throws(
+      () => assertRegionalEnvFilesExist(targets, directory),
+      /No apps\/api\/\.dev\.vars\.apac for the discovered region apac/u,
+    );
+    // The hosted path passes no `--env-file` at all, so it is not held to this.
+    assert.doesNotThrow(() => assertRegionalEnvFilesExist(
+      targets.map((target) => ({ ...target, remote: true })),
+      directory,
+    ));
+    assert.doesNotThrow(() => assertRegionalEnvFilesExist([targets[0]], directory));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The command line and the wrangler invocation
 // ---------------------------------------------------------------------------
@@ -640,7 +828,11 @@ test("applying the real baseline plus what follows equals replaying the real cha
   const onDisk = listMigrationFiles(migrationsDirectory);
 
   for (const baseline of baselines) {
-    const after = onDisk.filter((name) => name > baseline.through);
+    // `compareMigrationPaths`, not `>`: an unpadded name is misordered
+    // identically on both sides of this comparison, so a string compare would
+    // keep the two databases agreeing with each other while the real
+    // `planMigration` put that file on the other side of the boundary.
+    const after = onDisk.filter((name) => compareMigrationPaths(name, baseline.through) > 0);
     const viaBaseline = new DatabaseSync(":memory:");
     const viaChain = new DatabaseSync(":memory:");
     try {

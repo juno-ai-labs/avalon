@@ -18,10 +18,10 @@ boundary, or changing how a local database is created.
 | --- | --- |
 | `packages/db/baselines/b_<nnnn>_<text>.sql` | A generated snapshot. Named after the migration it stands through. Several may exist. Never edited by hand. |
 | `packages/db/baselines/manifest.json` | Every baseline: which migrations each subsumes, their digest, the volatile columns, and the object and row counts. The one place a reader learns what a file claims. |
-| `packages/db/baselines/production-fingerprint.json` | Per-object digests recorded from the hosted databases, so the parity result stays enforced offline. |
+| `packages/db/baselines/production-fingerprint.json` | Per-object digests recorded from the hosted databases, plus the migration they were recorded `through` and the regions read, so the parity result stays enforced offline against the chain as it stood at that point. |
 | `scripts/d1-baseline.mjs` | The library: boundary selection, the staleness digest, snapshotting, volatile-column detection, SQL rendering, fingerprints, and the shared "which tables are internal" rule. |
 | `scripts/create-d1-baseline.mjs` | `pnpm db:baseline:create <through-migration.sql>` — generates the file and the manifest. |
-| `scripts/check-d1-baseline-against-remote.mjs` | `pnpm db:baseline:verify` — compares the baseline against both hosted databases and them against each other. `-- --record` refreshes the fingerprint. |
+| `scripts/check-d1-baseline-against-remote.mjs` | `pnpm db:baseline:verify` — compares the migration chain against every discovered hosted database, and them against each other. `-- --record` refreshes the fingerprint. |
 | `scripts/migrate-d1.mjs` | The one migrate script — every region, local or hosted. Discovers regions, plans, then hands over to Wrangler. |
 
 ## How it works
@@ -109,6 +109,16 @@ compares the **migration chain** against each, and the regions against each
 other. It never reads a row of production data. With `-- --record` it writes
 `production-fingerprint.json`, which `scripts/d1-baseline.test.mjs` compares
 against on every run — so the answer stays enforced without credentials.
+
+That offline comparison replays the chain **truncated at the migration the
+recording names**, not the whole chain. Recording needs Cloudflare credentials
+and needs the migration to already be live, so fingerprinting everything on disk
+would redden `pnpm test:scripts` on every migration pull request with no repair
+short of merging and deploying it first. What the recording covers stays
+enforced; what production has not been given yet is not asserted about. The
+recording may lag the chain, but it may never name a migration this checkout no
+longer has, and the regions it lists must still be the regions discovered — both
+are separate assertions in that suite.
 
 The chain rather than a baseline, deliberately. A baseline describes its own
 boundary, so once a migration lands above it, comparing the baseline to
@@ -355,6 +365,55 @@ regenerate to make it pass.
 
 ## Changelog
 
+### 2026-08-22 — Keep every gate repairable, and make the diagnostics reachable
+
+**What changed:** the offline production-parity assertions replay the chain
+truncated at the migration `production-fingerprint.json` was recorded through,
+and treat that migration as a floor rather than an equality; the recorded region
+list is now asserted against the discovered one. `manifest.objectCounts` and
+`seededRowCounts` are asserted against a snapshot-only database rather than
+against baseline-plus-later-migrations. `inspectDatabase` reads the ledger
+whenever it exists, including on a database that already has tables, and the
+hosted inspection warns rather than throwing. Four latent defects are fixed:
+`stripJsonComments` stepping over escapes instead of looking one character back,
+`sqlite_sequence` read with `setReadBigInts`, `sqlLiteral` not appending `.0` to
+an exponent-form REAL, and a refusal for seeded TEXT that SQLite hands back
+truncated at an embedded NUL.
+
+**Why:** two of these gates had no reachable repair. Pinning the fingerprint to
+the newest migration on disk meant any pull request adding `0091_*.sql` reddened
+four assertions whose only sanctioned fix — `pnpm db:baseline:verify -- --record`
+— needs credentials *and* needs that migration already deployed, which cannot
+happen before its own pull request merges. The manifest counts describe the
+snapshot file, so measuring them against a database that also has the migrations
+above the boundary applied fails the day one adds a table: verified at 43 tables
+against a recorded 42. Neither failure says anything about whether a baseline is
+correct, and a gate that goes red for a reason nobody can act on gets suppressed
+rather than read. Separately, `outOfOrder` and `unknownApplied` were written for
+established databases and production, and both were unreachable there because
+the ledger was skipped whenever user tables existed.
+
+**Considered and rejected:** *unifying the region set inside `sync-dev-env.mjs`*,
+which discovery made inconsistent with the env files it writes. That script
+carries per-region ports and `_GLOBAL`/`_EU` key suffixes a discovered region has
+no answer for, and it is on every developer's first command of the day; a
+precondition in the migrate script that names the missing file and the reason
+removes the obscure failure at a fraction of the risk. Unifying them is the real
+fix and is still owed. Also *keeping the ledger read off the warm path* for its
+one wrangler start-up: the command already spends several, and the alternative
+was two checks that could never fire.
+
+**Consequences:** `production-fingerprint.json` is now re-recorded on its own
+schedule rather than as a step in a migration's pull request, and a migration
+merged but not yet deployed is legitimately outside what the offline check
+asserts. Anything comparing a manifest count must say which database it means —
+the snapshot, or the snapshot plus what followed. A hosted `pnpm db:migrate` no
+longer fails when the pre-flight inspection does, so a silent inspection warning
+in `deploy-api.yml` is expected output rather than a problem; the apply itself
+still fails loudly. Generation now refuses two more shapes it cannot render
+faithfully, and both refusals exist because the alternative was a file that
+applies cleanly and is wrong.
+
 ### 2026-08-22 — Order migrations as Wrangler does, and reproduce the state a snapshot was losing
 
 **What changed:** `compareMigrationPaths` replicates Wrangler's own comparator
@@ -515,7 +574,10 @@ database. A migration added at or below the current boundary — `0084_*.sql` is
 the live example, since the sequence skips it — fails the digest test on purpose;
 the fix is a new boundary and a regenerated baseline, not a suppressed
 assertion. The baseline must be regenerated and re-verified whenever the boundary
-moves, and `production-fingerprint.json` re-recorded with it, or the offline
-parity test is asserting against a schema nobody runs.
+moves. `production-fingerprint.json` is re-recorded on its own schedule — after a
+deploy, when it is worth re-establishing that production still matches the chain,
+and necessarily when a region is added or removed — never as a step in a
+migration's own pull request, which cannot have the credentials or the deployed
+migration that recording requires.
 
 Shipped in the pull request for `claude/local-sandbox-migration-tboqdg`.

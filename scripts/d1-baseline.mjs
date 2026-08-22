@@ -171,12 +171,16 @@ export function listMigrationFiles(directory) {
  * would include one of a pair and drop the other, producing a baseline missing
  * a migration that every real database ran.
  *
- * The string comparison is the same ordering Wrangler applies migrations in,
- * and it is correct only because the sequence is zero-padded to four digits —
- * the convention `classify-pending-d1-migrations.mjs` also encodes. A name that
- * broke it (`0090a_…`, or a five-digit sequence) would sort somewhere this does
- * not expect. The manifest digest is the backstop: it fails on any insertion at
- * or below the boundary, however that file sorts.
+ * The ordering is `compareMigrationPaths` — Wrangler's own comparator, which
+ * parses the leading integer and compares numerically, falling back to a string
+ * compare only on a tie. That tie-break is what keeps the doubled numbers
+ * together, and the numeric half is what stops an unpadded name (`89_backfill.sql`)
+ * landing on the wrong side of a `0090` boundary. A bare `Array.sort()` used to
+ * stand here and disagreed with Wrangler in exactly that case, which the
+ * manifest digest does *not* catch: the subsumed set is unchanged, so the digest
+ * is unchanged, so the baseline stays usable while the database it produces
+ * diverges from a replay. The digest is the backstop for a file inserted at or
+ * below the boundary, not for one the two orderings disagree about.
  */
 export function subsumedMigrations(allFiles, throughFile) {
   if (!allFiles.includes(throughFile)) {
@@ -221,6 +225,7 @@ export function snapshotDatabase(database) {
   const rows = {};
   const dependsOn = {};
   const storageTypes = {};
+  const byteLengths = {};
   for (const { name } of objects.filter((object) => object.type === "table")) {
     // `SELECT *` returns generated columns, and `INSERT` rejects them —
     // "cannot INSERT into generated column". `table_xinfo` marks them: hidden 2
@@ -253,6 +258,16 @@ export function snapshotDatabase(database) {
       .map((column) => `typeof("${column.replaceAll('"', '""')}") AS "${column.replaceAll('"', '""')}"`)
       .join(", ");
     storageTypes[name] = database.prepare(`SELECT ${typeList} FROM "${name}"`).all();
+    // The stored byte length of every value, which is what makes an embedded
+    // NUL visible: `node:sqlite` hands back TEXT only as far as its first NUL,
+    // and the truncated string is a perfectly ordinary string afterwards. Both
+    // replays truncate identically, so volatility detection sees nothing, and
+    // the shortened value is written into the baseline as if it were the whole
+    // one. Zipped by row index, the same way `storageTypes` above is.
+    const byteList = storedColumns
+      .map((column) => `length(CAST("${column.replaceAll('"', '""')}" AS BLOB)) AS "${column.replaceAll('"', '""')}"`)
+      .join(", ");
+    byteLengths[name] = database.prepare(`SELECT ${byteList} FROM "${name}"`).all();
     // The tables this one points at. Seeded rows have to be inserted after the
     // rows they reference, and `sqlite_schema` order is alphabetical, which is
     // unrelated to that.
@@ -273,13 +288,27 @@ export function snapshotDatabase(database) {
   const hasSequence = database
     .prepare("SELECT COUNT(*) AS present FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'")
     .get()?.present;
+  //
+  // Read the same way the seeded rows above are, and for the same reason: `seq`
+  // is the highest id *ever issued*, so one explicit insert of an external id —
+  // a snowflake, a millisecond timestamp — puts a value beyond 2^53 there
+  // permanently. Without `setReadBigInts` that read throws mid-snapshot, and
+  // narrowing it through `Number()` would round it *down*, handing a baselined
+  // database exactly the retired ids this block exists to protect.
   const sequences = Number(hasSequence ?? 0) > 0
-    ? database.prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name").all()
-      .filter((row) => !isInternalTableName(String(row.name)))
-      .map((row) => ({ name: String(row.name), seq: Number(row.seq) }))
+    ? readSequences(database)
     : [];
 
-  return { objects, rows, dependsOn, sequences, storageTypes };
+  return { objects, rows, dependsOn, sequences, storageTypes, byteLengths };
+}
+
+/** `sqlite_sequence`, read without losing a counter that outgrew a JS number. */
+function readSequences(database) {
+  const statement = database.prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name");
+  statement.setReadBigInts?.(true);
+  return statement.all()
+    .filter((row) => !isInternalTableName(String(row.name)))
+    .map((row) => ({ name: String(row.name), seq: narrowBigInt(row.seq) }));
 }
 
 /**
@@ -386,8 +415,15 @@ export function sqlLiteral(value, storageClass) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`${value} has no SQL literal`);
-    if (storageClass === "real" && Number.isInteger(value)) return `${value}.0`;
-    return String(value);
+    const rendered = String(value);
+    // `${value}.0` only makes a REAL literal while `String` stays in decimal
+    // form. At 1e21 it switches to exponent notation and the suffix lands after
+    // the exponent — `1e+21.0`, which SQLite rejects with `near ".0": syntax
+    // error`. An exponent-form literal is already REAL to SQLite, so there is
+    // nothing to add. Getting this wrong writes an unappliable file and exits
+    // successfully, so the break surfaces at somebody else's `pnpm db:migrate`.
+    if (storageClass === "real" && Number.isInteger(value) && !/[eE]/u.test(rendered)) return `${rendered}.0`;
+    return rendered;
   }
   if (typeof value === "bigint") return String(value);
   if (value instanceof Uint8Array) {
@@ -571,6 +607,33 @@ function renderRows(table, tableRows, volatileForTable, typesForTable = []) {
  * The ledger rows come last of all: they are the claim "these migrations have
  * run", and it must not be recorded before the schema they describe exists.
  */
+/**
+ * Refuses a seeded TEXT value that SQLite stores in more bytes than JavaScript
+ * received — in practice, one containing an embedded NUL.
+ *
+ * Every other refusal in this file exists because the generator would produce a
+ * file that fails to apply. This one is worse: the file applies perfectly and
+ * the database is quietly wrong, with a truncated string where the chain has a
+ * longer one, and nothing downstream can tell. Reproduced with
+ * `CAST(X'610062' AS TEXT)`: three bytes stored, `"a"` read back.
+ */
+export function assertSeededTextIsIntact(rows, byteLengths = {}) {
+  for (const [table, tableRows] of Object.entries(rows)) {
+    const lengths = byteLengths[table];
+    if (!lengths) continue;
+    for (const [index, row] of tableRows.entries()) {
+      for (const [column, value] of Object.entries(row)) {
+        if (typeof value !== "string") continue;
+        const stored = Number(lengths[index]?.[column] ?? Buffer.byteLength(value));
+        if (stored === Buffer.byteLength(value)) continue;
+        throw new Error(`${table}.${column} holds ${stored} bytes but reads back as `
+          + `${Buffer.byteLength(value)} — an embedded NUL truncates TEXT on the way out of SQLite, `
+          + "so this value cannot be snapshotted faithfully. Store it as a BLOB, or stop seeding it.");
+      }
+    }
+  }
+}
+
 export function renderBaselineSql({ through, files, digest, snapshot, volatileColumns = {} }) {
   const tables = snapshot.objects.filter((object) => object.type === "table");
   const indexes = snapshot.objects.filter((object) => object.type === "index");
@@ -578,6 +641,7 @@ export function renderBaselineSql({ through, files, digest, snapshot, volatileCo
 
   assertEveryObjectRenderable(snapshot.objects);
   assertVolatileValuesAreTimestamps(snapshot.rows, volatileColumns);
+  assertSeededTextIsIntact(snapshot.rows, snapshot.byteLengths);
 
   const sections = [];
   sections.push(`-- Generated by \`node scripts/create-d1-baseline.mjs ${through}\` — do not edit by hand.

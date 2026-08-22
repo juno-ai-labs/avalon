@@ -112,8 +112,15 @@ export function stripJsonComments(source) {
   while (index < source.length) {
     const character = source[index];
     if (character === '"') {
+      // Stepping *over* an escape rather than looking one character back: a
+      // backslash-quote and an escaped backslash followed by a real closing
+      // quote are indistinguishable from behind, so `"C:\\\\"` swallowed its own
+      // terminator, ran the scanner on inside a string that was already closed,
+      // stopped recognising `//` as a comment, and took `JSON.parse` down. One
+      // such value in one region config fails `discoverRegions` for every
+      // region — including the hosted path in `deploy-api.yml`.
       let end = index + 1;
-      while (end < source.length && !(source[end] === '"' && source[end - 1] !== "\\")) end += 1;
+      while (end < source.length && source[end] !== '"') end += source[end] === "\\" ? 2 : 1;
       output += source.slice(index, end + 1);
       index = end + 1;
       continue;
@@ -154,6 +161,30 @@ export function wranglerArguments({ region, config, binding, remote }, command, 
   return ["exec", "wrangler", "d1", ...command, binding, ...args, ...location, "--config", config];
 }
 
+/**
+ * Refuses a local run whose region has no `.dev.vars.<region>`.
+ *
+ * Regions are discovered from the Wrangler configs, but `scripts/sync-dev-env.mjs`
+ * still generates env files for a hardcoded `global` and `eu`. A third region is
+ * therefore discovered here and handed an `--env-file` nothing created, and
+ * Wrangler's own message for that names the file rather than the reason. This
+ * says which command is behind and which region it has never heard of.
+ *
+ * Unifying the two region sets is the real fix and is not this script's to make:
+ * `sync-dev-env.mjs` carries per-region ports and `_GLOBAL`/`_EU` key suffixes
+ * that a discovered region has no answer for yet.
+ */
+export function assertRegionalEnvFilesExist(targets, directory = API_DIRECTORY) {
+  const missing = targets
+    .filter((target) => !target.remote)
+    .map((target) => target.region)
+    .filter((region) => !existsSync(join(directory, `.dev.vars.${region}`)));
+  if (missing.length === 0) return;
+  throw new Error(`No apps/api/.dev.vars.${missing[0]} for the discovered region `
+    + `${missing.join(", ")}. \`pnpm env:sync\` generates regional env files for global and eu only, `
+    + "so a region added through its Wrangler config needs adding there too.");
+}
+
 const LEDGER_QUERY = "SELECT name FROM d1_migrations ORDER BY id";
 
 /**
@@ -181,25 +212,52 @@ async function query(target, sql, { run = execFileAsync } = {}) {
  * What one database already holds: its user-table count and the migrations its
  * ledger names.
  *
- * The ledger is read in a second query, and only when the first says it exists
- * and the database is otherwise empty. SQLite compiles a statement whole, so
- * naming `d1_migrations` before knowing it exists fails on the very database
- * this is meant to detect — and reading it on a database that already has
- * tables costs a wrangler start-up to learn something that cannot change the
- * plan, on the path setup takes every session.
+ * The ledger is read in a second query, and only when the first says it exists:
+ * SQLite compiles a statement whole, so naming `d1_migrations` before knowing it
+ * exists fails on the very database this is meant to detect.
+ *
+ * It *is* read on a database that already has tables, even though nothing there
+ * can turn the plan into a baseline. That costs one wrangler start-up on a
+ * command that already spends several, and it is the only way `outOfOrder` and
+ * `unknownApplied` ever fire: an established local database and production are
+ * precisely the databases that have tables, so skipping the read there left
+ * both checks unreachable everywhere they matter.
  */
 export async function inspectDatabase(target, options = {}) {
   const [inventory] = await query(target, INVENTORY_QUERY, options);
   const userTables = Number(inventory?.user_tables ?? 0);
   const hasLedger = Number(inventory?.has_ledger ?? 0) > 0;
-  // `null`, not `[]`: a database with tables is never baselined whatever its
-  // ledger holds, so the second query is skipped — but saying "nothing applied"
-  // would have the plan report every migration as pending on a database that is
-  // fully migrated.
-  if (userTables > 0) return { userTables, applied: null, hasLedger, ledgerRead: false };
-  if (!hasLedger) return { userTables, applied: [], hasLedger, ledgerRead: false };
+  // `null`, not `[]`: a database with tables and no ledger has applied something
+  // this tooling cannot name, and saying "nothing applied" would have the plan
+  // report every migration as pending on a database that may be fully migrated.
+  if (!hasLedger) return { userTables, applied: userTables > 0 ? null : [], hasLedger, ledgerRead: false };
   const rows = await query(target, LEDGER_QUERY, options);
   return { userTables, applied: rows.map((row) => String(row.name)), hasLedger, ledgerRead: true };
+}
+
+/**
+ * `inspectDatabase`, except that on a hosted database a failure warns instead of
+ * throwing.
+ *
+ * With `allowBaseline: false` the hosted plan is `migrate` or `up-to-date` and
+ * both fall through to the same unconditional `migrations apply`, so nothing
+ * read here can change what happens — it is reporting. A transient D1 error or
+ * a permissions change on the ledger query would otherwise be a new way for the
+ * migration step of `deploy-api.yml` to fail *before* Wrangler is reached,
+ * where the raw alias it replaced would simply have applied the migrations.
+ *
+ * Locally a failure still throws: there the inspection decides whether the
+ * database gets a baseline, and guessing wrong replays ninety-five migrations
+ * or, worse, hands the baseline to a database that already has tables.
+ */
+export async function inspectForPlan(target, options = {}) {
+  if (!target.remote) return inspectDatabase(target, options);
+  try {
+    return await inspectDatabase(target, options);
+  } catch (error) {
+    console.warn(`${target.region}: could not inspect before applying (${error.message})`);
+    return { userTables: 0, applied: null, hasLedger: false, ledgerRead: false };
+  }
 }
 
 /** Loads the migrations and baselines this checkout offers. */
@@ -270,6 +328,7 @@ async function main() {
   const targets = resolveTargets(discoverRegions(), options.regions)
     .map((entry) => ({ ...entry, remote: options.remote }));
   if (targets.length === 0) throw new Error("No regions discovered in apps/api");
+  assertRegionalEnvFilesExist(targets);
 
   const catalog = loadCatalog();
 
@@ -283,7 +342,7 @@ async function main() {
       continue;
     }
 
-    const state = await inspectDatabase(target);
+    const state = await inspectForPlan(target);
     const plan = planMigration({
       applied: state.applied,
       userTables: state.userTables,
