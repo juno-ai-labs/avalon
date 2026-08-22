@@ -37,9 +37,37 @@ const manifestFile = JSON.parse(
   readFileSync(new URL("../baselines/manifest.json", import.meta.url), "utf8"),
 ) as { baselines?: BaselineEntry[]; baseline?: BaselineEntry };
 
+/**
+ * Wrangler's own ordering, re-derived here rather than imported.
+ *
+ * The rest of this file re-derives everything it checks, and ordering is not an
+ * exception: importing `compareMigrationPaths` from `scripts/d1-baseline.mjs`
+ * would let the generator and its check agree on a wrong order. A plain string
+ * sort is *not* it — `89_backfill.sql` is below a `0090` boundary for Wrangler
+ * and above it for `Array.prototype.sort` — and every assertion below about
+ * what a baseline subsumes, what is left pending, and what gets replayed on top
+ * of it depends on getting that boundary the same way the migrate script does.
+ *
+ * "records exactly its own subsumed migrations" pins this against the shared
+ * implementation through the artifact: the set this comparator puts below a
+ * boundary has to be the set the generator recorded in the manifest.
+ */
+function compareMigrations(left: string, right: string): number {
+  const leftNumber = Number.parseInt(left.split("_")[0] ?? "", 10);
+  const rightNumber = Number.parseInt(right.split("_")[0] ?? "", 10);
+  if (leftNumber !== rightNumber) {
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+    if (Number.isFinite(leftNumber)) return -1;
+    if (Number.isFinite(rightNumber)) return 1;
+  }
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** Every checked-in baseline, oldest boundary first. */
 const allBaselines: BaselineEntry[] = [...(manifestFile.baselines ?? (manifestFile.baseline ? [manifestFile.baseline] : []))]
-  .sort((left, right) => (left.through < right.through ? -1 : 1));
+  .sort((left, right) => compareMigrations(left.through, right.through));
 
 /** The one an empty database is given: the boundary that reaches furthest. */
 const manifest = allBaselines.at(-1) as BaselineEntry;
@@ -48,7 +76,17 @@ const baselineSql = readFileSync(new URL(`../baselines/${manifest.file}`, import
 
 const migrationFileNames = readdirSync(migrationsDirectory)
   .filter((name) => name.endsWith(".sql"))
-  .sort();
+  .sort(compareMigrations);
+
+/** The migrations a baseline stands for: everything at or below its boundary. */
+function atOrBelow(boundary: string): string[] {
+  return migrationFileNames.filter((name) => compareMigrations(name, boundary) <= 0);
+}
+
+/** The migrations that still have to run on top of a baseline. */
+function above(boundary: string): string[] {
+  return migrationFileNames.filter((name) => compareMigrations(name, boundary) > 0);
+}
 
 /** Replays every migration in the repository, in Wrangler's order. */
 function chainDatabase(): DatabaseSync {
@@ -69,7 +107,7 @@ function chainDatabase(): DatabaseSync {
 function baselineDatabase(baseline: BaselineEntry = manifest): DatabaseSync {
   const database = new DatabaseSync(":memory:");
   database.exec(readFileSync(new URL(`../baselines/${baseline.file}`, import.meta.url), "utf8"));
-  for (const name of migrationFileNames.filter((candidate) => candidate > baseline.through)) {
+  for (const name of above(baseline.through)) {
     database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
   }
   return database;
@@ -287,10 +325,7 @@ describe("the baseline only ever applies to an empty database", () => {
 
   it("refuses a partially migrated database, the exact state a broken chain leaves", () => {
     const database = new DatabaseSync(":memory:");
-    const partial = readdirSync(migrationsDirectory)
-      .filter((name) => name.endsWith(".sql"))
-      .sort()
-      .filter((name) => name <= "0077_connector_oauth_telemetry_shape.sql");
+    const partial = atOrBelow("0077_connector_oauth_telemetry_shape.sql");
     for (const name of partial) database.exec(readFileSync(`${migrationsDirectory}${name}`, "utf8"));
     expect(() => database.exec(baselineSql)).toThrow(guard);
     database.close();
@@ -372,7 +407,7 @@ describe("the baseline hands a correct ledger to Wrangler", () => {
     const recorded = database.prepare("SELECT name FROM d1_migrations ORDER BY id").all()
       .map((row) => String(row.name));
     expect(recorded).toContain(manifest.through);
-    expect(recorded.filter((name) => name > manifest.through)).toEqual([]);
+    expect(recorded.filter((name) => compareMigrations(name, manifest.through) > 0)).toEqual([]);
     database.close();
   });
 
@@ -470,7 +505,7 @@ describe("the baseline is not mistaken for a migration", () => {
     // A baseline is an addition. If someone ever "cleans up" by deleting the
     // migrations it subsumes, every hosted database that has not run them loses
     // the only description of how to get there.
-    const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort();
+    const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql"));
     for (const subsumed of manifest.migrations) {
       expect(migrationFiles, `${subsumed} was deleted after being subsumed`).toContain(subsumed);
     }
@@ -510,10 +545,16 @@ describe("every checked-in baseline, not just the newest", () => {
         const recorded = database.prepare("SELECT name FROM d1_migrations ORDER BY id").all()
           .map((row) => String(row.name));
         expect(recorded, baseline.through).toEqual(baseline.migrations);
+        // And the ledger is exactly what this file's own reading of Wrangler's
+        // order says it should be. If the two ever disagreed — an unpadded name
+        // landing on the other side of the boundary for one of them — the
+        // suite would be replaying a different chain than the one the generator
+        // subsumed, and every comparison below it would be against the wrong
+        // database while still passing.
+        expect(recorded, baseline.through).toEqual(atOrBelow(baseline.through));
         // Everything above the boundary must still be pending, or the migrate
         // script would skip work a fresh database has not done.
-        const above = migrationFileNames.filter((name) => name > baseline.through);
-        expect(recorded.filter((name) => above.includes(name))).toEqual([]);
+        expect(recorded.filter((name) => above(baseline.through).includes(name))).toEqual([]);
       } finally {
         database.close();
       }
