@@ -18,6 +18,7 @@ import { BlockDashboardContextFenceSchema } from "./block-dashboard-protocol";
 import {
   WorkstreamRegionalEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
+  isPersonNotificationEffect,
   workstreamRegionalEffectHash,
   type WorkstreamRegionalEffect,
   type WorkstreamRegionalEffectEnvelope,
@@ -796,7 +797,7 @@ export class WorkstreamObjectStore {
           sourceVersion = z.number().int().positive().parse(command.sourceVersion);
           const dedupeKey = z.string().min(1).max(450).parse(command.dedupeKey);
           messageId = `effect:${dedupeKey}`;
-          if (effect.kind === "mention_notification") {
+          if (isPersonNotificationEffect(effect)) {
             const requiredKey = `user:${effect.recipientUserId}`;
             if (command.dependsOnProjectionKey !== requiredKey) {
               throw new Error("workstream_notification_projection_dependency_missing");

@@ -121,8 +121,9 @@ export function manualElicitationResponse(
   return { answer: customResponse, customResponse };
 }
 
-function AddParticipantDialog({
+export function AddParticipantDialog({
   current,
+  error,
   members,
   open,
   pending,
@@ -130,6 +131,7 @@ function AddParticipantDialog({
   onOpenChange,
 }: {
   current: WorkspaceMember[];
+  error?: string | undefined;
   members: WorkspaceMember[];
   open: boolean;
   pending: boolean;
@@ -137,7 +139,11 @@ function AddParticipantDialog({
   onOpenChange: (open: boolean) => void;
 }): React.JSX.Element {
   const currentIds = new Set(current.map((member) => member.id));
-  const available = members.filter((member) => !currentIds.has(member.id));
+  // A membership that is not active is one the work-stream endpoint refuses,
+  // so offering it here would only produce a failure the person cannot act on.
+  const available = members.filter((member) => (
+    !currentIds.has(member.id) && (member.status ?? 'active') === 'active'
+  ));
   return (
     <Modal
       description="Opening or viewing never adds someone as a participant. Add them explicitly here."
@@ -145,6 +151,7 @@ function AddParticipantDialog({
       open={open}
       title="Add a participant"
     >
+      {error ? <InlineError>{error}</InlineError> : null}
       {available.length === 0 ? (
         <EmptyState title="Everyone is already here" description="There are no other workspace members to add." />
       ) : (
@@ -1787,9 +1794,16 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <AddParticipantDialog
         current={displayedDetail.participants}
+        error={addParticipant.error?.message}
         members={members.data ?? []}
         onAdd={(member) => addParticipant.mutate(member)}
-        onOpenChange={setParticipantDialogOpen}
+        onOpenChange={(next) => {
+          // A refused add is only worth showing while the dialog that provoked
+          // it is open. Reopening starts clean rather than reporting the last
+          // attempt as though it were this one.
+          if (!next) addParticipant.reset();
+          setParticipantDialogOpen(next);
+        }}
         open={participantDialogOpen}
         pending={addParticipant.isPending}
       />

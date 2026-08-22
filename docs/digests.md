@@ -162,6 +162,7 @@ Producers today:
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
 | Authoritative `SubstreamAgent` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
+| `WorkstreamObjectProduct.addParticipant` | `workstream_participant_added` | the work stream; the person added is an `added` target | always — being put in a room is addressed at exactly one person |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ### The digest
@@ -610,6 +611,33 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-22 — Being added to a work stream is an event, and a notification
+
+**What changed:** `addParticipant` writes a `workstream_participant_added`
+activity event, audience `workstream`, `digestible = 1`, with the person added
+as an `added` target. It also emits a `participant_notification` regional
+effect, which becomes a `workstream_notification_intents` row under
+`notification_kind = 'participant_added'` and reaches the person as a Slack DM,
+or as email when no Slack account resolves. `WorkstreamObjectProduct` is now the
+log's second first-party producer.
+
+**Why:** this log exists so that "what happened for this person" is one query
+rather than a fan-out, and being added to a work stream was missing from it
+entirely — so the daily digest could not mention it, and neither could anything
+else. The gap showed up as a support report: a colleague added to a work stream
+heard about it from nobody. Adding the event without the notification would have
+left the person waiting up to a day to find out; adding the notification without
+the event would have left the digest still unable to say it.
+
+**Considered and rejected:** `digestible = 0`, on the grounds that a person
+already got a DM about it. The two answer different questions — the intent is
+whether one person is told now, `digestible` is whether the event is worth
+recalling in a summary of the day — and somebody who was added while away
+should still see it in the digest that covers that day. Also rejected: an event
+per participation change, including removals. Being removed is not something
+Avalon should announce to the person it happened to, and nobody asked for the
+audit trail.
 
 ### 2026-08-20 — The email preview stops querying retired D1 product tables
 

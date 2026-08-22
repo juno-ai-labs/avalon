@@ -264,11 +264,12 @@ export const WorkspaceRegionalEffectApplyRequestSchema = z.object({
       message: "Workstream regional effects must target their owning workspace",
     });
   }
-  if (!["activity_event", "mention_notification"].includes(request.envelope.effect.kind)) {
+  if (!["activity_event", "mention_notification", "participant_notification"]
+    .includes(request.envelope.effect.kind)) {
     context.addIssue({
       code: "custom",
       path: ["envelope", "effect", "kind"],
-      message: "Only activity and mention effects may use the regional apply handoff",
+      message: "Only activity and person-notification effects may use the regional apply handoff",
     });
   }
 });
