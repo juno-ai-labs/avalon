@@ -12,6 +12,44 @@ import { sqliteD1 } from "./helpers/sqlite-d1";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000501";
 
 describe("workspace runtime database routing", () => {
+  it("rejects a read that joins a local table to one only the region has", () => {
+    // The statement `slackUserIsLinked` used to run. It named a local table, so
+    // this router claimed it, and executed it inside an object with no
+    // `workspace_members` — which surfaced in production as `no such table`
+    // on every Slack run-outcome delivery, retried until the ingress budget
+    // was spent, rather than as anything naming the boundary it crossed.
+    expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
+      `SELECT 1 AS linked
+         FROM slack_user_links l
+         JOIN workspace_members wm
+           ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
+        WHERE l.connection_id = ? AND l.status = 'active' AND wm.status = 'active'`,
+    )).toThrow("workspace_runtime_cross_authority_statement:workspace_members");
+
+    // The halves each execute somewhere, and the router still says where.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      "SELECT user_id FROM slack_user_links WHERE connection_id = ? AND status = 'active'",
+    )).toBe(true);
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      "SELECT 1 AS linked FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    )).toBe(false);
+  });
+
+  it("keeps object tables that the local list does not name on the local side", () => {
+    // WorkspaceDO holds more tables than `WORKSPACE_LOCAL_TABLES` enumerates,
+    // so the guard above keys off a regional-only list rather than off
+    // "anything unlisted". These would break if it did.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      `SELECT directory.title FROM workspace_workstream_directory directory
+         JOIN workspace_workstream_pins pin ON pin.workstream_id = directory.workstream_id`,
+    )).toBe(true);
+    // `workspaces` must not match inside `workspace_workstream_directory`, and
+    // `sessions` must not match inside `slack_agent_sessions`.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      "SELECT id FROM slack_agent_sessions WHERE workspace_id = ?",
+    )).toBe(true);
+  });
+
   it("rejects regional mutations that smuggle a WorkspaceDO table through a subquery", () => {
     expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
       `INSERT INTO audit_events (id, workspace_id)

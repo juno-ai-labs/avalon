@@ -6,6 +6,7 @@ import type { DesktopSession } from '../../common/desktop';
 import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import {
+  AddParticipantDialog,
   AddResourceDialog,
   highestVisibleAttentionSequence,
   blockDashboardHoldsSidebar,
@@ -819,6 +820,80 @@ describe('RunStoppedNotice', () => {
       .toHaveTextContent('Its partial tool activity is no longer running.');
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AddParticipantDialog', () => {
+  const member = (id: string, name: string, status?: 'active' | 'invited' | 'suspended') => ({
+    id,
+    name,
+    email: `${name.toLowerCase()}@example.com`,
+    timezone: 'UTC',
+    ...(status ? { status } : {}),
+  });
+
+  it('shows why an add was refused instead of leaving the dialog looking idle', () => {
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          error="A participant is not an active workspace member"
+          members={[member('member-1', 'Adam', 'active')]}
+          onAdd={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('A participant is not an active workspace member')).toBeTruthy();
+    // The list stays usable: the refusal is about one attempt, not the dialog.
+    expect(screen.getByRole('button', { name: /Adam/u })).toBeTruthy();
+  });
+
+  it('offers only active memberships, because the endpoint refuses the rest', () => {
+    const onAdd = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          members={[
+            member('member-1', 'Adam', 'active'),
+            member('member-2', 'Invited', 'invited'),
+            member('member-3', 'Suspended', 'suspended'),
+          ]}
+          onAdd={onAdd}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('button', { name: /Adam/u })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Invited/u })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Suspended/u })).toBeNull();
+  });
+
+  it('keeps a person whose status the caller did not resolve', () => {
+    // Participants and viewers reach this dialog without a status; treating a
+    // missing one as inactive would empty the list for every caller but the
+    // workspace roster.
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          members={[member('member-1', 'Unstated')]}
+          onAdd={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('button', { name: /Unstated/u })).toBeTruthy();
   });
 });
 

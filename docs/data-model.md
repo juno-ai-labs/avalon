@@ -46,7 +46,7 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
-| `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed. |
+| `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
@@ -407,7 +407,8 @@ no projection fallback when that object is unavailable.
   `workspace_workstream_viewers` are authoritative common and viewer-specific
   query rows. Equal generation/waterline with a different hash is rejected.
   WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
-  mention payload plus its required viewer waterline. Delivery resolves current
+  person-notification payload — a mention, or somebody added to the work stream
+  — plus its required viewer waterline. Delivery resolves current
   membership/profile state from D1 and current destination state from
   WorkspaceDO; a newer revocation/listability row wins;
   terminal delivery or skip erases `payload_json` rather than retaining a second
@@ -716,6 +717,39 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-22 — Two object schemas admit a second notification kind, and the router refuses a cross-authority read
+
+**What changed:** WorkspaceDO schema version 8 rebuilds
+`workstream_notification_intents` so `notification_kind` accepts
+`participant_added` beside `mention`, and WorkstreamDO version 3 rebuilds its
+`durable_outbox` so `effect_kind` accepts `participant_notification`. Both are
+table rebuilds — new table, copy, drop, rename — because SQLite cannot widen a
+CHECK in place, and both restate the indexes and identity-fence triggers the
+dropped table took with it. Separately, `workspace-runtime-database.ts` now
+throws `workspace_runtime_cross_authority_statement:<table>` for a *read* that
+names both a WorkspaceDO table and a regional-only one, which it previously
+sent into the object to fail there.
+
+**Why:** the CHECKs are worth keeping — an unroutable effect kind should fail
+where it is written rather than in a Queue consumer — so admitting a second
+notification kind meant widening them rather than dropping them. The read guard
+closes the hole the write guard left: `slackUserIsLinked` joined
+`slack_user_links` to `workspace_members`, was claimed by the router because it
+named a local table, and executed inside an object that has no
+`workspace_members`. It failed as `no such table: workspace_members` on every
+Slack run-outcome delivery in production, which the ingress retried until its
+budget was spent. A read has no more correct destination than a write does when
+it names both sides.
+
+**Considered and rejected:** keying the guard off "any table not in
+`WORKSPACE_LOCAL_TABLES`". The object holds tables that list does not enumerate
+— `workspace_workstream_directory`, `workspace_activity_events`,
+`work_opportunities` and their neighbours — so that rule would refuse statements
+that are correct today. The explicit regional-only list is longer to maintain
+and is the only version that can be right. Also rejected: leaving the two
+CHECKs narrow and storing the new kind as `mention`, which would have made the
+delivery branch guess from the payload shape.
 
 ### 2026-08-22 — The per-migration test suite is retired
 

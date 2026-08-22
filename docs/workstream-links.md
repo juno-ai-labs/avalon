@@ -21,7 +21,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
 | The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
 | Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
-| Slack blocks, DMs, and mention email | `slack-agent-service.ts`, `slack-mention-service.ts`, `mention-email-service.ts` |
+| Slack blocks, DMs, and notification email | `slack-agent-service.ts`, `slack-notification-service.ts`, `mention-email-service.ts`, `participant-email-service.ts` |
 | Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
 | Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
 | The registered unfurl domains | `config/provider-apps/slack.json` |

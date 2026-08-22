@@ -518,8 +518,9 @@ grants, and convergence state; actual coding execution remains in Daytona.
 ### Sidebar, activity, suggestions, and notifications
 
 A product transaction that changes common metadata, a viewer overlay, activity,
-suggestion feedback, or a mention notification writes a versioned envelope to
-the child `durable_outbox` in the same SQLite transaction. The child sends those
+suggestion feedback, or a person notification — a mention, or somebody being
+added to the work stream — writes a versioned envelope to the child
+`durable_outbox` in the same SQLite transaction. The child sends those
 envelopes by RPC to its parent `WorkstreamDO`.
 
 `WorkstreamDO` deduplicates by child/message/hash, stores the latest common and
@@ -531,7 +532,8 @@ changed aggregate partition gets its own monotonic waterline and UUIDv7 event
 ID in `workstream_state_changes`; pending transitions are not coalesced. The
 UUID is carried unchanged on the direct WorkstreamDO socket and delayed
 workspace path. The parent sends directory common/user changes, suggestion
-feedback, activity, and mention delivery through one Cloudflare Queue outbox;
+feedback, activity, and person-notification delivery through one Cloudflare Queue
+outbox;
 the regional consumer resolves the appropriate destination:
 
 ```text
@@ -547,7 +549,7 @@ SubstreamAgent SQLite product transaction
      -> acknowledgement deletes the WorkstreamDO outbox item
   -> activity: typed RPC to WorkspaceDO
      -> authoritative activity event/target transaction + local cursor
-  -> mention delivery: typed RPC to WorkspaceDO
+  -> person notification (mention, participant added): typed RPC to WorkspaceDO
      -> notification intent + object-local delivery state, then thin D1 Queue receipt
      -> acknowledgement deletes the WorkstreamDO outbox item
 ```
@@ -824,7 +826,7 @@ already have committed across the object boundary.
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents` | Causally fenced mention intents. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
+| `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -1042,6 +1044,49 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-22 — Being added to a work stream tells the person
+
+**What changed:** `addParticipant` now emits three effects rather than one. The
+viewer projection it always wrote is still first; behind it come a
+`workstream_participant_added` activity event and a new
+`participant_notification` regional effect, which lands as a
+`workstream_notification_intents` row under `notification_kind =
+'participant_added'` and is delivered by the same Slack-then-email pair a
+mention uses. Two schemas widened a CHECK to admit the kind — WorkspaceDO
+version 8 rebuilds `workstream_notification_intents`, WorkstreamDO version 3
+rebuilds its `durable_outbox` — and `enqueueImmutable` now recomputes the
+projection dependency for both person notifications rather than only for
+mentions. Adding somebody who is already an active participant, or adding
+yourself, emits only the viewer effect.
+
+**Why:** being added was the one thing that could happen to a person in Avalon
+that reached them through no channel at all. The work stream appeared in their
+sidebar if their client happened to be open and listening, and nothing was
+waiting for them if it was not — no Slack DM, no email, and not even an
+`activity_events` row, so the daily digest could not mention it either. That is
+what a member reported: a colleague added to a work stream, told by nobody, who
+then could not find it.
+
+The notification rides the mention pipeline rather than a second one because
+that pipeline already answers the question this needs answered — its
+`requiredProjectionVersion` gate holds a notification until the recipient's own
+directory row has reached the workspace, so nobody is ever told about a work
+stream their sidebar cannot yet show them. Emitting the notification *after* the
+viewer effect in the same commit is what arms that gate: the version it depends
+on is the one the viewer effect just wrote.
+
+**Considered and rejected:** a fourth notification transport for participation,
+which would have needed its own retry, lease, and reconnect handling and would
+have drifted from the mention path's on the first Slack authorization failure.
+Also rejected: notifying on every add. A repeat add of an active participant is
+a no-op, and re-announcing it would re-enqueue an effect the parent has already
+acknowledged under the same identity but a newer projection version — which the
+parent refuses as a hash conflict and then cannot drain. Somebody is told once
+per participation, which is what the participant epoch in the effect's
+`sourceId` counts. Also rejected: notifying people named in `participantUserIds`
+at creation, which is a different path with a different audience question, left
+for its own change.
 
 ### 2026-08-22 — The object-store migration component takes the agent's name
 
