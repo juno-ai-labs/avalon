@@ -376,6 +376,11 @@ carve-out.
   it crosses the authority fence, logs an operational error, and suppresses the
   now-readable row for ten seconds. Later runs load the complete work-stream
   attributes normally.
+- Scheduled creation uses the same resolver. The activity consumer selects its
+  model before runtime bootstrap, when a work-stream read would hit the fence;
+  automation creation selects after bootstrap but before its product insert,
+  when the authoritative shell still carries placeholder facts. Neither state
+  is a valid targeting subject.
 - A **failed read is held down for ten seconds**, keyed by entity and subject.
   That is the one case where retrying immediately helps nobody: while D1 is
   unhealthy, every agent path would otherwise re-issue its reads and warn again
@@ -935,8 +940,10 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 **What changed:** The first-run model resolver keeps the new work-stream id in
 Flagship's evaluation context but asks the attribute loader only for the
-already-authoritative workspace facts. Once the atomic object creation commits,
-the ordinary resolver again loads the complete work-stream attributes.
+already-authoritative workspace facts. Direct object creation and both
+scheduled creation paths use that boundary until their product facts commit.
+Once creation commits, the ordinary resolver again loads the complete
+work-stream attributes.
 
 **Why:** Production Computer Use QA created four fresh private work streams and
 all four logged `workstream_runtime_sql_commit_failed` with
@@ -961,7 +968,8 @@ the attribute-read subject preserves the identity without inventing facts.
 remain available on the first run. Rules that require work-stream product facts
 begin matching only after creation commits, which is the first point those facts
 are authoritative. A future creation path must use this resolver while its root
-is preparing rather than relaxing the runtime authority fence.
+is preparing or only a bootstrapped runtime shell, rather than relaxing the
+runtime authority fence or targeting on placeholder facts.
 
 ### 2026-08-20 — Work-stream targeting follows the final authority boundary
 
