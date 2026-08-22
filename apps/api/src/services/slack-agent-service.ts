@@ -1092,114 +1092,37 @@ export class SlackAgentService {
     const assignmentMetadata = method === "explicit_link"
       ? "assigned_at = ?, assignment_method = 'explicit_link'"
       : "assigned_at = COALESCE(assigned_at, ?), assignment_method = COALESCE(assignment_method, 'verified_email')";
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open") {
-      const sessions = await this.env.DB.prepare(
-        `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
-           FROM slack_agent_sessions
-          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-            AND execution_scope = 'workspace'
-            ${assignmentGuard.replaceAll("s.", "")}`,
-      ).bind(connectionId, teamId, slackUserId, ...guardBindings).all<{
-        id: string;
-        workspace_id: string;
-        workstream_id: string;
-        assigned_user_id: string | null;
-        assignment_method: string | null;
-      }>();
-      const assigned = await this.env.DB.prepare(
-        `UPDATE slack_agent_sessions
-            SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
-          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-            AND execution_scope = 'workspace'
-            ${assignmentGuard.replaceAll("s.", "")}`,
-      ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings).run();
-      for (const session of sessions.results ?? []) {
-        await reconcileSlackWorkstreamIdentity(this.env, {
-          workspaceId: session.workspace_id,
-          workstreamId: session.workstream_id,
-          userId,
-          previousAssignedUserId: session.assigned_user_id,
-          mayCorrectVerifiedCreator: method === "explicit_link"
-            && session.assignment_method === "verified_email",
-        });
-      }
-      return Number(assigned.meta.changes ?? 0);
+    const sessions = await this.env.DB.prepare(
+      `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
+         FROM slack_agent_sessions
+        WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+          AND execution_scope = 'workspace'
+          ${assignmentGuard.replaceAll("s.", "")}`,
+    ).bind(connectionId, teamId, slackUserId, ...guardBindings).all<{
+      id: string;
+      workspace_id: string;
+      workstream_id: string;
+      assigned_user_id: string | null;
+      assignment_method: string | null;
+    }>();
+    const assigned = await this.env.DB.prepare(
+      `UPDATE slack_agent_sessions
+          SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
+        WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+          AND execution_scope = 'workspace'
+          ${assignmentGuard.replaceAll("s.", "")}`,
+    ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings).run();
+    for (const session of sessions.results ?? []) {
+      await reconcileSlackWorkstreamIdentity(this.env, {
+        workspaceId: session.workspace_id,
+        workstreamId: session.workstream_id,
+        userId,
+        previousAssignedUserId: session.assigned_user_id,
+        mayCorrectVerifiedCreator: method === "explicit_link"
+          && session.assignment_method === "verified_email",
+      });
     }
-    const results = await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-         SELECT s.workstream_id, ?, ?, 'explicit', ?, NULL
-         FROM slack_agent_sessions s
-         WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
-           ${assignmentGuard}
-         ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-           removed_at = NULL,
-           joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
-      ).bind(userId, userId, at, connectionId, teamId, slackUserId, ...guardBindings),
-      // A work stream this Slack member started before the mapping existed was
-      // recorded as ownerless. Now that the identity resolves, credit them as
-      // its creator.
-      //
-      // A creator recorded by another path is never rewritten. The single
-      // exception is an explicit account link correcting a creator that this
-      // same session's own verified-email guess produced: the link is the
-      // stronger statement about who the Slack member is, and the address it
-      // disagrees with can belong to somebody else. The session row still
-      // carries its previous `assignment_method` here, because the statement
-      // that overwrites it runs later in this batch.
-      this.env.DB.prepare(
-        `UPDATE workstreams
-         SET created_by_user_id = ?, updated_at = ?
-         WHERE id IN (
-           SELECT s.workstream_id FROM slack_agent_sessions s
-           WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
-             AND (
-               workstreams.created_by_user_id IS NULL
-               ${method === "explicit_link"
-                 ? `OR (s.assignment_method = 'verified_email'
-                        AND workstreams.created_by_user_id = s.assigned_user_id)`
-                 : ""}
-             )
-             ${assignmentGuard}
-         )`,
-      ).bind(userId, at, connectionId, teamId, slackUserId, ...guardBindings),
-      this.env.DB.prepare(
-        `UPDATE slack_agent_sessions
-         SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
-         WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-           ${assignmentGuard.replaceAll("s.", "")}`,
-      ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings),
-      // The participation row above records how they were added; once they are
-      // the creator it should say so, or the People rail subtitles a creator
-      // with "explicit".
-      this.env.DB.prepare(
-        `UPDATE workstream_participants
-         SET participation_reason = 'creator'
-         WHERE user_id = ? AND participation_reason <> 'creator'
-           AND workstream_id IN (
-             SELECT s.workstream_id FROM slack_agent_sessions s
-             JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
-             WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
-               ${assignmentGuard}
-           )`,
-      ).bind(userId, userId, connectionId, teamId, slackUserId, ...guardBindings),
-      // Symmetrically, a member a correction displaced is still a participant
-      // but no longer the creator.
-      this.env.DB.prepare(
-        `UPDATE workstream_participants
-         SET participation_reason = 'explicit'
-         WHERE participation_reason = 'creator' AND user_id <> ?
-           AND workstream_id IN (
-             SELECT s.workstream_id FROM slack_agent_sessions s
-             JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
-             WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
-               ${assignmentGuard}
-           )`,
-      ).bind(userId, userId, connectionId, teamId, slackUserId, ...guardBindings),
-    ]);
-    return Number(results[2]?.meta.changes ?? 0);
+    return Number(assigned.meta.changes ?? 0);
   }
 
   async previewLink(auth: AuthContext, token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
