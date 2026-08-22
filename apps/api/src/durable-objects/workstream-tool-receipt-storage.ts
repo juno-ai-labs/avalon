@@ -58,14 +58,22 @@ export type ToolReceiptAdmission =
    * "your lease is gone" apart from "the object failed", because only the first
    * is a normal end to a run.
    */
-  | { state: "ownership_lost" };
+  | { state: "ownership_lost" }
+  /**
+   * The run was cancelled or asked to stop. Distinct from a lost lease because
+   * callers surface them differently — one is a person stopping the work, the
+   * other is this executor no longer being the one doing it.
+   */
+  | { state: "cancelled" };
 
-export type ToolReceiptSettlement = "persisted" | "already_persisted" | "ownership_lost";
+export type ToolReceiptSettlement =
+  | "persisted" | "already_persisted" | "ownership_lost" | "cancelled";
 
 interface EffectRow extends Record<string, SqlStorageValue> {
   effect_intent_id: string;
   request_hash: string;
   execution_plan_hash: string | null;
+  execution_plan_json: string | null;
   status: string;
   checkpoint_index: number;
 }
@@ -84,29 +92,53 @@ export class WorkstreamToolReceiptStorage {
   }
 
   /**
-   * Whether the run still holds the lease this write claims.
+   * Whether the run still holds the lease this write claims, and if not, why.
    *
    * Read inside the same transaction as the write it guards, which is the whole
    * point of moving these operations here: the routed version asked this
    * question over RPC, then asked it again inside each statement's WHERE clause
    * because the answer could have changed in between.
+   *
+   * The reason is carried out rather than collapsed to a boolean because the
+   * two failures are not the same event. A cancelled run is a person stopping
+   * the work; a lost lease is this executor no longer being the one doing it,
+   * and only the second is a fault.
    */
-  #fenceHolds(fence: ToolReceiptFence, now: number): boolean {
-    return first(this.sql.exec<{ held: number } & Record<string, SqlStorageValue>>(
-      `SELECT 1 AS held FROM runs
+  #fence(
+    fence: ToolReceiptFence,
+    now: number,
+    /**
+     * Settle a receipt the run already started even though a member stop is
+     * durable. Cancellation blocks *new* work; it must not strand a receipt
+     * this same attempt has to settle before its parent can terminalize —
+     * `terminalizeHarnessAttempt` refuses while any receipt is still admitted
+     * or executing, so refusing here would deadlock the stop it is honouring.
+     * Every other condition still holds: this exact attempt, this exact lease
+     * owner, still running, not terminalized, not expired.
+     */
+    allowCancellationRequested = false,
+  ): "held" | "cancelled" | "lost" {
+    const row = first(this.sql.exec<{
+      status: string; cancellation_requested_at: number | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT status, cancellation_requested_at FROM runs
         WHERE run_id = ? AND legacy_attempt_id = ? AND lease_owner = ?
-          AND status = 'running' AND cancellation_requested_at IS NULL
           AND terminalized_at IS NULL AND lease_expires_at > ?`,
       fence.runId,
       fence.attemptId,
       fence.owner,
       now,
-    )) !== undefined;
+    ));
+    if (!row) return "lost";
+    if (row.status !== "running") return row.status === "cancelled" ? "cancelled" : "lost";
+    if (row.cancellation_requested_at !== null && !allowCancellationRequested) return "cancelled";
+    return "held";
   }
 
   #effect(effectIntentId: string): EffectRow | undefined {
     return first(this.sql.exec<EffectRow>(
-      `SELECT effect_intent_id, request_hash, execution_plan_hash, status, checkpoint_index
+      `SELECT effect_intent_id, request_hash, execution_plan_hash, execution_plan_json,
+              status, checkpoint_index
          FROM tool_effects WHERE effect_intent_id = ?`,
       effectIntentId,
     ));
@@ -170,15 +202,28 @@ export class WorkstreamToolReceiptStorage {
     executionPlanHash: string;
     executionPlanJson: string;
     compatiblePriorPlanHashes: readonly string[];
+    /**
+     * Both statements of the incoming call's mode agree that it is a read.
+     *
+     * Decided by the caller because only it holds the plan object. It is half
+     * of the rebind gate; the other half — that the *stored* receipt was also a
+     * read, and that this is a demonstrably different call — is decided here,
+     * against rows the caller cannot see.
+     */
+    incomingIsRead: boolean;
     providerIdempotencyKey: string | null;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptAdmission {
     return this.storage.transactionSync(() => {
-      if (!this.#fenceHolds(input.fence, input.now)) return { state: "ownership_lost" };
+      const held = this.#fence(input.fence, input.now);
+      if (held !== "held") {
+        return { state: held === "cancelled" ? "cancelled" : "ownership_lost" };
+      }
 
       const existing = first(this.sql.exec<EffectRow>(
-        `SELECT effect_intent_id, request_hash, execution_plan_hash, status, checkpoint_index
+        `SELECT effect_intent_id, request_hash, execution_plan_hash, execution_plan_json,
+                status, checkpoint_index
            FROM tool_effects WHERE run_id = ? AND tool_call_id = ?`,
         input.fence.runId,
         input.toolCallId,
@@ -246,11 +291,7 @@ export class WorkstreamToolReceiptStorage {
       if (existing.request_hash !== input.requestHash || !planMatches) {
         // A settled *read* whose result nothing depends on may be rebound to
         // the call that landed on its coordinates; anything else is ambiguous.
-        if (
-          input.mode === "read"
-          && existing.status === "completed"
-          && !this.#hasDependents(existing.effect_intent_id, input.fence.runId, input.toolCallId)
-        ) {
+        if (this.#mayRebind(existing, input)) {
           return this.#replanCompletedRead(existing, input);
         }
         // `completed` and `ambiguous` are already terminal; moving them would
@@ -260,7 +301,10 @@ export class WorkstreamToolReceiptStorage {
             effectIntentId: existing.effect_intent_id,
             fence: input.fence,
             now: input.now,
-            fromStatuses: ["admitted", "executing"],
+            // `failed` too, and for the same reason `fail()` accepts it: a
+            // write that failed locally may still have reached the provider,
+            // so it may be promoted to ambiguous but never demoted.
+            fromStatuses: ["admitted", "executing", "failed"],
             phase: "ambiguous_external_write",
             payloadJson: JSON.stringify({ code: "ambiguous_external_write" }),
             apply: (checkpointIndex) => this.sql.exec(
@@ -290,7 +334,10 @@ export class WorkstreamToolReceiptStorage {
             effectIntentId: existing.effect_intent_id,
             fence: input.fence,
             now: input.now,
-            fromStatuses: ["admitted", "executing"],
+            // `failed` too, and for the same reason `fail()` accepts it: a
+            // write that failed locally may still have reached the provider,
+            // so it may be promoted to ambiguous but never demoted.
+            fromStatuses: ["admitted", "executing", "failed"],
             phase: "ambiguous_external_write",
             payloadJson: JSON.stringify({ code: "ambiguous_external_write" }),
             apply: (checkpointIndex) => this.sql.exec(
@@ -312,6 +359,38 @@ export class WorkstreamToolReceiptStorage {
       }
       return { state: "resume_read", effectIntentId: existing.effect_intent_id };
     });
+  }
+
+  /**
+   * Whether a settled receipt may be rebound to the call that reused its
+   * coordinates, rather than being declared ambiguous.
+   *
+   * Every clause is a fence, and each one only ever relaxes the decision on
+   * proof:
+   *
+   * - The receipt must be settled and must have been a *read*. A write that may
+   *   have reached a provider can never be silently re-pointed.
+   * - The stored plan must itself say `read`. An unreadable plan cannot prove
+   *   the recorded call was one, so it fails closed.
+   * - The request hash must differ. Identical input whose recorded policy
+   *   cannot be proven compatible is the receipt-identity fence — one call whose
+   *   identity is in doubt — and that still fails closed rather than rebinding.
+   * - Nothing may already depend on the result.
+   */
+  #mayRebind(
+    existing: EffectRow,
+    input: { incomingIsRead: boolean; requestHash: string; toolCallId: string; fence: ToolReceiptFence },
+  ): boolean {
+    if (existing.status !== "completed" || !input.incomingIsRead) return false;
+    if (existing.request_hash === input.requestHash) return false;
+    let recordedMode: unknown;
+    try {
+      recordedMode = (JSON.parse(existing.execution_plan_json ?? "null") as { mode?: unknown } | null)?.mode;
+    } catch {
+      return false;
+    }
+    if (recordedMode !== "read") return false;
+    return !this.#hasDependents(existing.effect_intent_id, input.fence.runId, input.toolCallId);
   }
 
   /** A child run or an attachment receipt built on this result. */
@@ -425,7 +504,8 @@ export class WorkstreamToolReceiptStorage {
     now: number;
   }): ToolReceiptSettlement {
     return this.storage.transactionSync(() => {
-      if (!this.#fenceHolds(input.fence, input.now)) return "ownership_lost";
+      const held = this.#fence(input.fence, input.now);
+      if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
       const effect = this.#effect(input.effectIntentId);
       if (!effect) return "ownership_lost";
       const index = Math.max(1, Math.trunc(input.checkpointIndex));
@@ -460,12 +540,14 @@ export class WorkstreamToolReceiptStorage {
     providerOperationId: string | null;
     payloadJson: string;
     allowAmbiguousReconciliation: boolean;
+    allowCancellationRequested: boolean;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptSettlement {
     const summary = input.outputSummary.slice(0, 4_000);
     return this.storage.transactionSync(() => {
-      if (!this.#fenceHolds(input.fence, input.now)) return "ownership_lost";
+      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested);
+      if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
       const moved = this.#settle({
         effectIntentId: input.effectIntentId,
         fence: input.fence,
@@ -516,11 +598,13 @@ export class WorkstreamToolReceiptStorage {
     phase: string;
     errorJson: string;
     payloadJson: string;
+    allowCancellationRequested: boolean;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptSettlement {
     return this.storage.transactionSync(() => {
-      if (!this.#fenceHolds(input.fence, input.now)) return "ownership_lost";
+      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested);
+      if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
       const moved = this.#settle({
         effectIntentId: input.effectIntentId,
         fence: input.fence,
