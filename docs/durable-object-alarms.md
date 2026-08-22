@@ -109,9 +109,10 @@ survivors keep their retry gates, vanished keys are deleted, and new ones are
 added. The surviving keys are bound as one JSON value and matched with
 `json_each`, not as one bound parameter each — workerd's bound-variable ceiling
 is well below the number of targets a real workspace has, and exceeding it threw
-`too many SQL variables` and rolled back the whole index. That is what lets a wake-up scheduled *before* the armed alarm pull the
-alarm in, and a cancelled schedule push it back out, without every writer
-knowing about `_internal_durable_alarms`.
+`too many SQL variables` and rolled back the whole index. Reconciling is what
+lets a wake-up scheduled *before* the armed alarm pull the alarm in, and a
+cancelled schedule push it back out, without every writer knowing about
+`_internal_durable_alarms`.
 
 Two objects do this: `WorkspaceDO.refreshSchedule` (from
 `workspaceScheduleTargets`) and `SubstreamAgent.syncAgentTimerAlarms` (from its
@@ -158,6 +159,12 @@ derived source has no way to carry that distinction.
 - **The alarm is exact, and floored at `now + 1`.** An alarm set to a past
   instant fires immediately and re-derives the same past instant: that is the
   shape every hot-alarm loop in this codebase has had.
+- **Entries sharing an instant are totally ordered.** The due query and
+  `nextDueAt` order by `MAX(due_at, retry_at)` and then by the primary key, so a
+  tie larger than `SCHEDULED_ALARM_DRAIN_LIMIT` is sliced into consecutive wakes
+  that partition it. Ordering on the instant alone would leave the tie-break to
+  SQLite, and the same rows could come back on every wake while others never
+  ran.
 - **A failing entry is gated before its failure is reported.** The gate is
   persisted first precisely because the reporting path can throw; reversed, an
   exception in a log or audit write leaves the entry due again a millisecond
@@ -241,8 +248,8 @@ a failing target a free immediate attempt.
   module: only that runtime has real `setAlarm`/`getAlarm` semantics, alarm
   handler invocation, and SQLite. It covers arming exactly, pulling an alarm in
   when an earlier entry is scheduled, pushing it back out and deleting it when
-  entries are cancelled, per-entry backoff isolation, repeat advancement, and
-  the agent-timer index.
+  entries are cancelled, per-entry backoff isolation, repeat advancement,
+  draining a tie wider than one wake allows, and the agent-timer index.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
 - Driving an alarm in a test: `runDurableObjectAlarm(stub)` from
@@ -305,3 +312,19 @@ take its siblings down — is now a property of the drain itself. Maintenance is
 also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
 the memory-index outbox every time it retries.
+
+### 2026-08-22 — Same-instant entries are an ordering guarantee, not an accident
+
+**What changed:** No behaviour. The total order the due query already had —
+effective instant, then `kind`, then `alarm_key` — is now written down as an
+invariant, and `scheduled-alarms.test.ts` drains a tie of
+`SCHEDULED_ALARM_DRAIN_LIMIT * 2 + 5` entries sharing one millisecond, asserting
+each runs exactly once across the three wakes it takes.
+
+**Why:** The drain limit and the tie-break were two independent decisions, and
+nothing tied them together: the limit is only safe because the ordering makes
+consecutive slices partition the tie. Ordered on the instant alone the query is
+still correct for a tie that fits in one wake, so the defect would only appear on
+the workspace whose whole digest fan-out lands on the hour — the case with the
+least tolerance for a wake-up that never comes. A future change may widen the
+`ORDER BY`, but it may not drop the primary key from it.

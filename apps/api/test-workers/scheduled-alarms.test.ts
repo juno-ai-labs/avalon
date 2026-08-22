@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
 import {
+  SCHEDULED_ALARM_DRAIN_LIMIT,
   ScheduledAlarmStore,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
@@ -175,6 +176,49 @@ describe("the shared Durable Object alarm list", () => {
       // The gate holds on the very next drain: this is the loop the retry
       // states were introduced to prevent.
       expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toBe(0);
+    });
+  });
+
+  it("drains every entry sharing one instant across consecutive wakes, each exactly once", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      // More than one wake may drain, all wanting the same millisecond. A
+      // workspace whose whole digest fan-out lands on the hour looks like this.
+      const total = SCHEDULED_ALARM_DRAIN_LIMIT * 2 + 5;
+      const keys = Array.from(
+        { length: total },
+        (_unused, index) => `wakeup-${String(index).padStart(4, "0")}`,
+      );
+      state.storage.transactionSync(() => {
+        for (const key of keys) {
+          store.schedule({ kind: "test_ok", key, dueAt: now - 1_000 }, now);
+        }
+      });
+      const ran: string[] = [];
+      scheduling(instance).runScheduledAlarm = (alarm: ScheduledAlarm) => {
+        ran.push(alarm.key);
+        return Promise.resolve();
+      };
+
+      expect(await scheduling(instance).drainDueScheduledAlarms(now))
+        .toBe(SCHEDULED_ALARM_DRAIN_LIMIT);
+      // The overflow is not stranded until something else comes due: everything
+      // left is already past, so the re-arm asks for the next millisecond.
+      const armed = await scheduling(instance).armNextAlarm();
+      expect(armed).not.toBeNull();
+      expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+
+      expect(await scheduling(instance).drainDueScheduledAlarms(now))
+        .toBe(SCHEDULED_ALARM_DRAIN_LIMIT);
+      expect(await scheduling(instance).drainDueScheduledAlarms(now)).toBe(5);
+
+      // The ordering is what makes the slices partition the tie: without a
+      // total order the same rows can come back while others never do.
+      expect(ran).toEqual(keys);
+      expect(store.list("test_ok")).toEqual([]);
     });
   });
 
