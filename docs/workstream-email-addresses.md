@@ -373,7 +373,7 @@ take the execution environment; the anchor answers nothing about the product.
 ### 2026-08-22 — Global holds the claim, the region holds the lifecycle
 
 **What changed:** `workstream_email_routes` lost `status` and `disabled_at`
-(migration `0091`), and the regional mirror of the same value —
+(migration `0092`), and the regional mirror of the same value —
 `automation_subscriptions.email_route_status` — was dropped with it (WorkspaceDO
 migration 7). Every function that existed to move a route between `reserved`,
 `active`, and `disabled` is gone: `setStatus`, `setAutomationStatuses`,
