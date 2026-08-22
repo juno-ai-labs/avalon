@@ -1,7 +1,6 @@
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync} from "node:sqlite";
+import { type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -32,8 +31,8 @@ import {
   workstreamObjectRun,
   type RecordedDispatch,
 } from "./helpers/durable-authority";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -113,12 +112,8 @@ interface Fixture {
 }
 
 function fixture(): Fixture {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   // The retired pre-cutover arms are gone: firing a wake-up now requires the
   // Durable-Object authority, so the fixture opens it (before any product rows
   // exist, the way a fresh local stack does) and serves the object's runtime

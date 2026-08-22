@@ -1,6 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
@@ -16,7 +15,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000041";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000042");
@@ -335,14 +334,8 @@ function environment(database: DatabaseSync): Env {
 }
 
 function migratedDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  const migrations = new URL("../../../packages/db/migrations/", import.meta.url);
-  for (const fileName of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(new URL(fileName, migrations), "utf8"));
-  }
   openWorkstreamAuthorityForTest(database);
   return database;
 }

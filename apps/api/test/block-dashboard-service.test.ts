@@ -1,14 +1,13 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync} from "node:sqlite";
+import { type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
 import { asWorkspaceId, type BlockDashboard, type BlockDashboardBlockRun } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { BlockDashboardService, launchBlockDashboardRefresh } from "../src/services/block-dashboard-service";
 import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000401");
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000402";
 const OWNER_ID = "00000000-0000-4000-8000-000000000403";
@@ -43,11 +42,7 @@ function fixture(): {
   env: Env;
   requests: Array<Record<string, unknown>>;
 } {
-  const database = new DatabaseSync(":memory:");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
+  const database = legacyProductSqliteDatabase();
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES

@@ -1,9 +1,7 @@
 import { asHarnessRunId, asWorkstreamId } from "@avalon/contracts";
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
@@ -22,9 +20,8 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const OTHER_USER_ID = "00000000-0000-4000-8000-000000000009";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -53,12 +50,8 @@ const openDatabases: DatabaseSync[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
 function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
       ('${USER_ID}', 'owner', 'owner@example.test', 'Owner', '2026-01-01', '2026-01-01'),
