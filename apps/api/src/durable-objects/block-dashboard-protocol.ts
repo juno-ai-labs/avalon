@@ -113,10 +113,16 @@ export const BlockDashboardViewerAuthorizationRequestSchema = CoordinatesSchema.
   userId: UserIdSchema,
 }).strict();
 
+/**
+ * Close the sockets of a block that stopped existing.
+ *
+ * Deliberately names no user: a person losing access is carried by the
+ * access-revocation queue instead, and a second per-user path here would be a
+ * quieter answer to the same question. See `docs/access-revocation.md`.
+ */
 export const BlockDashboardSocketRetractionRequestSchema = CoordinatesSchema.extend({
   blockId: BlockIdSchema,
   region: RegionSchema,
-  userId: UserIdSchema.optional(),
 }).strict();
 
 export type BlockDashboardBlockDispatch = z.infer<typeof BlockDashboardBlockDispatchSchema>;

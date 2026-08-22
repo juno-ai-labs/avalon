@@ -2,6 +2,8 @@ import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
+import { consumeAccessRevocationQueue } from "./queues/access-revocation-consumer";
+import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reconcileDigestDefaults } from "./services/digest-service";
@@ -139,6 +141,16 @@ export default {
     return app.fetch(request, env, context);
   },
   queue: withEnvContract(async (batch, env) => {
+    // Revocations dispatch before the maintenance gate, not after. They are a
+    // separate queue resource so they never wait behind an activity backlog,
+    // and they are the only path from a retraction to an open socket — so
+    // refusing them during maintenance would retry every one of them into the
+    // dead-letter queue while the sockets they name stayed open. Closing a
+    // socket is not new work-stream work: it reads an object's own storage and
+    // hangs up. See docs/access-revocation.md.
+    if (isAccessRevocationQueue(batch.queue)) {
+      return consumeAccessRevocationQueue(batch, env);
+    }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
       throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
@@ -153,6 +165,7 @@ export default {
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
         reapExpiredActivityEvents(env),
+        reapExpiredSessions(env),
         reapProcessedActivityPayloads(env),
         processTelemetry(env),
       ]);

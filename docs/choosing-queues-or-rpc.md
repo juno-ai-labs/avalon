@@ -423,6 +423,7 @@ it.
 | --- | --- | --- | --- |
 | Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue | Split | Fan-in from webhooks and polls; nothing waits on the outcome. Split because the payload is workspace content and the consumer must be the region's own Worker. |
 | Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for both regions and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| Access revocation into the socket-holding objects (`ACCESS_REVOCATION_QUEUE`) | Queue | Split | The Worker that ends a membership or a session walks away; nothing it returns depends on the sockets closing. Each object is one hop, so a hop that fails retries alone rather than restarting the walk, and the consumer's calls into the objects are RPC because it reads back the children each one names. Split because the objects, the sessions, and the memberships never cross the boundary. See [`access-revocation.md`](access-revocation.md). |
 | Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | Crosses, by design | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
 | Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Same region | Reads and writes whose results the request returns to the desktop. |
 | `WorkspaceDO` typed product SQL | RPC | Same region | A conversation with one specific object, with rows coming back. |
@@ -435,5 +436,7 @@ it.
   across the Global/EU boundary, whichever mechanism carries it.
 - [`workstream-durable-object.md`](workstream-durable-object.md) — the Durable
   Object hierarchy and its RPC contracts.
+- [`access-revocation.md`](access-revocation.md) — a worked example of the two
+  mechanisms in one flow: a queue per hop, RPC inside each hop.
 - [`type-safety-boundaries.md`](type-safety-boundaries.md) — why every hop parses
   its payload at the boundary rather than trusting a build-time interface.
