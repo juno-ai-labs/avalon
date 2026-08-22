@@ -4,6 +4,27 @@ import { digestEmailHtml } from "../src/services/digest-email-content";
 import { occurrenceLabel } from "../src/services/digest-delivery-service";
 
 describe("digest email", () => {
+  it("renders the body's markdown rather than escaping it into the shell", () => {
+    const html = digestEmailHtml({
+      recipientName: "Ada",
+      workspaceName: "Avalon Studio",
+      occurrenceLabel: "Tuesday 11 August · 9:00 AM",
+      bodyMarkdown: "## Launch\n\n- One **thing** happened",
+      itemCount: 1,
+      highlightCount: 0,
+      appUrl: "https://with-avalon.com",
+      settingsUrl: "https://with-avalon.com/app/settings/digest",
+    });
+
+    // The renderer moved out of this module. Swapping the call back for an
+    // escape would leave the whole digest suite green while handing readers the
+    // `##` and `**` this change exists to remove.
+    expect(html).toContain("<h2");
+    expect(html).toContain("<ul");
+    expect(html).toContain("<strong");
+    expect(html).not.toContain("## Launch");
+  });
+
   it("keeps every style inline, because mail clients drop stylesheets", () => {
     const html = digestEmailHtml({
       recipientName: "Ada",

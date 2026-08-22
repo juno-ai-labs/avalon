@@ -87,7 +87,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and forbidden to send, draft, or post a copy to one of them through any tool of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice; the destinations travel in the automation context as `resultDelivery`, and only active ones are listed. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
+An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
 ### Automation compilation
 
@@ -883,7 +883,20 @@ sending a second copy until its author rewrote it.
 
 **Considered and rejected:** Listing every frozen target regardless of status. A
 disabled or failed target delivers nothing, so naming it would stop a run doing
-the sending its task actually needs.
+the sending its task actually needs. Also rejected: leaving the rule in the
+always-on policy string, which spends its bytes on every interactive run and
+gives a run asked to "email this to Bob" a rule whose subject its context does
+not carry.
+
+**Consequences:** A new delivery channel has to be added to `resultDelivery` or
+its runs will send a second copy, and the section renders only for a run with a
+non-empty list — a caller that populates the field must populate it truthfully.
+The rule is enforced by policy, not by a guard: the mechanism, if the destination
+set ever includes somebody other than the owner, is a `beforeToolCall` predicate
+over a frozen destination list, the same shape that already makes child runs
+read-only. `WORKSTREAM_PROMPT_VERSION` was deliberately not bumped, because it is
+inside the canonical run-scope hash and bumping it fails every in-flight run's
+resumed attempt across a deploy.
 
 ### 2026-08-22 — Tools receive the receipt identity their effects are keyed to
 

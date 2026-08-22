@@ -4294,12 +4294,22 @@ async function loadConnectorTriggerContext(
 /**
  * The destinations Avalon itself copies this automation's result to.
  *
- * The run has to be told, or it does the delivery a second time: a briefing
- * automation asked to reach somebody by email reads that as a task, sends it
- * through the connector's own mail tool, and Avalon then mails the same result
- * to the frozen target — two copies of one briefing, from two senders. Only
- * active targets are listed, so a paused or failed one does not stop the run
- * doing the work itself.
+ * The run has to be told, or it does the delivery a second time: an automation
+ * asked to reach somebody by email or by DM reads that as a task, sends it
+ * through the connector's own tool, and Avalon then sends the same result to
+ * the frozen target — two copies of one briefing, from two senders.
+ *
+ * Each channel is filtered by the predicate its own sender uses, not by one
+ * convenient guess. Email delivers only from `active`; Slack deliberately
+ * delivers from `needs_input` too — its comment in `slack-agent-service.ts`
+ * says why — and skips a member who turned that notification off. A third
+ * predicate that disagreed with either would put the duplicate back for exactly
+ * the targets it got wrong, so this reads the same conditions and the two must
+ * change together.
+ *
+ * The order is fixed. These rows are rendered into the system prefix, which is
+ * re-rendered on every turn and must be byte-identical across a retry, and
+ * SQLite is free to return two rows in either order.
  */
 async function loadAutomationResultDelivery(
   env: Env,
@@ -4307,21 +4317,38 @@ async function loadAutomationResultDelivery(
   automationSubscriptionId: string,
 ): Promise<Array<{ channel: "email" | "slack_agent_dm"; destination: string }>> {
   const targets = await env.DB.prepare(
-    `SELECT target_type, email_address FROM automation_delivery_targets
-      WHERE workspace_id = ? AND automation_subscription_id = ? AND status = 'active'`,
+    `SELECT dt.target_type, dt.email_address, dt.slack_user_id
+     FROM automation_delivery_targets dt
+     LEFT JOIN slack_user_links link
+       ON link.connection_id = dt.connection_id AND link.user_id = dt.user_id
+       AND link.slack_user_id = dt.slack_user_id AND link.status = 'active'
+     LEFT JOIN slack_delivery_preferences pref
+       ON pref.connection_id = dt.connection_id AND pref.user_id = dt.user_id
+     WHERE dt.workspace_id = ? AND dt.automation_subscription_id = ?
+       AND ((dt.target_type = 'email' AND dt.status = 'active' AND dt.email_address IS NOT NULL)
+         OR (dt.target_type = 'slack_agent_dm' AND dt.status IN ('active', 'needs_input')
+           AND link.slack_user_id IS NOT NULL
+           AND (COALESCE(pref.notify_automation_completed, 1) = 1
+             OR COALESCE(pref.notify_needs_input, 1) = 1)))`,
   ).bind(workspaceId, automationSubscriptionId).all<{
     target_type: "email" | "slack_agent_dm";
     email_address: string | null;
+    slack_user_id: string | null;
   }>();
   type Destination = { channel: "email" | "slack_agent_dm"; destination: string };
-  return (targets.results ?? []).flatMap<Destination>((target) => {
+  const destinations = (targets.results ?? []).flatMap<Destination>((target) => {
     if (target.target_type === "email") {
-      return target.email_address
-        ? [{ channel: "email", destination: target.email_address }]
-        : [];
+      return target.email_address ? [{ channel: "email", destination: target.email_address }] : [];
     }
-    return [{ channel: "slack_agent_dm", destination: "the owner's Avalon Slack Agent DM" }];
+    // The Slack destination is an id rather than a description, because the
+    // rule the model applies is "does this recipient match one of these" and a
+    // sentence is not something a tool argument can be compared against.
+    return target.slack_user_id
+      ? [{ channel: "slack_agent_dm" as const, destination: target.slack_user_id }]
+      : [];
   });
+  return destinations.sort((left, right) =>
+    left.channel.localeCompare(right.channel) || left.destination.localeCompare(right.destination));
 }
 
 async function loadRunPromptContext(
@@ -4364,30 +4391,38 @@ async function loadRunPromptContext(
       overrides_json: string;
     }>();
     if (!automation) throw new Error("automation_subscription_context_not_found");
+    // Independent reads, both into WorkspaceDO: awaiting them in sequence put a
+    // second round trip in front of every automation run for no reason.
+    const [resultDelivery, durableTables] = await Promise.all([
+      loadAutomationResultDelivery(env, input.workspaceId, input.automationSubscriptionId),
+      loadAutomationMemoryTableContext(
+        env,
+        input.workspaceId,
+        input.automationSubscriptionId,
+        parseJson<unknown[]>(automation.memory_tables_json, []),
+      ),
+    ]);
     automationContext = {
       name: automation.name,
       versionNumber: automation.version_number,
       instructions: automation.instructions,
       expectedOutputs: parseJson(automation.expected_outputs_json, []),
-      resultDelivery: await loadAutomationResultDelivery(
-        env,
-        input.workspaceId,
-        input.automationSubscriptionId,
-      ),
+      resultDelivery,
       defaultBehavior: parseJson(automation.default_behavior_json, {}),
       overrides: parseJson(automation.overrides_json, {}),
-      durableTables: await loadAutomationMemoryTableContext(
-        env,
-        input.workspaceId,
-        input.automationSubscriptionId,
-        parseJson(automation.memory_tables_json, []),
-      ),
+      durableTables,
     };
   }
   const additionalMessages: ModelMessage[] = [];
   if (input.slackOrigin) additionalMessages.push(renderUntrustedSlackOriginMessage(input.slackOrigin));
   const memoryQueryParts: string[] = [workstream.title, workstream.objective];
-  if (automationContext) memoryQueryParts.push(JSON.stringify(automationContext));
+  if (automationContext) {
+    // Everything but the delivery destination: an address is control-plane
+    // configuration, and embedding it shifts recall for every automation that
+    // has a target while retrieving nothing anybody wants back.
+    const recallable = { ...automationContext, resultDelivery: undefined };
+    memoryQueryParts.push(JSON.stringify(recallable));
+  }
   if (input.triggerMessageId) {
     const triggerMessage = await env.DB.prepare(
       `SELECT text_content FROM messages

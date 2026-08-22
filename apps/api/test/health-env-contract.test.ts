@@ -23,7 +23,7 @@ vi.mock("../src/env", async (importOriginal) => ({
 const { assertEnvContract } = await import("../src/env");
 const { healthRoutes } = await import("../src/routes/health");
 
-async function probe(): Promise<Response> {
+async function probe(overrides: Record<string, unknown> = {}): Promise<Response> {
   const app = new Hono<HonoAppEnv>();
   app.route("/health", healthRoutes);
   return app.request("/health", undefined, createTestEnv({
@@ -31,6 +31,7 @@ async function probe(): Promise<Response> {
     PAYLOADS: { list: async () => ({ objects: [] }) },
     AVALON_REGION: "global",
     APP_ENV: "production",
+    ...overrides,
   }));
 }
 
@@ -58,6 +59,25 @@ describe("the health probe's environment-contract check", () => {
       ok: false,
       message: "the Worker cannot serve requests; see the env_contract_failed log",
     });
+  });
+
+  it("says when notification mail is going out from the transactional sender", async () => {
+    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
+
+    const unset = await probe({ RESEND_NOTIFICATION_FROM_EMAIL: "  " });
+    const configured = await probe({ RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@with-avalon.com>" });
+
+    // The fallback that covers an unset sender is silent — `sendResendEmail`
+    // uses the transactional address and reports "sent" — which is how every
+    // digest and automation result went out from the invitations address for
+    // the life of the feature. The probe is where that becomes visible; it is
+    // deliberately not in the environment contract, because an unset sender
+    // must not take a region down.
+    const body = await unset.json() as { checks: { resendNotificationSender: { ok: boolean; message: string } } };
+    expect(body.checks.resendNotificationSender.ok).toBe(false);
+    expect(body.checks.resendNotificationSender.message).toContain("transactional sender");
+    const healthy = await configured.json() as { checks: { resendNotificationSender: { ok: boolean } } };
+    expect(healthy.checks.resendNotificationSender.ok).toBe(true);
   });
 
   it("does not dress a defect in the assertion up as one", async () => {

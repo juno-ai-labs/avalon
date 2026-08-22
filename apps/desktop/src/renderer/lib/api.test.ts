@@ -172,6 +172,41 @@ afterEach(() => {
 });
 
 describe('Avalon API wire adapter', () => {
+  it.each([
+    ['The briefing, emailed to you each morning', true],
+    ['A summary sent to you by email', true],
+    ['Email me the three items that matter', true],
+    ['A ranked list of your five most important emails', false],
+    ['A Slack message naming the emails that need a reply', false],
+    ['A weekly changelog in Avalon', false],
+  ])('reads %j as an email destination: %s', async (expectedOutput, expected) => {
+    const draft = {
+      name: 'Morning briefing',
+      description: 'Summarizes the morning.',
+      overview: 'Runs every morning.',
+      instructions: 'Write the briefing.',
+      triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+      requiredCapabilities: [],
+      expectedOutputs: [expectedOutput],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      suggestedScope: 'personal' as const,
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => sse([
+      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Ready.' },
+    ], 47)));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    // Avalon is the only sender now, so this flag decides whether the create
+    // screen offers the destination at all — and a destination frozen by
+    // mistake cannot be changed afterwards.
+    const result = await api.compileAutomation({ message: 'Brief me.' });
+    expect(result.summary?.requiresEmailDelivery).toBe(expected);
+  });
+
   it('streams automation assistant tokens and returns the final typed draft', async () => {
     const draft = {
       name: 'Blog monitor',

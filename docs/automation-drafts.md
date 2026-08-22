@@ -143,6 +143,12 @@ may not write through to, inserts a new automation exactly as it always did.
   `updated_at` moves on every compile turn, so any query ordered by it — Slack's
   App Home is the one today — is otherwise led by whatever is being typed right
   now, and led away from the automations that run.
+- **The result is Markdown, not an email.** The compiler asks for headings,
+  bullets, numbered lists, bold, italic, inline code, and links — never for a
+  wrapper, an HTML document, or a subject line. Avalon renders the email around
+  the result; a model asked for an email-shaped artifact produces one nested
+  inside another, and asked for a table produces the one structure the renderer
+  keeps verbatim rather than laying out.
 - **A destination is not a step.** Avalon sends each run's final message to the
   destinations frozen on the automation, so the compiler writes "email me the
   briefing" into `expectedOutputs` and never into `instructions` as a
@@ -231,7 +237,7 @@ from the API, not a second renderer completion.
 | `apps/api/test/automation-draft-persistence.test.ts` | The lifecycle end to end against a migrated SQLite database: a draft appearing in the list, later turns updating it in place, the conversation coming back, promotion keeping the id, and a draft id the caller may not write through to. |
 | `apps/api/test/automation-lifecycle.test.ts` | Archival, and the refusal to archive an automation that runs. |
 | `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft. |
-| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, and the screen naming the draft it wrote. |
+| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's own outputs pre-tick. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 
 Run them with `pnpm --filter @avalon/api exec vitest run test/automation-draft-persistence.test.ts`
@@ -293,6 +299,14 @@ email-shaped artifact produces one wrapped in another.
 **Considered and rejected:** Leaving this to the run-time policy alone. That
 policy stops the second send, but the instructions still describe work the
 automation is not doing, which is what its author reads on the overview screen.
+
+**Consequences:** Automations compiled before this still carry a provider send in
+their instructions. The run-time policy suppresses it, so they deliver once — but
+their overview screen still describes a step that no longer happens, and nothing
+rewrites them. It also makes the create screen's delivery choice load-bearing:
+with no provider send in the instructions, an automation whose owner asked to be
+emailed and whose Email destination is left unticked delivers nowhere, which is
+why the draft's own `expectedOutputs` now pre-tick it.
 
 ### 2026-08-18 — Draft and promotion state move into WorkspaceDO
 

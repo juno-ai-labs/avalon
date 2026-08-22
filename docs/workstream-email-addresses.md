@@ -20,6 +20,9 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/automation-email-service.ts` | Outbound automation results by email. |
+| `apps/api/src/services/automation-email-content.ts` | The result email's shell, importable without the Worker's bindings. |
+| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Avalon emails share; owned by [`digests.md`](digests.md). |
+| `scripts/preview-automation-email.mjs` | Rendering the result email for somebody to look at. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ## How it works
@@ -292,6 +295,23 @@ sunbird, terrapin, waxbill
 - **An inbound address is a routing identifier, never an authenticator.** The From
   match is defense in depth; the actual protection is that inbound-email runs get no
   external connector writes and no outbound web tools.
+- **A run never delivers a result Avalon is delivering.** The active destinations
+  travel in the automation prompt context as `resultDelivery`, and the platform
+  policy renders a `# Result delivery` section telling the run to drop every
+  recipient matching one before it sends anything. Removing either half puts the
+  duplicate back: the compiler no longer writes a provider send, so nothing else
+  stops a saved instruction that says "email me the briefing".
+- **`resultDelivery` mirrors each sender's own predicate, not a third one.** Email
+  delivers from `active`; Slack deliberately delivers from `needs_input` too and
+  skips a member who turned that notification off. A convenient single predicate
+  gets one of them wrong, and being wrong here is either a duplicate delivery or a
+  result delivered nowhere. The loader and the two senders change together.
+- **Its order is fixed.** The rows are rendered into the system prefix, which is
+  re-rendered every turn and must be byte-identical across a retry; nothing
+  constrains the order two rows come back in.
+- **The result email carries a canonical HTTPS link, never `avalon://`.** Mail
+  clients do not linkify a custom scheme, and most readers of a briefing are on a
+  phone with no desktop app — see [`workstream-links.md`](workstream-links.md).
 - **The outbound email destination is the literal address frozen when the automation
   was saved**, so a later account change cannot silently redirect results.
 - **Every run lands in its own Avalon work stream**, and that destination cannot be
@@ -340,7 +360,9 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
 | `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, the suppressed-empty rule, and that the result's Markdown is rendered rather than mailed as markup. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
-| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations, and told nothing when a target is disabled. |
+| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Avalon still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
+| `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
+| `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/workstream-email-address.test.ts`
@@ -386,7 +408,8 @@ sent to the frozen target — and both were unreadable: the first was Markdown i
 `text/plain` body, the second was Markdown escaped into HTML. The sender of the
 second read `invites@`, because the notification sender this document already
 claimed was used had never been set anywhere and silently fell back to the
-transactional one.
+transactional one. Configuring it moves the From address on every notification
+sender — digests and mention emails as well as automation results.
 
 **Considered and rejected:** Detecting the duplicate at delivery time — comparing
 what the run sent through a connector against the frozen target — which needs a
@@ -397,9 +420,22 @@ as HTML. `gmail.send` builds a `text/plain` body, that mail is sent as the perso
 rather than as Avalon, and the tool guidance now says to write plain text; giving
 it a second MIME part is a separate change with its own reasons.
 
-**What a future change has to respect:** `resultDelivery` lists only *active*
-targets. A disabled or failed target sends nothing, so listing it would tell a run
-to stand down on behalf of a delivery that will never happen.
+**Consequences:** `resultDelivery` lists what each channel's sender will actually
+attempt, and the loader and the senders are now three readers of two predicates:
+a fourth reader, or a new delivery channel added to one and not the other, puts
+the duplicate back for exactly the targets it disagrees about. A destination that
+is not the owner's own address would also change what the policy is holding — it
+is a de-duplication rule today, bounded by the fact that a miss annoys the person
+who configured the automation, and it would become a confidentiality boundary.
+Two things this deliberately did **not** do, both named so the next change can
+take them up rather than rediscover them: the destination set is read at prompt
+render rather than frozen with the run scope, so a target disabled mid-run leaves
+the result delivered nowhere; and enforcement is the policy rather than a
+`beforeToolCall` predicate over that frozen set, which is the mechanism the
+harness already composes for read-only runs. `WORKSTREAM_PROMPT_VERSION` was
+deliberately not bumped: it is inside the canonical run-scope hash, so bumping it
+fails every in-flight run's resumed attempt across the deploy, and the policy
+change is additive.
 
 ### 2026-08-22 — The work-stream gate reads the object, not the anchor
 
