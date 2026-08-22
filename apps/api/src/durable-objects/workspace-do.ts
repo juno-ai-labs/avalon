@@ -35,6 +35,7 @@ import {
 } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import {
+  revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -1407,10 +1408,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     let closed = 0;
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (!attachment || attachment.userId !== request.userId) continue;
       // A revoked session closes only the windows that presented it; an ended
-      // membership carries no session and closes all of them.
-      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      // membership carries no session and closes all of them. The rule lives in
+      // one place because the four socket roles disagree about their own
+      // attachments — see `revocationClosesSocket`.
+      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
       closed += 1;
     }

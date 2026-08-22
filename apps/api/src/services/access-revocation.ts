@@ -79,6 +79,31 @@ export const SocketAccessRevocationSchema = AccessRevocationMessageSchema.pick({
 
 export type SocketAccessRevocation = z.infer<typeof SocketAccessRevocationSchema>;
 
+/**
+ * Whether one socket belongs to the revocation being applied.
+ *
+ * Single-sourced because the four socket roles disagree about their own
+ * attachments and a divergence here is silent: `SubstreamAgent` alone makes
+ * `sessionId` optional — a socket accepted before the command gateway carries
+ * none — while the other three require it. Written inline, the natural
+ * `attachment.sessionId !== request.sessionId` reads as "skip" for `undefined`,
+ * which exempted exactly the transcript feed from every logout and expiry.
+ *
+ * The rule: a socket is this person's, and either the revocation names no
+ * session (the membership is gone, so nothing they hold is admissible) or the
+ * socket cannot be shown *not* to be the named session. An unknown session is
+ * closed rather than spared — that costs a reconnect, where sparing it keeps a
+ * dead session reading.
+ */
+export function revocationClosesSocket(
+  revocation: SocketAccessRevocation,
+  attachment: { userId: string; sessionId?: string | undefined },
+): boolean {
+  if (attachment.userId !== revocation.userId) return false;
+  if (revocation.sessionId === null) return true;
+  return attachment.sessionId === undefined || attachment.sessionId === revocation.sessionId;
+}
+
 /** The message an object publishes to carry its own revocation to one child. */
 export function descendantRevocation(
   revocation: SocketAccessRevocation,
