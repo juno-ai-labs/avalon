@@ -423,7 +423,7 @@ sockets survive every revocation. Losing participation or visibility on a single
 work stream no longer closes anything until reconnect — those are object-local
 facts the D1-fed queue cannot see.
 
-Shipped in #TBD. Owned by [`access-revocation.md`](access-revocation.md).
+Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
 ### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
 
