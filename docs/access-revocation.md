@@ -24,7 +24,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent}.ts` | `revokeSocketAccess` on each of the four socket-holding objects. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
-| `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the pre-existing expired-session backlog revoked so the sweep starts clean, and indexes the query it runs every five minutes. |
+| `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ## How it works
 
@@ -168,6 +168,11 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   until it reconnects. Making it durable needs an outbox row written in the same
   D1 write as the retraction, and a sweep that enqueues until delivery; that is
   a real design change and is not built.
+- **The expiry sweep re-asserts its predicate when it marks.** The rows were
+  selected in an earlier round trip and D1 auto-commits between statements, so a
+  logout landing in between has already written its own `revoked_at`; marking by
+  id alone would overwrite it with the sweep's later timestamp and move the
+  recorded moment access ended.
 - **The expiry sweep publishes before it marks**, which is what stops the same
   failure being permanent there. Marking first would exclude the row from every
   later sweep, so a transient queue outage would lose that expiry for good; in
@@ -180,7 +185,13 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   queue is the monitoring for this module.
 - **A message cannot be parsed.** Acknowledged, not retried — nothing will make
   it readable later, and retrying it only delays the batch behind it. Logged as
-  `access_revocation_message_invalid`.
+  `access_revocation_message_invalid` with the failing field paths and the
+  body's `kind`, because a producer and this consumer disagreeing about the
+  schema is otherwise invisible: the message is gone from the queue and nothing
+  else records it.
+- **A logout's message is dropped.** Logged as `session_revocation_unannounced`.
+  Unlike expiry there is no later run to pick it up — the row is already
+  revoked — so that session's sockets stay open until they reconnect.
 - **Batch settings.** `max_batch_size: 10`, `max_batch_timeout: 1`. One message
   is one person losing access and each is handled independently, so batching buys
   fewer invocations and nothing else; the short timeout matters because this

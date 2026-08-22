@@ -4,6 +4,7 @@ import { asUserId, asWorkspaceId, type Region, type Session } from "@avalon/cont
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
+import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
 
 const encoder = new TextEncoder();
@@ -417,7 +418,18 @@ export class AuthService {
         .all<RevokedSessionRow>();
       revoked.push(...(result.results ?? []));
     }
-    await publishSessionRevocations(this.env, revoked, "session_revoked");
+    // The return value says what was announced, and here it can only be logged:
+    // these rows are already revoked, so unlike the expiry sweep there is no
+    // later run that will pick up what did not go out. A logout whose message
+    // was dropped leaves that session's sockets open until they reconnect —
+    // this line is the only trace of it. See `docs/access-revocation.md`.
+    const announced = await publishSessionRevocations(this.env, revoked, "session_revoked");
+    if (announced.length !== revoked.length) {
+      logWarn(this.env, "session_revocation_unannounced", {
+        revoked: revoked.length,
+        announced: announced.length,
+      });
+    }
   }
 
   private async claimOAuthState(state: string, purpose: string): Promise<OAuthStateRow> {

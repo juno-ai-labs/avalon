@@ -150,6 +150,31 @@ describe("removing a member", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("refuses an admin whose target was promoted after the check", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+    const service = new WorkspaceService(env, auth(ADMIN, "admin"));
+    // The role is read in an earlier round trip than the delete. Promote the
+    // target in between, exactly as a concurrent request would: an admin may
+    // remove a member but never an owner, and a delete that asserts only the
+    // caller's standing would take one anyway.
+    const promote = () => database.prepare(
+      `UPDATE workspace_members SET role = 'owner' WHERE workspace_id = ? AND user_id = ?`,
+    ).run(WORKSPACE, MEMBER);
+    const prepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("DELETE FROM workspace_members")) promote();
+      return prepare(sql);
+    });
+
+    await expect(service.removeMember(MEMBER)).rejects.toThrow(/membership changed/i);
+    const remaining = database.prepare(
+      `SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+    ).get(WORKSPACE, MEMBER) as { count: number };
+    expect(remaining.count).toBe(1);
+    expect(sent).toEqual([]);
+  });
+
   it("refuses a member, a self-removal, and an admin reaching for an owner", async () => {
     const database = seed();
     const { env, sent } = environment(database);
@@ -212,6 +237,30 @@ describe("reaping expired sessions", () => {
     // the same expiry forever.
     expect(await reapExpiredSessions(env)).toBe(0);
     expect(sent).toHaveLength(1);
+  });
+
+  it("does not overwrite a revocation that landed while the sweep was running", async () => {
+    const database = seed();
+    insertSession(database, "expired", "2020-01-01T00:00:00.000Z");
+    const { env, sent } = environment(database);
+    // A logout lands between the sweep's select and its mark. Marking by id
+    // alone would overwrite that row's `revoked_at` with the sweep's later
+    // timestamp, moving the recorded moment the session actually ended.
+    const loggedOutAt = "2021-06-06T06:06:06.000Z";
+    const prepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("UPDATE sessions SET revoked_at")) {
+        database.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = 'expired' AND revoked_at IS NULL`)
+          .run(loggedOutAt);
+      }
+      return prepare(sql);
+    });
+
+    await reapExpiredSessions(env);
+    expect(sent).toHaveLength(1);
+    const row = database.prepare(`SELECT revoked_at FROM sessions WHERE id = 'expired'`)
+      .get() as { revoked_at: string };
+    expect(row.revoked_at).toBe(loggedOutAt);
   });
 
   it("leaves a session unmarked when its announcement did not go out", async () => {
