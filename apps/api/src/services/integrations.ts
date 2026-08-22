@@ -214,6 +214,7 @@ import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { TerminalPortFactory } from "./terminal/object-port";
+import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl, requireOpenWorkstreamAuthority } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
@@ -2007,6 +2008,7 @@ export async function runWorkstreamHarness(
     lease: AttemptLease;
     publishRealtime?: boolean;
     terminalPortFactory?: TerminalPortFactory;
+    runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
   },
 ): Promise<WorkstreamHarnessResult> {
   // Layer WorkspaceDO product state over the work-stream/substream runtime
@@ -2127,6 +2129,7 @@ export async function runWorkstreamHarness(
     input,
     runAuthoritySnapshot,
     runtime?.terminalPortFactory,
+    runtime?.runtimeResourceAttacher,
   );
   // Into the frozen surface, not just into Bind's plugin list: authorization,
   // receipt policy, and the persisted run scope all resolve a call through
@@ -4699,6 +4702,7 @@ async function loadHarnessTools(
   input: WorkstreamWorkflowInput,
   runAuthoritySnapshot?: RunAuthoritySnapshot,
   inObjectTerminalPort?: TerminalPortFactory,
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<{
   coreTools: HarnessTool[];
   corePlugins: HarnessPlugin[];
@@ -4757,7 +4761,12 @@ async function loadHarnessTools(
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
-  const terminalPlugin = await createAvalonTerminalPlugin(env, input, inObjectTerminalPort);
+  const terminalPlugin = await createAvalonTerminalPlugin(
+    env,
+    input,
+    inObjectTerminalPort,
+    inObjectResourceAttacher,
+  );
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.

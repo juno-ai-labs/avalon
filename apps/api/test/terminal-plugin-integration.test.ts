@@ -87,7 +87,7 @@ describe("Terminal Bind integration", () => {
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
   });
 
-  it("threads the resident object's Terminal port through plugin setup", async () => {
+  it("threads the resident object's Terminal boundaries through plugin setup", async () => {
     const { objectStore, env, input } = fixture("supported");
     const messageId = "30000000-0000-4000-8000-000000000005";
     const connectionId = "30000000-0000-4000-8000-000000000006";
@@ -132,12 +132,14 @@ describe("Terminal Bind integration", () => {
     );
     input.triggerMessageId = messageId;
     const residentPort = vi.fn(testTerminalPortFactory(objectStore));
+    const residentResourceAttacher = vi.fn(async () => undefined);
 
     await __integrationTesting.loadHarnessTools(
       withWorkstreamRuntimeDatabase(env, W, S),
       input,
       undefined,
       residentPort,
+      residentResourceAttacher,
     );
 
     expect(residentPort).toHaveBeenCalledWith(W, S);
@@ -146,6 +148,18 @@ describe("Terminal Bind integration", () => {
       "SELECT run_id, repository_full_name FROM terminal_publication_grants WHERE run_id = ?",
       R,
     )).toEqual({ run_id: R, repository_full_name: "owner/repo" });
+  });
+
+  it("rejects an incomplete resident Terminal boundary", async () => {
+    const { objectStore, env, input } = fixture("supported");
+    const residentPort = vi.fn(testTerminalPortFactory(objectStore));
+
+    await expect(__integrationTesting.loadHarnessTools(
+      withWorkstreamRuntimeDatabase(env, W, S),
+      input,
+      undefined,
+      residentPort,
+    )).rejects.toThrow("terminal_resident_runtime_incomplete");
   });
 
   it("omits Terminal in unsupported regions", async () => {
