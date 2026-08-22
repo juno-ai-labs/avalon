@@ -51,6 +51,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
+import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
@@ -794,7 +795,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
-  const [atBottom, setAtBottom] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const loadingOlderRef = useRef(false);
@@ -1039,6 +1039,22 @@ export function WorkstreamScreen(): React.JSX.Element {
     getScrollElement: () => transcriptRef.current,
     overscan: 8,
   });
+  // Following the newest message is off until the screen has put this work
+  // stream's viewport where it belongs, and off again whenever the end of the
+  // transcript is a page away rather than loaded.
+  const {
+    atEnd: transcriptAtEnd,
+    claimNextScroll: claimTranscriptScroll,
+    onScroll: onTranscriptScroll,
+    onWheel: onTranscriptWheel,
+    release: releaseTranscriptFollow,
+    resume: resumeTranscriptFollow,
+  } = useTranscriptFollow(
+    transcriptRef,
+    initialPositionedWorkstreamRef.current === id
+      && transcript.length > 0
+      && newerMessageCursor.data === null,
+  );
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
@@ -1065,11 +1081,17 @@ export function WorkstreamScreen(): React.JSX.Element {
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
-        element.scrollTop = preservedPrependScrollTop(
+        const preserved = preservedPrependScrollTop(
           previousScrollTop,
           previousScrollHeight,
           element.scrollHeight,
         );
+        // Only claim the scroll when there is one to claim. A page that
+        // prepended nothing moves nothing, and the flag would then be spent on
+        // the reader's next scroll instead.
+        if (preserved === element.scrollTop) return;
+        claimTranscriptScroll();
+        element.scrollTop = preserved;
       });
     } catch (error) {
       if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1133,7 +1155,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         after = newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
-      setAtBottom(true);
+      resumeTranscriptFollow();
       window.requestAnimationFrame(() => {
         const current = queryClient.getQueryData<Message[]>(['messages', id]) ?? [];
         transcriptVirtualizer.scrollToIndex(Math.max(0, current.length - 1), { align: 'end', behavior: 'smooth' });
@@ -1437,11 +1459,14 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (activeWorkstreamIdRef.current !== id || transcript.length === 0) return;
       const anchorIndex = initialTranscriptAnchorIndex(transcript, anchorSequence);
       if (anchorIndex !== null) {
-        setAtBottom(false);
+        // Opened at the first unread message rather than at the end, so the
+        // transcript is not following: a run already streaming into this work
+        // stream must not pull the reader off the message they came back for.
+        releaseTranscriptFollow();
         transcriptVirtualizer.scrollToIndex(anchorIndex, { align: 'start' });
         return;
       }
-      setAtBottom(true);
+      resumeTranscriptFollow();
       transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' });
     });
   }, [id, messages.isLoading, transcript, transcriptVirtualizer, workstream.data]);
@@ -1509,12 +1534,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
     };
   }, [scheduleReadAcknowledgement]);
-
-  useEffect(() => {
-    if (initialPositionedWorkstreamRef.current !== id || !atBottom || newerMessageCursor.data) return;
-    if (transcript.length === 0) return;
-    requestAnimationFrame(() => transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' }));
-  }, [atBottom, id, newerMessageCursor.data, transcript, transcriptVirtualizer]);
 
   if (workstream.isLoading || messages.isLoading) {
     return <OpeningState label="Opening work stream…" />;
@@ -1600,10 +1619,14 @@ export function WorkstreamScreen(): React.JSX.Element {
         onDragLeave={transcriptDrop.onDragLeave}
         onDragOver={transcriptDrop.onDragOver}
         onDrop={transcriptDrop.onDrop}
+        // The transcript reads scrolling intent from the wheel as well as from
+        // the scroll it causes, because the two do not arrive in the same frame.
+        // `useTranscriptFollow` holds the reasoning.
+        onWheel={(event) => onTranscriptWheel(event.deltaY)}
         onScroll={(event) => {
           const element = event.currentTarget;
-          const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-          setAtBottom(nearBottom && newerMessageCursor.data === null);
+          onTranscriptScroll(element);
+          const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < TRANSCRIPT_END_SLACK;
           if (shouldLoadEarlierFromScroll(
             element.scrollTop,
             Boolean(messageCursor.data),
@@ -1701,7 +1724,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </div>
 
       <div className="composer-dock">
-        {!atBottom && (
+        {!(transcriptAtEnd && newerMessageCursor.data === null) && (
           <JumpToLatestButton onJump={() => void jumpToLatest()} />
         )}
         <div className="composer-stack">
