@@ -1140,6 +1140,25 @@ thirty, and costs no read at all when nothing has been revoked.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
+### 2026-08-22 — The sidebar push takes the sweep every publisher takes
+
+**What changed:** `publishSidebarList` awaits `revalidateBeforePublish(false)`
+before sending, which made `runWorkspaceSql` and both of its callers async.
+
+**Why:** This object has three publish paths and this was the only one sending
+without the authorization sweep. It carries a viewer's whole automation or note
+list — the same class of product data `publishWorkstreamState` sweeps for — to
+sockets that have said nothing since they connected, so a session revoked
+without a membership retraction to publish kept receiving those rows on every
+write until an unrelated publication swept. The interval-gated form, not the
+certain one: a write to `notes` is not a retraction this path can judge.
+
+**Considered and rejected:** Keeping the push synchronous and sweeping on a
+timer of its own, which is a second answer to a question `revalidateBeforePublish`
+already answers, and would let the two intervals disagree about who is still
+allowed to listen. A future publisher added here has to join that sweep too;
+the bound is on the object, not on any one path.
+
 ### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
 
 **What changed:** The main `SubstreamAgent` exposes its resident Bind execution

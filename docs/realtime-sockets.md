@@ -492,6 +492,37 @@ facts the D1-fed queue cannot see.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
+### 2026-08-22 — Three review findings on the sidebar payload and its push
+
+**What changed:** Three defects the automated review on #232 found, all in code
+that PR introduced. `activateWorkstreamRoute` now reads `archived_at` through
+`workstreamExecutionEnvironment`, not `workspaceDatabase`. `publishSidebarList`
+awaits `revalidateBeforePublish(false)` before it sends, which made
+`runWorkspaceSql` async. And the connect payload no longer suppresses the
+`workstream_directory` invalidation unconditionally — only when page one
+accounts for every row already resident.
+
+**Why:** Each was a case of a new path skipping a bound the paths beside it
+hold. `workstreams` is not a workspace-local table, so the workspace facade
+sends its statements to regional D1, where migration 0090 dropped `archived_at`
+— the gate would have failed with `no such column` after reserving the address,
+on every automation run and Slack work-stream create. The push carries a
+viewer's whole automation or note list, which is exactly the payload
+`publishWorkstreamState` sweeps for, so a revoked session kept receiving product
+rows until an unrelated publication happened to sweep. And the directory
+refetch, skipped to save a round trip, was the only thing retiring a work stream
+archived while the socket was away: page one merges rather than replaces, so the
+tombstone survived.
+
+**Considered and rejected:** Reproducing the server's `last_activity_at DESC,
+workstream_id` ordering on the client to decide whether an unaccounted-for row
+belongs to a later page — it duplicates the cursor arithmetic in a second place
+that can drift from it, to save a request that only a reader who has scrolled,
+on a reconnect, will pay. Letting the client ask instead keeps one authority for
+the ordering. A future change must not restore the unconditional skip: a cold
+connect has nothing resident and still pays nothing, which is the case the
+payload exists for.
+
 ### 2026-08-21 — Subscribing is answered with the sidebar
 
 **What changed:** The `workspace_sync` event that answers `subscribe` carries a
