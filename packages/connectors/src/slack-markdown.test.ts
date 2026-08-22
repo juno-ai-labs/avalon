@@ -83,6 +83,37 @@ describe("splitting Slack markdown", () => {
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(SLACK_MARKDOWN_BLOCK_LIMIT);
   });
 
+  it("keeps every chunk inside the limit even when a fence is open", () => {
+    // The regression: a single line longer than the budget with a fence open —
+    // minified JSON, a base64 payload, a long log line. The budget was computed
+    // once per source line, so pieces after a mid-line flush were still measured
+    // against the overhead of no carried fence and came back over the limit with
+    // a reopened fence on top.
+    const source = `Here is the payload:\n\n\`\`\`json\n${"a".repeat(30_000)}\n\`\`\`\n`;
+    for (const chunk of splitSlackMarkdown(source)) {
+      expect(chunk.length).toBeLessThanOrEqual(SLACK_MARKDOWN_BLOCK_LIMIT);
+    }
+  });
+
+  it("holds the limit across fenced and unfenced shapes alike", () => {
+    // A property check over the two rules together: the fence-balance test used
+    // short lines and the length test used fence-free prose, so neither covered
+    // a chunk that has to carry a reopened fence *and* a full body.
+    const shapes = [
+      `\`\`\`\n${"x".repeat(40_000)}\n\`\`\``,
+      `${"word ".repeat(50)}\n\n\`\`\`ts\n${"const a = 1;\n".repeat(2_000)}\`\`\`\n\n${"tail ".repeat(50)}`,
+      `\`\`\`\n${"y".repeat(11_990)}\n\`\`\`\n\n${"z".repeat(11_990)}`,
+      `# Title\n\n${"para\n\n".repeat(3_000)}`,
+    ];
+    for (const shape of shapes) {
+      const chunks = splitSlackMarkdown(shape);
+      for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(SLACK_MARKDOWN_BLOCK_LIMIT);
+      for (const chunk of chunks) {
+        expect(chunk.split("\n").filter((line) => line.startsWith("```")).length % 2).toBe(0);
+      }
+    }
+  });
+
   it("drops nothing: the chunks still carry the whole body", () => {
     const source = `${"paragraph body here\n\n".repeat(500)}tail`;
     const rejoined = splitSlackMarkdown(source, 1_500).join("\n").replace(/\n+/gu, " ");

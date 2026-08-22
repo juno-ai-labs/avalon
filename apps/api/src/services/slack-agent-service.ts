@@ -3104,18 +3104,41 @@ export class SlackAgentService {
   ): Promise<void> {
     if (!session.reaction_channel_id || !session.reaction_message_ts) return;
     try {
+      // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
+      // took at the top. Between that read and this call the stream appends,
+      // `chat.stopStream`, a possible full fallback post, the needs-input DMs,
+      // and the status clear have all run on 5-10s timeouts, and the ticker has
+      // been rewriting `reaction_current` every six seconds throughout. Removing
+      // the stale emoji answers `no_reaction`, which is swallowed as success —
+      // leaving the working reaction *and* the outcome on the message, which is
+      // the one invariant this feature has.
+      const current = await this.env.DB.prepare(
+        "SELECT reaction_current FROM slack_agent_sessions WHERE id = ?",
+      ).bind(session.id).first<{ reaction_current: string | null }>();
+      const placed = current?.reaction_current ?? null;
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
       const result = await this.executeSlackReaction(connection, token, {
         kind: "reaction",
         channelId: session.reaction_channel_id,
         timestamp: session.reaction_message_ts,
         add: reactions.outcomes[outcome],
-        remove: session.reaction_current,
+        remove: placed,
         fallback: slackDefaultReactionFor(outcome),
       });
-      await this.env.DB.prepare(
-        "UPDATE slack_agent_sessions SET reaction_current = ?, updated_at = ? WHERE id = ?",
-      ).bind(result?.reaction ?? null, nowIso(), session.id).run();
+      // Conditional on the value this transition actually removed, so a tick
+      // that slipped in behind the read is detected rather than overwritten.
+      // `IS` rather than `=` because the column is nullable and NULL is a real
+      // state here: it means Avalon has placed nothing.
+      const written = await this.env.DB.prepare(
+        "UPDATE slack_agent_sessions SET reaction_current = ?, updated_at = ? WHERE id = ? AND reaction_current IS ?",
+      ).bind(result?.reaction ?? null, nowIso(), session.id, placed).run();
+      if (!Number(written.meta.changes ?? 0)) {
+        logWarn(this.env, "slack_outcome_reaction_raced", {
+          session_id: session.id,
+          outcome,
+          expected: placed,
+        });
+      }
     } catch (error) {
       if (slackReconnectRequired(error)) {
         await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
@@ -3159,7 +3182,12 @@ export class SlackAgentService {
       if ((session.last_delivery_key ?? "") !== input.deliveryKey) return false;
       const connection = await this.connectionById(session.connection_id);
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
-      const cursor = session.reaction_cursor + 1;
+      // The cursor names the reaction this tick places, and the *next* position
+      // is what gets persisted. Pre-incrementing skipped the first emoji
+      // entirely: admission resets the cursor to 0, so the first tick showed
+      // `working[1]` and the documented order never started where it says it
+      // does — most runs finished before it wrapped around to the first.
+      const cursor = session.reaction_cursor;
       try {
         const result = await this.executeSlackReaction(connection, await this.botToken(connection), {
           kind: "reaction",
@@ -3169,9 +3197,12 @@ export class SlackAgentService {
           remove: session.reaction_current,
           fallback: slackDefaultReactionFor("working", cursor),
         });
+        // Conditional on the emoji this tick removed, so a terminal transition
+        // that landed in between is not overwritten by a working reaction.
         await this.env.DB.prepare(
-          "UPDATE slack_agent_sessions SET reaction_current = ?, reaction_cursor = ?, updated_at = ? WHERE id = ?",
-        ).bind(result.reaction, cursor, nowIso(), session.id).run();
+          `UPDATE slack_agent_sessions SET reaction_current = ?, reaction_cursor = ?, updated_at = ?
+            WHERE id = ? AND reaction_current IS ?`,
+        ).bind(result.reaction, cursor + 1, nowIso(), session.id, session.reaction_current).run();
       } catch (error) {
         // A rate limit above all: keep the rotation alive and leave the current
         // reaction until the next tick rather than ending it on one refusal.

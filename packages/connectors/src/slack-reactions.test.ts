@@ -55,6 +55,14 @@ describe("the working rotation", () => {
     expect([0, 1, 2, 3, 4].map((cursor) => slackWorkingReaction(set, cursor))).toEqual(["a", "b", "c", "a", "b"]);
   });
 
+  it("starts on the first reaction the rotation declares", () => {
+    // A run is admitted with the cursor at 0, so cursor 0 has to be the first
+    // documented emoji. Pre-incrementing before the lookup skipped it: the first
+    // tick showed the second entry and most runs ended before it wrapped.
+    expect(slackWorkingReaction(SLACK_DEFAULT_REACTIONS, 0)).toBe(SLACK_DEFAULT_REACTIONS.working[0]);
+    expect(slackWorkingReaction(SLACK_DEFAULT_REACTIONS, 0)).toBe("brain");
+  });
+
   it("survives a cursor that went backwards", () => {
     expect(slackWorkingReaction(resolveSlackReactions({ working: ["a", "b"] }), -1)).toBe("b");
   });

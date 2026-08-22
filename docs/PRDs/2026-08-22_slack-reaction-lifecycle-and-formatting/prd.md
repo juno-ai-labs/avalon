@@ -299,6 +299,49 @@ These land in [`e2e.md`](../../e2e.md) as durable checks.
 
 ## Decision log
 
+### 2026-08-22 — Both reaction writers re-read and write conditionally
+
+**Decided:** `applyOutcomeReaction` and `advanceSessionReaction` each re-read
+`reaction_current` immediately before acting and guard their write with
+`WHERE reaction_current IS ?`. The ticker re-reads its own row after the Slack
+call and abandons the rotation if it was cleared or restarted meanwhile. The
+rotation cursor now names the reaction being placed rather than being
+pre-incremented.
+
+**Why:** Review found three ways the single-slot rule broke. `deliverWorkstreamOutcome`
+snapshots the session row at the top and reaches `applyOutcomeReaction` several
+Slack round trips later, by which time a tick may have moved `reaction_current`;
+removing the stale emoji answers `no_reaction`, which is swallowed as success,
+so the message kept the working reaction *and* gained the outcome. A `/stop` that
+arrives while `alarm()` is awaiting Slack cannot interrupt it, so the handler's
+unconditional re-arm resurrected a cancelled rotation. And the pre-incremented
+cursor meant a run admitted at cursor 0 showed `working[1]` first, so the
+documented order never started where both the module comment and
+`slack-integration.md` say it does.
+
+**Changes:** Nothing in the agreed scope. Product behavior's "at most one Avalon
+reaction is on the message at any time" is unchanged as a statement and now
+actually holds under concurrency; the working rotation's stated order is now the
+order a member sees.
+
+### 2026-08-22 — The markdown splitter's budget is the worst-case fence overhead
+
+**Decided:** `splitSlackMarkdown` bounds a hard-wrapped line by the worse of the
+current fence state and the state a mid-line flush produces, and measures each
+piece against the fence state *after* adding it.
+
+**Why:** The budget was computed once per source line while `carriedFence`
+changes inside the hard-wrap loop, so every chunk after a mid-line flush was
+sized as though it carried no reopened fence. A single line longer than the
+budget with a fence open — minified JSON, a base64 payload, a long log line —
+produced 12,008-character chunks against a 12,000 limit. That is not cosmetic:
+`chat.appendStream` validates `markdown_text` at 12,000 before the request goes
+out, the fallback's `markdown` block is over Slack's cumulative cap and is
+rejected, and the member receives no result at all.
+
+**Changes:** Nothing in the agreed scope. Product behavior already said long
+output splits at Slack's limit; it now does so for fenced content too.
+
 ### 2026-08-22 — The reaction's columns live in WorkspaceDO, not regional D1
 
 **Decided:** The four columns are added by WorkspaceDO schema migration version
