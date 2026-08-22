@@ -492,7 +492,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // so a helper that addresses "the agent that owns this work stream" reaches
     // the object it is already running in rather than the namespace. See
     // `lib/durable-object-self.ts`.
-    this.env = withDurableObjectSelf(env, {
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived. That is not hypothetical: `WorkstreamObjectProductService`
+    // below keeps its environment for the object's whole life, and resolves
+    // this work stream's own model routing through it.
+    this.env = env = withDurableObjectSelf(env, {
       namespace: env.SUBSTREAM_AGENTS,
       name: () => this.selfObjectName(),
       id: state.id,

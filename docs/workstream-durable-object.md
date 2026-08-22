@@ -1101,7 +1101,12 @@ name thunk must return `null` until the object's identity is durably its own —
 a name derived too early is a name for a different object. The registration is
 compared by binding *identity* and name equality, so a helper resolving a name
 that is not the caller's own must keep reaching the namespace: that is what makes
-a sibling call still a real hop.
+a sibling call still a real hop. And the registration line rebinds the
+constructor's `env` parameter as well as assigning the field, so that nothing
+below it can hand the unregistered environment to a collaborator that keeps it:
+`SubstreamAgent` built `WorkstreamObjectProductService` with the raw parameter in
+the first draft of this change, which left that service — and the model routing
+it resolves for its own work stream — still going out through the namespace.
 
 ### 2026-08-22 — Object-local visibility comes back; only the D1 read stays gone
 
