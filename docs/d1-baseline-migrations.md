@@ -202,6 +202,18 @@ for one.
   fails loudly if someone silently fixes it.
 - **`pnpm db:baseline:verify` needs Cloudflare credentials** and is not a CI
   gate. The recorded fingerprint is what keeps its result enforced.
+- **A migration inserted below what a database already ran gives it a different
+  schema.** Wrangler applies whatever is missing in sort order without regard to
+  what ran before, so a file added below an applied one runs late on an old
+  database and early on a fresh one. It is silent where the file only `ALTER`s —
+  the column lands in a different position, both migrations succeed, and only
+  the column order differs — and a hard failure where it creates something a
+  later migration already used. A baseline does not cause this but makes it
+  easier to meet: a baselined database is fresh by construction, so it takes the
+  fresh ordering while production takes the late one. `planMigration` reports it
+  as `outOfOrder` and the migrate script prints it; it is not refused, because
+  the repair is a decision about migrations — renumber, or accept — that the
+  tooling cannot make.
 - **Regenerating is not free of judgement.** The generator will happily produce a
   baseline from a chain that no longer matches production. Verify against remote
   before recording a new fingerprint.
@@ -310,7 +322,10 @@ an error.
   migration inserted below its boundary — which is exactly when a fallback is
   worth having.
 
-**Consequences:** nothing may reach for "the baseline" by name, index, or
+**Consequences:** a migration inserted below one a database already applied is
+reported (`outOfOrder`) rather than refused, and anything that starts treating
+that as an error has to answer what a developer mid-branch is supposed to do
+about it. Nothing may reach for "the baseline" by name, index, or
 "the only entry" — `selectBaseline` is the only way to choose one, and anything
 else silently uses a snapshot that stops short of where it could reach. A region
 is defined by a Wrangler config whose D1 binding declares `migrations_dir`; a
