@@ -169,6 +169,41 @@ describe("dispatchMigrationRun", () => {
     expect(dispatchableRegions(queues.env)).toEqual(["global"]);
   });
 
+  /**
+   * The two causes are disjoint, and a review read them as double-counting.
+   * An object with no resolvable region never reaches `targets` — the registry
+   * filters it out — so the dispatcher only ever adds the *other* kind, whose
+   * region is known but whose queue this deployment does not bind. Three
+   * objects, two unreachable for different reasons, is `unroutable: 2`.
+   */
+  it("counts both causes of unroutable exactly once", async () => {
+    await sweepIn([
+      namespaceOf("global", "WorkspaceDO", [objectId("a")]),
+      namespaceOf("eu", "WorkspaceDO", [objectId("b")]),
+      // Region resolvable from neither a report nor a known script name.
+      {
+        namespaceId: "ns-elsewhere",
+        scriptName: "some-other-worker",
+        className: "WorkspaceDO",
+        usesSqlite: true,
+        objects: [{ objectId: objectId("c"), hasStoredData: true }],
+      },
+    ]);
+    const queues = boundEnv({ regions: ["global"] });
+
+    const run = await dispatchMigrationRun(
+      queues.env,
+      registryStub(),
+      { className: "WorkspaceDO" },
+      "operator@example.test",
+    );
+
+    expect(run.matched).toBe(3);
+    expect(run.dispatched).toBe(1);
+    expect(run.unroutable).toBe(2);
+    expect(queues.global.sent.map((command) => command.objectId)).toEqual([objectId("a")]);
+  });
+
   it("records what landed when the queue refuses partway", async () => {
     await sweepIn([namespaceOf("global", "WorkspaceDO", [objectId("a"), objectId("b")])]);
     const queues = boundEnv({ regions: ["global"], failAfter: 0 });
