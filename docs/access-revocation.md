@@ -16,7 +16,7 @@ the thing this module replaced, and it is not to come back.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/access-revocation.ts` | The message schema, the publish helpers, and the expired-session sweep. Every producer goes through here. |
+| `apps/api/src/services/access-revocation.ts` | The message schema, the publish helpers, the expired-session sweep, and `revocationClosesSocket` — the one place that decides whether a socket belongs to a revocation. Every producer goes through here. |
 | `apps/api/src/queues/access-revocation-consumer.ts` | One hop per message: resolve the object, call it, publish the children it names. |
 | `apps/api/src/routes/workspace-membership.ts` | `DELETE /workspaces/:workspaceId/membership/member/:userId`, the only route that ends a membership. |
 | `apps/api/src/services/workspace-service.ts` | `removeMember` — deletes the D1 row and publishes in the same request. |
@@ -84,8 +84,14 @@ alongside the directory rows. A hop that finds nothing to close costs one call.
 ### What each object does
 
 Each `revokeSocketAccess` walks `state.getWebSockets()`, reads the hibernation
-attachment, and closes every socket whose `userId` matches — and, when the
-message carries a `sessionId`, only those that presented that session. Close code
+attachment, and asks `revocationClosesSocket` — one shared predicate, not four
+inline copies. The four roles disagree about their own attachments:
+`SubstreamAgent` alone makes `sessionId` optional, because a socket accepted
+before the command gateway carries none. Written out per role, the natural
+`attachment.sessionId !== request.sessionId` reads as *skip* for `undefined`,
+which is how the transcript feed came to be exempt from every logout and expiry
+in the first place. Shared, a schema change on one role cannot silently diverge
+from the rule. Close code
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` tells the desktop this was a retraction
 rather than a network drop.
 

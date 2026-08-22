@@ -10,6 +10,7 @@ import { applyAccessRevocation, consumeAccessRevocationQueue } from "../src/queu
 import {
   AccessRevocationMessageSchema,
   isAccessRevocationQueue,
+  revocationClosesSocket,
   type AccessRevocationMessage,
   publishAccessRevocation,
   reapExpiredSessions,
@@ -464,5 +465,31 @@ describe("recognizing this protocol's queue", () => {
       "avalon-global-activities",
       "avalon-migration-reports",
     ].some(isAccessRevocationQueue)).toBe(false);
+  });
+});
+
+describe("deciding whether one socket belongs to a revocation", () => {
+  const membershipGone = { reason: "workspace_membership_removed", workspaceId: WORKSPACE, userId: MEMBER, sessionId: null } as const;
+  const sessionGone = { reason: "session_revoked", workspaceId: WORKSPACE, userId: MEMBER, sessionId: "session-a" } as const;
+
+  it("never touches somebody else's socket", () => {
+    expect(revocationClosesSocket(membershipGone, { userId: OWNER, sessionId: "session-a" })).toBe(false);
+    expect(revocationClosesSocket(sessionGone, { userId: OWNER, sessionId: "session-a" })).toBe(false);
+  });
+
+  it("closes every window when the membership itself is gone", () => {
+    expect(revocationClosesSocket(membershipGone, { userId: MEMBER, sessionId: "session-a" })).toBe(true);
+    expect(revocationClosesSocket(membershipGone, { userId: MEMBER, sessionId: "session-b" })).toBe(true);
+    expect(revocationClosesSocket(membershipGone, { userId: MEMBER })).toBe(true);
+  });
+
+  it("closes only the named session, and any socket that cannot disprove it", () => {
+    expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-a" })).toBe(true);
+    // One window signing out must not sign the person out of the others.
+    expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-b" })).toBe(false);
+    // Only SubstreamAgent's schema makes the field optional, which is exactly
+    // why this rule is shared: written out per role it diverged once already,
+    // and `undefined !== "<id>"` exempted the transcript feed from every logout.
+    expect(revocationClosesSocket(sessionGone, { userId: MEMBER })).toBe(true);
   });
 });
