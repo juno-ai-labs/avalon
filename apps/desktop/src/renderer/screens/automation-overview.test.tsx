@@ -281,7 +281,6 @@ describe('Automation template updates', () => {
     // so invalidating it here would refetch nothing and imply that it does.
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['automations'] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workstreams'] });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workstreams'] });
     // Nothing may render the deleted automation from cache on a later mount.
     expect(queryClient.getQueryData(['automation', automationId])).toBeUndefined();
   });

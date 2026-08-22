@@ -3294,20 +3294,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Re-send one sidebar list to every subscribed socket, per viewer.
-   *
-   * Read once per socket rather than once per workspace because both lists are
-   * scoped — a personal automation or note belongs to its owner, and sending
-   * one reader's list to another would leak it. This mirrors
-   * `publishWorkstreamState`, which re-reads its row per viewer for the same
-   * reason.
-   *
-   * Synchronous throughout: the reads are local SQLite and the sends are
-   * ordered by the transport, so a later write cannot overtake an earlier one
-   * on the same socket. That ordering is what lets the event carry no
-   * waterline; see the schema in `packages/contracts`.
-   */
-  /**
    * The whole sidebar for one viewer, from three local reads with no `await`
    * between them, so it is one consistent snapshot rather than three answers a
    * concurrent write could land between.
@@ -3342,6 +3328,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().waterline;
   }
 
+  /**
+   * Re-send one sidebar list to every subscribed socket, per viewer.
+   *
+   * Read once per socket rather than once per workspace because both lists are
+   * scoped — a personal automation or note belongs to its owner, and sending
+   * one reader's list to another would leak it. This mirrors
+   * `publishWorkstreamState`, which re-reads its row per viewer for the same
+   * reason.
+   *
+   * The event carries the list's waterline, read once here so every socket is
+   * told the same version of the same read. Transport ordering is not relied on
+   * for that: `WorkspaceSidebarListEventSchema` carries the number because the
+   * connect payload sends these lists too, and two producers cannot be ordered
+   * by one of their transports.
+   */
   private async publishSidebarList(list: SidebarList): Promise<void> {
     const occurredAt = new Date().toISOString();
     const waterline = this.sidebarListWaterline(list);

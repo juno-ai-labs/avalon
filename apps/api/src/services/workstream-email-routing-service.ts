@@ -244,7 +244,12 @@ export class WorkstreamEmailRoutingService {
     const owner = await executionEnv.DB.prepare(
       `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
     ).bind(input.workstreamId, input.workspaceId).first<{ archived_at: string | null }>();
-    if (owner?.archived_at) {
+    // A row that is not there refuses, like the automation twin below: this
+    // gate answers "may mail reach this owner", and an owner it cannot read is
+    // not an owner it can vouch for. `ensureWorkstreamAddress` has already
+    // 404ed a genuinely missing work stream, so reaching this with no row means
+    // the two reads disagreed — which is the case least worth failing open on.
+    if (!owner || owner.archived_at) {
       throw new ApiError(409, "workstream_email_owner_archived", "An archived work stream cannot receive email");
     }
     return route;

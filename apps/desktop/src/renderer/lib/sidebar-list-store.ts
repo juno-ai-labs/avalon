@@ -27,6 +27,27 @@ export const SIDEBAR_LIST_QUERY_KEYS = {
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
+/**
+ * Keep the ledger for as long as the lists it orders.
+ *
+ * Nothing renders the waterlines, so no `useQuery` observes them and React
+ * Query counts the entry as inactive the moment it is written — collectable
+ * after `gcTime`, five minutes by default. The two lists survive because
+ * `useSocketOwnedList` observes them; the ledger would quietly vanish under
+ * them and reset the guard to -1, at which point the next list to arrive is
+ * applied whatever its version. The lists still look right, so the only visible
+ * symptom is the total order silently no longer holding — the one property this
+ * module exists for.
+ *
+ * Pinned here rather than at provider setup, and before the first write, for
+ * two reasons: a default only applies to a query built after it is set, and the
+ * invariant belongs beside the code that depends on it instead of somewhere a
+ * later provider can forget it.
+ */
+function pinWaterlineLedger(queryClient: QueryClient): void {
+  queryClient.setQueryDefaults(SIDEBAR_LIST_WATERLINES_KEY, { gcTime: Number.POSITIVE_INFINITY });
+}
+
 interface SidebarListItems {
   automations: AutomationSummary[];
   notes: NoteSummary[];
@@ -44,6 +65,7 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   waterline: number,
   items: SidebarListItems[K],
 ): boolean {
+  pinWaterlineLedger(queryClient);
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarList, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
   ) ?? {};
