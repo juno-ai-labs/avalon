@@ -109,9 +109,57 @@ export function internalTableExclusionSql(columnName = "name") {
   ].join("\n              AND ");
 }
 
+/**
+ * Orders two migration names **exactly as Wrangler does**, which is not the same
+ * as ordering them as strings.
+ *
+ * Wrangler's `compareMigrationPaths` splits on `/`, and for each segment parses
+ * the leading integer (`parseInt(segment.split("_")[0], 10)`); when both parse
+ * and differ it compares them numerically, and only otherwise falls back to a
+ * string compare. So `89_backfill.sql` sorts *before* `0090_boundary.sql` for
+ * Wrangler and *after* it for `Array.prototype.sort`.
+ *
+ * That divergence is not cosmetic. Every zero-padded name in this repository
+ * orders identically either way, which is why a string sort survived this long —
+ * but a single unpadded file lands below the boundary for Wrangler and above it
+ * for us, so it is applied on top of a baseline that never ran it, the manifest
+ * digest never changes because the subsumed set never changes, and the
+ * `outOfOrder` check misses it because that compared as strings too. The
+ * database silently differs from a replay. Comparing the way Wrangler does
+ * removes the whole class rather than policing filenames for one shape of it.
+ *
+ * Copied from `wrangler-dist/cli.js` (`compareMigrationPaths` /
+ * `compareSegments`, wrangler 4.123.0). If Wrangler ever changes this, the
+ * tooling has to follow: it is Wrangler that decides the order migrations are
+ * applied in, and this only has to agree.
+ */
+export function compareMigrationPaths(left, right) {
+  const leftSegments = left.split("/");
+  const rightSegments = right.split("/");
+  const shared = Math.min(leftSegments.length, rightSegments.length);
+  for (let index = 0; index < shared; index += 1) {
+    const comparison = compareMigrationSegments(leftSegments[index], rightSegments[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return leftSegments.length - rightSegments.length;
+}
+
+function compareMigrationSegments(left, right) {
+  const leftNumber = Number.parseInt(left.split("_")[0], 10);
+  const rightNumber = Number.parseInt(right.split("_")[0], 10);
+  if (leftNumber !== rightNumber) {
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+    if (Number.isFinite(leftNumber)) return -1;
+    if (Number.isFinite(rightNumber)) return 1;
+  }
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** Every migration file in `directory`, in the order Wrangler applies them. */
 export function listMigrationFiles(directory) {
-  return readdirSync(directory).filter((name) => name.endsWith(".sql")).sort();
+  return readdirSync(directory).filter((name) => name.endsWith(".sql")).sort(compareMigrationPaths);
 }
 
 /**
@@ -134,7 +182,7 @@ export function subsumedMigrations(allFiles, throughFile) {
   if (!allFiles.includes(throughFile)) {
     throw new Error(`${throughFile} is not a migration in this repository`);
   }
-  return allFiles.filter((name) => name <= throughFile);
+  return allFiles.filter((name) => compareMigrationPaths(name, throughFile) <= 0);
 }
 
 /**
@@ -171,11 +219,38 @@ export function snapshotDatabase(database) {
     .filter((object) => typeof object.sql === "string" && object.sql.trim() !== "");
 
   const rows = {};
+  const dependsOn = {};
   for (const { name } of objects.filter((object) => object.type === "table")) {
     const tableRows = database.prepare(`SELECT * FROM "${name}"`).all();
-    if (tableRows.length > 0) rows[name] = tableRows;
+    if (tableRows.length === 0) continue;
+    rows[name] = tableRows;
+    // The tables this one points at. Seeded rows have to be inserted after the
+    // rows they reference, and `sqlite_schema` order is alphabetical, which is
+    // unrelated to that.
+    dependsOn[name] = [...new Set(
+      database.prepare("SELECT \"table\" AS parent FROM pragma_foreign_key_list(?)")
+        .all(name)
+        .map((row) => String(row.parent))
+        .filter((parent) => parent !== name),
+    )];
   }
-  return { objects, rows };
+
+  // AUTOINCREMENT's high-water mark. It lives in `sqlite_sequence`, which is an
+  // internal table and so is excluded from `objects` — but it is *state*, not
+  // bookkeeping: it records the highest id ever issued, including ids of rows
+  // since deleted. Re-inserting the surviving rows sets it to the highest
+  // surviving id, so a baselined database re-issues ids that are permanently
+  // retired everywhere else.
+  const hasSequence = database
+    .prepare("SELECT COUNT(*) AS present FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'")
+    .get()?.present;
+  const sequences = Number(hasSequence ?? 0) > 0
+    ? database.prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name").all()
+      .filter((row) => !isInternalTableName(String(row.name)))
+      .map((row) => ({ name: String(row.name), seq: Number(row.seq) }))
+    : [];
+
+  return { objects, rows, dependsOn, sequences };
 }
 
 /**
@@ -206,7 +281,9 @@ export function detectVolatileColumns(firstRows, secondRows) {
       if (!secondRow) continue;
       compared += 1;
       for (const column of Object.keys(firstRow)) {
-        if (firstRow[column] !== secondRow[column]) movedIn.set(column, (movedIn.get(column) ?? 0) + 1);
+        if (!sameSeededValue(firstRow[column], secondRow[column])) {
+          movedIn.set(column, (movedIn.get(column) ?? 0) + 1);
+        }
       }
     }
 
@@ -231,6 +308,24 @@ export function detectVolatileColumns(firstRows, secondRows) {
     if (names.length > 0) volatileColumns[table] = names.sort();
   }
   return volatileColumns;
+}
+
+/**
+ * Whether two values read out of two replays are the same value.
+ *
+ * `!==` is wrong for BLOBs: SQLite hands them back as fresh `Uint8Array`
+ * objects, and two distinct objects are never `!==`-equal, so **every** seeded
+ * blob looked volatile in every row of every run. The generator then refused
+ * with a message about `datetime('now')`, sending the reader to look for a
+ * timestamp expression that does not exist — and `sqlLiteral`'s `X'…'` branch
+ * became unreachable through the generator, despite being written for exactly
+ * this case.
+ */
+export function sameSeededValue(left, right) {
+  if (left instanceof Uint8Array && right instanceof Uint8Array) {
+    return left.length === right.length && left.every((byte, index) => byte === right[index]);
+  }
+  return left === right;
 }
 
 /** A SQL literal for a value read back out of SQLite. */
@@ -306,7 +401,14 @@ export const RENDERABLE_OBJECT_TYPES = ["table", "index", "trigger"];
  * guesses.
  */
 export function assertEveryObjectRenderable(objects) {
-  const unsupported = objects.filter((object) => !RENDERABLE_OBJECT_TYPES.includes(object.type));
+  // A virtual table has `type = 'table'`, so the type check alone waves it
+  // through — and then the renderer emits the `CREATE VIRTUAL TABLE` *and*
+  // explicit `CREATE TABLE`s for the shadow tables that statement creates for
+  // itself, so applying the baseline dies on "table already exists". This
+  // docstring used to claim the generator stopped on FTS5 (0036/0037). It did
+  // not; this is what makes it true.
+  const unsupported = objects.filter((object) => !RENDERABLE_OBJECT_TYPES.includes(object.type)
+    || /^\s*CREATE\s+VIRTUAL\s+TABLE/iu.test(object.sql));
   if (unsupported.length === 0) return;
   throw new Error(
     `Cannot render ${unsupported.map((object) => `${object.type}:${object.name}`).join(", ")} into a `
@@ -348,6 +450,45 @@ export function assertVolatileValuesAreTimestamps(rows, volatileColumns) {
       }
     }
   }
+}
+
+/**
+ * Orders seeded tables so a row is inserted after the rows it references.
+ *
+ * `snapshot.rows` arrives in `sqlite_schema` order, which is alphabetical and
+ * has nothing to do with foreign keys — so a child whose name sorts before its
+ * parent's was inserted first and the file died on `FOREIGN KEY constraint
+ * failed`, naming no table. Worse, it died *partway*: the schema was created,
+ * the ledger rows at the end were not, and the next run saw a database with
+ * tables and no ledger and sent Wrangler to replay migration 0001 onto it.
+ *
+ * Only seeded tables are ordered; a parent with no rows constrains nothing.
+ * A cycle among seeded tables is refused rather than guessed at — SQLite would
+ * need `PRAGMA defer_foreign_keys`, which D1 does not allow, so there is no
+ * order that works and the honest answer is to say so.
+ */
+export function orderSeededTables(rows, dependsOn = {}) {
+  const seeded = Object.keys(rows);
+  const ordered = [];
+  const state = new Map();
+  const visit = (table, trail) => {
+    if (state.get(table) === "done") return;
+    if (state.get(table) === "visiting") {
+      throw new Error(
+        `Seeded tables ${[...trail, table].join(" -> ")} reference each other in a cycle, so there is `
+        + "no insert order that satisfies their foreign keys. D1 does not allow "
+        + "PRAGMA defer_foreign_keys, so renderBaselineSql cannot emit these rows.",
+      );
+    }
+    state.set(table, "visiting");
+    for (const parent of dependsOn[table] ?? []) {
+      if (seeded.includes(parent)) visit(parent, [...trail, table]);
+    }
+    state.set(table, "done");
+    ordered.push(table);
+  };
+  for (const table of seeded) visit(table, []);
+  return ordered;
 }
 
 function renderRows(table, tableRows, volatileForTable) {
@@ -407,7 +548,8 @@ ${D1_MIGRATIONS_TABLE_SQL};`);
 
   sections.push(`-- Tables.\n${tables.map((table) => `${table.sql.trim()};`).join("\n\n")}`);
 
-  const seeded = Object.entries(snapshot.rows);
+  const seededOrder = orderSeededTables(snapshot.rows, snapshot.dependsOn);
+  const seeded = seededOrder.map((table) => [table, snapshot.rows[table]]);
   if (seeded.length > 0) {
     const rendered = seeded
       .map(([table, tableRows]) => renderRows(table, tableRows, volatileColumns[table] ?? []))
@@ -416,6 +558,23 @@ ${D1_MIGRATIONS_TABLE_SQL};`);
 -- every run is re-derived here rather than frozen, so a baselined database is
 -- stamped when it is created rather than when this file was generated.
 ${rendered}`);
+  }
+
+  const sequences = snapshot.sequences ?? [];
+  if (sequences.length > 0) {
+    // AUTOINCREMENT never reissues an id, so the high-water mark is part of the
+    // state a replay would leave. Re-inserting the surviving rows only raises it
+    // to the highest surviving id, which hands a baselined database the ids of
+    // rows the chain deleted. D1 permits writing `sqlite_sequence` directly
+    // (verified against local D1); DELETE-then-INSERT rather than UPSERT because
+    // `sqlite_sequence` carries no uniqueness constraint for `ON CONFLICT` to
+    // target, and the row may not exist at all when every seeded row was later
+    // deleted.
+    const restored = sequences.map(({ name, seq }) => (
+      `DELETE FROM sqlite_sequence WHERE name = ${sqlLiteral(name)};\n`
+      + `INSERT INTO sqlite_sequence (name, seq) VALUES (${sqlLiteral(name)}, ${sqlLiteral(seq)});`
+    )).join("\n");
+    sections.push(`-- AUTOINCREMENT high-water marks, which the inserts above do not reproduce.\n${restored}`);
   }
 
   if (indexes.length > 0) {
@@ -561,7 +720,7 @@ export function parseWranglerJson(stdout, context) {
 export function readBaselineManifest(contents) {
   const parsed = typeof contents === "string" ? JSON.parse(contents) : contents;
   const baselines = parsed.baselines ?? (parsed.baseline ? [parsed.baseline] : []);
-  return [...baselines].sort((left, right) => (left.through < right.through ? -1 : 1));
+  return [...baselines].sort((left, right) => compareMigrationPaths(left.through, right.through));
 }
 
 /**
@@ -583,12 +742,12 @@ export function readBaselineManifest(contents) {
 export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
   return baselines
     .filter((baseline) => {
-      const expected = migrationsOnDisk.filter((name) => name <= baseline.through);
+      const expected = migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) <= 0);
       if (expected.length !== baseline.migrations.length) return false;
       if (expected.some((name, index) => name !== baseline.migrations[index])) return false;
       return digestFor(expected) === baseline.digest;
     })
-    .sort((left, right) => (left.through < right.through ? 1 : -1));
+    .sort((left, right) => compareMigrationPaths(right.through, left.through));
 }
 
 /**
@@ -664,11 +823,11 @@ export function planMigration({
     ? applied.filter((name) => !migrationsOnDisk.includes(name)).sort()
     : [];
   const highestApplied = ledgerKnown && applied.length > 0
-    ? applied.reduce((highest, name) => (name > highest ? name : highest))
+    ? applied.reduce((highest, name) => (compareMigrationPaths(name, highest) > 0 ? name : highest))
     : null;
   const outOfOrder = highestApplied === null
     ? []
-    : (pending ?? []).filter((name) => name < highestApplied);
+    : (pending ?? []).filter((name) => compareMigrationPaths(name, highestApplied) < 0);
   const isEmpty = userTables === 0 && ledgerKnown && applied.length === 0;
 
   if (isEmpty && allowBaseline) {
@@ -677,7 +836,7 @@ export function planMigration({
       return {
         action: "baseline",
         baseline,
-        thenApply: migrationsOnDisk.filter((name) => name > baseline.through),
+        thenApply: migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) > 0),
         pending,
         unknownApplied,
         outOfOrder,
