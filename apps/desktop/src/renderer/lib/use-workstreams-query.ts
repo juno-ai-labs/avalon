@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
-import { useWorkspaceSocket, type WorkstreamPage } from './workspace-socket';
-import { applyVersionedSidebarList } from './sidebar-list-store';
+import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
@@ -43,11 +42,10 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * transcript and anything like it. That is a property of the request, not of
  * the identity of the list, which is why it stays out of the key.
  *
- * The first page is asked for as `list_sidebar`, which answers with the
- * automations and notes beside it and seeds their caches here — the whole
- * sidebar opens, and reopens, on one round trip. Those two lists have no
- * fetcher of their own: WorkspaceDO pushes them whole whenever it changes one
- * of their rows, and this is where they are seeded and re-seeded.
+ * The first page is not fetched at all. Subscribing to the workspace socket is
+ * answered with the whole sidebar unasked, and the provider writes it — so this
+ * query exists for what a person's own action asks for afterwards: scrolling
+ * past page one, turning Debug enabled on, and reloading after a pin.
  *
  * ## Why this pages by hand rather than with `useInfiniteQuery`
  *
@@ -72,7 +70,7 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  *   re-reading everything above it.
  */
 export function useWorkstreamsQuery(): WorkstreamsQuery {
-  const { listSidebar, listWorkstreams } = useWorkspaceSocket();
+  const { listWorkstreams, sidebarConnect } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
   const pagesLoaded = useRef(1);
@@ -87,40 +85,11 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       let cursor: string | undefined;
       let walked = 0;
       for (let page = 0; page < pagesLoaded.current; page += 1) {
-        // The first page is always the whole sidebar. Nothing else loads the
-        // automations and notes now — no REST fetcher stands behind them — so
-        // every reason this query reloads is also a reason they must be
-        // reloaded: a cold start, a reconnect, a debug toggle. Later pages ask
-        // for the directory alone.
-        let result: WorkstreamPage;
-        if (page === 0) {
-          const batch = await listSidebar({
-            limit: WORKSTREAM_PAGE_SIZE,
-            includeSystem: debugEnabled,
-          });
-          // Written before this function returns, so React Query stores the
-          // work streams in the same tick the other two lists land in. The
-          // three arrive in one render rather than three, which is the whole
-          // point of asking for them together.
-          //
-          // Through the same receiver the pushes use, so a batch read before a
-          // write cannot land on top of the push that carried it: the ledger
-          // keeps whichever version is newer, whatever order they arrive in.
-          applyVersionedSidebarList(
-            queryClient,
-            'automations',
-            batch.automations.waterline,
-            batch.automations.items,
-          );
-          applyVersionedSidebarList(queryClient, 'notes', batch.notes.waterline, batch.notes.items);
-          result = batch;
-        } else {
-          result = await listWorkstreams({
-            limit: WORKSTREAM_PAGE_SIZE,
-            ...(cursor ? { before: cursor } : {}),
-            includeSystem: debugEnabled,
-          });
-        }
+        const result = await listWorkstreams({
+          limit: WORKSTREAM_PAGE_SIZE,
+          ...(cursor ? { before: cursor } : {}),
+          includeSystem: debugEnabled,
+        });
         items.push(...result.items);
         walked += 1;
         cursor = result.nextCursor ?? undefined;
@@ -134,8 +103,27 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       setHasMore(cursor != null);
       return mergeWorkstreams([], items);
     },
+    // Not fetched on mount: the first page arrives unasked with the connect
+    // payload, and asking for it as well is the round trip that payload exists
+    // to remove. Enabled once one has landed, at which point the cache is
+    // already populated and infinitely fresh — so nothing fetches until
+    // something explicitly invalidates, which is the debug toggle or a pin.
+    enabled: sidebarConnect !== null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+
+  // Paging is the client's own position and the payload knows nothing about it.
+  // Adopted only while page one is all that is loaded: a reader who has
+  // scrolled holds a cursor further down the list, and taking the payload's
+  // would make the next scroll re-fetch a page they already have.
+  const observedConnect = useRef(0);
+  useEffect(() => {
+    if (!sidebarConnect || sidebarConnect.generation === observedConnect.current) return;
+    observedConnect.current = sidebarConnect.generation;
+    if (pagesLoaded.current !== 1) return;
+    nextCursor.current = sidebarConnect.nextCursor;
+    setHasMore(sidebarConnect.nextCursor !== null);
+  }, [sidebarConnect]);
 
   const fetchMore = useCallback(() => {
     const cursor = nextCursor.current;

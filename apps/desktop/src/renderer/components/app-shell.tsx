@@ -163,10 +163,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // and is still fading out, which is on screen and has to be laid out for.
   const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
-  // One socket answer opens the sidebar: the first page of work streams, the
-  // automations and the notes together. Those last two are then kept current by
-  // WorkspaceDO pushing each list whole when it changes a row, so neither has a
-  // fetcher here — see `useSocketOwnedList`.
+  // Nothing here loads the sidebar. Subscribing to the workspace socket is
+  // answered with the whole of it — the first page of work streams, the
+  // automations and the notes — and WorkspaceDO pushes each list again whenever
+  // it changes a row. This query exists for what a person asks for afterwards:
+  // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
   const automations = useSocketOwnedList<AutomationSummary>(['automations']);
   // The automation list endpoint has a second job the sidebar never wanted: it
@@ -236,7 +237,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
-        loading={workstreams.isLoading}
+        // Not `isLoading`: the first page is not fetched, so there is no
+        // in-flight request to report. The sidebar is waiting exactly while it
+        // has no list yet — which also keeps the skeletons up rather than
+        // claiming an empty workspace when the socket cannot connect.
+        loading={workstreams.data === undefined}
         notes={notes.data ?? []}
         onArchiveDraftAutomation={async (automation) => {
           if (!api) return;

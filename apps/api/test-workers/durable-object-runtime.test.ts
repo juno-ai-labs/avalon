@@ -2213,7 +2213,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("answers one list_sidebar with the directory, the automations and the notes", async () => {
+  it("answers subscribe with the whole sidebar, unasked", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -2313,23 +2313,24 @@ describe("Durable Objects in the Workers runtime", () => {
     socket!.accept();
 
     try {
+      // The only thing the client says is where it got to. Everything the
+      // sidebar paints comes back on the answer, without being named.
       const answer = nextMessage(socket!);
-      socket!.send(JSON.stringify({
-        type: "list_sidebar",
-        requestId: "00000000-0000-7000-8000-000000000709",
-        limit: 20,
-        includeSystem: false,
-      }));
-      const page = JSON.parse(String((await answer).data)) as {
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as {
         type: string;
-        requestId: string;
-        workstreams: { items: Array<{ id: string; title: string }>; nextCursor: string | null };
-        automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
-        notes: { waterline: number; items: Array<{ id: string; title: string }> };
+        reason: string;
+        sidebar: {
+          workstreams: { items: Array<{ id: string; title: string }>; nextCursor: string | null };
+          automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
+          notes: { waterline: number; items: Array<{ id: string; title: string }> };
+        };
       };
 
-      expect(page.type).toBe("workspace_sidebar_page");
-      expect(page.requestId).toBe("00000000-0000-7000-8000-000000000709");
+      expect(event.type).toBe("workspace_sync");
+      expect(event.reason).toBe("initial");
+      const page = event.sidebar;
+      expect(page).toBeDefined();
       expect(page.workstreams.items).toHaveLength(1);
       expect(page.workstreams.items[0]).toMatchObject({
         id: WORKSTREAM_ID,

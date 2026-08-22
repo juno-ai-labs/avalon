@@ -36,7 +36,7 @@ is recorded.
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
-| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages, opens a cold sidebar with the one batched read, and retains the last page while a reconnect retries its request. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
@@ -170,22 +170,40 @@ and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
 REST/D1 list endpoint to reconstruct them.
 
-Opening a cold sidebar sends `list_sidebar` instead, once. It carries the same
-request ID, limit and system-row preference but no cursor, and WorkspaceDO
-answers `workspace_sidebar_page`: one `workstream_page` body plus the viewer's
-automations and notes, each bounded at 250 rows. All three come from this
-object's own SQLite — `workspace_workstream_directory`, `automation_subscriptions`
-and `notes` — read with no `await` between them, so the sidebar opens on one
-consistent snapshot in one round trip rather than a socket page beside two REST
-calls that turn back into RPC to this same object. The batch is the cold read
-only: a later page is `list_workstreams`, and a later refresh belongs to whichever
-topic owns the list that changed. Two consequences follow. The automation email
-route is served as stored, because reconciling it against the Global registry is
-a network call that must not run on the object's socket thread; no sidebar row
-renders the address, and the next `automations` invalidation refetches a
-reconciled list over REST. And a workspace past either bound is served its first
-250 rows here and reconciled the same way — a bound that truncates keeps a very
-large sidebar loading, where a bound that rejected would fail the whole batch.
+Subscribing is answered with the sidebar itself. The `workspace_sync` event that
+answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
+the viewer's automations and notes, each bounded at 250 rows and each stamped
+with its own waterline. All three come from this object's own SQLite —
+`workspace_workstream_directory`, `automation_subscriptions` and `notes` — read
+with no `await` between them, so the sidebar opens on one consistent snapshot
+and on no request at all. The client's `subscribe` frame names no collection, no
+filter and no page size; it carries a waterline, which is where that client got
+to, not what it would like.
+
+Every subscribe carries it, cold or resuming. A resume where no topic moved
+still gets one, under `reason: "resume"` with an empty topic list — the one
+event shape allowed to name no topics, because it exists to hand over state
+rather than to report news. That matters because a push can be missed while a
+socket is away and produce no topic at all: `WorkspaceScheduler` advancing an
+automation's next run is exactly that. A resume that missed nothing costs the
+bytes and applies nothing, since every list carries the waterline its pushes
+carry and the client's comparison drops it. Receivers must apply the sidebar
+*before* the topic-waterline guard, or a resume repeating a waterline the client
+already holds would be discarded along with the state it was sent to deliver.
+They must also skip `workstream_directory` while handling an event that carried
+the sidebar: `initial` names every topic, so invalidating that one would send
+the client back for the page the same event just delivered — the round trip this
+payload exists to remove, reintroduced one line below it.
+
+The directory page in that payload deliberately excludes system work streams.
+Debug enabled is rare and engineers only, and the server does not hold the
+preference — it lives in the desktop's own application settings — so a viewer
+who wants those rows re-draws the sidebar from a `list_workstreams` request
+carrying `includeSystem`. Loading the common case unasked and paying a round
+trip for the rare one is the way round that suits the p95; the reverse would put
+a debug preference in everyone's connect. The automations and notes do not vary
+by it at all.
+
 Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
 affected list whole as `workspace_sidebar_list` whenever it writes one of their
 rows, so the batch is the only load and the push is the only refresh — which is
@@ -470,6 +488,38 @@ work stream no longer closes anything until reconnect — those are object-local
 facts the D1-fed queue cannot see.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
+
+### 2026-08-21 — Subscribing is answered with the sidebar
+
+**What changed:** The `workspace_sync` event that answers `subscribe` carries a
+`sidebar` field — the first directory page, the automations and the notes, each
+waterlined. `list_sidebar` and `workspace_sidebar_page` are gone; nothing
+requests the sidebar's first screen any more. Every subscribe carries it,
+including a resume where no topic moved, which is the new `reason: "resume"`
+with an empty topic list. The desktop no longer fetches page one at all.
+
+**Why:** [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks the
+connect exchange to deliver what the opened surface paints, and forbids a
+subscribe frame that names a collection, a filter or a page size.
+`list_sidebar` named two of the three. It had removed two REST reads, which was
+worth having, but it left the round trip in place and it was a new instance of a
+pattern that document marks as behaviour to replace.
+
+**Considered and rejected:** A separate unprompted `workspace_sidebar` frame,
+which was built first and works — but it makes the connect exchange two frames
+where one will do, and a resume with nothing to report has no sync event to sit
+beside. Keeping `list_sidebar` as a debug-only request was also rejected once it
+was clear `includeSystem` filters only work streams: `list_workstreams` already
+takes that flag, so the debug re-draw needs no command of its own.
+
+**Consequences:** A subscribe now costs a directory read plus two list reads on
+the object, per socket, including on every reconnect — where it previously cost
+an invalidation the client answered with its own requests, so the round trips
+went down and the object's work went up. The sidebar must be applied before the
+topic-waterline guard, since a quiet resume repeats a waterline the client
+already holds. System work streams are the one thing the payload does not
+serve; that preference lives in the desktop, and a debug viewer asks for the
+wider directory itself.
 
 ### 2026-08-21 — The two sidebar lists are pushed, not invalidated
 

@@ -1,11 +1,11 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSidebarListEventSchema,
-  WorkspaceSidebarPageEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamSocketCommandResultSchema,
+  type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
   type WorkspaceWorkstreamPageEvent,
@@ -23,18 +23,17 @@ import {
 } from 'react';
 import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
 import { uuidV7 } from './telemetry';
-import type { AutomationSummary, Message, NoteSummary, WorkstreamSummary } from './types';
+import type { Message, WorkstreamSummary } from './types';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
   workstreamSummaryState,
 } from './workstream-state-store';
 import { applyVersionedSidebarList } from './sidebar-list-store';
-import { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { mergeCachedWorkstreamPage, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
-type ListSidebarCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_sidebar' }>;
 type WorkspaceSocketApi = Pick<AvalonApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -44,10 +43,17 @@ export interface WorkstreamPage {
   nextCursor: string | null;
 }
 
-/** Everything the sidebar opens with, from the one object that owns all of it. */
-export interface SidebarBatch extends WorkstreamPage {
-  automations: { waterline: number; items: AutomationSummary[] };
-  notes: { waterline: number; items: NoteSummary[] };
+/**
+ * What the last connect payload established, for the surfaces that page beyond
+ * it.
+ *
+ * `generation` counts payloads rather than identifying one: a paging hook needs
+ * to know that a *new* sidebar arrived, not which. `nextCursor` is the
+ * directory's position after the page the payload carried.
+ */
+export interface SidebarConnect {
+  generation: number;
+  nextCursor: string | null;
 }
 
 interface PendingCommand {
@@ -58,29 +64,18 @@ interface PendingCommand {
 }
 
 /**
- * A correlated directory request awaiting its answer.
+ * A correlated directory page awaiting its answer.
  *
- * The two kinds share one map so they share one lifecycle: resend after a
- * transient reconnect, reject on going offline, reject on disposal. Those are
- * the paths a second map would quietly fall out of — the batch is sent once per
- * cold sidebar, which is exactly when a reconnect is most likely to be in
- * flight, and a batch dropped there leaves the sidebar on skeletons forever.
+ * Only pages are requested now — the sidebar's first screen arrives unasked on
+ * subscribe. What is left is what a person's own action asked for: scrolling
+ * past the first page, and turning Debug enabled on to widen the list.
  */
-type PendingDirectoryRequest =
-  | {
-    kind: 'workstreams';
-    command: ListWorkstreamsCommand;
-    resolve: (page: WorkstreamPage) => void;
-    reject: (error: Error) => void;
-    timeout: number;
-  }
-  | {
-    kind: 'sidebar';
-    command: ListSidebarCommand;
-    resolve: (batch: SidebarBatch) => void;
-    reject: (error: Error) => void;
-    timeout: number;
-  };
+interface PendingDirectoryRequest {
+  command: ListWorkstreamsCommand;
+  resolve: (page: WorkstreamPage) => void;
+  reject: (error: Error) => void;
+  timeout: number;
+}
 
 interface WorkspaceSocketContextValue {
   state: WorkspaceSocketState;
@@ -91,8 +86,8 @@ interface WorkspaceSocketContextValue {
     before?: string;
     includeSystem: boolean;
   }): Promise<WorkstreamPage>;
-  /** The cold-start read: the first directory page, the automations and the notes. */
-  listSidebar(input: { limit: number; includeSystem: boolean }): Promise<SidebarBatch>;
+  /** The last sidebar the server sent unasked, or null before the first one. */
+  sidebarConnect: SidebarConnect | null;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -180,6 +175,7 @@ export function WorkspaceSocketProvider({
   const queryClient = useQueryClient();
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
+  const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);
   const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<Message>>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
@@ -188,13 +184,6 @@ export function WorkspaceSocketProvider({
     )),
   );
   const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
-    () => Promise.reject(new ApiError(
-      'The workspace is not connected.',
-      409,
-      'workspace_socket_unavailable',
-    )),
-  );
-  const listSidebarRef = useRef<WorkspaceSocketContextValue['listSidebar']>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
       409,
@@ -236,6 +225,24 @@ export function WorkspaceSocketProvider({
           if (!stopped && socket === target && target.readyState === WebSocket.OPEN) target.close();
         }, PONG_TIMEOUT_MS);
       }, HEARTBEAT_MS);
+    };
+    const applyConnectedSidebar = (sidebar: WorkspaceSidebar): void => {
+      // Merged over whatever is resident rather than replacing it: this is page
+      // one, and a reader who had scrolled keeps the pages below it instead of
+      // watching the list collapse and refill.
+      const page = applyDirectoryPage(queryClient, sidebar.workstreams);
+      mergeCachedWorkstreamPage(queryClient, page.items);
+      applyVersionedSidebarList(
+        queryClient,
+        'automations',
+        sidebar.automations.waterline,
+        sidebar.automations.items.map(mapAutomationSummary),
+      );
+      applyVersionedSidebarList(queryClient, 'notes', sidebar.notes.waterline, sidebar.notes.items);
+      setSidebarConnect((current) => ({
+        generation: (current?.generation ?? 0) + 1,
+        nextCursor: page.nextCursor,
+      }));
     };
     const sendPending = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
@@ -293,13 +300,9 @@ export function WorkspaceSocketProvider({
             type: 'subscribe',
             afterWaterline: Math.max(0, lastWaterline),
           }));
-          // Work-stream state pushes intentionally carry only the latest row,
-          // not a replay log. A reconnect therefore reloads any directory that
-          // was already resident; per-row waterlines discard an older page if
-          // the direct WorkstreamDO socket has advanced the shared cache.
-          if (queryClient.getQueryData(WORKSTREAMS_QUERY_KEY) !== undefined) {
-            void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-          }
+          // No directory invalidation here: subscribing is answered with the
+          // whole sidebar, so a reconnect reconverges from that payload rather
+          // than from a refetch the client has to ask for.
           sendPending();
           scheduleHeartbeat(next);
         });
@@ -317,6 +320,11 @@ export function WorkspaceSocketProvider({
           }
           const sync = WorkspaceSocketSyncEventSchema.safeParse(decoded);
           if (sync.success) {
+            // Before the waterline guard, not after. The sidebar rides on the
+            // answer to `subscribe`, and a resume where no topic moved carries
+            // the waterline the client already has — so a guard that ran first
+            // would drop the state this event exists to deliver.
+            if (sync.data.sidebar) applyConnectedSidebar(sync.data.sidebar);
             if (sync.data.waterline <= lastWaterline) return;
             lastWaterline = sync.data.waterline;
             setTopicWaterlines((current) => {
@@ -324,38 +332,24 @@ export function WorkspaceSocketProvider({
               for (const topic of sync.data.topics) nextWaterlines[topic] = sync.data.waterline;
               return nextWaterlines;
             });
-            for (const topic of sync.data.topics) invalidateTopic(queryClient, topic);
+            for (const topic of sync.data.topics) {
+              // An event that carried the sidebar has just delivered the
+              // directory; telling the client to go and fetch it again in the
+              // same breath undoes the whole point of the payload. `initial`
+              // names every topic, so without this the connect answer is
+              // followed immediately by the `list_workstreams` it replaced.
+              if (topic === 'workstream_directory' && sync.data.sidebar) continue;
+              invalidateTopic(queryClient, topic);
+            }
             return;
           }
           const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);
           if (workstreamPage.success) {
             const entry = pendingDirectoryRequests.get(workstreamPage.data.requestId);
-            // A request id answers with the kind it asked for. A mismatch is a
-            // protocol fault rather than a late reply, and resolving the wrong
-            // shape would put an object where the caller unpacks an array.
-            if (entry?.kind !== 'workstreams') return;
+            if (!entry) return;
             pendingDirectoryRequests.delete(workstreamPage.data.requestId);
             window.clearTimeout(entry.timeout);
             entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data));
-            return;
-          }
-          const sidebarPage = WorkspaceSidebarPageEventSchema.safeParse(decoded);
-          if (sidebarPage.success) {
-            const entry = pendingDirectoryRequests.get(sidebarPage.data.requestId);
-            if (entry?.kind !== 'sidebar') return;
-            pendingDirectoryRequests.delete(sidebarPage.data.requestId);
-            window.clearTimeout(entry.timeout);
-            entry.resolve({
-              ...applyDirectoryPage(queryClient, sidebarPage.data.workstreams),
-              automations: {
-                waterline: sidebarPage.data.automations.waterline,
-                items: sidebarPage.data.automations.items.map(mapAutomationSummary),
-              },
-              notes: {
-                waterline: sidebarPage.data.notes.waterline,
-                items: sidebarPage.data.notes.items,
-              },
-            });
             return;
           }
           const workstreamState = WorkspaceWorkstreamStateEventSchema.safeParse(decoded);
@@ -475,27 +469,7 @@ export function WorkspaceSocketProvider({
           'workspace_directory_timeout',
         ));
       }, COMMAND_TIMEOUT_MS);
-      pendingDirectoryRequests.set(requestId, { kind: 'workstreams', command, resolve, reject, timeout });
-      sendPending();
-      void connect();
-    });
-    listSidebarRef.current = (input) => new Promise((resolve, reject) => {
-      const requestId = uuidV7();
-      const command: ListSidebarCommand = {
-        type: 'list_sidebar',
-        requestId,
-        limit: input.limit,
-        includeSystem: input.includeSystem,
-      };
-      const timeout = window.setTimeout(() => {
-        pendingDirectoryRequests.delete(requestId);
-        reject(new ApiError(
-          'The sidebar could not be loaded. Try again.',
-          0,
-          'workspace_sidebar_timeout',
-        ));
-      }, COMMAND_TIMEOUT_MS);
-      pendingDirectoryRequests.set(requestId, { kind: 'sidebar', command, resolve, reject, timeout });
+      pendingDirectoryRequests.set(requestId, { command, resolve, reject, timeout });
       sendPending();
       void connect();
     });
@@ -530,11 +504,6 @@ export function WorkspaceSocketProvider({
         409,
         'workspace_socket_closed',
       ));
-      listSidebarRef.current = () => Promise.reject(new ApiError(
-        'The workspace is no longer connected.',
-        409,
-        'workspace_socket_closed',
-      ));
       rejectPending(new ApiError(
         'The workspace closed before the message was confirmed.',
         409,
@@ -556,13 +525,9 @@ export function WorkspaceSocketProvider({
     (input) => listWorkstreamsRef.current(input),
     [],
   );
-  const listSidebar = useCallback<WorkspaceSocketContextValue['listSidebar']>(
-    (input) => listSidebarRef.current(input),
-    [],
-  );
   const value = useMemo(
-    () => ({ state, topicWaterlines, createMessage, listWorkstreams, listSidebar }),
-    [createMessage, listSidebar, listWorkstreams, state, topicWaterlines],
+    () => ({ state, topicWaterlines, createMessage, listWorkstreams, sidebarConnect }),
+    [createMessage, listWorkstreams, sidebarConnect, state, topicWaterlines],
   );
   return <WorkspaceSocketContext.Provider value={value}>{children}</WorkspaceSocketContext.Provider>;
 }

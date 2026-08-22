@@ -559,12 +559,11 @@ listability, “You Are Mentioned,” and the Home/sidebar list of work streams 
 interest. Pins, resource links, and resolved suggestion feedback live beside
 those rows so cross-work-stream queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
-WorkspaceDO socket, and opens a cold sidebar with one `list_sidebar` batch that
-answers the first page together with the viewer's `automation_subscriptions` and
-`notes` rows — all three are this object's tables, so the sidebar's opening state
-is one local snapshot rather than a socket read beside two Worker round trips
-back into the same object. [`realtime-sockets.md`](realtime-sockets.md) holds the
-protocol and its bounds. Common and viewer rows retain separate monotonic waterlines,
+WorkspaceDO socket, and receives the sidebar itself on the answer to
+`subscribe` — the first page together with the viewer's
+`automation_subscriptions` and `notes` rows, since all three are this object's
+tables. Opening the sidebar therefore costs no request at all.
+[`realtime-sockets.md`](realtime-sockets.md) holds the protocol and its bounds. Common and viewer rows retain separate monotonic waterlines,
 because Queue is at-least-once and unordered. Electron keeps one shared
 per-work-stream waterline ledger behind the header/detail/sidebar caches. The
 active WorkstreamDO socket normally wins first; the later WorkspaceDO event is
@@ -1217,6 +1216,33 @@ expired. Recovery remains row-derived and survives eviction, while a
 receipt terminalized by recovery converges the transcript in the same SQLite
 transaction. Real-workerd tests pin the non-joining heartbeat and Node/runtime
 tests pin both the v13-to-v14 repair and ordinary receipt semantics.
+
+### 2026-08-21 — The sidebar rides on the subscribe answer
+
+**What changed:** `subscribe` builds the whole sidebar for that viewer — the
+first directory page, the automations, the notes — and attaches it to the
+`workspace_sync` event it already sends. The `list_sidebar` message it replaces
+is gone. A resume with no topics to report still answers, under a new `resume`
+reason, so the payload reaches a socket that was away.
+
+**Why:** The object holds the socket and the rows; the ticket already proved who
+connected. Waiting to be asked spends a round trip establishing something the
+object had already determined, and it is what
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks a connect
+exchange not to do.
+
+**Considered and rejected:** Sending the sidebar as its own frame beside the
+sync event — one more frame per subscribe, and nothing to attach it to on a
+quiet resume; and taking `includeSystem` from the client so the payload could
+serve debug viewers too, which puts a preference this object does not hold into
+every connect for a case that is rare and internal.
+
+**Consequences:** Every subscribe now performs three reads before it answers,
+where before it read a bounded replay log. Reconnect storms therefore cost this
+object more than they used to, bounded by 250 rows per list and by the reads
+being local and synchronous. The payload is per viewer, so it cannot be built
+once and broadcast; a future surface wanting a connect payload of its own should
+expect the same shape of cost.
 
 ### 2026-08-21 — A write to an automation or note pushes its list
 
