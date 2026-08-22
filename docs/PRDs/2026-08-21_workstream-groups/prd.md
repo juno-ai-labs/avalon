@@ -11,8 +11,9 @@
 > [`../../workstream-pinning.md`](../../workstream-pinning.md),
 > [`../../workstream-durable-object.md`](../../workstream-durable-object.md),
 > [`../../workstream-origin-attachments.md`](../../workstream-origin-attachments.md),
-> [`../../theming.md`](../../theming.md), and
-> [`../../choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md).
+> [`../../theming.md`](../../theming.md),
+> [`../../choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md), and
+> [`../../durable-object-alarms.md`](../../durable-object-alarms.md).
 
 ## Summary
 
@@ -451,6 +452,21 @@ three other things have to survive.
   the object hands it work at its own pace. A large group makes the fan-out take
   longer; it does not make it fail.
 
+**The drain is a derived alarm, not a `setAlarm` of its own.** Cloudflare gives a
+Durable Object exactly one alarm, and WorkspaceDO already shares it between due
+schedules, resource watches, maintenance passes, Terminal deadlines, and the
+activity-event sweep — so it extends `ScheduledDurableObject`, which owns the
+slot and keeps it pointed at the earliest reason. The fan-out outbox joins that
+as a second *derived* source, folded into `nextDerivedAlarmAt` as
+`MIN(not_before)` beside the sweep already there, exactly as the work-stream
+object's three outboxes are. It is deliberately **not** an entry in
+`_internal_durable_alarms`: an outbox row has no identity that can succeed or
+fail on its own, which is the rule
+[`durable-object-alarms.md`](../../durable-object-alarms.md) draws between the
+two kinds. Arming this with a bare `setAlarm` would overwrite whichever reason
+was armed already and stop the workspace's schedule without failing anything —
+the exact outcome that document exists to prevent.
+
 A cap was considered and rejected on the precedent that already exists: pinning
 shipped `MAX_PINNED_WORKSTREAMS`, moved it onto a visibility-filtered count, and
 then removed it outright, because a cap counted against stored rows is wrong
@@ -667,8 +683,8 @@ CREATE TABLE workspace_group_default_resources (
 ) STRICT;
 
 -- Transactional outbox for the fan-out, drained onto the regional queue by the
--- object's alarm. Same shape as the regional-effect outbox the work-stream
--- objects already use, and for the same reason: `queue.send()` does not
+-- object's alarm. Same shape as `durable_outbox`, the regional-effect outbox the
+-- work-stream objects already use, and for the same reason: `queue.send()` does not
 -- participate in the local transaction, so the intent has to be committed with
 -- the row that caused it. Deliberately self-contained — every field the attach
 -- needs is on the row, so draining it joins to nothing.
@@ -682,8 +698,15 @@ CREATE TABLE workspace_group_resource_fanout (
   attached_by_user_id TEXT NOT NULL,
   enqueued_at         INTEGER NOT NULL CHECK (enqueued_at >= 0),
   attempts            INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  -- The retry instant the counter above is useless without, and the column the
+  -- object's alarm derives from: `MIN(not_before)` over this table is what
+  -- `nextDerivedAlarmAt` folds in. `durable_outbox` carries it for both reasons.
+  not_before          INTEGER NOT NULL CHECK (not_before >= 0),
   PRIMARY KEY (group_id, resource_id, workstream_id)
 ) STRICT;
+
+CREATE INDEX workspace_group_resource_fanout_drain_idx
+  ON workspace_group_resource_fanout(not_before, enqueued_at);
 ```
 
 **`NOCASE` folds ASCII only.** *Café* and *CAFÉ* are therefore two different
@@ -991,32 +1014,39 @@ does not establish that any of this is visible or legible.
 11. A default added and then deleted — group and all — before the alarm drains
     still attaches, and the resulting link names the original actor. This is the
     case that a join back to `workspace_group_default_resources` cannot serve.
-12. Switching **Group terminology** to **Project** changes the sidebar heading,
+12. **Adding the fan-out's wake reason does not cost the workspace its other
+    alarms.** On real workerd, a pending fan-out row and a due schedule armed
+    together both fire: the outbox drains and the schedule still runs. A fan-out
+    enqueued while a later alarm is armed pulls the alarm in rather than waiting
+    for it, and draining the outbox settles nothing it does not own. A clobbered
+    alarm throws nothing and fails silently, so this is proved rather than
+    reasoned about.
+13. Switching **Group terminology** to **Project** changes the sidebar heading,
     the plus button, the context-menu item, the modal, the marker's accessible
     name, the group home page, and the settings row itself, with no reload. The
     setting survives a reload, proving the D1 column is written and read back.
-13. The terminology invariant is enforced by a rule a test can apply
+14. The terminology invariant is enforced by a rule a test can apply
     mechanically: **no string in a JSX text position, `aria-label`, `title`, or
     `placeholder` matches `/\b(group|project)s?\b/i` outside the terminology
     helper.** A bare grep is not the check — the renderer legitimately contains
     `role="group"`, Radix's `*.Group` parts, and the recency identifiers this PRD
     asks be renamed — and a check that needs an allowlist to stay quiet proves
     nothing.
-14. Archiving a work stream removes it from its groups' lists and from the group
+15. Archiving a work stream removes it from its groups' lists and from the group
     home page's count, exactly as it removes it from *Yesterday*; un-archiving
     puts it back with its membership intact. An expanded group of more work
     streams than one page pages them.
-15. Membership and defaults survive a WorkspaceDO restart.
-16. A fan-out whose target work stream is unreachable retries and lands in the
+16. Membership and defaults survive a WorkspaceDO restart.
+17. A fan-out whose target work stream is unreachable retries and lands in the
     dead-letter queue; the group keeps the default, and nothing else in the
     workspace is affected. A fan-out whose group, default row, or target work
     stream has vanished or been archived in the meantime drops the intent without
     throwing, and the drain keeps going for every other group in the workspace.
-17. A note admitted as a group default and then made private stops being fanned
+18. A note admitted as a group default and then made private stops being fanned
     out: it leaves the group's default list, later joiners do not receive it, and
     work streams that already hold it keep it. The fan-out-time re-check refuses
     it even if the list write is lost.
-18. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
+19. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`,
     `pnpm test:scripts`, both Wrangler dry-run builds, and
     `pnpm --filter @avalon/api test:workers` are green. Anything that depends on
     Durable Object storage, alarms, or the socket is a `test-workers/` test on
