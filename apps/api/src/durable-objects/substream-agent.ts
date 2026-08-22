@@ -494,6 +494,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * first.
    */
   private objectStore!: WorkstreamObjectStore;
+  /** This object's own `SUBSTREAM_AGENTS` name; see {@link selfObjectName}. */
+  private objectName: string | null = null;
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private readonly initialized: Promise<void>;
@@ -603,31 +605,41 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * This object's own name in `SUBSTREAM_AGENTS`, or `null` before it has one.
    *
-   * Not memoized: the external substream id is written on the object's first
-   * scoped request, so a name derived before that would be the main child's and
-   * would stay wrong. Both reads are against this object's own SQLite.
+   * Memoized only once a name exists. Both durable facts are write-once — a
+   * root identity is never rewritten, and `ensureSubstreamIdentity` refuses a
+   * second external id — so a derived name cannot change, while a `null` has to
+   * stay re-derivable because the facts arrive on the object's first scoped
+   * request. Freezing a `null` would leave the object permanently unable to
+   * recognize itself.
    *
    * The substream row is read here rather than through
    * {@link externalSubstreamId}, whose `"0"` default is right for its own
    * callers — they ask it *am I the main child?*, and an unwritten row reads as
-   * yes — and wrong as a name. An object with a root identity but no substream
-   * row would take the main child's name and answer self-calls addressed to a
-   * sibling out of its own storage. No path reaches that today, but the
-   * ordering that prevents it is not something a name should depend on.
+   * yes — and wrong as a name. See {@link substreamSelfObjectName}.
    */
   private selfObjectName(): string | null {
+    if (this.objectName !== null) return this.objectName;
     // Genuinely absent, definite-assignment notwithstanding: the environment
     // carrying this object's self-registration exists from the first statement
     // of the constructor, and the store is built inside the callback below it.
     if (!this.objectStore) return null;
-    const substream = this.state.storage.sql.exec<{ external_substream_id: string }>(
-      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
-    ).toArray()[0];
-    return substreamSelfObjectName(
-      this.env.AVALON_REGION,
-      this.objectStore.identity(),
-      substream?.external_substream_id ?? null,
-    );
+    // Guarded like every other object's name read. A throw here would not stay
+    // local: the thunk runs inside `durableObjectSelf`, so a missing table would
+    // take down *every* `SUBSTREAM_AGENTS` resolution this object makes,
+    // including the sibling calls that have nothing to do with self-recognition.
+    try {
+      const substream = this.state.storage.sql.exec<{ external_substream_id: string }>(
+        `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+      ).toArray()[0];
+      this.objectName = substreamSelfObjectName(
+        this.env.AVALON_REGION,
+        this.objectStore.identity(),
+        substream?.external_substream_id ?? null,
+      );
+    } catch {
+      return null;
+    }
+    return this.objectName;
   }
 
   private externalSubstreamId(): SubstreamId {
