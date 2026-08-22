@@ -420,7 +420,7 @@ describe("the Workstream Durable Object relational schema", () => {
       ).run();
 
       expect(() => applyWorkstreamObjectSchema(storage, "worker-two"))
-        .toThrow("workstream_schema_hash_mismatch:1");
+        .toThrow("substream_agent_do_schema_hash_mismatch:1");
     } finally {
       database.close();
     }

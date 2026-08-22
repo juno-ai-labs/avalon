@@ -1043,6 +1043,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — The object-store migration component takes the agent's name
+
+**What changed:** `WORKSTREAM_OBJECT_SCHEMA_COMPONENT` is `substream_agent_do`
+rather than `workstream`. Only the migration runner's component key changed —
+the schema, its 15 versions, their hashes, the class, and the object graph's
+names are untouched. The runner prefixes its own errors with the key, so this
+object's failures now read `substream_agent_do_schema_hash_mismatch:<version>`
+and the like.
+
+**Why:** the key is what the migration tracker files this object's reports
+under, and it was the one key in the fleet that named neither its class nor
+anything else on the site, sitting next to `workstream_do` — a genuinely
+different object — under a name that read like its parent. It said `workstream`
+because the history began under `WorkstreamRoom` and the class rename was
+deliberately storage-preserving, which kept the receipts and left the label
+behind.
+
+**Considered and rejected:** renaming the constant along with its value. It
+still names *which* schema this module owns, which is what a reader here needs;
+the value names the class that applies it, which is what an operator reading the
+tracker needs. Also rejected: leaving it, on the grounds that the key is only a
+label — it is a label on the one screen that gets read during an incident.
+
+**What a future change has to respect:** the component key is read by
+`apps/migration-tracker`, which stores it and keys a per-region head on it.
+Changing it again means a registry migration in the same change; the tracker
+cannot import this constant, because it must not depend on the Worker it
+observes. Nothing in the object itself records the key — `_sql_schema_migrations`
+holds a version, a hash, and a build — so no rename here can move a receipt.
+
 ### 2026-08-22 — An object addressing its own name reaches itself
 
 **What changed:** Every Durable Object class registers itself with

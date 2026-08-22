@@ -41,7 +41,7 @@ describe("DurableObjectMigrationReportSchema", () => {
     objectId: "a".repeat(64),
     objectName: `eu:${WORKSPACE}:${WORKSTREAM}`,
     className: "SubstreamAgent",
-    component: "workstream",
+    component: "substream_agent_do",
     region: "eu",
     appEnv: "production",
     workerVersionId: "0.24.0",
@@ -83,7 +83,7 @@ describe("DurableObjectMigrationReportSchema", () => {
     expect(DurableObjectMigrationReportSchema.safeParse({
       ...report,
       status: "failed",
-      failure: { message: "workstream_schema_hash_mismatch:3", version: 3 },
+      failure: { message: "substream_agent_do_schema_hash_mismatch:3", version: 3 },
     }).success).toBe(true);
   });
 

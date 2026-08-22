@@ -207,6 +207,12 @@ full report history. Every page has a JSON twin under `/api/`.
 - **Every route on the site is authorized, including the JSON ones.** There is no
   second credential and no exempt path; an unconfigured Access setup refuses
   every request rather than serving the fleet's shape unauthenticated.
+- **Renaming a component key requires a registry migration in the same change.**
+  The key is the tracker's own identifier — no Durable Object stores it — and it
+  is the only join between a report and a head. Renamed on the producer alone, it
+  starts a second component at head 0 and strands every object that has not woken
+  under the old one, which reads as a healthy fleet rather than an error. Registry
+  v3 is the worked example.
 - **The tracker imports nothing from `apps/api`.** A build break in the Worker
   being observed must not take down the thing that reports on it — which is why
   the migration runner and the structured logger are deliberate copies.
@@ -424,6 +430,59 @@ that carries state — as WorkspaceDO migration 5's `schedule_bootstrap` entry
 does.
 
 ## Changelog
+
+### 2026-08-22 — SubstreamAgent's component is named after its class
+
+**What changed:** the component key `SubstreamAgent` reports under is
+`substream_agent_do`, renamed from `workstream`, and registry schema v3 carries
+the stored history — live rows, the report log, and the per-region head — onto
+the new key.
+
+**Why:** the site was showing `workstream` and `workstream_do` next to each
+other as if one were the other's namespace. They are two unrelated objects:
+`workstream_do` is `WorkstreamDO`'s own control-plane schema, while `workstream`
+was the object-store schema that `SubstreamAgent` applies through
+`WorkstreamObjectStore`. The key predates the class — it named the history when
+`WorkstreamRoom` owned it, and survived the v3 Wrangler `renamed_classes`
+migration because that rename was deliberately storage-preserving. Every other
+key on the site is its class, so the one component whose key and class did not
+correspond was also the one an operator was most likely to misread during an
+incident. The name was doing the opposite of the job it exists for.
+
+The rename is confined to this subsystem, which is what made it worth doing at
+all: no Durable Object stores its component key — `_sql_schema_migrations`
+records a version, a hash, and a build — so nothing in the fleet migrates, no
+receipt moves, and the Cloudflare-facing identifiers (script, class, binding,
+namespace, object id) are untouched. Renaming the *class* would have been the
+opposite: a `renamed_classes` tag, appended and irreversible, against the
+namespace every object's storage hangs off.
+
+The migration runner prefixes its thrown errors with the component, so this
+object's failure text changes shape with the key. Failure messages already in
+the report log are left exactly as they were reported: unlike the component
+column, which is an identifier the tracker assigns, the message is what an
+object actually said on the day it broke.
+
+**Considered and rejected:** letting the new key simply start a second
+component, on the theory that objects would migrate to it as they woke. They
+would not — the 795 objects that have never reported would sit under `workstream`
+at v15 indefinitely, and the ones that had reported would show `current` under a
+head of 0 until a new build raised it. Also rejected: translating the legacy key
+in the queue consumer, which handles the deploy window at the cost of a
+permanent rule in the hot path that outlives its reason.
+
+**What a future change has to respect:** the key is the tracker's own
+identifier and its only join between a report and a head, so renaming one again
+means a registry migration in the same change — `component_versions` is keyed
+`(component, region)` and a rename without one splits the fleet silently rather
+than failing. The two Workers deploy from independent workflows, so v3's write
+to `component_versions` merges rather than updates: if `apps/api` lands first,
+the row already exists, and an `UPDATE` onto it would collide with the primary
+key inside the registry's own constructor and take the tracker down. If the
+tracker happens to deploy first, reports from the outgoing API build recreate
+`workstream` for the length of the deploy window; those objects re-report under
+the new key on their first wake against the new build, and the leftover
+`component_versions` row is an operator delete.
 
 ### 2026-08-22 — The report tables drop the Applied column
 
