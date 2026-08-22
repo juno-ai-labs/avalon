@@ -445,9 +445,16 @@ was the object-store schema that `SubstreamAgent` applies through
 `WorkstreamObjectStore`. The key predates the class — it named the history when
 `WorkstreamRoom` owned it, and survived the v3 Wrangler `renamed_classes`
 migration because that rename was deliberately storage-preserving. Every other
-key on the site is its class, so the one component whose key and class did not
-correspond was also the one an operator was most likely to misread during an
-incident. The name was doing the opposite of the job it exists for.
+key on the site is derived from its class — snake-cased, `_do` where the class
+ends in `DO` — and `workstream` was derived from nothing still in the codebase.
+That it read as `workstream_do`'s parent is what made it worse than merely
+stale: of the four keys, it was the one an operator was most likely to misread
+during an incident.
+
+The rule is derivation, not equality. `block_dashboard_block_agent` carries a
+`block` that `BlockDashboardAgent` does not, and `substream_agent_do` takes the
+`_do` suffix from its two siblings rather than from `SubstreamAgent`. Both are
+recognisable from their class, which is all the key has to be.
 
 The rename is confined to this subsystem, which is what made it worth doing at
 all: no Durable Object stores its component key — `_sql_schema_migrations`
@@ -474,10 +481,13 @@ a report arriving under it is a producer nobody can account for, which is worth
 seeing rather than silently renaming.
 
 **Considered and rejected:** letting the new key simply start a second
-component, on the theory that objects would migrate to it as they woke. They
-would not — the 795 objects that have never reported would sit under `workstream`
-at v15 indefinitely, and the ones that had reported would show `current` under a
-head of 0 until a new build raised it. Also rejected: leaving the deploy window
+component, on the theory that objects would migrate to it as they woke. Every
+object that has reported and has not woken since the deploy would keep
+`component = 'workstream'` and go on resolving against the old head, while the
+new key started at 0 and showed everything that had woken as `current` against a
+head no build had raised. Not the never-reported objects, though: `recordSweep`
+writes no component at all, so a sweep-discovered object is `unreported` under
+no key and a producer-side rename cannot strand it. Also rejected: leaving the deploy window
 to an operator cleanup, which was the first shape of this change. It
 under-counted the damage. Only `durable_objects` heals itself on an object's
 next wake; the head row needs a manual delete, and every event written in the
@@ -491,7 +501,10 @@ means a registry migration in the same change — `component_versions` is keyed
 `(component, region)` and a rename without one splits the fleet silently rather
 than failing. It also means a compatibility branch at ingestion for as long as
 the old producer can still be deployed, because the migration cannot see what
-arrives after it. v3's write to `component_versions` merges rather than updates
+arrives after it — and there is no third option where the objects simply re-announce
+themselves: `_migration_report_state` dedupes on version, status, and build, so
+a key that changes without one of those changing is silent until the 24-hour
+heartbeat. v3's write to `component_versions` merges rather than updates
 for the other order: if `apps/api` lands first, the row already exists, and an
 `UPDATE` onto it would collide with the primary key inside the registry's own
 constructor and take the tracker down.
