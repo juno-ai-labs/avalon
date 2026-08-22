@@ -212,9 +212,27 @@ async function loadDurableObjectStaleUnfurls(
   const checkedAt = nowIso();
   const stale: Record<string, unknown>[] = [];
   const unchangedUpdates: D1PreparedStatement[] = [];
+  const advanceRefreshedAt = (link: Record<string, unknown>) => env.DB.prepare(
+    `UPDATE slack_unfurled_links SET refreshed_at = ?
+      WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
+  ).bind(
+    checkedAt,
+    link.connection_id,
+    link.slack_channel_id,
+    link.slack_message_ts,
+    link.url,
+  );
   for (const link of links.results ?? []) {
     const item = directory.get(`${String(link.workspace_id)}:${String(link.workstream_id)}`);
-    if (!item || item.archived_at !== null) continue;
+    if (!item || item.archived_at !== null) {
+      // Not a card to refresh, but still a row the sweep's due time is derived
+      // from: advance it as an unchanged card is advanced, or the sweep comes
+      // straight back for it — and, since the stall gate, is held and reported
+      // for a link nobody will ever refresh. Left alone, one archived work
+      // stream pinned every other card in the workspace behind the backoff.
+      unchangedUpdates.push(advanceRefreshedAt(link));
+      continue;
+    }
     const changed = item.harness_status !== link.rendered_status
       || String(item.updated_at) > String(link.refreshed_at)
       || String(link.audience_checked_at) < audienceCutoff
@@ -223,16 +241,7 @@ async function loadDurableObjectStaleUnfurls(
       stale.push({ ...link, ...item, ordered_activity_at: item.last_activity_at });
       continue;
     }
-    unchangedUpdates.push(env.DB.prepare(
-      `UPDATE slack_unfurled_links SET refreshed_at = ?
-        WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
-    ).bind(
-      checkedAt,
-      link.connection_id,
-      link.slack_channel_id,
-      link.slack_message_ts,
-      link.url,
-    ));
+    unchangedUpdates.push(advanceRefreshedAt(link));
   }
   if (unchangedUpdates.length > 0) await env.DB.batch(unchangedUpdates);
   const perConnection = new Map<string, number>();

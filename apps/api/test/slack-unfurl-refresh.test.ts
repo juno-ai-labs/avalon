@@ -7,6 +7,7 @@ import { encryptString } from "../src/lib/crypto";
 import { refreshSlackWorkstreamUnfurls } from "../src/services/slack-unfurl-refresh";
 import { workstreamUnfurlBlocks, workstreamUnfurlCardHash } from "../src/services/slack-workstream-card";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
 const connectionId = "00000000-0000-7000-8000-000000000041";
@@ -303,6 +304,52 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
+  it("advances an archived work stream's link so the sweep stops coming back for it", async () => {
+    // Post-cutover, the card's work stream is read from WorkspaceDO and an
+    // archived one is skipped — correctly, there is no card to refresh. But
+    // the sweep's due time is the oldest `refreshed_at` in the table, and a
+    // skipped row that never advanced pinned every other card in the
+    // workspace: the sweep came straight back, and since the stall gate would
+    // have been held and reported for a link nobody will ever refresh.
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    openWorkstreamAuthorityForTest(database);
+    const before = database.prepare("SELECT refreshed_at FROM slack_unfurled_links").get() as { refreshed_at: string };
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+    const env = environment(database, {
+      APP_ENV: "test",
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          lookupWorkstreamDirectory: async () => ({
+            items: [{
+              workstreamId,
+              title: "Quarterly planning",
+              description: "",
+              scope: "workspace",
+              state: "completed",
+              systemKind: null,
+              lastActivityAt: "2026-08-10T12:00:00.000Z",
+              archivedAt: "2026-08-10T13:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              originType: "ad_hoc",
+              originLabel: null,
+              createdByUserId: userId,
+              automationSubscriptionId: null,
+              automationRunId: null,
+              plannedFor: null,
+            }],
+          }),
+        },
+      }),
+    });
+
+    await refreshSlackWorkstreamUnfurls(env, workspaceId);
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    const after = database.prepare("SELECT refreshed_at FROM slack_unfurled_links").get() as { refreshed_at: string };
+    expect(after.refreshed_at > before.refreshed_at).toBe(true);
+  });
+
   it("still refreshes rows on a connection the database believes is broken", async () => {
     // A `needs_reconnect` row records one past moment and nothing re-checks it.
     // Skipping the sweep on that belief left cards permanently stale on
@@ -549,8 +596,12 @@ function migratedDatabase(): DatabaseSync {
   return database;
 }
 
-function environment(database: DatabaseSync): Env {
+function environment(
+  database: DatabaseSync,
+  overrides: { APP_ENV?: Env["APP_ENV"]; WORKSPACE_DOS?: DurableObjectNamespace } = {},
+): Env {
   return createTestEnv({
+    ...overrides,
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
