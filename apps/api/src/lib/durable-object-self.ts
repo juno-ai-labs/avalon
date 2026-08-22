@@ -136,6 +136,12 @@ export function durableObjectSelf<T extends RpcDurableObject | undefined = undef
   namespace: DurableObjectNamespace<T>,
   name: string,
 ): DurableObjectStub<T> | null {
+  // A focused unit environment may omit a binding entirely, the same allowance
+  // `withWorkspaceRuntimeDatabase` makes. Without this, two omitted bindings are
+  // both `undefined` and compare equal, and the match would fall to the name
+  // alone — which is exactly the comparison that is not sufficient, since
+  // `WorkstreamDO` and the main `SubstreamAgent` share a logical name.
+  if (!namespace) return null;
   for (const registered of registrations(env)) {
     if (registered.namespace !== namespace) continue;
     if (registered.name() !== name) continue;

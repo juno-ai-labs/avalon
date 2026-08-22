@@ -6,7 +6,10 @@ import {
   PersonalSocketEventSchema,
   SubstreamIdSchema,
   UserIdSchema,
+  type Region,
   type SubstreamId,
+  type WorkspaceId,
+  type WorkstreamId,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asSubstreamId,
@@ -390,6 +393,31 @@ function userFromRow(row: UserRow): User {
 
 export { substreamAgentName };
 
+/**
+ * This object's own name, or `null` while its identity is not yet fully its own.
+ *
+ * Split out from the object so the rule can be proved rather than reasoned
+ * about. A `SubstreamAgent` is named by *two* durable facts — which work stream
+ * it belongs to, and which external substream it is — and both have to be
+ * present. An object holding only the first would otherwise take the main
+ * child's name and answer self-calls addressed to a sibling out of its own
+ * storage. `externalSubstreamId`'s `"0"` default is right where it is used as
+ * *am I the main child?* and wrong here, which is why this takes the raw row.
+ */
+export function substreamSelfObjectName(
+  region: Region,
+  identity: { workspaceId: WorkspaceId; workstreamId: WorkstreamId } | null,
+  externalSubstreamId: string | null,
+): string | null {
+  if (!identity || externalSubstreamId === null) return null;
+  return substreamAgentName(
+    region,
+    identity.workspaceId,
+    identity.workstreamId,
+    asSubstreamId(externalSubstreamId),
+  );
+}
+
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
   attachments: T[],
   participantIds: ReadonlySet<string>,
@@ -578,19 +606,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Not memoized: the external substream id is written on the object's first
    * scoped request, so a name derived before that would be the main child's and
    * would stay wrong. Both reads are against this object's own SQLite.
+   *
+   * The substream row is read here rather than through
+   * {@link externalSubstreamId}, whose `"0"` default is right for its own
+   * callers — they ask it *am I the main child?*, and an unwritten row reads as
+   * yes — and wrong as a name. An object with a root identity but no substream
+   * row would take the main child's name and answer self-calls addressed to a
+   * sibling out of its own storage. No path reaches that today, but the
+   * ordering that prevents it is not something a name should depend on.
    */
   private selfObjectName(): string | null {
     // Genuinely absent, definite-assignment notwithstanding: the environment
     // carrying this object's self-registration exists from the first statement
     // of the constructor, and the store is built inside the callback below it.
     if (!this.objectStore) return null;
-    const identity = this.objectStore.identity();
-    if (!identity) return null;
-    return substreamAgentName(
+    const substream = this.state.storage.sql.exec<{ external_substream_id: string }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ).toArray()[0];
+    return substreamSelfObjectName(
       this.env.AVALON_REGION,
-      identity.workspaceId,
-      identity.workstreamId,
-      this.externalSubstreamId(),
+      this.objectStore.identity(),
+      substream?.external_substream_id ?? null,
     );
   }
 

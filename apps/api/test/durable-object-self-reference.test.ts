@@ -11,10 +11,13 @@ import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { substreamAgentName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import {
+  substreamSelfObjectName,
+  type SubstreamAgent,
+} from "../src/durable-objects/substream-agent";
 import type { Env } from "../src/env";
 import { durableObjectStubForWorkspace } from "../src/lib/durable-object-namespace";
-import { withDurableObjectSelf } from "../src/lib/durable-object-self";
+import { durableObjectSelf, withDurableObjectSelf } from "../src/lib/durable-object-self";
 import { publishWorkstreamEvent } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
@@ -166,6 +169,26 @@ describe("a Durable Object addressing its own name", () => {
     expect(idFromName).toHaveBeenCalledWith(OWN_NAME);
   });
 
+  it("refuses to match an omitted binding against another omitted binding", async () => {
+    // A focused unit environment may bind neither namespace, the same allowance
+    // `withWorkspaceRuntimeDatabase` makes. Both then read `undefined`, and an
+    // identity comparison alone would call them equal — leaving the name as the
+    // only discriminator, which is the one that is not sufficient.
+    const bare = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      DB: affinityDatabase(),
+    });
+    const env = withDurableObjectSelf(bare, {
+      namespace: bare.SUBSTREAM_AGENTS,
+      name: () => OWN_NAME,
+      id: createTestDurableObjectId(OWN_NAME),
+      instance: testAgent([]),
+    });
+
+    expect(durableObjectSelf(env, bare.WORKSTREAM_DOS, OWN_NAME)).toBeNull();
+  });
+
   it("keeps a shared helper local when it publishes for the object's own work stream", async () => {
     const published: unknown[] = [];
     const { namespace, idFromName } = trackedNamespace();
@@ -248,5 +271,34 @@ describe("a local SQL executor carried on the environment", () => {
     await other.DB.prepare("SELECT id FROM connector_connections").first().catch(() => undefined);
 
     expect(executor).not.toHaveBeenCalled();
+  });
+});
+
+describe("the name a SubstreamAgent answers to", () => {
+  const identity = {
+    workspaceId: asWorkspaceId(WORKSPACE),
+    workstreamId: asWorkstreamId(WORKSTREAM),
+  };
+
+  it("is the object's own name once both durable facts are recorded", () => {
+    expect(substreamSelfObjectName("global", identity, "0")).toBe(OWN_NAME);
+  });
+
+  it("is withheld while the object has no work stream yet", () => {
+    expect(substreamSelfObjectName("global", null, "0")).toBeNull();
+  });
+
+  it("is withheld while the external substream id is unwritten", () => {
+    // Not the main child's name: an object holding only a root identity would
+    // otherwise answer self-calls addressed to substream 0 out of its own
+    // storage. `externalSubstreamId`'s "0" default is right as an *am I the
+    // main child?* predicate and wrong as a name, which is why this takes the
+    // raw row rather than that helper.
+    expect(substreamSelfObjectName("global", identity, null)).toBeNull();
+  });
+
+  it("names a non-main substream as its own object", () => {
+    const second = "55555555-5555-4555-8555-555555555555";
+    expect(substreamSelfObjectName("global", identity, second)).toBe(`${OWN_NAME}:${second}`);
   });
 });
