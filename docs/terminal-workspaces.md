@@ -423,6 +423,43 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-22 — Terminal takes its effect identity from the tool context
+
+**What changed:** `HarnessToolContext` carries an optional `effectIntentId` —
+the receipt row the host recorded for this tool call — and the three places
+Terminal used to read it out of `tool_invocations` now take it from there:
+`runtime.ts` (the provider task name and the `terminal_tasks` row),
+`resource-bridge.ts` (the `terminal:<id>` provider resource identity), and
+`repository.ts` (the bundle path and the publication row). Terminal no longer
+names `tool_invocations` anywhere, and `createDaytonaTerminalRuntime` lost the
+`D1Database` parameter that existed only for that query.
+
+**Why:** The typed port removed Terminal's D1-shaped SQL over its own tables,
+and left three statements over a table Terminal does not own, reached through
+the `_runtime_tool_invocations` compatibility view. Each was asking the same
+question the harness had already answered a moment earlier: which receipt is
+this call. The identity now travels with the call instead of being looked up
+from it, which is both one fewer object round trip per Terminal write and one
+fewer reason for the shared runtime vocabulary to exist.
+
+**Considered and rejected:** Deriving the identity in the harness — hashing
+`toolCallId`, or minting it in Bind and passing it down as the receipt id.
+`toolCallId` is stable across a resumed run but its receipt row is created once
+and kept, so an id computed on the second attempt would not match the one the
+first attempt already wrote provider work against; a resumed run would start a
+second sandbox task rather than reattach to the first. Only the host knows the
+identity it stored, so the flow is host to harness, through the
+`resolveToolEffectIntentId` port.
+
+**Consequences:** The field is optional, because only a host that implements
+receipt ports can supply it. All three call sites fail closed with the existing
+`tool_receipt_missing` — the same error the missing-row branch raised — rather
+than substituting `toolCallId`, which would key an external effect to a
+coordinate no receipt ever used. `terminal_tasks.effect_intent_id` still
+references the receipt, so a command still cannot record a task the harness
+never planned; that check moved from a query Terminal ran to a foreign key the
+object enforces.
+
 ### 2026-08-22 — Resident agents keep Terminal authority in their owning event
 
 **What changed:** A Bind loop already running inside the main `SubstreamAgent`
@@ -596,8 +633,9 @@ conversion, and the split transactions all survive. Also rejected: converting
 the whole runtime compatibility vocabulary at once. `tool_invocations`,
 `harness_runs`, `resources`, and `notes` are shared by every subsystem, so
 retiring them is a change per subsystem rather than a wider version of this
-one; `runtime.ts` still reaches `tool_invocations` through the routed handle
-and says so.
+one; `runtime.ts` still reached `tool_invocations` through the routed handle
+and said so. (The 2026-08-22 entry above removed Terminal's last reader of
+that table by handing the receipt id to the tool instead.)
 
 **Consequences:** Two invariants the blob could not express are now enforced by
 the table: a lease or a claim without its deadline is rejected, because an

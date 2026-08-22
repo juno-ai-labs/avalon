@@ -92,7 +92,6 @@ export async function createAvalonTerminalPlugin(
   const readGateway = createGitHubRestReadGateway(env);
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,
-    env.DB,
     coordinator,
     provider,
     createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher),

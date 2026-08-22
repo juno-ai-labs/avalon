@@ -1,4 +1,3 @@
-import type { HarnessToolContext } from "@avalon/agent-harness";
 import { AttachmentKindSchema, classifyAttachmentKind } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
@@ -14,8 +13,6 @@ import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visi
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalResourceBridge } from "./runtime";
 import { TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
-
-interface InvocationRow { id: string }
 
 interface PublishedRow {
   id: string;
@@ -60,17 +57,6 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
       : "pending",
     createdAt: row.created_at,
   };
-}
-
-async function invocationFor(database: D1Database, context: HarnessToolContext): Promise<InvocationRow> {
-  const invocation = await database.prepare(
-    `SELECT id FROM tool_invocations
-      WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
-  ).bind(context.workspaceId, context.workstreamId, context.harnessRunId, context.toolCallId).first<InvocationRow>();
-  if (!invocation) {
-    throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable tool receipt. Retry publication so it can be recorded safely.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
-  }
-  return invocation;
 }
 
 export function createTerminalResourceBridge(
@@ -258,8 +244,14 @@ export function createTerminalResourceBridge(
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }
-      const invocation = await invocationFor(env.DB, context);
-      const providerResourceId = `terminal:${invocation.id}`;
+      // The published resource's stable identity across a resumed run. It is
+      // the receipt the harness planned this call against, so a retry finds
+      // the row it already wrote instead of publishing a second copy.
+      const effectIntentId = context.effectIntentId;
+      if (!effectIntentId) {
+        throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable tool receipt. Retry publication so it can be recorded safely.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
+      }
+      const providerResourceId = `terminal:${effectIntentId}`;
       const existing = await workspace.prepare(
         `SELECT id, title, mime_type, content_sha256, metadata_json,
                 model_content_status, created_at

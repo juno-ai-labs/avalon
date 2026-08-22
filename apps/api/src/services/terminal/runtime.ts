@@ -53,8 +53,6 @@ export interface TerminalRepositoryPublisher {
   ): Promise<TerminalPublishedBranchAndPrOutput>;
 }
 
-interface InvocationRow { id: string }
-
 /**
  * The object stores unix milliseconds; a tool result reports ISO-8601, which
  * is the model-facing contract. This is the only place the two meet.
@@ -170,7 +168,6 @@ function parsePatch(patch: string): TerminalPatchOutput {
 
 export function createDaytonaTerminalRuntime(
   terminalPort: TerminalPortFactory,
-  database: D1Database,
   coordinator: TerminalSandboxCoordinator,
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
@@ -347,17 +344,14 @@ export function createDaytonaTerminalRuntime(
       const sandbox = await acquire(context);
       const acquisitionDurationMs = Date.now() - totalStartedAt;
       const cwd = input.cwd ? await resolveInsideRoot(context, sandbox, input.cwd) : ROOT;
-      const invocation = await database.prepare(
-        `SELECT id FROM tool_invocations
-          WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
-      ).bind(context.workspaceId, context.workstreamId, context.harnessRunId, context.toolCallId).first<InvocationRow>();
-      if (!invocation) {
+      const effectIntentId = context.effectIntentId;
+      if (!effectIntentId) {
         throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable tool receipt. Retry the command so it can be recorded safely.", { reason: "Retry the same command call so Avalon can create its durable receipt first." });
       }
-      const taskName = `avalon-task-${invocation.id}`;
+      const taskName = `avalon-task-${effectIntentId}`;
       const commandHash = await sha256Hex(JSON.stringify({ command: input.command, cwd, timeoutMs: input.timeoutMs }));
       const terminal = terminalPort(context.workspaceId, context.workstreamId);
-      const existing = await terminal.taskByEffect(invocation.id);
+      const existing = await terminal.taskByEffect(effectIntentId);
       const replay = existing && commandOutputFromTask(existing);
       if (replay) {
         await provider.cleanupCommand?.(sandbox.providerSandboxId, taskName).catch(() => undefined);
@@ -387,7 +381,7 @@ export function createDaytonaTerminalRuntime(
       await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
-        effectIntentId: invocation.id,
+        effectIntentId,
         sandboxGeneration: sandbox.generation,
         providerTaskName: taskName,
         commandSha256: commandHash,
@@ -441,8 +435,8 @@ export function createDaytonaTerminalRuntime(
           : completeLog;
         try {
           const published = await resources.publishResource(context, {
-            filePath: `.avalon/logs/${invocation.id}.log`,
-            displayName: `Terminal command log ${invocation.id}`,
+            filePath: `.avalon/logs/${effectIntentId}.log`,
+            displayName: `Terminal command log ${effectIntentId}`,
             description: outputLimitExceeded
               ? "Bounded command log; provider output exceeded Avalon's capture limit."
               : "Complete output from a Terminal command whose inline result was truncated.",
@@ -459,7 +453,7 @@ export function createDaytonaTerminalRuntime(
       }
       const completedAt = Date.now();
       await terminal.settleTask({
-        effectIntentId: invocation.id,
+        effectIntentId,
         state,
         exitCode: state === "timed_out" || state === "cancelled" || outputLimitExceeded
           ? null

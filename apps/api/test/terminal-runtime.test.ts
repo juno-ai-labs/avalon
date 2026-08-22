@@ -53,8 +53,11 @@ function fixture() {
     VALUES ('00000000-0000-4000-8000-000000000099', '${W}', 'uploaded_file',
             'avalon_upload', 'resource', '{}', '2026-08-13', '2026-08-13');
   `);
-  // The run, its tool invocation, and every sandbox row live in the work
-  // stream's own object since migration 0090 dropped the D1 copies.
+  // The run, its tool receipt, and every sandbox row live in the work stream's
+  // own object since migration 0090 dropped the D1 copies. Terminal no longer
+  // reads the receipt — it is handed the id on the tool context — but
+  // `terminal_tasks.effect_intent_id` still references it, so a command cannot
+  // record a task the harness never planned.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
@@ -126,7 +129,7 @@ function fixture() {
   const db = testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S });
   const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, { now: () => new Date("2026-08-13T12:00:00.000Z") });
   return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(
-    testTerminalPortFactory(objectStore), db, coordinator, provider, resources, publisher) };
+    testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher) };
 }
 
 const context: HarnessToolContext = {
@@ -134,6 +137,10 @@ const context: HarnessToolContext = {
   workstreamId: S,
   harnessRunId: R,
   toolCallId: "call-runtime",
+  // The receipt the harness planned this call against. Terminal keys its
+  // provider task name and its `terminal_tasks` row to this, so a resumed run
+  // recognizes the command it already started.
+  effectIntentId: I,
   executionPrincipal: { type: "user", userId: U },
   signal: new AbortController().signal,
 };
@@ -176,6 +183,22 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining("git apply --check"),
     }));
+  });
+
+  it("refuses to start provider work when the harness supplied no receipt identity", async () => {
+    const { objectStore, provider, runtime } = fixture();
+    const unreceipted: HarnessToolContext = { ...context };
+    delete unreceipted.effectIntentId;
+
+    await expect(runtime.runCommand(unreceipted, { command: "true", timeoutMs: 3_000 }))
+      .rejects.toMatchObject({ code: "tool_receipt_missing" });
+    // Nothing provider-side may start: an unkeyed task is one a resumed run
+    // could never recognize, so it would run the command twice.
+    expect(provider.runCommand).not.toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
+      taskName: expect.stringContaining("avalon-task-"),
+    }));
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks"))
+      .toEqual({ count: 0 });
   });
 
   it("records one durable command task and terminalizes nonzero exit normally", async () => {
