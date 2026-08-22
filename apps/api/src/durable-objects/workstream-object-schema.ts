@@ -1738,6 +1738,21 @@ function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] 
  * already frozen by its own migration hash — any edit to it breaks v1 before
  * it could silently change what this migration builds.
  */
+function roundedCompatTriggerRebuilds(): string[] {
+  return WORKSTREAM_RUNTIME_COMPAT_SCHEMA
+    .filter((statement) =>
+      statement.includes("CREATE TRIGGER IF NOT EXISTS")
+      && statement.includes("* 86400000 AS INTEGER"))
+    .flatMap((statement) => {
+      const name = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+      if (!name) throw new Error("compat trigger statement without a name");
+      return [
+        `DROP TRIGGER IF EXISTS ${name}`,
+        statement.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"),
+      ];
+    });
+}
+
 /**
  * Allocates `tool_effects.tool_position` from the run's high-water mark rather
  * than its row count.
@@ -1749,10 +1764,19 @@ function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] 
  * and `_runtime_tool_invocations_delete` turns each into a
  * `DELETE FROM tool_effects`. One hole in a run's positions and the next
  * admission computes a number another row already holds; `INSERT OR IGNORE`
- * drops it, and `persistToolExecutionPlan` — which believes it conflicted on
- * `(harness_run_id, tool_call_id)`, a constraint that does not exist — looks up
- * its own coordinates, finds nothing, and throws `RunOwnershipLostError`. The
- * run ends on a lease failure that never happened.
+ * drops it, and `persistToolExecutionPlan` — reading zero changes as "someone
+ * else already wrote my receipt" — looks up `(harness_run_id, tool_call_id)`,
+ * finds nothing because its row was never written, and throws
+ * `RunOwnershipLostError`. The run ends on a lease failure that never happened.
+ *
+ * The caller's conflict target is real: `INSERT OR IGNORE` resolves against
+ * three constraints, and the compat schema's own `tool_effects_run_call_uq`
+ * (`workstream-runtime-compat-schema.ts`) is what makes the routed
+ * `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` mean what it says
+ * after the router strips the clause. It is simply not the constraint that
+ * fires here — a collided *position* carries a new `tool_call_id`, so the call
+ * key is untouched and the caller's fallback lookup is querying for a row that
+ * the ignored insert never created.
  *
  * `MAX(tool_position) + 1` stays injective across deletes. It is scoped to the
  * run rather than to `(run_id, attempt_epoch)` so that positions keep advancing
@@ -1760,10 +1784,9 @@ function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] 
  * numbering at a new epoch, which is defensible but is a behavior change this
  * repair has no reason to make.
  *
- * Derived from the compat source with the rounding of migration 15 reapplied,
- * because that migration rebuilt every epoch-converting trigger and this text
- * must continue from it — starting at v1's would silently reinstate the
- * truncation it fixed.
+ * Derived from the compat source with v3's rounding reapplied, because that
+ * migration rebuilt every epoch-converting trigger and this text must continue
+ * from it — starting at v1's would silently reinstate the truncation it fixed.
  */
 function rebuiltToolInvocationsInsertTriggerForPositionAllocation(): string[] {
   const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
@@ -1779,21 +1802,6 @@ function rebuiltToolInvocationsInsertTriggerForPositionAllocation(): string[] {
     "(SELECT COALESCE(MAX(tool_position) + 1, 0) FROM tool_effects WHERE run_id = NEW.harness_run_id),",
   );
   return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_insert", patched];
-}
-
-function roundedCompatTriggerRebuilds(): string[] {
-  return WORKSTREAM_RUNTIME_COMPAT_SCHEMA
-    .filter((statement) =>
-      statement.includes("CREATE TRIGGER IF NOT EXISTS")
-      && statement.includes("* 86400000 AS INTEGER"))
-    .flatMap((statement) => {
-      const name = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
-      if (!name) throw new Error("compat trigger statement without a name");
-      return [
-        `DROP TRIGGER IF EXISTS ${name}`,
-        statement.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"),
-      ];
-    });
 }
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */
