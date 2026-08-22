@@ -180,6 +180,26 @@ for one.
   moving in every row — and the generator refused, citing a `datetime('now')`
   that was not there. Any future value type read back as an object needs the
   same treatment.
+- **A generated column is never inserted, and a wide integer never crashes.**
+  `SELECT *` returns `GENERATED ALWAYS AS` columns and `INSERT` rejects them, so
+  the column list comes from `pragma_table_xinfo` with the generated ones
+  removed; SQLite recomputes them. Rows are read as BigInt and narrowed back to
+  numbers where that is exact, so an id beyond 2^53 survives instead of throwing
+  from inside the reader.
+- **A value's storage class is preserved, not just its JavaScript value.**
+  There is one number type in JavaScript, so `2.0` and `2` render the same and
+  SQLite stores the result as an INTEGER. A declared `REAL` column is rescued by
+  affinity; a typeless or STRICT `ANY` column is not, and `typeof()` filters
+  change underneath. `sqlLiteral` takes SQLite's own `typeof()` and emits `2.0`
+  where it must.
+- **Text `wrangler d1 execute --file` would rewrite is refused.** Its
+  `trimSqlQuery` is a substring test: any file containing `BEGIN TRANSACTION`
+  has its first `BEGIN TRANSACTION;` **and its first `COMMIT;`** deleted —
+  wherever they sit, including inside a comment, a trigger body, or a seeded
+  string — and a second occurrence is a hard error. Both routes reach a baseline,
+  since SQLite keeps comments written inside a `CREATE` body and seeded rows are
+  copied verbatim, so the generator stops rather than let a database be quietly
+  edited on the way in.
 - **The guard fires.** The command fails with
   `CHECK constraint failed: baseline_requires_empty_database` and nothing of the
   baseline's schema is created. The database is left as it was — apart from the
@@ -251,6 +271,17 @@ for one.
   detector can only see what changes between two runs. A seeded column whose
   value is derived from a coarse clock has to be recognised by the person
   writing the migration, not by the generator.
+- **A manifest state only a bad merge produces is skipped, not resolved.** A
+  boundary appearing twice — both branches regenerated, the merge kept both —
+  has no right answer, and the comparator never returns 0 for equal boundaries,
+  so which one "won" was a sort artifact that flipped with input order. Both are
+  dropped and the chain runs. A manifest entry whose `.sql` is not on disk (the
+  hunk merged, the file never staged) is dropped for the same reason.
+- **A region may not declare its own `migrations_table`.** Wrangler reads the
+  ledger from `migrations_table || "d1_migrations"`, while the baseline
+  hardcodes `d1_migrations` in its guard and its ledger rows — and one baseline
+  serves every region, so a per-region ledger cannot be represented at all.
+  `discoverRegions` refuses a config that sets it to anything else.
 - **Regenerating is not free of judgement.** The generator will happily produce a
   baseline from a chain that no longer matches production. Verify against remote
   before recording a new fingerprint.
@@ -354,7 +385,10 @@ rather than snapshotting `sqlite_sequence` — D1 permits writing that table
 directly (verified against local D1), so refusing would block a legitimate
 feature to avoid work that turned out to be four lines.
 
-**Consequences:** nothing may compare migration names with `<`, `>` or a bare
+**Consequences:** the generator's job includes knowing what `wrangler d1 execute`
+will do to the file afterwards, not only what SQLite will do with it — the
+`BEGIN TRANSACTION` refusal exists because Wrangler edits the text it is given.
+Nothing may compare migration names with `<`, `>` or a bare
 `.sort()`; `compareMigrationPaths` is the only ordering, and it is a copy of
 Wrangler's, so if Wrangler changes its comparator this has to follow rather than
 be argued with. Anything the chain leaves behind that is neither schema nor a

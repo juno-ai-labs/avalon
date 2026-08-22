@@ -220,10 +220,39 @@ export function snapshotDatabase(database) {
 
   const rows = {};
   const dependsOn = {};
+  const storageTypes = {};
   for (const { name } of objects.filter((object) => object.type === "table")) {
-    const tableRows = database.prepare(`SELECT * FROM "${name}"`).all();
+    // `SELECT *` returns generated columns, and `INSERT` rejects them —
+    // "cannot INSERT into generated column". `table_xinfo` marks them: hidden 2
+    // is VIRTUAL, hidden 3 is STORED. Both are derived from other columns, so
+    // reproducing them is neither possible nor needed.
+    const storedColumns = database.prepare("SELECT name, hidden FROM pragma_table_xinfo(?)")
+      .all(name)
+      .filter((column) => ![2, 3].includes(Number(column.hidden)))
+      .map((column) => String(column.name));
+    if (storedColumns.length === 0) continue;
+    const columnList = storedColumns.map((column) => `"${column.replaceAll('"', '""')}"`).join(", ");
+
+    // Integers beyond 2^53 — a Slack `ts` in nanoseconds, a snowflake id —
+    // throw "Value is too large to be represented as a JavaScript number"
+    // without this. Values that fit are handed back as ordinary numbers so
+    // nothing downstream has to learn about BigInt for the common case.
+    const statement = database.prepare(`SELECT ${columnList} FROM "${name}"`);
+    statement.setReadBigInts?.(true);
+    const tableRows = statement.all().map((row) => Object.fromEntries(
+      Object.entries(row).map(([column, value]) => [column, narrowBigInt(value)]),
+    ));
     if (tableRows.length === 0) continue;
     rows[name] = tableRows;
+
+    // SQLite's storage class per value, because JavaScript cannot tell a REAL
+    // 2.0 from an INTEGER 2 — both are the number 2. Emitting `2` for a REAL
+    // changes the stored type, which `typeof()` filters and STRICT `ANY`
+    // columns both notice.
+    const typeList = storedColumns
+      .map((column) => `typeof("${column.replaceAll('"', '""')}") AS "${column.replaceAll('"', '""')}"`)
+      .join(", ");
+    storageTypes[name] = database.prepare(`SELECT ${typeList} FROM "${name}"`).all();
     // The tables this one points at. Seeded rows have to be inserted after the
     // rows they reference, and `sqlite_schema` order is alphabetical, which is
     // unrelated to that.
@@ -250,7 +279,7 @@ export function snapshotDatabase(database) {
       .map((row) => ({ name: String(row.name), seq: Number(row.seq) }))
     : [];
 
-  return { objects, rows, dependsOn, sequences };
+  return { objects, rows, dependsOn, sequences, storageTypes };
 }
 
 /**
@@ -311,6 +340,21 @@ export function detectVolatileColumns(firstRows, secondRows) {
 }
 
 /**
+ * An integer read as BigInt, narrowed back to a number when it fits exactly.
+ *
+ * Reading every integer as BigInt is what stops a value beyond 2^53 from
+ * throwing, but handing BigInts to everything downstream would make the common
+ * case everybody's problem. Only values that cannot be represented exactly stay
+ * BigInt, and `sqlLiteral` already renders those.
+ */
+export function narrowBigInt(value) {
+  if (typeof value !== "bigint") return value;
+  return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(value)
+    : value;
+}
+
+/**
  * Whether two values read out of two replays are the same value.
  *
  * `!==` is wrong for BLOBs: SQLite hands them back as fresh `Uint8Array`
@@ -328,11 +372,21 @@ export function sameSeededValue(left, right) {
   return left === right;
 }
 
-/** A SQL literal for a value read back out of SQLite. */
-export function sqlLiteral(value) {
+/**
+ * A SQL literal for a value read back out of SQLite.
+ *
+ * `storageClass` is SQLite's own `typeof()` for the value, and it is needed for
+ * exactly one case: a REAL with no fractional part. JavaScript has one number
+ * type, so `2.0` and `2` are the same value and `String()` renders both as `2` —
+ * which SQLite then stores as an INTEGER. A declared `REAL` column is rescued by
+ * column affinity, but a typeless column or a STRICT `ANY` one is not, and
+ * `typeof()` filters and JSON output change underneath.
+ */
+export function sqlLiteral(value, storageClass) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`${value} has no SQL literal`);
+    if (storageClass === "real" && Number.isInteger(value)) return `${value}.0`;
     return String(value);
   }
   if (typeof value === "bigint") return String(value);
@@ -491,11 +545,13 @@ export function orderSeededTables(rows, dependsOn = {}) {
   return ordered;
 }
 
-function renderRows(table, tableRows, volatileForTable) {
+function renderRows(table, tableRows, volatileForTable, typesForTable = []) {
   const columns = Object.keys(tableRows[0]);
-  const rendered = tableRows.map((row) => {
+  const rendered = tableRows.map((row, index) => {
     const values = columns.map((column) => (
-      volatileForTable.includes(column) ? "datetime('now')" : sqlLiteral(row[column])
+      volatileForTable.includes(column)
+        ? "datetime('now')"
+        : sqlLiteral(row[column], typesForTable[index]?.[column])
     ));
     return `  (${values.join(", ")})`;
   });
@@ -552,7 +608,9 @@ ${D1_MIGRATIONS_TABLE_SQL};`);
   const seeded = seededOrder.map((table) => [table, snapshot.rows[table]]);
   if (seeded.length > 0) {
     const rendered = seeded
-      .map(([table, tableRows]) => renderRows(table, tableRows, volatileColumns[table] ?? []))
+      .map(([table, tableRows]) => renderRows(
+        table, tableRows, volatileColumns[table] ?? [], (snapshot.storageTypes ?? {})[table] ?? [],
+      ))
       .join("\n\n");
     sections.push(`-- Control rows the subsumed migrations seed. A column the chain recomputes on
 -- every run is re-derived here rather than frozen, so a baselined database is
@@ -590,7 +648,35 @@ INSERT OR IGNORE INTO d1_migrations (name)
 VALUES
 ${ledgerValues};`);
 
-  return `${sections.join("\n\n")}\n`;
+  const rendered = `${sections.join("\n\n")}\n`;
+  assertWranglerWillNotRewrite(rendered);
+  return rendered;
+}
+
+/**
+ * Refuses a baseline Wrangler would quietly edit before running it.
+ *
+ * `wrangler d1 execute --file` passes the text through `trimSqlQuery`, which is
+ * a substring check and two blind `String.replace` calls: if the file contains
+ * `BEGIN TRANSACTION` anywhere — a migration comment copied verbatim, a seeded
+ * row holding a SQL snippet — it deletes the first `BEGIN TRANSACTION;` **and
+ * the first `COMMIT;`**, wherever those happen to be, including inside a trigger
+ * body or a string literal. A second occurrence is a hard error instead
+ * ("contains several transactions").
+ *
+ * So the failure is either a mangled database or a refusal naming a
+ * transaction nobody wrote. Neither is worth discovering during setup, and the
+ * generator is the only place that can see it coming.
+ */
+export function assertWranglerWillNotRewrite(sql) {
+  if (!sql.includes("BEGIN TRANSACTION")) return;
+  throw new Error(
+    "The rendered baseline contains the text 'BEGIN TRANSACTION'. `wrangler d1 execute --file` "
+    + "strips the first 'BEGIN TRANSACTION;' and the first 'COMMIT;' from any file containing it — "
+    + "wherever they appear, including inside a comment, a trigger body, or a seeded string — and "
+    + "errors outright if it appears twice. Remove or reword whatever carries that text before "
+    + "this boundary can be baselined.",
+  );
 }
 
 /** Applies migration files to an open database, in order. */
@@ -740,7 +826,16 @@ export function readBaselineManifest(contents) {
  * is the right way round.
  */
 export function usableBaselines(baselines, migrationsOnDisk, digestFor) {
+  // A boundary appearing twice can only come from a merge that kept both sides:
+  // `mergeIntoManifest` replaces by boundary, so no single regeneration produces
+  // one. There is no way to tell which snapshot is right, and the comparator
+  // never returns 0 for equal boundaries — so which one "won" was a sort
+  // artifact that flipped with input order. Both are dropped, and the chain runs.
+  const seen = new Map();
+  for (const baseline of baselines) seen.set(baseline.through, (seen.get(baseline.through) ?? 0) + 1);
+
   return baselines
+    .filter((baseline) => seen.get(baseline.through) === 1)
     .filter((baseline) => {
       const expected = migrationsOnDisk.filter((name) => compareMigrationPaths(name, baseline.through) <= 0);
       if (expected.length !== baseline.migrations.length) return false;

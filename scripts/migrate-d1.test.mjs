@@ -46,6 +46,7 @@ import { buildBaseline, mergeIntoManifest } from "./create-d1-baseline.mjs";
 import {
   API_DIRECTORY,
   discoverRegions,
+  loadCatalog,
   parseArguments,
   resolveTargets,
   stripJsonComments,
@@ -1029,4 +1030,61 @@ test("the repository's own migrations sort identically under both orderings", ()
   // fails, a filename stopped being zero-padded and the two orders have parted.
   const onDisk = listMigrationFiles(join(API_DIRECTORY, "..", "..", "packages", "db", "migrations"));
   assert.deepEqual(onDisk, [...onDisk].sort());
+});
+
+// ---------------------------------------------------------------------------
+// Manifest states a bad merge leaves behind
+// ---------------------------------------------------------------------------
+
+test("a manifest entry whose baseline file is missing is dropped, not announced", () => {
+  // The usual cause is a merge that took the manifest hunk while the generated
+  // `.sql` was never staged. The plan would otherwise announce a baseline and
+  // then hand Wrangler a path that does not exist — a confusing failure for
+  // something the chain can do perfectly well.
+  const root = mkdtempSync(join(tmpdir(), "avalon-catalog-"));
+  try {
+    const migrations = join(root, "m");
+    const baselines = join(root, "b");
+    mkdirSync(migrations);
+    mkdirSync(baselines);
+    writeFileSync(join(migrations, "0001_a.sql"), "CREATE TABLE a (id TEXT);", "utf8");
+    writeFileSync(join(baselines, "manifest.json"), JSON.stringify({
+      baselines: [{ through: "0001_a.sql", file: "b_0001_a.sql", migrations: ["0001_a.sql"], digest: "x" }],
+    }), "utf8");
+
+    assert.deepEqual(loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines }).baselines, []);
+    writeFileSync(join(baselines, "b_0001_a.sql"), "-- present", "utf8");
+    assert.equal(
+      loadCatalog({ migrationsDirectory: migrations, baselinesDirectory: baselines }).baselines.length,
+      1,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a region declaring its own migrations_table is refused rather than silently mismatched", () => {
+  // Wrangler reads the ledger from `migrations_table || "d1_migrations"`. The
+  // baseline hardcodes `d1_migrations` in its guard and its ledger rows, and one
+  // baseline serves every region, so a per-region table cannot work — and the
+  // failure would be the tooling reading a ledger Wrangler never writes.
+  const directory = mkdtempSync(join(tmpdir(), "avalon-mt-"));
+  try {
+    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+      d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "custom_ledger" }],
+    }), "utf8");
+    assert.throws(() => discoverRegions(directory), /sets migrations_table to "custom_ledger"/u);
+
+    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+      d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "d1_migrations" }],
+    }), "utf8");
+    assert.deepEqual(discoverRegions(directory).map((entry) => entry.region), ["eu"],
+      "spelling out the default explicitly is fine");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("no region in this repository declares a migrations_table", () => {
+  assert.doesNotThrow(() => discoverRegions());
 });
