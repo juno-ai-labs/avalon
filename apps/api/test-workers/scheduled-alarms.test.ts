@@ -19,6 +19,8 @@ import {
   ScheduledAlarmStore,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
+  type ScheduledAlarmOutcome,
+  type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
@@ -42,8 +44,10 @@ interface AlarmScheduling {
   }): Promise<void>;
   cancelScheduledAlarm(kind: string, key: string): Promise<boolean>;
   armNextAlarm(): Promise<number | null>;
-  drainDueScheduledAlarms(now: number): Promise<number>;
-  runScheduledAlarm(alarm: ScheduledAlarm): Promise<void>;
+  drainDueScheduledAlarms(now: number): Promise<ScheduledAlarmRun[]>;
+  gateStalledScheduledAlarms(ran: readonly ScheduledAlarmRun[], now: number): void;
+  runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome>;
+  onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void;
 }
 
 function scheduling(instance: WorkspaceDO): AlarmScheduling {
@@ -164,7 +168,7 @@ describe("the shared Durable Object alarm list", () => {
         return Promise.resolve();
       };
 
-      expect(await scheduling(instance).drainDueScheduledAlarms(now)).toBe(2);
+      expect(await scheduling(instance).drainDueScheduledAlarms(now)).toHaveLength(2);
       expect(ran).toEqual(["first", "third"]);
       expect(store.get("test_ok", "first")).toBeNull();
       expect(store.get("test_ok", "third")).toBeNull();
@@ -175,7 +179,7 @@ describe("the shared Durable Object alarm list", () => {
 
       // The gate holds on the very next drain: this is the loop the retry
       // states were introduced to prevent.
-      expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toBe(0);
+      expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toHaveLength(0);
     });
   });
 
@@ -204,7 +208,7 @@ describe("the shared Durable Object alarm list", () => {
       };
 
       expect(await scheduling(instance).drainDueScheduledAlarms(now))
-        .toBe(SCHEDULED_ALARM_DRAIN_LIMIT);
+        .toHaveLength(SCHEDULED_ALARM_DRAIN_LIMIT);
       // The overflow is not stranded until something else comes due: everything
       // left is already past, so the re-arm asks for the next millisecond.
       const armed = await scheduling(instance).armNextAlarm();
@@ -212,8 +216,8 @@ describe("the shared Durable Object alarm list", () => {
       expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
 
       expect(await scheduling(instance).drainDueScheduledAlarms(now))
-        .toBe(SCHEDULED_ALARM_DRAIN_LIMIT);
-      expect(await scheduling(instance).drainDueScheduledAlarms(now)).toBe(5);
+        .toHaveLength(SCHEDULED_ALARM_DRAIN_LIMIT);
+      expect(await scheduling(instance).drainDueScheduledAlarms(now)).toHaveLength(5);
 
       // The ordering is what makes the slices partition the tie: without a
       // total order the same rows can come back while others never do.
@@ -248,7 +252,7 @@ describe("the shared Durable Object alarm list", () => {
       // The drain reads the entries due at the instant the alarm *started*, so
       // however long the first handler runs, the second is not pulled into its
       // pass and keeps its own due time.
-      expect(await scheduling(instance).drainDueScheduledAlarms(started)).toBe(1);
+      expect(await scheduling(instance).drainDueScheduledAlarms(started)).toHaveLength(1);
       expect(ran).toEqual(["first"]);
       expect(store.get("test_slow", "second")?.dueAt).toBe(started + 5);
       expect(Date.now()).toBeGreaterThan(started + 5);
@@ -265,9 +269,64 @@ describe("the shared Durable Object alarm list", () => {
       await state.storage.setAlarm(Date.now() + 600_000);
 
       // The wake that re-arm buys.
-      expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toBe(1);
+      expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toHaveLength(1);
       expect(ran).toEqual(["first", "second"]);
       expect(store.get("test_slow", "second")).toBeNull();
+    });
+  });
+
+  it("gates only an entry that is back at the identical instant, not one that moved itself", async () => {
+    // Driven directly — drain, gate, arm — so nothing is armed while the test
+    // runs and the armed instant is read from `armNextAlarm` itself. Three
+    // entries, all due at the same past instant, each answering differently.
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      const dueAt = now - 1_000;
+      store.schedule({ kind: "test_stall", key: "stuck", dueAt }, now);
+      store.schedule({ kind: "test_stall", key: "moved", dueAt }, now);
+      store.schedule({ kind: "test_stall", key: "progressed", dueAt }, now);
+      store.schedule({ kind: "test_stall", key: "waiting", dueAt }, now);
+      const stalled: string[] = [];
+      scheduling(instance).onScheduledAlarmStalled = (alarm: ScheduledAlarm) => { stalled.push(alarm.key); };
+      scheduling(instance).runScheduledAlarm = (alarm: ScheduledAlarm) => {
+        // `moved` reschedules itself to a *different* past instant — the idiom
+        // for "run again at once" — which the settle's due_at guard keeps.
+        if (alarm.key === "moved") store.schedule({ kind: alarm.kind, key: alarm.key, dueAt: dueAt - 1 }, now);
+        if (alarm.key === "progressed") return Promise.resolve({ progressed: true } as const);
+        if (alarm.key === "waiting") return Promise.resolve({ waitMs: 45_000 });
+        return Promise.resolve();
+      };
+
+      const ran = await scheduling(instance).drainDueScheduledAlarms(now);
+      expect(ran.map((run) => run.alarm.key)).toEqual(["moved", "progressed", "stuck", "waiting"]);
+      // The re-derive a workspace does in `runDueAlarmWork`, for the three
+      // one-shots the settle deleted: each comes back at the identical instant.
+      for (const key of ["stuck", "progressed", "waiting"]) {
+        store.schedule({ kind: "test_stall", key, dueAt }, now);
+      }
+
+      const gatedAt = Date.now();
+      scheduling(instance).gateStalledScheduledAlarms(ran, gatedAt);
+
+      expect(stalled).toEqual(["stuck"]);
+      const stuck = store.get("test_stall", "stuck");
+      expect(stuck?.attempt).toBe(1);
+      expect(stuck!.retryAt).toBeGreaterThanOrEqual(gatedAt + scheduledAlarmRetryDelay(1, () => 0));
+      // Moved to a different instant: untouched, and still the earliest thing.
+      expect(store.get("test_stall", "moved")).toMatchObject({ dueAt: dueAt - 1, attempt: 0, retryAt: 0 });
+      // Reported progress: untouched.
+      expect(store.get("test_stall", "progressed")).toMatchObject({ dueAt, attempt: 0, retryAt: 0 });
+      // Asked to wait: held for exactly that long, and not counted.
+      expect(store.get("test_stall", "waiting")).toMatchObject({ dueAt, attempt: 0, retryAt: gatedAt + 45_000 });
+
+      const armed = await scheduling(instance).armNextAlarm();
+      expect(armed).not.toBeNull();
+      expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+      // Park it before the callback returns, for the reason the other tests give.
+      await state.storage.setAlarm(Date.now() + 600_000);
     });
   });
 
@@ -434,6 +493,71 @@ describe("a workspace's schedule", () => {
       expect(entries.map((entry) => entry.key)).toEqual([scheduleId]);
       expect(entries[0]!.dueAt).toBe(Date.parse(advancedTo));
       expect(await state.storage.getAlarm()).toBe(Date.parse(advancedTo));
+    });
+  });
+
+  it("gates an entry that ran but came back due at the same instant, instead of re-waking for it", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+    const scheduleId = "00000000-0000-7000-8000-0000000000e1";
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000000e2",
+      statements: [{
+        sql: `INSERT INTO schedules
+                (id, workspace_id, connector_connection_id, schedule_type, interval_seconds,
+                 timezone, next_run_at, enabled, version, created_at, updated_at)
+              VALUES (?, ?, ?, 'interval', 300, 'UTC', ?, 1, 1, ?, ?)`,
+        params: [
+          scheduleId,
+          WORKSPACE_ID,
+          "00000000-0000-7000-8000-0000000000e3",
+          new Date(Date.now() + 600_000).toISOString(),
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ],
+      }],
+    });
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const stuckAt = new Date(Date.now() - 1_000).toISOString();
+      state.storage.sql.exec(
+        `UPDATE schedules SET next_run_at = ? WHERE id = ? AND workspace_id = ?`,
+        stuckAt,
+        scheduleId,
+        WORKSPACE_ID,
+      );
+      // A handler that returns without moving its row. Before the stall gate
+      // the re-derive put the same past instant straight back and the re-arm
+      // floored it at the next millisecond: one wake per handler duration,
+      // for as long as the row stayed put.
+      scheduling(instance).runScheduledAlarm = () => Promise.resolve();
+      await instance.refreshSchedule(WORKSPACE_ID);
+
+      const first = Date.now();
+      await instance.alarm();
+
+      const gated = store.get("schedule", scheduleId);
+      expect(gated?.dueAt).toBe(Date.parse(stuckAt));
+      expect(gated?.attempt).toBe(1);
+      expect(gated!.retryAt).toBeGreaterThanOrEqual(first + scheduledAlarmRetryDelay(1, () => 0));
+      expect(await state.storage.getAlarm()).toBe(gated!.retryAt);
+
+      // The attempt carries across the settle-and-reinsert, so the delay keeps
+      // growing toward the ceiling instead of restarting at its first step on
+      // every wake. The gate is opened by hand rather than waited out.
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'schedule' AND alarm_key = ?`,
+        scheduleId,
+      );
+      const second = Date.now();
+      await instance.alarm();
+
+      const again = store.get("schedule", scheduleId);
+      expect(again?.attempt).toBe(2);
+      expect(again!.retryAt).toBeGreaterThanOrEqual(second + scheduledAlarmRetryDelay(2, () => 0));
+      expect(await state.storage.getAlarm()).toBe(again!.retryAt);
     });
   });
 

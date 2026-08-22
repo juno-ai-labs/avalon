@@ -64,6 +64,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
+import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 
 /**
  * The directory reads a schedule needs, satisfied without an RPC hop.
@@ -205,15 +206,30 @@ function workflowAlreadyExists(error: unknown): boolean {
  * tables contribute one due time between them. Splitting them would schedule
  * three alarms that all run the same function.
  */
-const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promise<unknown>> = {
-  resource_objects: (ctx) => reapDeletedResourceObjects(ctx.workspaceEnv, ctx.workspaceId),
-  expired_drafts: (ctx) => reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId),
-  note_objects: (ctx) => reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId),
-  note_privacy: (ctx) => processPendingNotePrivacyNotifications(ctx.workspaceEnv),
-  memory_index: (ctx) => processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId),
-  notification_intents: (ctx) => reapSettledWorkspaceNotificationIntents(ctx.workspaceEnv, ctx.workspaceId),
-  slack_ingress: (ctx) => new SlackAgentService(ctx.workspaceEnv).maintainIngress(100, ctx.workspaceId),
-  slack_unfurls: (ctx) => refreshSlackWorkstreamUnfurls(ctx.workspaceEnv, ctx.workspaceId),
+/**
+ * What a pass tells the alarm's stall check, which holds an entry that is due
+ * again at the identical instant after it ran.
+ *
+ * The bounded reaps report progress: each retires its oldest rows a hundred
+ * at a time, and a burst sharing one second re-derives the same instant until
+ * the burst is gone — progress the instant cannot show. The rest deliberately
+ * say nothing, so the identical instant is read as the stall it is. Reporting
+ * progress from the Slack sweeps in particular would reopen the loop: the
+ * unfurl pass advances every unchanged card on every run and the ingress pass
+ * re-enqueues a stale job without touching its row, so both would claim
+ * progress forever against a source they never move.
+ */
+const progressedIf = (retired: number): ScheduledAlarmOutcome => (retired > 0 ? { progressed: true } : undefined);
+
+const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promise<ScheduledAlarmOutcome>> = {
+  resource_objects: async (ctx) => progressedIf(await reapDeletedResourceObjects(ctx.workspaceEnv, ctx.workspaceId)),
+  expired_drafts: async (ctx) => progressedIf(await reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId)),
+  note_objects: async (ctx) => progressedIf(await reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId)),
+  note_privacy: async (ctx) => { await processPendingNotePrivacyNotifications(ctx.workspaceEnv); },
+  memory_index: async (ctx) => { await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId); },
+  notification_intents: async (ctx) => { await reapSettledWorkspaceNotificationIntents(ctx.workspaceEnv, ctx.workspaceId); },
+  slack_ingress: async (ctx) => { await new SlackAgentService(ctx.workspaceEnv).maintainIngress(100, ctx.workspaceId); },
+  slack_unfurls: async (ctx) => { await refreshSlackWorkstreamUnfurls(ctx.workspaceEnv, ctx.workspaceId); },
 };
 
 /**
@@ -233,8 +249,20 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
  * `datetime()` returns `YYYY-MM-DD HH:MM:SS`, which `Date.parse` reads as
  * *local* time — harmless on a Worker, which runs in UTC, and a silent
  * hours-wide shift anywhere else that parses one of these.
+ *
+ * Every derived instant is also rounded *up* to the next whole second.
+ * `strftime` drops the milliseconds a `nowIso()` column carries, so an alarm
+ * that fires in the 999 ms before the pass's own cutoff finds nothing due,
+ * comes back at the identical instant, and — since the stall gate — is held
+ * for a backoff step and reported for it. A second late is the cheaper error.
+ *
+ * The one arm that depends on where it runs is built by
+ * `scheduleTargetQueries`: the draft reap excludes an upload a work stream has
+ * linked, and the links table is part of the object's schema alone — the Node
+ * suite runs these queries against regional snapshots that never had it.
  */
-const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
+function scheduleTargetQueries(linksTableAvailable: boolean): readonly { sql: string; scoped: boolean }[] {
+  return [
   {
     scoped: true,
     sql: `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
@@ -254,11 +282,18 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   },
   {
     scoped: true,
+    // Counts exactly what `reapExpiredDraftResources` removes. A draft a work
+    // stream has linked is kept on purpose, and counting it here would leave
+    // the pass due at an instant it can never move.
     sql: `SELECT 'maintenance' AS target_kind, 'expired_drafts' AS id,
-                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(created_at), '+24 hours') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(created_at), '+24 hours', '+1 second') AS due_at
             FROM resources
            WHERE workspace_id = ?1 AND provider = 'avalon_upload'
-             AND attachment_status = 'draft' HAVING COUNT(*) > 0`,
+             AND attachment_status = 'draft'
+             ${linksTableAvailable
+               ? "AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links link WHERE link.resource_id = resources.id)"
+               : ""}
+           HAVING COUNT(*) > 0`,
   },
   {
     scoped: false,
@@ -282,37 +317,44 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   {
     // One entry for four tables: `SlackAgentService.maintainIngress` reaps all
     // of them in one pass, so three more entries would schedule three alarms
-    // that call the same function.
+    // that call the same function. Each arm counts a row at the instant that
+    // pass will act on it: a spent link challenge a day after it expired or
+    // was consumed — `SLACK_LINK_CHALLENGE_GRACE_MS` in slack-agent-service.ts,
+    // which this `+24 hours` must match — and the rest at their own horizons.
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'slack_ingress' AS id, MIN(due_at) AS due_at
             FROM (
               SELECT MIN(CASE
                        WHEN status = 'processing' THEN lease_expires_at
-                       WHEN status = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%SZ', completed_at, '+30 days')
+                       WHEN status = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%SZ', completed_at, '+30 days', '+1 second')
                        WHEN status = 'failed' AND attempt_count >= 20
-                         THEN strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+30 days')
-                       ELSE strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+2 minutes') END) AS due_at
+                         THEN strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+30 days', '+1 second')
+                       ELSE strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+2 minutes', '+1 second') END) AS due_at
                 FROM slack_ingress_jobs WHERE workspace_id = ?1
               UNION ALL SELECT MIN(lease_expires_at) FROM slack_agent_thread_claims
               UNION ALL SELECT MIN(expires_at) FROM slack_agent_pending_prompts
-              UNION ALL SELECT MIN(expires_at) FROM slack_link_challenges
+              UNION ALL SELECT strftime('%Y-%m-%dT%H:%M:%SZ',
+                                        MIN(MIN(COALESCE(consumed_at, expires_at), expires_at)),
+                                        '+24 hours', '+1 second')
+                          FROM slack_link_challenges
             ) HAVING MIN(due_at) IS NOT NULL`,
   },
   {
     scoped: false,
     sql: `SELECT 'maintenance' AS target_kind, 'slack_unfurls' AS id,
-                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(refreshed_at), '+5 minutes') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(refreshed_at), '+5 minutes', '+1 second') AS due_at
             FROM slack_unfurled_links
            WHERE shared_at >= datetime('now', '-30 days') HAVING COUNT(*) > 0`,
   },
   {
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'notification_intents' AS id,
-                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(updated_at), '+30 days') AS due_at
+                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(updated_at), '+30 days', '+1 second') AS due_at
             FROM workstream_notification_intents
            WHERE workspace_id = ?1 AND state IN ('delivered', 'skipped') HAVING COUNT(*) > 0`,
   },
-];
+  ];
+}
 
 /**
  * Everything this workspace's alarm is waiting on, with its due instant.
@@ -328,8 +370,15 @@ export async function workspaceScheduleTargets(
   // Run rather than batched: a batch is one transaction, and these are ten
   // independent reads that nothing else depends on being consistent with each
   // other — the alarm re-derives them on every change anyway.
+  // Asked of the schema rather than of a binding: the object's own executor,
+  // a routed environment, and a test snapshot all answer truthfully, and the
+  // wrong answer is a query that throws on every wake.
+  const linksTable = await ctx.workspaceEnv.DB.prepare(
+    `SELECT 1 AS present FROM sqlite_master
+      WHERE type = 'table' AND name = 'workspace_workstream_resource_links'`,
+  ).first<{ present: number }>();
   const workspaceTargets = await Promise.all(
-    SCHEDULE_TARGET_QUERIES.map((query) => {
+    scheduleTargetQueries(linksTable !== null).map((query) => {
       const statement = ctx.workspaceEnv.DB.prepare(query.sql);
       return (query.scoped ? statement.bind(ctx.workspaceId) : statement).all<AlarmTargetRow>();
     }),
@@ -362,12 +411,11 @@ export async function runWorkspaceScheduleTarget(
   ctx: WorkspaceScheduleContext,
   target: WorkspaceScheduleTarget,
   now: Date,
-): Promise<void> {
+): Promise<ScheduledAlarmOutcome> {
   if (target.kind === "maintenance") {
     const task = MAINTENANCE_TASKS[target.id];
     if (!task) throw new Error(`unknown_workspace_maintenance_task:${target.id}`);
-    await task(ctx);
-    return;
+    return task(ctx);
   }
 
   if (target.kind === "schedule") {
@@ -392,7 +440,7 @@ export async function runWorkspaceScheduleTarget(
     return;
   }
 
-  await reconcileTerminalSandbox(ctx, target.id, now);
+  return reconcileTerminalSandbox(ctx, target.id, now);
 }
 
 /**
@@ -424,6 +472,19 @@ export async function recordWorkspaceScheduleFailure(
 }
 
 /**
+ * How long a Terminal deadline the pass could not act on is held.
+ *
+ * Its due time is `next_terminal_action_at` in the workspace directory, which
+ * only the work stream's own directory effect moves, off the Queue. A sandbox
+ * a live run holds keeps its deadline until the run settles; a transition this
+ * pass just made keeps it until that effect lands. Both re-derive the identical
+ * instant, and neither is a stall: a held entry is re-checked rather than
+ * counted, and the first reconcile after the directory moves clears the hold.
+ */
+const TERMINAL_HELD_SANDBOX_RECHECK_MS = 60_000;
+const TERMINAL_DIRECTORY_CATCHUP_MS = 30_000;
+
+/**
  * Advance one work stream's Terminal sandbox to whatever state it is now due
  * for: a warm stop, an archive, or an expiry that preserves the final diff.
  */
@@ -431,7 +492,7 @@ async function reconcileTerminalSandbox(
   ctx: WorkspaceScheduleContext,
   workstreamId: string,
   now: Date,
-): Promise<void> {
+): Promise<ScheduledAlarmOutcome> {
   const configuration = parseTerminalRegionConfiguration(ctx.env);
   if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
   const provider = createDaytonaTerminalProvider(configuration);
@@ -450,14 +511,14 @@ async function reconcileTerminalSandbox(
     now,
     createTerminalFinalDiffPreserver(executionEnv, provider, ctx.workspaceId, workstreamId),
   );
-  if (result.transition !== "none") {
-    logStructuredEvent(ctx.env, "info", "terminal_sandbox_lifecycle_transition", {
-      workspace_id: ctx.workspaceId,
-      workstream_id: workstreamId,
-      transition: result.transition,
-    });
-  }
-  if (result.transition !== "expired") return;
+  if (result.transition === "deferred") return { waitMs: TERMINAL_HELD_SANDBOX_RECHECK_MS };
+  if (result.transition === "none") return;
+  logStructuredEvent(ctx.env, "info", "terminal_sandbox_lifecycle_transition", {
+    workspace_id: ctx.workspaceId,
+    workstream_id: workstreamId,
+    transition: result.transition,
+  });
+  if (result.transition !== "expired") return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
   const repository = await port(ctx.workspaceId, workstreamId).selectedRepository();
   await emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),
@@ -474,6 +535,7 @@ async function reconcileTerminalSandbox(
     operationId: workstreamId,
     eventId: newId(),
   }).catch(() => undefined);
+  return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
 }
 
 async function runSchedule(
