@@ -11,25 +11,32 @@
  * release that adds a binding provisions its own queue on the way out; nothing
  * about a queue is done by hand.
  *
- * It used to stop and print the `wrangler queues create` command instead. That
- * turned every release that added a binding into a failed deploy plus a manual
- * step — the one thing a pipeline exists to remove — and blocked five merges in
- * an afternoon the first time it fired for real. The changelog in
- * docs/durable-object-migration-tracking.md records the change.
+ * It used to stop and print the `wrangler queues create` command instead, and
+ * the changelog in docs/durable-object-migration-tracking.md records why that
+ * changed. `--check` keeps that read-only form for a laptop: it reports what a
+ * deploy would create and fails if anything is missing, without creating it.
  *
- * A dead-letter queue is the exception. Cloudflare creates one named in a
- * consumer's `dead_letter_queue` if it does not exist yet, so it is reported
- * rather than created — creating it here would be reimplementing something the
- * platform already does.
+ * Two things are still refused rather than provisioned. A queue that only one
+ * side of the Wrangler files names — a producer with no consumer anywhere, or
+ * the reverse — is a typo, and creating it would ship a queue nothing drains,
+ * where the dead-letter signal that is this platform's monitoring can never
+ * fire. And a dead-letter queue is left to Cloudflare, which creates one named
+ * in a consumer's `dead_letter_queue` on first deploy; creating it here would
+ * reimplement the platform.
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isEntryPoint } from './entry-point.mjs';
+import { parseWranglerConfig } from './wrangler-config.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SAFE_QUEUE = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
+/** Cloudflare's "Authentication error": the token lacks the permission. */
+const PERMISSION_ERROR_CODE = 10000;
+const LISTING_PAGE_LIMIT = 20;
+const LISTING_PAGE_SIZE = 100;
 
 /** Every Wrangler file that binds a queue, and the surface each one deploys. */
 const queueConfigs = [
@@ -43,76 +50,8 @@ const queueConfigs = [
 
 function required(name, environment) {
   const value = environment[name]?.trim();
-  if (!value) throw new Error(`${name} is required to check Cloudflare Queue resources`);
+  if (!value) throw new Error(`${name} is required to ensure Cloudflare Queue resources exist`);
   return value;
-}
-
-/**
- * Strip JSONC comments without touching string contents.
- *
- * A regex cannot do this: these files contain `https://` inside `vars`, and a
- * naive `//` strip would truncate every one of them. Tracking the string state
- * is the whole difference between a parser and a corruption.
- */
-export function stripJsonComments(source) {
-  let output = '';
-  let inString = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    const next = source[index + 1];
-
-    if (inLineComment) {
-      if (character === '\n') {
-        inLineComment = false;
-        output += character;
-      }
-      continue;
-    }
-    if (inBlockComment) {
-      if (character === '*' && next === '/') {
-        inBlockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (inString) {
-      output += character;
-      if (character === '\\') {
-        output += next ?? '';
-        index += 1;
-      } else if (character === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-      output += character;
-      continue;
-    }
-    if (character === '/' && next === '/') {
-      inLineComment = true;
-      index += 1;
-      continue;
-    }
-    if (character === '/' && next === '*') {
-      inBlockComment = true;
-      index += 1;
-      continue;
-    }
-    output += character;
-  }
-
-  // Wrangler files are hand-edited, so a trailing comma before a closer is
-  // ordinary there and fatal to JSON.parse.
-  return output.replace(/,(\s*[}\]])/gu, '$1');
-}
-
-export function parseWranglerConfig(source) {
-  return JSON.parse(stripJsonComments(source));
 }
 
 function assertSafe(surface, role, name) {
@@ -135,11 +74,8 @@ export function queuesFromWrangler(source, surface) {
   const createdOnDeploy = [];
 
   for (const producer of queues.producers ?? []) {
-    required.push({
-      surface,
-      role: `producer:${producer.binding ?? 'unknown'}`,
-      name: assertSafe(surface, `producer:${producer.binding}`, producer.queue),
-    });
+    const role = `producer:${producer.binding ?? 'unknown'}`;
+    required.push({ surface, role, name: assertSafe(surface, role, producer.queue) });
   }
   for (const consumer of queues.consumers ?? []) {
     required.push({
@@ -170,27 +106,83 @@ export async function configuredQueues() {
   return { required, createdOnDeploy };
 }
 
+/**
+ * Every required queue must be named by a producer somewhere and a consumer
+ * somewhere, across all the Wrangler files together — a per-region queue pairs
+ * inside one file, the shared report queue pairs across three. A name on only
+ * one side is a misspelling, and the deploy that attached it would go green
+ * while the real queue backed up behind no consumer, or messages went into a
+ * queue nothing drains. This is the failure the old fail-and-name-it gate
+ * caught by accident; now it is caught on purpose, before any create.
+ */
+export function assertPairedQueues(required) {
+  const roles = new Map();
+  for (const queue of required) {
+    const sides = roles.get(queue.name) ?? { producers: [], consumers: [] };
+    (queue.role === 'consumer' ? sides.consumers : sides.producers).push(`${queue.surface}/${queue.role}`);
+    roles.set(queue.name, sides);
+  }
+  const unpaired = [...roles]
+    .filter(([, sides]) => sides.producers.length === 0 || sides.consumers.length === 0)
+    .map(([name, sides]) => sides.producers.length === 0
+      ? `${name} has consumer ${sides.consumers.join(', ')} but no producer`
+      : `${name} has producer ${sides.producers.join(', ')} but no consumer`);
+  if (unpaired.length > 0) {
+    throw new Error(
+      'Every queue a Wrangler file declares must be named by both a producer and a consumer.'
+      + ` Check the spelling of:\n${unpaired.map((line) => `  ${line}`).join('\n')}`,
+    );
+  }
+}
+
 function queuesUrl(accountId) {
   return `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/queues`;
+}
+
+/** `HTTP 403: Authentication error [code: 10000]` — the status plus what Cloudflare said. */
+function describeFailure(response, body) {
+  const detail = (body?.errors ?? [])
+    .map((error) => `${error.message} [code: ${error.code}]`)
+    .join('; ');
+  return `HTTP ${response.status}${detail ? `: ${detail}` : ''}`;
+}
+
+function permissionRefused(response, body) {
+  return response.status === 401 || response.status === 403
+    || (body?.errors ?? []).some((error) => error.code === PERMISSION_ERROR_CODE);
 }
 
 /** Every queue name the account holds, following Cloudflare's pagination. */
 export async function listAccountQueues({ accountId, token, fetchImpl }) {
   const names = new Set();
-  for (let page = 1; page <= 20; page += 1) {
+  for (let page = 1; page <= LISTING_PAGE_LIMIT; page += 1) {
     const response = await fetchImpl(
-      `${queuesUrl(accountId)}?page=${page}&per_page=100`,
+      `${queuesUrl(accountId)}?page=${page}&per_page=${LISTING_PAGE_SIZE}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     const body = await response.json().catch(() => null);
     if (!response.ok || body?.success !== true) {
-      throw new Error(`Listing Cloudflare Queues failed with HTTP ${response.status}`);
+      throw new Error(`Listing Cloudflare Queues failed with ${describeFailure(response, body)}.`);
     }
     const results = body.result ?? [];
     for (const queue of results) names.add(queue.queue_name);
-    if (results.length < 100) break;
+    if (results.length < LISTING_PAGE_SIZE) return names;
   }
-  return names;
+  // A listing that stops here is incomplete, and an incomplete listing would
+  // make this script try to create queues that already exist. Say so rather
+  // than report a failure that reads as a platform bug.
+  throw new Error(
+    `Listing Cloudflare Queues stopped after ${LISTING_PAGE_LIMIT} pages`
+    + ` (${LISTING_PAGE_LIMIT * LISTING_PAGE_SIZE} queues) without reaching the end; raise LISTING_PAGE_LIMIT.`,
+  );
+}
+
+class QueueCreateError extends Error {
+  constructor(message, { permission = false, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'QueueCreateError';
+    this.permission = permission;
+  }
 }
 
 /**
@@ -199,62 +191,93 @@ export async function listAccountQueues({ accountId, token, fetchImpl }) {
  * to the consumer, and Wrangler applies those on every deploy.
  */
 export async function createAccountQueue({ accountId, token, fetchImpl, name }) {
-  const response = await fetchImpl(queuesUrl(accountId), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queue_name: name }),
-  });
+  // Validate where the mutation happens, not only where the config is parsed:
+  // a caller that builds its own list must not be able to post an arbitrary
+  // string at the account.
+  assertSafe('create', 'queue', name);
+  let response;
+  try {
+    response = await fetchImpl(queuesUrl(accountId), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queue_name: name }),
+    });
+  } catch (cause) {
+    throw new QueueCreateError(`Creating Cloudflare Queue ${name} failed: ${cause.message}`, { cause });
+  }
   const body = await response.json().catch(() => null);
   if (response.ok && body?.success === true) return;
 
-  const detail = (body?.errors ?? [])
-    .map((error) => `${error.message} [code: ${error.code}]`)
-    .join('; ');
   // Name the likely cause rather than the status: this runs in a deploy
   // pipeline, and the next thing the reader wants is the fix. Code 10000 on a
   // create is what a token without Queues Edit returns; the same token can
   // still list, so the preflight gets this far before it finds out.
-  const hint = response.status === 403
+  const permission = permissionRefused(response, body);
+  const hint = permission
     ? ' The token must hold Queues Edit on the account; docs/runbook.md lists the required permissions.'
     : '';
-  throw new Error(
-    `Creating Cloudflare Queue ${name} failed with HTTP ${response.status}`
-    + `${detail ? `: ${detail}` : ''}.${hint}`,
+  throw new QueueCreateError(
+    `Creating Cloudflare Queue ${name} failed with ${describeFailure(response, body)}.${hint}`,
+    { permission },
   );
 }
 
+/**
+ * Options: `create: false` is `--check` — report what a deploy would create and
+ * fail if anything is missing, without touching the account.
+ */
 export async function ensureRequiredQueues(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const log = options.log ?? console.log;
+  const create = options.create ?? true;
   const accountId = required('CLOUDFLARE_ACCOUNT_ID', environment);
   const token = required('CLOUDFLARE_API_TOKEN', environment);
   const declared = options.queues ?? await configuredQueues();
+  assertPairedQueues(declared.required);
   const account = { accountId, token, fetchImpl };
   const present = await listAccountQueues(account);
 
   const missing = [...new Set(
     declared.required.filter((queue) => !present.has(queue.name)).map((queue) => queue.name),
   )];
+  if (!create && missing.length > 0) {
+    throw new Error(
+      `Missing Cloudflare Queue(s): ${missing.join(', ')}. The deployment creates them;`
+      + ' to create them now, run `pnpm cloudflare:queues:ensure`.',
+    );
+  }
+
+  const created = new Set();
   for (const name of missing) {
     try {
       await createAccountQueue({ ...account, name });
       log(`Created Queue ${name}`);
     } catch (error) {
+      // A refused permission is never a race, and it must surface: the other
+      // deployment winning the race on this name would otherwise hide a token
+      // that can no longer create until the next release that needs it to.
+      if (error.permission) throw error;
       // Two deployments can run this at once — the API and the migration
       // tracker both declare `avalon-migration-reports` — and the loser's
       // create is refused as a duplicate. What matters is that the queue
       // exists, so look again before failing: if it is there now, somebody
-      // else made it and this run is done.
-      const now = await listAccountQueues(account);
+      // else made it and this run is done. The outcome is checked rather than
+      // Cloudflare's duplicate-name error code, which is undocumented surface.
+      let now;
+      try {
+        now = await listAccountQueues(account);
+      } catch {
+        throw error;
+      }
       if (!now.has(name)) throw error;
-      log(`Queue ${name} was created by a concurrent deployment`);
+      log(`Queue ${name} exists after this run's create was refused (${error.message}); a concurrent deployment created it`);
     }
-    present.add(name);
+    created.add(name);
   }
 
   for (const queue of declared.required) {
-    log(`Required Queue present: ${queue.surface}/${queue.role} -> ${queue.name}`);
+    log(`Required Queue ${created.has(queue.name) ? 'created' : 'present'}: ${queue.surface}/${queue.role} -> ${queue.name}`);
   }
   for (const queue of declared.createdOnDeploy) {
     log(present.has(queue.name)
@@ -265,5 +288,8 @@ export async function ensureRequiredQueues(options = {}) {
 }
 
 if (isEntryPoint(import.meta.url)) {
-  await ensureRequiredQueues();
+  const flags = process.argv.slice(2);
+  const unknown = flags.filter((flag) => flag !== '--check');
+  if (unknown.length > 0) throw new Error(`Unknown argument(s): ${unknown.join(' ')}. The only flag is --check.`);
+  await ensureRequiredQueues({ create: !flags.includes('--check') });
 }

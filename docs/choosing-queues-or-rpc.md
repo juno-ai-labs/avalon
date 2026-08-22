@@ -206,6 +206,12 @@ account for them:
 Handle these four, and nothing beyond them — see
 [Trust the primitives](#trust-the-primitives).
 
+The queue itself needs no handling. Declare it in the Wrangler file — producer
+binding, consumer settings, dead-letter queue — and the deployment preflight
+creates it if the account does not hold it; there is no step to run by hand,
+and a queue only one side names is refused as a misspelling. The procedure is
+in [`runbook.md`](runbook.md#the-durable-object-migration-tracker).
+
 ## The limits that decide the argument
 
 Reproduced here because they are what makes one option viable and the other not.
