@@ -16,7 +16,7 @@ import {
   type ConnectorCursorCommit,
 } from "../services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { refreshWorkspaceSchedulerAlarm } from "../services/workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
 const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
@@ -173,8 +173,10 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       // Refresh even when the target already held this value: the previous
       // attempt may have committed D1 but lost its response before re-arming
       // the workspace alarm.
+      // The step name is durable Workflow history: renaming it would orphan
+      // every in-flight run's checkpoint, so it keeps the retired object's name.
       await step.do("refresh-workspace-scheduler", async () => {
-        await refreshWorkspaceSchedulerAlarm(this.env, input.workspaceId);
+        await refreshWorkspaceSchedule(this.env, input.workspaceId);
       });
     }
 

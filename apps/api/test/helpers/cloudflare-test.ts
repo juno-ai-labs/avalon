@@ -52,7 +52,6 @@ type CloudflareBinding =
   | Env["BLOCK_DASHBOARD_AGENTS"]
   | Env["WORKSTREAM_DOS"]
   | Env["WORKSPACE_DOS"]
-  | Env["WORKSPACE_SCHEDULERS"]
   | Env["CRASH_SYMBOLICATOR"]
   | DurableObjectState
   | DurableObjectStorage
