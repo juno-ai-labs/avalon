@@ -657,8 +657,11 @@ host does that work while handling `tool_started` rather than through that
 port, so the return value would reach nobody.
 
 **Consequences:** The ordering is load-bearing and asserted, not just
-commented: resolving before `tool_started` would read whatever a previous
-attempt left. A host that implements no receipt ports leaves the field absent,
+commented — though for a plainer reason than it first looks: the host writes
+the receipt while handling `tool_started`, so before that event it has nothing
+to return. A host that queried the row rather than remembering it would get the
+same id on a resumed attempt, because the surviving row is the one the first
+attempt wrote. A host that implements no receipt ports leaves the field absent,
 and a tool that needs one must fail rather than substitute `toolCallId`.
 Because tool calls within a turn may run concurrently, a host keys its answers
 by `toolCallId` rather than remembering only the latest.

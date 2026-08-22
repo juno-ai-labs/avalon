@@ -2605,8 +2605,9 @@ export interface RunHarnessInput {
    * The durable receipt identity the host recorded for this tool call.
    *
    * Resolved once per dispatch, after `tool_started` — the event a host uses
-   * to write that receipt — and before the tool runs, so the answer reaches
-   * the tool as `HarnessToolContext.effectIntentId`.
+   * to write that receipt, and therefore the first moment it has an answer —
+   * and before the tool runs, so the answer reaches the tool as
+   * `HarnessToolContext.effectIntentId`.
    *
    * It is a port rather than something the harness derives because the host
    * mints the identity and keeps it: `toolCallId` is stable across a resumed

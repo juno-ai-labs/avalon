@@ -12,7 +12,7 @@ import {
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalResourceBridge } from "./runtime";
-import { TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
+import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
 
 interface PublishedRow {
   id: string;
@@ -247,10 +247,7 @@ export function createTerminalResourceBridge(
       // The published resource's stable identity across a resumed run. It is
       // the receipt the harness planned this call against, so a retry finds
       // the row it already wrote instead of publishing a second copy.
-      const effectIntentId = context.effectIntentId;
-      if (!effectIntentId) {
-        throw new TerminalToolError("tool_receipt_missing", "Avalon could not find the durable tool receipt. Retry publication so it can be recorded safely.", { reason: "Retry the same publication call so Avalon can create its durable receipt first." });
-      }
+      const effectIntentId = requireTerminalEffectIntent(context, "publication");
       const providerResourceId = `terminal:${effectIntentId}`;
       const existing = await workspace.prepare(
         `SELECT id, title, mime_type, content_sha256, metadata_json,

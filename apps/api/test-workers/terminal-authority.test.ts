@@ -26,6 +26,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@avalon/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import type { TerminalPortFactory } from "../src/services/terminal/object-port";
 import {
@@ -79,6 +81,47 @@ async function terminal(
   });
   const parsed = body as { value?: unknown; error?: string } | null;
   return { status, value: parsed?.value ?? null, ...(parsed?.error ? { error: parsed.error } : {}) };
+}
+
+/**
+ * Run a Terminal operation and read the effects it enqueued, in one invocation.
+ *
+ * The delivery alarm deletes each `durable_outbox` row the moment it forwards
+ * it to the parent, so a test that reads those rows in a later call is racing
+ * a drain that means the effect *succeeded* — and losing that race looks
+ * exactly like the effect never having been enqueued. Parking the alarm is not
+ * enough either: the object re-arms one when it is next opened.
+ *
+ * So the read happens here, synchronously, with no await between the operation
+ * returning and the query. Within one invocation the input gate is closed and
+ * the alarm cannot interleave.
+ *
+ * Do not reach for `blockConcurrencyWhile` to build this fence — it holds the
+ * gate `reset()` needs, and defers the test's own writes into the next test.
+ */
+async function terminalCommonEffects(
+  stub: DurableObjectStub,
+  operation: TerminalOperation,
+  ...args: unknown[]
+): Promise<Array<string | null | undefined>> {
+  return runInDurableObject(stub, async (instance, state) => {
+    // The stub is untyped here; this file drives one class and it defines this.
+    await (instance as SubstreamAgent).executeTerminalOperation({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation,
+      args,
+    });
+    return state.storage.sql.exec<{ payload_json: string | null }>(
+      `SELECT payload_json FROM durable_outbox
+        WHERE channel = 'regional_effect_v1' AND partition_key = 'common'`,
+    ).toArray()
+      .map((row) => JSON.parse(row.payload_json ?? "{}") as {
+        effect?: { nextTerminalActionAt?: string | null };
+      })
+      .map((body) => body.effect?.nextTerminalActionAt)
+      .filter((value) => value !== undefined);
+  });
 }
 
 function seedRunRow(state: DurableObjectState, runId: string, status: string, now = 1): void {
@@ -658,7 +701,12 @@ describe("Terminal authority on real workerd", () => {
         state.storage.sql.exec(`DELETE FROM durable_outbox`);
       });
       await reserve(stub, RUN_A);
-      await terminal(stub, "attachProviderSandbox", {
+
+      // `workspace_workstream_directory.next_terminal_action_at` is the only
+      // input the workspace's alarm has for Terminal work, and this effect is
+      // its only writer. A sandbox holding three durable deadlines that
+      // enqueues nothing leaves the sweep with no reason to ever run.
+      const published = await terminalCommonEffects(stub, "attachProviderSandbox", {
         generation: 1,
         sandboxId: "daytona-1",
         lifecycleState: "running",
@@ -668,24 +716,8 @@ describe("Terminal authority on real workerd", () => {
         now: 1_500,
       });
 
-      // `workspace_workstream_directory.next_terminal_action_at` is the only
-      // input the workspace's alarm has for Terminal work, and this effect is
-      // its only writer. A sandbox holding three durable deadlines that
-      // enqueues nothing leaves the sweep with no reason to ever run.
-      await runInDurableObject(stub, (_instance, state) => {
-        const effects = state.storage.sql.exec<{ payload_json: string | null }>(
-          `SELECT payload_json FROM durable_outbox
-            WHERE channel = 'regional_effect_v1' AND partition_key = 'common'`,
-        ).toArray();
-        expect(effects.length).toBeGreaterThan(0);
-        const published = effects
-          .map((row) => JSON.parse(row.payload_json ?? "{}") as {
-            effect?: { nextTerminalActionAt?: string | null };
-          })
-          .map((body) => body.effect?.nextTerminalActionAt)
-          .filter((value) => value !== undefined);
-        expect(published.at(-1)).toBe(new Date(2_000_000).toISOString());
-      });
+      expect(published.length).toBeGreaterThan(0);
+      expect(published.at(-1)).toBe(new Date(2_000_000).toISOString());
     });
 
     it("clears the published deadline when the sandbox expires", async () => {
@@ -718,28 +750,17 @@ describe("Terminal authority on real workerd", () => {
         state.storage.sql.exec(`DELETE FROM durable_outbox`);
       });
 
-      await terminal(stub, "settleLifecycleTransition", {
+      // Nothing sweeps this column, so a settle that publishes no effect
+      // leaves a past timestamp in the directory forever and the scheduler
+      // keeps re-arming its alarm on it.
+      const published = await terminalCommonEffects(stub, "settleLifecycleTransition", {
         lifecycleState: "expired",
         claimId: "claim-expire",
         now: 3_000,
       });
 
-      // Nothing sweeps this column, so a settle that publishes no effect
-      // leaves a past timestamp in the directory forever and the scheduler
-      // keeps re-arming its alarm on it.
-      await runInDurableObject(stub, (_instance, state) => {
-        const published = state.storage.sql.exec<{ payload_json: string | null }>(
-          `SELECT payload_json FROM durable_outbox
-            WHERE channel = 'regional_effect_v1' AND partition_key = 'common'`,
-        ).toArray()
-          .map((row) => JSON.parse(row.payload_json ?? "{}") as {
-            effect?: { nextTerminalActionAt?: string | null };
-          })
-          .map((body) => body.effect?.nextTerminalActionAt)
-          .filter((value) => value !== undefined);
-        expect(published.length).toBeGreaterThan(0);
-        expect(published.at(-1)).toBeNull();
-      });
+      expect(published.length).toBeGreaterThan(0);
+      expect(published.at(-1)).toBeNull();
     });
   });
 
