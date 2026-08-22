@@ -71,9 +71,10 @@ before a full re-arm.
 `alarm()` is implemented once, in the base:
 
 1. Wait for the object's migrations (`scheduleReady()`).
-2. **Re-arm immediately**, before anything awaited. A cancelled invocation
-   neither throws nor runs a `finally`, so an object that re-arms only at the
-   end of its handler can be left with no wake-up at all.
+2. **Re-arm immediately** through `armAlarmBeforeDueWork()`, before anything
+   awaited. A cancelled invocation neither throws nor runs a `finally`, so an
+   object that re-arms only at the end of its handler can be left with no
+   wake-up at all.
 3. Ask `scheduledAlarmDeferral(now)` whether the whole alarm should be held —
    the regional-authority gate. A deferral sets the alarm *outright* to the
    recheck instant, because the re-arm in step 2 usually points at an instant
@@ -87,7 +88,17 @@ before a full re-arm.
    `executeRuntimeSql`. Without a reconcile here, the drain settles the entry it
    just ran and nothing arms the occurrence that replaced it: a recurring
    automation fires exactly once.
-6. Re-arm.
+6. Re-arm through `armAlarmAfterDueWork()`.
+
+Both arms default to the exact re-derivation and are hooks for one case: an
+object whose alarm *is* the worker for a reason it derives. `SubstreamAgent` is
+the one — an agent run is claimed from a dispatch row whose due time is a wake
+reason, so re-deriving off that row while the run is still in flight arms for an
+instant already past and hands the same run straight back. Its
+`armAlarmDuringRunDrain` leaves the run lane out and floors the alarm at one
+keep-alive heartbeat instead, which bounds recovery from a cancelled
+continuation without looping. It takes the first arm always, and the second only
+when the drain reported the run still owned elsewhere.
 
 An entry that returns is settled: a one-shot is deleted, a repeating one
 advances to the first occurrence strictly *after* now (an object that hibernated
@@ -141,8 +152,10 @@ derived source has no way to carry that distinction.
 
 - **An object never derives its alarm outside this base.** A second derivation
   of "the earliest thing" will disagree with the base's, and the disagreement
-  shows up as work that silently never runs. Two call sites do still arm
-  directly, and both are deliberate: `enqueueAgentRun` and
+  shows up as work that silently never runs. Three call sites do still arm
+  directly, and all three are deliberate. `SubstreamAgent.armAlarmDuringRunDrain`
+  is the base's own hook and is described under *Firing*: the run lane is the one
+  derived reason whose worker is this alarm. `enqueueAgentRun` and
   `WorkstreamObjectStore.enqueueRegionalEffect` each set an *immediate* alarm
   the instant they commit durable work, so an isolate that dies before the full
   re-arm cannot strand it. Both can only pull the alarm in, never push it out,
@@ -272,7 +285,7 @@ a failing target a free immediate attempt.
 
 **What changed:** New `ScheduledDurableObject` base and `_internal_durable_alarms` table,
 adopted by `WorkspaceDO`, `WorkstreamDO`, and `SubstreamAgent` (schema versions
-4, 2, and 14 respectively). The `WorkspaceScheduler` Durable Object's work —
+4, 2, and 15 respectively). The `WorkspaceScheduler` Durable Object's work —
 due schedules, resource watches, maintenance passes, and Terminal deadlines —
 moved into WorkspaceDO as reconciled entries, with its execution code extracted
 to `services/workspace-schedule-execution.ts`; the class survives only to hand
@@ -303,6 +316,15 @@ backoff. `scheduler_retry_states` existed because one broken automation used to
 be able to hot-loop a workspace's alarm; that hazard is unchanged, and the gate
 now lives in the same row as the schedule it guards, which is why a reconcile
 can rewrite due times without resetting it.
+
+`armAlarmBeforeDueWork` / `armAlarmAfterDueWork` are hooks rather than a fixed
+`armNextAlarm` at both ends of `alarm()` because `SubstreamAgent` had just
+earned the exception: the run-drain arm deliberately leaves the dispatch row out
+of the derivation, since the invocation doing the deriving is the one servicing
+that row. Folding that into the base as a special case would have put the run
+lane's vocabulary into a class that knows nothing about runs; making it a
+subclass override keeps the base's rule — one derivation, no direct `setAlarm` —
+intact for everyone else.
 
 Two dead pre-cutover paths went with the move: the legacy-phase wake-up drain,
 which read a regional `workstream_wakeups` table that migration `0090` dropped
