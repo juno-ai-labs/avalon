@@ -31,7 +31,7 @@ or touching what the tracker stores, serves, or lets in.
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger. |
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding in each region. |
-| `scripts/check-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and proves each queue it declares exists, so the configuration stays the single source of truth. |
+| `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 
 ## How it works
 
@@ -431,6 +431,40 @@ does.
 
 ## Changelog
 
+### 2026-08-22 — The queue preflight creates what is missing instead of failing
+
+**What changed:** `ensure-cloudflare-queues.mjs` (formerly
+`check-cloudflare-queues.mjs`) still reads every Wrangler file and lists the
+account, but a required queue the account does not hold is now created — the
+same `POST …/queues` call `wrangler queues create` makes — before either
+deployment proceeds. A create refused because a concurrent deployment made the
+same queue is resolved by listing again rather than failing. Dead-letter queues
+are still left to the platform, and nothing is ever deleted.
+
+**Why:** The check-only form fired for real for the first time on 2026-08-22. A
+release bound two new per-region queues, nobody ran the command the gate named,
+and every API deployment after it failed at the preflight: five merges, one of
+them carrying a D1 migration, sat undeployed until somebody read the logs. A
+gate that stops and asks a human to run a command is a manual step with extra
+ceremony, and the rule for this pipeline is that nothing is manual short of
+break-glass. The reasoning behind the gate — the Wrangler file is the single
+source of truth, and a resource it describes must not live in somebody's shell
+history — is kept whole; creating from that file is the stronger form of it.
+
+**Considered and rejected:** Creating the two queues by hand once more and
+leaving the gate as it was: it would fire again on the next binding, for the
+same reason. A Wrangler provisioning flag: none exists in the pinned 4.123.0.
+Making the R2 preflight provision the same way: a bucket carries a jurisdiction
+and holds data, so one created automatically in the wrong place is not free to
+undo, and it stays a check — the one resource still created by hand.
+
+**Consequences:** The deployment token must hold Queues Edit, which the runbook
+already required for attaching consumers; a token that can only list fails the
+create with `Authentication error [code: 10000]`, and the script names the
+permission. A misspelled queue name in a Wrangler file now creates a stray queue
+rather than failing the deploy — `SAFE_QUEUE` bounds what can be created, and
+`wrangler queues list` shows the strays. A queue removed from the configuration
+lingers until an operator deletes it.
 ### 2026-08-22 — SubstreamAgent's component is named after its class
 
 **What changed:** the component key `SubstreamAgent` reports under is

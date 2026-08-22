@@ -383,24 +383,30 @@ owns the design; this is the provisioning and deployment procedure.
 Reports travel on a Queue rather than a service binding, so **there is no
 deploy-order dependency between the tracker and either API Worker** — a queue is
 a resource both sides bind to. What both sides do require is that the queues
-exist first. The producer binding is optional at runtime, so an API Worker
-deployed before the tracker existed keeps working and simply reports nothing.
+exist first, which each deployment now ensures for itself (below). The producer
+binding is optional at runtime, so an API Worker deployed before the tracker
+existed keeps working and simply reports nothing.
 
 The queue's *configuration* — name, batch size, batch timeout, retries, and its
 dead-letter queue — lives in the Wrangler files and is applied on every deploy,
 so it is not something to set by hand anywhere. What Wrangler does not do is
-create the queue a producer binding names; that fails the deploy. So the
-existence of every declared queue is a preflight, exactly as it is for R2:
+create the queue a producer binding names; that fails the deploy. So every
+deployment provisions its own queues as a preflight:
 
 ```text
 pnpm cloudflare:resources:check
 ```
 
-That reads all three Wrangler files, proves each queue they declare exists, and
-names the `wrangler queues create` command for any that does not. It runs in the
-API deployment before anything is deployed. `avalon-migration-reports` is
-already provisioned; a dead-letter queue needs no action, because Cloudflare
-creates one named in a consumer's `dead_letter_queue` on first deploy.
+That reads all three Wrangler files and creates any queue they declare that the
+account does not hold — `scripts/ensure-cloudflare-queues.mjs`, making the same
+`POST …/queues` call `wrangler queues create` makes. It runs in both the API and
+the tracker deployment before anything is deployed, so a release that adds a
+binding ships its queue with it and no queue is ever created by hand. It never
+deletes: retiring a queue is a deliberate operator action. A dead-letter queue
+needs no action either way, because Cloudflare creates one named in a consumer's
+`dead_letter_queue` on first deploy. The create needs **Queues Edit** on the
+token, listed above; a token that can only list queues gets `Authentication
+error [code: 10000]` on the create, and the script says so.
 
 There is one report queue for both regions, not one per region as with the
 activity queues: every report converges on the single registry object regardless
