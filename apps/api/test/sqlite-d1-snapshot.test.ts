@@ -44,6 +44,32 @@ function describeDatabase(database: DatabaseSync): Record<string, unknown> {
   return described;
 }
 
+/**
+ * Seeded rows with the one column the chain recomputes on every run removed.
+ *
+ * `workstream_authority_control` and `digest_reconciliation_control` each seed
+ * `updated_at` with `datetime('now')`, so a replay and a rebuild agree on
+ * everything but the second they were built in. That is the *only* such column:
+ * replaying the chain twice a second and a half apart leaves every other seeded
+ * value identical, which is how this list was arrived at and how it should be
+ * rechecked.
+ *
+ * Naming the column matters. Exempting whole rows instead — which this test did
+ * first — takes `phase`, `generation` and both contract versions with it, and
+ * those decide the serving phase `workstream-authority.ts` reads. A fixture
+ * handing tests the wrong phase reads as a product bug, not a fixture bug. If a
+ * later migration seeds another generation-time column, this comparison fails
+ * loudly and that column gets added here; that is the intended outcome, not a
+ * reason to widen the exemption back out.
+ */
+const GENERATION_STAMP_COLUMNS = ["updated_at"];
+
+function withoutGenerationStamps(rows: unknown): unknown[] {
+  return (rows as Array<Record<string, unknown>>).map((row) => Object.fromEntries(
+    Object.entries(row).filter(([column]) => !GENERATION_STAMP_COLUMNS.includes(column)),
+  ));
+}
+
 describe("migrated SQLite fixtures", () => {
   const variants: Array<[SqliteTemplateVariant, () => DatabaseSync]> = [
     ["regional", migratedSqliteDatabase],
@@ -55,12 +81,10 @@ describe("migrated SQLite fixtures", () => {
     it(`rebuilds the ${variant} shape exactly as replaying the migrations leaves it`, () => {
       const replayed = describeDatabase(buildTemplateDatabase(variant));
       const rebuilt = describeDatabase(fixture());
-      // The two control tables stamp `datetime('now')`, so they agree on
-      // everything but the second they were built in. Compare their shape and
-      // row count, and let the timestamps differ.
       for (const key of Object.keys(replayed)) {
         if (key.endsWith("::rows")) {
-          expect((rebuilt[key] as unknown[]).length, key).toBe((replayed[key] as unknown[]).length);
+          expect(withoutGenerationStamps(rebuilt[key]), key)
+            .toStrictEqual(withoutGenerationStamps(replayed[key]));
           continue;
         }
         expect(rebuilt[key], key).toStrictEqual(replayed[key]);

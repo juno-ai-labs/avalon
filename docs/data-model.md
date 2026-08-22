@@ -682,8 +682,12 @@ has a document, and the column notes above point at it rather than restating it:
 - `packages/db/test/dev-seed.test.ts` covers `seed.sql` and `seed-product.json`,
   which — unlike the migrations — are live editable files. Its standing job is to
   fail if the D1 seed ever recreates a product table that migration 0090 dropped.
-- `packages/db/src/index.test.ts` drives the repositories over that same
-  migrated SQLite database through a `D1DatabaseLike` shim.
+- `packages/db/src/index.test.ts` covers the repository SQL and the identifier
+  primitives against a mocked `D1DatabaseLike` — `vi.fn()` statements and string
+  assertions on the SQL they were handed. Nothing in this package drives the
+  repositories over a migrated database; the queries that need real SQL are
+  proved in the api Node suite, over the fixtures in
+  `apps/api/test/helpers/sqlite-d1.ts`.
 - `packages/db/test/baseline-migration.test.ts` proves the checked-in baseline
   leaves the same database as replaying the migrations it subsumes, comparing
   through `PRAGMA` introspection rather than SQL text. It is the reason a fresh

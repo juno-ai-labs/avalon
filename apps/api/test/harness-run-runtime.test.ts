@@ -1,5 +1,4 @@
-import type { DatabaseSync} from "node:sqlite";
-import { type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { runHarness, type HarnessTool } from "@avalon/agent-harness";
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type HarnessRunId } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
