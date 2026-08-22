@@ -1,6 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import type { DatabaseSync} from "node:sqlite";
-import { type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { SlackWorkspaceBotScopes } from "@avalon/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
