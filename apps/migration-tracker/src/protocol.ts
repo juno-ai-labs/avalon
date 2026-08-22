@@ -208,8 +208,45 @@ export interface InventoryObject {
  * "both" when absent, which is the ordinary case — the same classes are
  * deployed in both Workers and a schema change lands in both.
  */
+/**
+ * The Durable Object classes that run `withMigrationReport`.
+ *
+ * The sweep enumerates every namespace in the account, which is more than the
+ * classes this Worker observes: the tracker's own `MigrationRegistry` is created
+ * by the sweep that discovers it, and `CrashSymbolicatorContainer` is a
+ * container rather than a migrated object. Neither will ever report, so without
+ * this list they accumulate in `unreported` forever and make that count
+ * worthless for its actual job — spotting an API object that should have
+ * reported and has not.
+ *
+ * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
+ * class missing from here is never swept at all; a class listed here whose
+ * objects never wake sits in `unreported` forever. `WorkspaceScheduler` was
+ * removed when the class was deleted: its objects can no longer report, so
+ * leaving it here would have parked every one of them in `unreported` — the
+ * exact count this list exists to keep meaningful.
+ */
+export const REPORTING_CLASSES = [
+  "SubstreamAgent",
+  "BlockDashboardAgent",
+  "WorkstreamDO",
+  "WorkspaceDO",
+] as const;
+
 export const MigrationRunRequestSchema = z.object({
-  className: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/u),
+  /**
+   * Only a class the API Worker can actually migrate.
+   *
+   * An enum rather than an identifier pattern, because the page's own list of
+   * classes is a rendering of what is forceable, not a constraint on it: a JSON
+   * caller or a hand-edited form reaches this schema directly. A class the
+   * consumer holds no dispatcher for would otherwise be fanned out, retried five
+   * times per object, and dead-lettered — while the run row recorded it as
+   * dispatched. That spends an operator's afternoon and, worse, fills the
+   * dead-letter queue this platform relies on as its monitoring signal with
+   * messages that were never going to work.
+   */
+  className: z.enum(REPORTING_CLASSES),
   region: z.enum(["global", "eu"]).nullish(),
 });
 export type MigrationRunRequest = z.infer<typeof MigrationRunRequestSchema>;
