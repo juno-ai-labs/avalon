@@ -9,6 +9,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
+import { SLACK_REACTION_COLUMN_STATEMENTS } from "../../src/durable-objects/workspace-domain-schema";
+
 const migrationsDirectory = fileURLToPath(new URL("../../../../packages/db/migrations/", import.meta.url));
 
 function migrateSqliteDatabase(through?: string): DatabaseSync {
@@ -144,6 +146,11 @@ export type SqliteTemplateVariant = "regional" | "pre-retirement" | "legacy-prod
 export function buildTemplateDatabase(variant: SqliteTemplateVariant): DatabaseSync {
   if (variant === "regional") return migrateSqliteDatabase();
   const database = migrateSqliteDatabase("0089_confine_legacy_bookkeeping_triggers.sql");
+  // This shape stands in for a workspace object database in service fixtures,
+  // so object-schema changes to the domain tables land here too. Without them a
+  // fixture is a snapshot of D1 as it stood at 0089 rather than of the object
+  // the code under test actually writes to.
+  for (const statement of SLACK_REACTION_COLUMN_STATEMENTS) database.exec(statement);
   if (variant === "legacy-product") return database;
   // These tables crossed the workspace/work-stream boundary in D1. The object
   // import keeps the opaque ids but cannot retain SQLite foreign keys into a
