@@ -23,27 +23,37 @@ import {
   GUARD_TABLE_NAME,
   assertEveryObjectRenderable,
   assertVolatileValuesAreTimestamps,
+  assertWranglerWillNotRewrite,
   compareFingerprints,
+  compareMigrationPaths,
   detectVolatileColumns,
   digestMigrations,
   fingerprintsMatch,
   internalTableExclusionSql,
   isInternalTableName,
   listMigrationFiles,
+  narrowBigInt,
   normalizeSchemaSql,
+  orderSeededTables,
   parseWranglerJson,
+  readBaselineManifest,
   renderBaselineSql,
+  sameSeededValue,
   schemaFingerprint,
   snapshotDatabase,
   sqlLiteral,
   subsumedMigrations,
+  usableBaselines,
 } from "./d1-baseline.mjs";
 import { MIGRATIONS_DIRECTORY, baselineFileNameFor, buildBaseline, snapshotChain } from "./create-d1-baseline.mjs";
-import { verifyAgainstRegions, baselineFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
+import { verifyAgainstRegions, chainFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
+import { discoverRegions } from "./migrate-d1.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinesDirectory = join(repositoryRoot, "packages", "db", "baselines");
-const manifest = JSON.parse(readFileSync(join(baselinesDirectory, "manifest.json"), "utf8")).baseline;
+// The newest baseline: the one an empty database would be given, and the one
+// whose boundary the single-baseline assertions below are about.
+const manifest = readBaselineManifest(readFileSync(join(baselinesDirectory, "manifest.json"), "utf8")).at(-1);
 const baselineSql = readFileSync(join(baselinesDirectory, manifest.file), "utf8");
 
 /**
@@ -91,8 +101,8 @@ test("the boundary migration is itself included, and nothing after it is", () =>
   const all = listMigrationFiles(MIGRATIONS_DIRECTORY);
   const subsumed = subsumedMigrations(all, manifest.through);
   assert.equal(subsumed.at(-1), manifest.through);
-  assert.ok(subsumed.every((name) => name <= manifest.through));
-  const excluded = all.filter((name) => name > manifest.through);
+  assert.ok(subsumed.every((name) => compareMigrationPaths(name, manifest.through) <= 0));
+  const excluded = all.filter((name) => compareMigrationPaths(name, manifest.through) > 0);
   assert.ok(excluded.every((name) => !subsumed.includes(name)));
 });
 
@@ -284,6 +294,8 @@ test("the shared exclusion fragment escapes the underscore wildcard", () => {
 // Rendering rules
 // ---------------------------------------------------------------------------
 
+const FIXTURE_STAMP = "2026-08-21 10:00:00";
+
 function renderFixture(overrides = {}) {
   return renderBaselineSql({
     through: "0002_b.sql",
@@ -295,9 +307,13 @@ function renderFixture(overrides = {}) {
         { type: "index", name: "t_idx", tbl_name: "t", sql: "CREATE INDEX t_idx ON t(id)" },
         { type: "trigger", name: "t_guard", tbl_name: "t", sql: "CREATE TRIGGER t_guard BEFORE INSERT ON t BEGIN SELECT RAISE(ABORT, 'no'); END" },
       ],
-      rows: { t: [{ id: "one", stamped: "2026-08-21 10:00:00" }] },
+      rows: { t: [{ id: "one", stamped: FIXTURE_STAMP }] },
     },
     volatileColumns: { t: ["stamped"] },
+    // Pinned rather than left to the wall clock: the generator requires a
+    // volatile value to be roughly now, and a fixture that drifted out of that
+    // window would fail for the date rather than for anything it tests.
+    now: Date.parse(`${FIXTURE_STAMP.replace(" ", "T")}Z`),
     ...overrides,
   });
 }
@@ -322,7 +338,7 @@ test("the ledger claim is rendered last, after every object it describes", () =>
 test("a volatile column is re-derived on apply and a stable one is frozen", () => {
   const sql = renderFixture();
   assert.match(sql, /datetime\('now'\)/u);
-  assert.ok(!sql.includes("2026-08-21 10:00:00"), "the volatile literal must not be frozen into the file");
+  assert.ok(!sql.includes(FIXTURE_STAMP), "the volatile literal must not be frozen into the file");
   assert.ok(sql.includes("'one'"), "a stable value is frozen");
 });
 
@@ -375,21 +391,55 @@ test("the baseline's object counts match the manifest", () => {
   database.close();
 });
 
-test("the baseline reproduces the schema recorded from the hosted databases", () => {
+test("the migration chain reproduces the schema recorded from the hosted databases", () => {
   // The offline half of `pnpm db:baseline:verify`: that script needs Cloudflare
   // credentials, this assertion keeps its answer enforced on every run without
-  // them. A failure means the baseline no longer describes what production has.
+  // them. A failure means the chain no longer describes what production has.
+  //
+  // The chain rather than a baseline, so this stays correct once migrations
+  // land above a boundary: a baseline describes its own boundary, and comparing
+  // it to production would then report every newer migration as drift.
+  // `packages/db/test/baseline-migration.test.ts` ties the baselines to the
+  // chain; this ties the chain to production.
+  // Compared against the chain **truncated at what was recorded**, not the whole
+  // chain. Recording needs Cloudflare credentials and needs the migration to
+  // already be live, neither of which a PR that adds `0091_*.sql` can have — so
+  // fingerprinting the full chain here would redden this suite on every
+  // migration PR with the only sanctioned repair being to merge and deploy it
+  // first. Truncating keeps the assertion enforced on everything production is
+  // known to have while staying silent about what it has not been given yet.
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  const comparison = compareFingerprints(recorded.objects, baselineFingerprint(baselineSql));
-  assert.ok(fingerprintsMatch(comparison), describeComparison("baseline vs recorded production", comparison).join("\n"));
-  assert.equal(recorded.through, manifest.through);
+  const comparison = compareFingerprints(recorded.objects, chainFingerprint(MIGRATIONS_DIRECTORY, {
+    through: recorded.through,
+  }));
+  assert.ok(fingerprintsMatch(comparison), describeComparison("chain vs recorded production", comparison).join("\n"));
+  // A floor rather than an equality: the recording may lag the chain, but it may
+  // never name a migration this checkout does not have. That happens when a
+  // migration is deleted or renamed after being deployed, which is the one way
+  // the truncation above could quietly start comparing a different chain.
+  assert.ok(
+    listMigrationFiles(MIGRATIONS_DIRECTORY).includes(recorded.through),
+    `production-fingerprint.json was recorded through ${recorded.through}, which is no longer on disk`,
+  );
 });
 
-test("the recorded production fingerprint covers every object the baseline creates", () => {
+test("the recorded production fingerprint covers every object the chain creates", () => {
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.equal(
-    Object.keys(recorded.objects).length,
-    manifest.objectCounts.tables + manifest.objectCounts.indexes + manifest.objectCounts.triggers,
+  const truncated = chainFingerprint(MIGRATIONS_DIRECTORY, { through: recorded.through });
+  assert.equal(Object.keys(recorded.objects).length, Object.keys(truncated).length);
+});
+
+test("the recorded production fingerprint covers every region this checkout has", () => {
+  // One baseline serves every region, which is only sound if every region was
+  // actually looked at. Region discovery is config-driven now, so adding
+  // `wrangler.apac.jsonc` would otherwise leave this suite green against a
+  // recording captured from Global and EU alone.
+  const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
+  assert.deepEqual(
+    [...(recorded.regions ?? [])].sort(),
+    discoverRegions().map((entry) => entry.region).sort(),
+    "a region was added or removed since production-fingerprint.json was recorded; rerun "
+      + "`pnpm db:baseline:verify -- --record`",
   );
 });
 
@@ -446,11 +496,11 @@ test("the region check reports a divergence between two hosted databases as itse
   const table = (sql) => [{ type: "table", name: "t", tbl_name: "t", sql }];
   const baseline = schemaFingerprint(table("CREATE TABLE t (id TEXT)"));
   const { ok, lines } = verifyAgainstRegions({
-    baseline,
+    expected: baseline,
     regionSchemas: { global: table("CREATE TABLE t (id TEXT)"), eu: table("CREATE TABLE t (id INTEGER)") },
   });
   assert.equal(ok, false);
-  assert.ok(lines.some((line) => line.startsWith("baseline vs eu: MISMATCH")));
+  assert.ok(lines.some((line) => line.startsWith("chain vs eu: MISMATCH")));
   assert.ok(lines.some((line) => line.startsWith("global vs eu: MISMATCH")));
   assert.ok(lines.some((line) => line.includes("definition differs:    table:t")));
 });
@@ -458,11 +508,11 @@ test("the region check reports a divergence between two hosted databases as itse
 test("the region check passes only when the baseline and both regions agree", () => {
   const table = [{ type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (id TEXT)" }];
   const { ok, lines } = verifyAgainstRegions({
-    baseline: schemaFingerprint(table),
+    expected: schemaFingerprint(table),
     regionSchemas: { global: table, eu: table },
   });
   assert.equal(ok, true);
-  assert.deepEqual(lines, ["baseline vs global: match", "baseline vs eu: match", "global vs eu: match"]);
+  assert.deepEqual(lines, ["chain vs global: match", "chain vs eu: match", "global vs eu: match"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -656,16 +706,116 @@ test("normalization leaves every real schema object in the baseline unchanged", 
   // moves any of the 129 objects invalidates `production-fingerprint.json`,
   // which then has to be re-recorded against the hosted databases rather than
   // regenerated locally.
-  const database = new DatabaseSync(":memory:");
-  database.exec(baselineSql);
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.deepEqual(schemaFingerprint(snapshotDatabase(database).objects), recorded.objects);
-  database.close();
+  // Truncated at the recording for the same reason as the parity test above: a
+  // migration that is on disk but not yet in production is not a normalization
+  // change, and this assertion exists to catch normalization changes.
+  assert.deepEqual(chainFingerprint(MIGRATIONS_DIRECTORY, { through: recorded.through }), recorded.objects);
 });
 
 // ---------------------------------------------------------------------------
 // The generator refuses what it cannot render faithfully
 // ---------------------------------------------------------------------------
+
+test("a volatile column the chain computes with a modifier stops generation", async () => {
+  // The shape test alone cannot tell `datetime('now')` from
+  // `datetime('now', '+1 day')` — both produce `YYYY-MM-DD HH:MM:SS` — and the
+  // renderer writes only the first. Detection would find the column, the file
+  // would be written with a value a day earlier than any replay produces, and
+  // nothing downstream would notice: the equivalence suite strips volatile
+  // columns from both sides before comparing.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE ctl (id INTEGER PRIMARY KEY, due_at TEXT NOT NULL);\n"
+      + "INSERT INTO ctl (id, due_at) VALUES (1, datetime('now', '+1 day'));",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 1100 }),
+      /ctl\.due_at is volatile and holds .* which is \d+s from now/u,
+    );
+  });
+});
+
+test("a volatile column the chain computes with plain datetime('now') is accepted", async () => {
+  // The other half of the check above: the tolerance has to be wide enough for
+  // a slow replay, or every real generation would fail on the same rule.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE ctl (id INTEGER PRIMARY KEY, stamped_at TEXT NOT NULL);\n"
+      + "INSERT INTO ctl (id, stamped_at) VALUES (1, datetime('now'));",
+  }, async (directory) => {
+    const { sql, manifestEntry } = await buildBaseline({
+      through: "0001_a.sql",
+      directory,
+      settleMilliseconds: 1100,
+    });
+    assert.deepEqual(manifestEntry.volatileColumns, { ctl: ["stamped_at"] });
+    assert.match(sql, /datetime\('now'\)/u);
+  });
+});
+
+test("a seeded TEXT value SQLite hands back truncated stops generation", () => {
+  // `node:sqlite` returns TEXT only as far as its first embedded NUL, and the
+  // shortened string is indistinguishable from a real one afterwards. Both
+  // replays truncate the same way, so volatility detection reports nothing and
+  // the baseline is written with the short value — the one failure in this file
+  // that produces a file which applies cleanly and is silently wrong.
+  withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE a (id TEXT PRIMARY KEY, note TEXT);\n"
+      + "INSERT INTO a (id, note) VALUES ('1', CAST(X'610062' AS TEXT));",
+  }, (directory) => {
+    const files = ["0001_a.sql"];
+    const snapshot = snapshotChain(directory, files);
+    assert.equal(snapshot.rows.a[0].note, "a", "the probe must be truncated on the way out");
+    assert.equal(Number(snapshot.byteLengths.a[0].note), 3, "SQLite must still hold all three bytes");
+    assert.throws(
+      () => renderBaselineSql({ through: "0001_a.sql", files, digest: "sha256:x", snapshot }),
+      /a\.note holds 3 bytes but reads back as 1/u,
+    );
+  });
+});
+
+test("an AUTOINCREMENT counter beyond 2\u00b3 survives the round trip exactly", () => {
+  // `seq` is the highest id ever *issued*, so one explicit insert of an external
+  // id — a snowflake, a millisecond timestamp — puts a value past 2^53 there
+  // permanently. Reading it without BigInt support throws mid-snapshot, and
+  // narrowing through `Number()` rounds it down, which reissues exactly the
+  // retired ids the sequence block exists to protect.
+  const big = 9007199254740993n;
+  withTemporaryMigrations({
+    "0001_a.sql": `CREATE TABLE a (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT);\n`
+      + `INSERT INTO a (id, note) VALUES (${big}, 'issued');\n`
+      + "DELETE FROM a;",
+  }, (directory) => {
+    const files = ["0001_a.sql"];
+    const snapshot = snapshotChain(directory, files);
+    const sequence = snapshot.sequences.find((entry) => entry.name === "a");
+    assert.equal(sequence.seq, big, "the counter must survive the read as an exact integer");
+
+    const sql = renderBaselineSql({ through: "0001_a.sql", files, digest: "sha256:x", snapshot });
+    assert.match(sql, new RegExp(`VALUES \\('a', ${big}\\)`, "u"));
+
+    // And the rebuilt database issues the next id after it, not a reused one.
+    const rebuilt = new DatabaseSync(":memory:");
+    rebuilt.exec(sql);
+    rebuilt.prepare("INSERT INTO a (note) VALUES ('after')").run();
+    const statement = rebuilt.prepare("SELECT id FROM a");
+    statement.setReadBigInts(true);
+    assert.equal(statement.get().id, big + 1n);
+    rebuilt.close();
+  });
+});
+
+test("a REAL too large for decimal notation renders as SQL that parses", () => {
+  // `${value}.0` is only a REAL literal while `String` stays in decimal form; at
+  // 1e21 it switches to exponent notation and the suffix lands after the
+  // exponent. The generated file would be committed and reviewed before
+  // anything tried to apply it.
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE t (v ANY) STRICT; INSERT INTO t VALUES (${sqlLiteral(1e21, "real")});`);
+  assert.equal(database.prepare("SELECT typeof(v) AS t FROM t").get().t, "real");
+  database.close();
+  assert.equal(sqlLiteral(1e21, "real"), "1e+21");
+  assert.equal(sqlLiteral(2, "real"), "2.0", "decimal-form integers still need the suffix");
+});
 
 test("an object type the renderer cannot emit stops generation instead of vanishing", () => {
   // A view would be read from `sqlite_schema`, partitioned into nothing, and
@@ -752,4 +902,261 @@ test("a column volatile in every seeded row is still just volatile", () => {
     ),
     { ctl: ["at"] },
   );
+});
+
+// ---------------------------------------------------------------------------
+// State and shapes the renderer used to lose or choke on
+// ---------------------------------------------------------------------------
+
+test("seeded rows are inserted after the rows they reference", async () => {
+  // `sqlite_schema` order is alphabetical, so a child whose name sorts before
+  // its parent's was inserted first and the file died on a foreign key —
+  // naming no table, and partway through, leaving schema with no ledger.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE workspace (id TEXT PRIMARY KEY);
+      CREATE TABLE agent_role (id TEXT PRIMARY KEY, ws TEXT NOT NULL REFERENCES workspace(id));
+      INSERT INTO workspace (id) VALUES ('w1');
+      INSERT INTO agent_role (id, ws) VALUES ('r1', 'w1');`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.ok(sql.indexOf('INSERT INTO "workspace"') < sql.indexOf('INSERT INTO "agent_role"'));
+    const database = new DatabaseSync(":memory:");
+    assert.doesNotThrow(() => database.exec(sql));
+    assert.equal(database.prepare("SELECT COUNT(*) c FROM agent_role").get().c, 1);
+    database.close();
+  });
+});
+
+test("seeded tables that reference each other in a cycle are refused, not guessed at", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE a (id TEXT PRIMARY KEY, b_id TEXT REFERENCES b(id));
+                 CREATE TABLE b (id TEXT PRIMARY KEY, a_id TEXT REFERENCES a(id));
+                 INSERT INTO a VALUES ('a1', NULL); INSERT INTO b VALUES ('b1', 'a1');`);
+  const snapshot = snapshotDatabase(database);
+  assert.throws(
+    () => renderBaselineSql({ through: "0001_a.sql", files: ["0001_a.sql"], digest: "sha256:x", snapshot }),
+    /reference each other in a cycle/u,
+  );
+  database.close();
+});
+
+test("a parent with no seeded rows constrains nothing", () => {
+  // Only seeded tables need ordering; an empty parent cannot be violated.
+  assert.deepEqual(orderSeededTables({ child: [{}] }, { child: ["parent"] }), ["child"]);
+  assert.deepEqual(orderSeededTables({ child: [{}], parent: [{}] }, { child: ["parent"], parent: [] }),
+    ["parent", "child"]);
+});
+
+test("the AUTOINCREMENT high-water mark survives, including ids the chain deleted", async () => {
+  // Re-inserting the surviving rows only raises the counter to the highest
+  // surviving id, so a baselined database re-issues ids that are permanently
+  // retired everywhere else.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE tier (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+      INSERT INTO tier (name) VALUES ('a'), ('b'), ('c'), ('d');`,
+    "0002_b.sql": "DELETE FROM tier WHERE name IN ('c', 'd');",
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0002_b.sql", directory, settleMilliseconds: 0 });
+    const nextIdAfter = (build) => {
+      const database = new DatabaseSync(":memory:");
+      build(database);
+      database.prepare("INSERT INTO tier (name) VALUES ('next')").run();
+      const id = database.prepare("SELECT id FROM tier WHERE name = 'next'").get().id;
+      database.close();
+      return id;
+    };
+    const chain = nextIdAfter((database) => {
+      for (const name of ["0001_a.sql", "0002_b.sql"]) {
+        database.exec(readFileSync(join(directory, name), "utf8"));
+      }
+    });
+    assert.equal(nextIdAfter((database) => database.exec(sql)), chain, "the next id must match a replay");
+    assert.equal(chain, 5, "ids 3 and 4 are retired, so the next is 5");
+  });
+});
+
+test("a seeded BLOB is frozen as a hex literal, not misread as a volatile timestamp", async () => {
+  // SQLite returns a fresh Uint8Array per read, so `!==` reported every blob as
+  // moving in every row — and the generator refused, citing `datetime('now')`.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE app_key (id TEXT PRIMARY KEY, secret BLOB NOT NULL);
+      INSERT INTO app_key (id, secret) VALUES ('k1', X'0102030405');`,
+  }, async (directory) => {
+    const { sql, manifestEntry } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.deepEqual(manifestEntry.volatileColumns, {});
+    assert.match(sql, /X'0102030405'/u);
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    assert.deepEqual(
+      [...database.prepare("SELECT secret FROM app_key").get().secret],
+      [1, 2, 3, 4, 5],
+    );
+    database.close();
+  });
+});
+
+test("blob equality is by content, and a blob that really does change is still volatile", () => {
+  assert.ok(sameSeededValue(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])));
+  assert.ok(!sameSeededValue(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4])));
+  assert.ok(!sameSeededValue(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3])));
+  assert.deepEqual(
+    detectVolatileColumns({ t: [{ b: new Uint8Array([1]) }] }, { t: [{ b: new Uint8Array([1]) }] }),
+    {},
+  );
+  assert.deepEqual(
+    detectVolatileColumns({ t: [{ b: new Uint8Array([1]) }] }, { t: [{ b: new Uint8Array([2]) }] }),
+    { t: ["b"] },
+  );
+});
+
+test("a virtual table stops generation rather than being rendered with its shadow tables", async () => {
+  // An FTS5 table has `type = 'table'`, so a type check alone waves it through;
+  // the renderer then emits the CREATE VIRTUAL TABLE *and* explicit CREATE
+  // TABLEs for the shadows it creates for itself, and applying dies on
+  // "table already exists".
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE VIRTUAL TABLE note_search USING fts5(body);",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /Cannot render table:note_search into a baseline/u,
+    );
+  });
+});
+
+test("an ordinary table is not mistaken for a virtual one", () => {
+  assert.doesNotThrow(() => assertEveryObjectRenderable([
+    { type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (virtual_column TEXT)" },
+  ]));
+});
+
+// ---------------------------------------------------------------------------
+// Values and shapes the renderer used to lose, retype, or choke on
+// ---------------------------------------------------------------------------
+
+test("a generated column is left out of the INSERT and recomputed on apply", async () => {
+  // `SELECT *` returns generated columns and `INSERT` rejects them outright, so
+  // the baseline could not be applied at all.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE plan (
+        id INTEGER PRIMARY KEY, cents INTEGER, seats INTEGER,
+        per_seat_cents INTEGER GENERATED ALWAYS AS (cents / seats) VIRTUAL,
+        total_cents INTEGER GENERATED ALWAYS AS (cents) STORED
+      );
+      INSERT INTO plan (id, cents, seats) VALUES (1, 100, 4);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    // The names appear in the CREATE, legitimately. What matters is the INSERT's
+    // column list, which is what SQLite rejects.
+    const insertColumns = /INSERT INTO "plan" \(([^)]*)\)/u.exec(sql)[1];
+    assert.deepEqual(insertColumns.split(", "), ['"id"', '"cents"', '"seats"'],
+      "generated columns, VIRTUAL and STORED, must be left out of the INSERT");
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    // Recomputed by SQLite from the columns that were inserted.
+    assert.equal(database.prepare("SELECT per_seat_cents AS v FROM plan").get().v, 25);
+    assert.equal(database.prepare("SELECT total_cents AS v FROM plan").get().v, 100);
+    database.close();
+  });
+});
+
+test("a REAL with no fractional part stays a REAL", async () => {
+  // JavaScript has one number type, so 2.0 and 2 are the same value and
+  // `String()` renders both as `2`, which SQLite stores as an INTEGER. Column
+  // affinity rescues a declared REAL column; a STRICT `ANY` column is not.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE m (id INTEGER PRIMARY KEY, v ANY) STRICT;
+      INSERT INTO m (id, v) VALUES (1, 2.0), (2, 2), (3, 2.5);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    assert.deepEqual(
+      database.prepare("SELECT id, typeof(v) AS t FROM m ORDER BY id").all().map((row) => String(row.t)),
+      ["real", "integer", "real"],
+      "each value keeps the storage class the chain gave it",
+    );
+    database.close();
+  });
+});
+
+test("an integer beyond 2^53 survives instead of crashing the generator", async () => {
+  // A Slack `ts` in nanoseconds, a snowflake id. Previously this threw
+  // "Value is too large to be represented as a JavaScript number" with no table
+  // or column named and no hint it was a baseline limitation.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE event (id INTEGER PRIMARY KEY, ts INTEGER);
+      INSERT INTO event (id, ts) VALUES (1, 1755870000123456789);`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.match(sql, /1755870000123456789/u);
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    const statement = database.prepare("SELECT ts FROM event");
+    statement.setReadBigInts(true);
+    assert.equal(statement.get().ts, 1755870000123456789n);
+    database.close();
+  });
+});
+
+test("an ordinary integer is still rendered as a plain number", () => {
+  assert.equal(narrowBigInt(5n), 5);
+  assert.equal(typeof narrowBigInt(5n), "number");
+  assert.equal(narrowBigInt(2n ** 60n), 2n ** 60n);
+  assert.equal(sqlLiteral(5), "5");
+  assert.equal(sqlLiteral(5, "integer"), "5");
+  assert.equal(sqlLiteral(5, "real"), "5.0");
+  assert.equal(sqlLiteral(5.5, "real"), "5.5");
+});
+
+test("text Wrangler would silently edit out of the file stops generation", async () => {
+  // `wrangler d1 execute --file` strips the first `BEGIN TRANSACTION;` and the
+  // first `COMMIT;` from any file containing the former — wherever they are,
+  // including inside a comment or a string — and errors if it appears twice.
+  // SQLite keeps comments written inside a CREATE body, and seeded rows are
+  // copied verbatim, so both routes reach the file.
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE z (\n  -- once wrapped in BEGIN TRANSACTION; before the cutover\n  id TEXT PRIMARY KEY\n);",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /contains the text 'BEGIN TRANSACTION'/u,
+    );
+  });
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE TABLE snippet (id TEXT PRIMARY KEY, body TEXT);\n"
+      + "INSERT INTO snippet VALUES ('s1', 'BEGIN TRANSACTION; UPDATE x SET y = 1; COMMIT;');",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /contains the text 'BEGIN TRANSACTION'/u,
+    );
+  });
+});
+
+test("an ordinary baseline is not caught by the transaction check", () => {
+  assert.doesNotThrow(() => assertWranglerWillNotRewrite("CREATE TABLE t (id TEXT);\nCOMMIT ok;"));
+  assert.throws(() => assertWranglerWillNotRewrite("-- BEGIN TRANSACTION\nCREATE TABLE t (id TEXT);"),
+    /BEGIN TRANSACTION/u);
+});
+
+test("a boundary appearing twice makes neither baseline usable, whatever the input order", () => {
+  // Only a merge that kept both sides produces this: `mergeIntoManifest`
+  // replaces by boundary. There is no way to tell which snapshot is right, and
+  // the comparator never returns 0 for equal boundaries — so the winner used to
+  // be a sort artifact that flipped with input order.
+  const migrations = ["0001_a.sql"];
+  const digestFor = () => "sha256:same";
+  const left = { through: "0001_a.sql", file: "b_from_branch_A.sql", migrations, digest: "sha256:same" };
+  const right = { through: "0001_a.sql", file: "b_from_branch_B.sql", migrations, digest: "sha256:same" };
+  assert.deepEqual(usableBaselines([left, right], migrations, digestFor), []);
+  assert.deepEqual(usableBaselines([right, left], migrations, digestFor), []);
+  assert.deepEqual(usableBaselines([left], migrations, digestFor).map((entry) => entry.file),
+    ["b_from_branch_A.sql"]);
 });
