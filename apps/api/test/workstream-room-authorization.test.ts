@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -100,8 +101,6 @@ function fakeSocket(userId: string): FakeSocket {
   };
 }
 
-const productDatabases = new WeakMap<SubstreamAgent, DatabaseSync>();
-
 function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamAgent {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
@@ -174,14 +173,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamA
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
-  productDatabases.set(room, objectDatabase);
   return room;
-}
-
-function productDatabase(room: SubstreamAgent): DatabaseSync {
-  const database = productDatabases.get(room);
-  if (!database) throw new Error("room_product_database_missing");
-  return database;
 }
 
 describe("message commands over the SubstreamAgent socket", () => {
@@ -323,114 +315,86 @@ describe("who the work-stream room lets connect", () => {
 
 describe("who the work-stream room disconnects", () => {
   // Connect-time authorization only covers the sockets opened after a change.
-  // These are the ones that were already inside, which is what a bystander
-  // reading the work stream at the moment it closes actually is.
-  it("closes the reader a work stream just became private without", async () => {
-    const evicted = fakeSocket(MEMBER);
-    const kept = fakeSocket(PARTICIPANT);
-    const room = roomFor(seededDatabase(), [evicted, kept]);
+  // The ones already inside are closed by the access-revocation queue and by
+  // nothing else: this room re-checks nothing on its own, on a timer or on a
+  // retraction it happens to be publishing. See docs/access-revocation.md.
+  it("closes the sockets of the person it is told lost access", async () => {
+    const revoked = fakeSocket(PARTICIPANT);
+    const kept = fakeSocket(MEMBER);
+    const room = roomFor(seededDatabase(), [revoked, kept]);
+
+    await room.revokeSocketAccess({
+      reason: "workspace_membership_removed",
+      workspaceId: asWorkspaceId(WORKSPACE),
+      userId: PARTICIPANT,
+      sessionId: null,
+    });
+
+    expect(revoked.closes).toEqual([
+      { code: 1008, reason: "You can no longer read this work stream" },
+    ]);
+    expect(kept.closes).toEqual([]);
+    // The people who stay must stop seeing the closed reader listed as
+    // present: `webSocketClose` fires for a *client*-initiated close, so
+    // closing one here invokes nothing.
+    expect(kept.sent.map((payload) => (JSON.parse(payload) as { type: string }).type))
+      .toEqual(["presence_changed"]);
+  });
+
+  it("closes only the windows that presented a revoked session", async () => {
+    const revoked = fakeSocket(PARTICIPANT);
+    const otherWindow = fakeSocket(PARTICIPANT);
+    otherWindow.serializeAttachment({
+      ...(otherWindow.deserializeAttachment() as Record<string, unknown>),
+      sessionId: "00000000-0000-7000-8000-0000000000c9",
+    });
+    const room = roomFor(seededDatabase(), [revoked, otherWindow]);
+
+    await room.revokeSocketAccess({
+      reason: "session_revoked",
+      workspaceId: asWorkspaceId(WORKSPACE),
+      userId: PARTICIPANT,
+      sessionId: SESSION,
+    });
+
+    expect(revoked.closes.map((close) => close.code)).toEqual([1008]);
+    // One window signing out must not sign the person out of the others.
+    expect(otherWindow.closes).toEqual([]);
+  });
+
+  it("closes nobody when a work stream narrows to its participants", async () => {
+    const reader = fakeSocket(MEMBER);
+    const room = roomFor(seededDatabase(), [reader]);
 
     const response = await publish(room, { type: "workstream_scope_changed", scope: "personal" });
 
     expect(response.status).toBe(202);
-    expect(evicted.closes).toEqual([
-      { code: 1008, reason: "You can no longer read this work stream" },
-    ]);
-    expect(kept.closes).toEqual([]);
-    // Swept before the broadcast, so the event that excluded them is not the
-    // last thing they are sent.
-    expect(evicted.sent).toEqual([]);
-    // The scope change, and a refreshed roster: the people who stay must stop
-    // seeing the evicted reader listed as present in a work stream they were
-    // just shut out of.
-    expect(kept.sent.map((payload) => (JSON.parse(payload) as { type: string }).type))
-      .toEqual(["workstream_scope_changed", "presence_changed"]);
-  });
-
-  it("closes a participant who was taken out of a private work stream", async () => {
-    const database = seededDatabase();
-    const removed = fakeSocket(PARTICIPANT);
-    const room = roomFor(database, [removed]);
-    // Losing a participant retracts read access in a private work stream
-    // exactly as narrowing the scope does, and nothing else disconnects them.
-    productDatabase(room).exec(`DELETE FROM participants WHERE user_id = '${PARTICIPANT}'`);
-
-    const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
-
-    expect(response.status).toBe(202);
-    expect(removed.closes.map((close) => close.code)).toEqual([1008]);
-  });
-
-  it("leaves everyone in place when the work stream is open to the workspace", async () => {
-    const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
-    const reader = fakeSocket(MEMBER);
-    const room = roomFor(database, [reader]);
-
-    await publish(room, { type: "participant_removed", userId: PARTICIPANT });
-
+    // A deliberate gap, not an oversight: work-stream participation and
+    // visibility are object-local facts, so the D1-fed revocation queue cannot
+    // see them and this reader keeps the socket until they reconnect. Recorded
+    // in docs/access-revocation.md; closing them here would be a second
+    // mechanism.
     expect(reader.closes).toEqual([]);
     expect(reader.sent).toHaveLength(1);
   });
 
-  it("re-checks on its own when the retraction never reached it", async () => {
+  it("asks D1 nothing while publishing, however often it publishes", async () => {
     const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
     const reader = fakeSocket(MEMBER);
     const room = roomFor(database, [reader]);
-    // An ordinary event: the room checks the connected set and finds nothing
-    // wrong, which is also what starts its revalidation clock.
-    await publish(room, { type: "harness_status_changed", status: "running" });
-    expect(reader.closes).toEqual([]);
-
-    // The work stream goes private and the publisher that would have said so
-    // fails — `publishWorkstreamEvent` swallows that, so the room is never told.
-    productDatabase(room).exec("UPDATE workstream SET scope = 'personal' WHERE id = 1");
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
-
-    // The next thing the room would have sent them is what catches it.
-    await publish(room, { type: "harness_status_changed", status: "completed" });
-
-    expect(reader.closes.map((close) => close.code)).toEqual([1008]);
-    expect(reader.sent).toHaveLength(1);
-  });
-
-  it("does not re-check on every frame of a stream", async () => {
-    const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
-    const reader = fakeSocket(MEMBER);
-    const room = roomFor(database, [reader]);
-    await publish(room, { type: "harness_status_changed", status: "running" });
-    database.exec(`UPDATE workstreams SET scope = 'personal' WHERE id = '${WORKSTREAM}'`);
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
-
-    // Deltas are the one high-frequency event, and a turn that emits them has
-    // already passed a `stream_started` through the check.
-    await publish(room, {
-      type: "stream_delta",
-      messageId: WORKSTREAM,
-      delta: "…",
-      reset: false,
-      turnId: "turn-1",
-      epoch: 0,
-      streamSeq: 1,
+    const asked: string[] = [];
+    const original = database.prepare.bind(database);
+    vi.spyOn(database, "prepare").mockImplementation((sql: string) => {
+      asked.push(sql);
+      return original(sql);
     });
 
+    await publish(room, { type: "harness_status_changed", status: "running" });
+    await publish(room, { type: "harness_status_changed", status: "completed" });
+
+    // An authorization query on this path is what the queue exists to remove:
+    // the transcript feed is the highest-frequency socket in the product.
+    expect(asked.filter((sql) => sql.includes("workspace_members"))).toEqual([]);
     expect(reader.closes).toEqual([]);
-  });
-
-  it("makes everyone reconnect, rather than stranding them, when it cannot tell who may stay", async () => {
-    const database = seededDatabase();
-    const reader = fakeSocket(PARTICIPANT);
-    const room = roomFor(database, [reader]);
-    productDatabase(room).exec("DROP TABLE participants");
-
-    await publish(room, { type: "workstream_scope_changed", scope: "personal" });
-
-    // 1011, not the access-revoked code: a failed query is not evidence that
-    // this reader lost access, and a reconnect is authorized against D1 again.
-    // Closing them as "revoked" would strand a legitimate reader on an error
-    // screen over one bad query.
-    expect(reader.closes.map((close) => close.code)).toEqual([1011]);
   });
 });

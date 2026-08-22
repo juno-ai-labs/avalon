@@ -55,6 +55,10 @@ import {
 import { blockDashboardAgentName, substreamAgentName, workspaceDOName } from "./names";
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
+import {
+  SocketAccessRevocationSchema,
+  type SocketAccessRevocation,
+} from "../services/access-revocation";
 
 const ForwardedEffectsSchema = z.object({
   substreamId: z.string().min(1).max(180),
@@ -1179,7 +1183,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           blockDashboard,
         });
         const currentBlockIds = new Set(blockDashboard.blocks.map((block) => block.id));
-        await this.revalidateBlockDashboardSockets(
+        await this.closeSocketsForRemovedBlocks(
           previousBlockIds.filter((blockId) => !currentBlockIds.has(blockId)),
         );
         this.state.waitUntil((async () => {
@@ -1346,31 +1350,23 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
     }
     if (activeUsers.size === 0) return;
-    const metadata = this.metadataRow();
-    if (!metadata) return;
-    const placeholders = [...activeUsers].map(() => "?").join(",");
-    const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active' AND user_id IN (${placeholders})`,
-    ).bind(metadata.workspace_id, ...activeUsers).all<{ user_id: string }>();
-    const permitted = new Set((members.results ?? []).map((member) => member.user_id)
-      .filter((userId) => this.canRead(userId)));
     const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed || !activeUsers.has(attachment.userId)) continue;
-      if (!permitted.has(attachment.userId)) {
-        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
-        continue;
-      }
       socket.send(payload);
     }
   }
 
-  private async revalidateBlockDashboardSockets(
-    blockIds: readonly string[],
-    userId?: string,
-  ): Promise<void> {
+  /**
+   * Close the sockets of blocks that just left the dashboard.
+   *
+   * A block that stopped existing takes its readers with it, which is a fact
+   * about the block rather than about who was reading it. Losing access is a
+   * different question with exactly one answer — see `docs/access-revocation.md`
+   * — and this must not become a second one.
+   */
+  private async closeSocketsForRemovedBlocks(blockIds: readonly string[]): Promise<void> {
     const metadata = this.metadataRow();
     if (!metadata || blockIds.length === 0) return;
     await Promise.allSettled(blockIds.map(async (blockId) => {
@@ -1390,7 +1386,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         workstreamId: metadata.workstream_id,
         blockId,
         region: this.env.AVALON_REGION,
-        ...(userId ? { userId } : {}),
       }));
     }));
   }
@@ -1558,16 +1553,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     const parsed = ForwardedEffectsSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return json({ error: "invalid_substream_effects" }, 400);
     try {
-      const previousMetadata = this.metadataRow();
-      const previousVisibility = previousMetadata
-        ? `${previousMetadata.scope}:${previousMetadata.archived_at === null ? "open" : "archived"}`
-        : null;
-      const affectedUsers = new Map<string, boolean>();
-      for (const envelope of parsed.data.envelopes) {
-        if (envelope.effect.kind === "directory_user" && !affectedUsers.has(envelope.effect.userId)) {
-          affectedUsers.set(envelope.effect.userId, this.canRead(envelope.effect.userId));
-        }
-      }
       let accepted = 0;
       for (const envelope of parsed.data.envelopes) {
         if (envelope.region !== this.env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
@@ -1581,23 +1566,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       // other member of the workspace are waiting on, and their only path to it
       // is the workspace socket — so start it here instead of at the alarm.
       this.deliverDirectoryEffectsEagerly();
-      const configuration = this.latestBlockDashboardConfiguration();
-      const blockIds = configuration
-        ? parseBlockDashboardBlocks(configuration.blocks_json).map((block) => block.id)
-        : [];
-      const currentMetadata = this.metadataRow();
-      const currentVisibility = currentMetadata
-        ? `${currentMetadata.scope}:${currentMetadata.archived_at === null ? "open" : "archived"}`
-        : null;
-      if (previousVisibility !== currentVisibility) {
-        await this.revalidateBlockDashboardSockets(blockIds);
-      } else {
-        await Promise.all([...affectedUsers].map(async ([userId, couldRead]) => {
-          if (couldRead !== this.canRead(userId)) {
-            await this.revalidateBlockDashboardSockets(blockIds, userId);
-          }
-        }));
-      }
+      // A visibility change used to sweep block sockets from here. It no
+      // longer does: closing somebody's socket because their access ended is
+      // the access-revocation queue's job and nothing else's, so that this
+      // object cannot hold a second, quieter answer to the same question. See
+      // docs/access-revocation.md. Block lifecycle is a different question and
+      // still sweeps, at the configuration-change site that knows the answer.
       return json({ ok: true, accepted });
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "substream_effect_failed" }, 409);
@@ -2008,6 +1982,54 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     };
   }
 
+  /**
+   * Drop every socket this object holds for a person whose access ended, and
+   * carry the same revocation to its substreams and blocks.
+   *
+   * The only way a socket here is closed for lost access; see
+   * `docs/access-revocation.md`. Its registries are the only place its
+   * substreams and blocks are listed, so it answers with them and stops there —
+   * what carries the revocation onward is the consumer's business, not this
+   * object's.
+   */
+  async revokeSocketAccess(
+    revocation: SocketAccessRevocation,
+  ): Promise<{ substreamIds: string[]; blockIds: string[] }> {
+    await this.initialized;
+    const request = SocketAccessRevocationSchema.parse(revocation);
+    const identity = this.metadataRow();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readSocketAttachment(socket);
+      if (!attachment || attachment.userId !== request.userId) continue;
+      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      try {
+        socket.serializeAttachment({ ...attachment, subscribed: false });
+      } catch {
+        // An unreadable attachment already fails the broadcast filter.
+      }
+      try {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+      } catch {
+        // Already closing; the runtime owns the rest of the teardown.
+      }
+    }
+    if (!identity) return { substreamIds: [], blockIds: [] };
+    const configuration = this.latestBlockDashboardConfiguration();
+    // The main substream keeps the historical name and is never listed in the
+    // directory, so it is named here rather than discovered.
+    const substreamIds = [
+      "0",
+      ...this.state.storage.sql.exec<{ substream_id: string }>(
+        `SELECT substream_id FROM substream_directory ORDER BY substream_id`,
+      ).toArray().map((row) => row.substream_id).filter((substreamId) => substreamId !== "0"),
+    ];
+    return {
+      substreamIds,
+      blockIds: (configuration ? parseBlockDashboardBlocks(configuration.blocks_json) : [])
+        .map((block) => block.id),
+    };
+  }
+
   private async broadcastMetadata(): Promise<void> {
     const sockets = this.state.getWebSockets();
     if (sockets.length === 0) return;
@@ -2018,29 +2040,10 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       activeUsers.add(attachment.userId);
     }
     if (activeUsers.size === 0) return;
-    const placeholders = [...activeUsers].map(() => "?").join(",");
-    let permitted: Set<string>;
-    try {
-      const row = this.metadataRow();
-      if (!row) throw new Error("workstream_metadata_missing");
-      const result = await this.env.DB.prepare(
-        `SELECT user_id FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active' AND user_id IN (${placeholders})`,
-      ).bind(row.workspace_id, ...activeUsers).all<{ user_id: string }>();
-      permitted = new Set((result.results ?? []).map((member) => member.user_id)
-        .filter((userId) => this.canRead(userId)));
-    } catch {
-      for (const socket of sockets) socket.close(1011, "Reconnect to continue reading this work stream");
-      return;
-    }
     const occurredAt = new Date().toISOString();
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed) continue;
-      if (!permitted.has(attachment.userId)) {
-        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
-        continue;
-      }
       const metadata = this.metadataForUser(attachment.userId);
       if (!metadata) continue;
       socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({

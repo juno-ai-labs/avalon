@@ -40,7 +40,8 @@
   ],
   "queues": {
     "producers": [
-      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-do-runtime-test-activity" }
+      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-do-runtime-test-activity" },
+      { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-do-runtime-test-access-revocations" }
     ]
   }
 }
