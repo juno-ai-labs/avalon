@@ -42,6 +42,8 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "scripts/ensure-cloudflare-queues.mjs"
+      - "scripts/wrangler-config.mjs"
+      - "scripts/entry-point.mjs"
       - "scripts/check-migration-tracker-health.mjs"
       - ".github/workflows/deploy-migration-tracker.yml"
   workflow_dispatch:
@@ -110,8 +112,9 @@ jobs:
       # Wrangler applies a consumer's settings but will not create the queue it
       # names, so a missing queue fails the deploy halfway through. Read every
       # Wrangler file and create whatever is missing first; nothing about a
-      # queue is a manual step. The API deployment runs the same script, and a
-      # create the two race on is resolved by re-listing, not by failing.
+      # queue is a manual step. The API deployment runs the same script over the
+      # same files, so the two can race on one create; the loser lists again
+      # and passes if the queue exists by then.
       - name: Ensure every Queue the Wrangler configs declare exists
         run: node scripts/ensure-cloudflare-queues.mjs
 
