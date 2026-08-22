@@ -50,6 +50,8 @@ const TickerStateSchema = z.object({
   delivery_key: z.string(),
   interval_ms: z.number().int().positive(),
   ticks: z.number().int().nonnegative(),
+  /** Identifies this rotation, so a resumed alarm can tell it was cancelled. */
+  started_at: z.number().int().nonnegative(),
 });
 
 const MIGRATION_COMPONENT = "slack_reaction_ticker";
@@ -149,7 +151,7 @@ export class SlackReactionTicker {
     await this.initialized;
     const stored = TickerStateSchema.safeParse(
       this.state.storage.sql
-        .exec("SELECT workspace_id, session_id, delivery_key, interval_ms, ticks FROM slack_reaction_rotation WHERE id = 1")
+        .exec("SELECT workspace_id, session_id, delivery_key, interval_ms, ticks, started_at FROM slack_reaction_rotation WHERE id = 1")
         .toArray()[0],
     );
     if (!stored.success) {
@@ -175,6 +177,21 @@ export class SlackReactionTicker {
       live = false;
     }
     if (!live) {
+      await this.clear();
+      return;
+    }
+    // `advanceSessionReaction` awaits D1 reads, a token decrypt, and a Slack
+    // round trip, and the input gate lets a concurrent `/stop` run during those
+    // awaits. `deleteAlarm()` does not interrupt a handler already executing, so
+    // re-arming unconditionally here resurrected the rotation the stop had just
+    // cancelled — and the working emoji this tick placed then outlived the
+    // outcome reaction. Re-reading the row makes the cancellation stick.
+    const surviving = TickerStateSchema.safeParse(
+      this.state.storage.sql
+        .exec("SELECT workspace_id, session_id, delivery_key, interval_ms, ticks, started_at FROM slack_reaction_rotation WHERE id = 1")
+        .toArray()[0],
+    );
+    if (!surviving.success || surviving.data.started_at !== state.started_at) {
       await this.clear();
       return;
     }

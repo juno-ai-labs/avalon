@@ -268,12 +268,18 @@ removes the previous one:
 
 A transition removes only the emoji Avalon itself last placed, recorded in
 `slack_agent_sessions.reaction_current`, so a member's own reaction on the same
-message survives. The reaction sits on the *triggering* message rather than the
+message survives. Both transitions re-read that column immediately before acting
+and write it back conditionally, because delivery and a rotation tick can be in
+flight at once: removing a stale emoji answers `no_reaction`, which is a
+successful retry, and would otherwise leave the working reaction beside the
+outcome — the one thing the single-slot rule exists to prevent. The reaction sits on the *triggering* message rather than the
 thread root, and each new prompt in a thread moves it and restarts the rotation.
 
 The rotation is a Durable Object alarm keyed by session, holding its cursor in
 its own SQLite database and stopping when the session's delivery key moves —
-which is delivery's own stamp that the run is over. **The outcome reaction never
+which is delivery's own stamp that the run is over. A tick re-reads its own row
+before re-arming, so a stop that arrived while the tick was awaiting Slack
+cancels the rotation rather than being undone by it. **The outcome reaction never
 depends on it**: delivery applies that transition, and delivery runs on
 every terminal status whether or not a ticker ever started. That is what lets the
 rotation be treated as decoration — an alarm that is lost costs a cycling emoji,

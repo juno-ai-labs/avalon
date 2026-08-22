@@ -72,10 +72,26 @@ export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK
   for (const line of normalized.split("\n")) {
     // Reserve room for the reopened fence above and the closing fence below, so
     // a chunk that lands mid-block cannot exceed the limit once repaired.
-    const budget = Math.max(16, maximum - fenceOverhead(carriedFence, openFence));
+    //
+    // The bound is the *worst* of the current fence state and the state a flush
+    // inside this line would produce, because a flush sets `carriedFence` to the
+    // open fence and the remainder of the line then pays for both markers. A
+    // budget computed only from the state on entry is what overflowed: a single
+    // line longer than the budget with a fence open — minified JSON, a base64
+    // payload, a long log line — was hard-split into pieces sized for no carried
+    // fence, and every chunk after the flush came back over the limit with a
+    // reopened fence on top.
+    const wrapBudget = Math.max(16, maximum - Math.max(
+      fenceOverhead(carriedFence, openFence),
+      fenceOverhead(openFence, openFence),
+    ));
 
-    for (const piece of hardWrap(line, budget)) {
-      if (pending.length && pendingLength + piece.length + 1 > budget) {
+    for (const piece of hardWrap(line, wrapBudget)) {
+      // Measured against the fence state *after* this piece, since a piece that
+      // opens a fence makes the chunk need a closing marker it did not need a
+      // moment ago.
+      const overhead = fenceOverhead(carriedFence, nextFenceState(openFence, piece));
+      if (pending.length && overhead + pendingLength + piece.length + 1 > maximum) {
         // A blank line is only a paragraph seam outside a fence; inside one it
         // is part of the code, and breaking there splits the block for nothing.
         const paragraph = openFence === null ? lastParagraphBreak(pending) : -1;
