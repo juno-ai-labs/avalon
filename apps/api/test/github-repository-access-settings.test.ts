@@ -7,7 +7,6 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import {
-  createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import {
@@ -332,10 +331,6 @@ function environment(database: DatabaseSync): Env {
     GITHUB_APP_CLIENT_SECRET: "secret",
     GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nunused\n-----END PRIVATE KEY-----",
     GITHUB_WEBHOOK_SECRET: "webhook-secret",
-    WORKSPACE_SCHEDULERS: {
-      idFromName: () => createTestDurableObjectId("github-settings-scheduler"),
-      get: () => ({ refresh: async () => undefined }),
-    },
   });
 }
 

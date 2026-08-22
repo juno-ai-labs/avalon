@@ -3,14 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
 
+import { workspaceSchedulerName } from "../src/durable-objects/workspace-scheduler";
+import { scheduledAlarmRetryDelay } from "../src/durable-objects/scheduled-alarms";
 import {
   calculateNextOccurrence,
-  runIsolatedSchedulerMaintenance,
-  schedulerRetryDelay,
   type ScheduleTiming,
-  WorkspaceScheduler,
-  workspaceSchedulerName
-} from "../src/durable-objects/workspace-scheduler";
+} from "../src/services/workspace-schedule-execution";
 import {
   applyActiveStreamCheckpointEvent,
   distinctNonParticipantViewers,
@@ -54,19 +52,6 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
-  it("isolates scheduler maintenance failures so later work still runs", async () => {
-    const later = vi.fn(async () => undefined);
-    const rejected = vi.fn();
-
-    await runIsolatedSchedulerMaintenance([
-      () => { throw new Error("reaper_failed"); },
-      later,
-    ], rejected);
-
-    expect(later).toHaveBeenCalledOnce();
-    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ message: "reaper_failed" }), 0);
-  });
-
   it.each([
     ["global", "-122.4194", "wnam"],
     ["global", "-73.9857", "enam"],
@@ -367,150 +352,10 @@ describe("runtime component invariants", () => {
     ).toBe("2026-01-02T00:00:00.000Z");
   });
 
-  it("bounds scheduler retry backoff with equal jitter", () => {
-    expect(schedulerRetryDelay(1, () => 0)).toBe(30_000);
-    expect(schedulerRetryDelay(2, () => 0)).toBe(60_000);
-    expect(schedulerRetryDelay(99, () => 0.999)).toBeLessThanOrEqual(30 * 60_000);
-  });
-
-  it("parks workspace alarms without reading due work during maintenance", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const setAlarm = vi.fn(async () => undefined);
-    const objectDatabase = new DatabaseSync(":memory:");
-    const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      setAlarm,
-      transactionSync: <T>(body: () => T) => body(),
-      sql: createTestSqlStorage(objectDatabase),
-    });
-    const first = vi.fn(async () => ({
-      phase: "maintenance_draining",
-      generation: 2,
-      required_serving_contract_version: 1,
-      serving_contract_version: 0,
-    }));
-    const prepare = vi.fn(() => ({ first }));
-    const scheduler = new WorkspaceScheduler(
-      createCloudflareTestBinding<DurableObjectState>({
-        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
-        storage,
-      }),
-      { DB: { prepare } } as never,
-    );
-    storage.sql.exec(
-      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
-       VALUES (1, ?, 0, 0)`,
-      "00000000-0000-7000-8000-000000000001",
-    );
-
-    await scheduler.alarm();
-
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(setAlarm).toHaveBeenCalledWith(Date.now() + 5 * 60_000);
-    objectDatabase.close();
-  });
-
-  it("persists a retry gate so a failed due target cannot create a one-second alarm loop", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    vi.spyOn(Math, "random").mockReturnValue(0);
-
-    const workspaceId = "00000000-0000-7000-8000-000000000001";
-    const scheduleId = "00000000-0000-7000-8000-000000000002";
-    const schedule = {
-      id: scheduleId,
-      workspace_id: workspaceId,
-      automation_subscription_id: null,
-      connector_connection_id: null,
-      schedule_type: "interval",
-      rrule: null,
-      interval_seconds: 300,
-      timezone: "UTC",
-      next_run_at: "2025-12-31T23:59:00.000Z",
-      last_run_at: null,
-      enabled: 1,
-      version: 1,
-      created_at: "2025-12-31T23:54:00.000Z",
-      updated_at: "2025-12-31T23:54:00.000Z",
-    };
-    const objectDatabase = new DatabaseSync(":memory:");
-    const setAlarm = vi.fn(async (at: number) => { void at; });
-    const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      setAlarm,
-      deleteAlarm: vi.fn(async () => undefined),
-      transactionSync: <T>(body: () => T) => body(),
-      sql: createTestSqlStorage(objectDatabase),
-    });
-    let auditWrites = 0;
-    const prepare = vi.fn((sql: string) => ({
-      first: async () => {
-        if (sql.includes("FROM workstream_authority_control")) {
-          return {
-            phase: "durable_object_open",
-            generation: 1,
-            required_serving_contract_version: 1,
-            serving_contract_version: 1,
-          };
-        }
-        throw new Error(`Unexpected first query: ${sql}`);
-      },
-      bind: vi.fn(() => ({
-        all: async () => {
-          // The alarm-target union names every due-dated table, so it has to be
-          // matched before the per-table due scans that share those names.
-          if (sql.includes("AS target_kind")) {
-            return {
-              results: [{ target_kind: "schedule", id: scheduleId, due_at: schedule.next_run_at }],
-            };
-          }
-          if (sql.includes("SELECT *") && sql.includes("FROM schedules")) {
-            return { results: [schedule] };
-          }
-          if (sql.includes("SELECT id, workspace_id, connection_id, next_poll_at")) {
-            return { results: [] };
-          }
-          if (sql.includes("FROM workstream_wakeups")) {
-            return { results: [] };
-          }
-          throw new Error(`Unexpected all query: ${sql}`);
-        },
-        run: async () => {
-          if (sql.includes("INSERT INTO audit_events")) auditWrites += 1;
-          return { meta: { changes: 1 } };
-        },
-      })),
-    }));
-    const scheduler = new WorkspaceScheduler(
-      createCloudflareTestBinding<DurableObjectState>({
-        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
-        storage,
-      }),
-      { DB: { prepare } } as never,
-    );
-    (scheduler as unknown as {
-      workspaceDirectory: () => Promise<{
-        dueWorkstreamDirectory: () => Promise<string[]>;
-        workstreamScheduleTargets: () => Promise<{ items: [] }>;
-      }>;
-    }).workspaceDirectory = async () => ({
-      dueWorkstreamDirectory: async () => [],
-      workstreamScheduleTargets: async () => ({ items: [] }),
-    });
-    storage.sql.exec(
-      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
-       VALUES (1, ?, 0, 0)`,
-      workspaceId,
-    );
-
-    await scheduler.alarm();
-    const firstAlarm = setAlarm.mock.calls.at(-1)?.[0];
-    expect(firstAlarm).toBe(Date.now() + 30_000);
-    expect(auditWrites).toBe(1);
-
-    await scheduler.alarm();
-    expect(setAlarm.mock.calls.at(-1)?.[0]).toBe(firstAlarm);
-    expect(auditWrites).toBe(1);
-    objectDatabase.close();
+  it("bounds scheduled-alarm retry backoff with equal jitter", () => {
+    expect(scheduledAlarmRetryDelay(1, () => 0)).toBe(30_000);
+    expect(scheduledAlarmRetryDelay(2, () => 0)).toBe(60_000);
+    expect(scheduledAlarmRetryDelay(99, () => 0.999)).toBeLessThanOrEqual(30 * 60_000);
   });
 
   it("keeps a local calendar hour across the daylight-saving boundary", () => {

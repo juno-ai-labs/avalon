@@ -39,7 +39,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, the retiring `WorkspaceScheduler`, the shared `ScheduledDurableObject` alarm base, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
@@ -105,7 +105,7 @@ flowchart LR
   Q --> C["Idempotent activity consumer"]
   C -->|"typed directory state RPC"| WD
   C --> D
-  C --> S["WorkspaceScheduler DO"]
+  C --> S["WorkspaceDO alarm"]
   S --> SA
   SA --> A["Avalon Bind 13 adapter"]
   A --> O["OpenRouter"]
@@ -500,23 +500,25 @@ Natural-language automation creation compiles into a validated draft. A versione
 template holds reusable behavior; a subscription pins a version and owns scope,
 execution principal, connector bindings, overrides, and schedule state.
 
-One WorkspaceScheduler Durable Object per workspace maintains one alarm for the
-earliest due item. WorkspaceDO uniqueness constraints are authoritative under
-repeated alarms. It starts generic workflow instances rather than deploying per-automation
-code. A planned run and its work stream are reused when the scheduled instant
-arrives.
+WorkspaceDO holds one alarm for the earliest due item in its own workspace, and
+its uniqueness constraints are authoritative under repeated alarms. It starts
+generic workflow instances rather than deploying per-automation code. A planned
+run and its work stream are reused when the scheduled instant arrives.
 
-The alarm has three target kinds: due `schedules`, due `resource_watches`, and due
-`workstream_wakeups`. A `schedules` row names exactly one of an automation
-subscription, a connector connection, or a digest schedule. A Durable Object holds
-one alarm at a time, so the object arms for the earliest target across all three
-and drains every target due at that instant before re-arming, with per-target
-exponential backoff held in Durable Object storage. Workspaces never contend: each
-has its own object and its own alarm.
+The alarm's target kinds are due `schedules`, due `resource_watches`, per-task
+maintenance sweeps, and Terminal sandbox deadlines. A `schedules` row names
+exactly one of an automation subscription, a connector connection, or a digest
+schedule. A Durable Object holds one alarm at a time, so each target is a row in
+the object's `_internal_durable_alarms` list, the alarm is armed for the earliest
+of them, and every target due at that instant drains in one wake — each behind
+its own exponential-backoff gate, so a broken automation cannot stop a digest.
+Workspaces never contend: each has its own object and its own alarm.
+[`durable-object-alarms.md`](durable-object-alarms.md) covers the mechanism,
+which WorkstreamDO and SubstreamAgent share.
 
 A person's scheduled digest is one `schedules` row per delivery time, because a
 single RRULE multiplies `BYHOUR` by `BYMINUTE` and so cannot carry an arbitrary
-list of times. When one fires, the scheduler freezes a window over the first-party
+list of times. When one fires, the workspace freezes a window over the first-party
 `activity_events` log, claims the occurrence, and starts an ordinary run in a
 hidden `system_kind` work stream; what the run writes is then delivered by email or
 by any connector declaring a personal delivery surface. See
@@ -524,7 +526,9 @@ by any connector declaring a personal delivery surface. See
 
 A work stream can schedule its own wake-up through `workstream_schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.
-When it fires, the scheduler claims the row, re-checks the execution principal that
+Its own SubstreamAgent owns that timer: the wake-up becomes an entry in that
+object's alarm list, so every wake-up due at one instant fires in one alarm.
+When it fires, the agent claims the row, re-checks the execution principal that
 scheduled it against current membership, writes a system row into the transcript,
 and starts an ordinary work-stream run whose trigger is the stored prompt.
 

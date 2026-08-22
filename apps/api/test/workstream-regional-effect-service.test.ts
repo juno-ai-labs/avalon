@@ -108,11 +108,15 @@ function workspaceSyncNamespace() {
     transactionSync: (body: () => unknown) => body(),
     sql: createTestSqlStorage(database),
   });
+  const refreshSchedule = vi.fn(async () => ({ alarmAt: null }));
   const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
       initializeWorkspace: vi.fn(async () => undefined),
       publishSync: vi.fn(async () => 1),
+      // WorkspaceDO owns the workspace alarm, so every settle path now asks it
+      // — not a separate scheduler object — to reconcile.
+      refreshSchedule,
       applyWorkstreamRegionalEffect: vi.fn(async (input: unknown) =>
         applyWorkstreamRegionalEnvelope(
           storage,
@@ -146,7 +150,7 @@ function workspaceSyncNamespace() {
       })),
     }),
   });
-  return { database, namespace };
+  return { database, namespace, refreshSchedule };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -439,16 +443,10 @@ describe("the WorkstreamDO regional effect inbox", () => {
   it("stores activity and mention intent in WorkspaceDO, then erases delivered content", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
-    const refreshScheduler = vi.fn(async () => ({ alarmAt: null }));
-    const schedulers = createCloudflareTestBinding<DurableObjectNamespace>({
-      idFromName: () => createTestDurableObjectId("workspace-scheduler"),
-      get: () => ({ refresh: refreshScheduler }),
-    });
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       WORKSPACE_DOS: workspace.namespace,
-      WORKSPACE_SCHEDULERS: schedulers,
       APP_ENV: "test",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     });
@@ -518,7 +516,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         `SELECT state, payload_json, attempts FROM workstream_notification_intents
           WHERE intent_id = ?`,
       ).get(mention.intentId)).toEqual({ state: "delivered", payload_json: null, attempts: 1 });
-      expect(refreshScheduler).toHaveBeenCalledWith(WORKSPACE_ID);
+      expect(workspace.refreshSchedule).toHaveBeenCalledWith(WORKSPACE_ID);
     } finally {
       database.close();
       workspace.database.close();
