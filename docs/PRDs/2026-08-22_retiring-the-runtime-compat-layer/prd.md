@@ -67,10 +67,20 @@ matching the table name `workstream_sandboxes` happened to mark the mutation as
 directory-affecting; naming the operations properly stopped the publication and
 no test noticed, because no test asserted it.
 
-**It freezes the schema.** Terminal could not promote `lifecycle_json` to real
-columns — with a typed `archive_due_at` the scheduler could index and sort —
-until its readers stopped naming the compat view. Every subsystem still behind
-the layer has the same constraint.
+**It freezes the schema, and in one place it has already bent it.** Terminal
+could not promote `lifecycle_json` to real columns — with a typed
+`archive_due_at` the scheduler could index and sort — until its readers stopped
+naming the compat view. Every subsystem still behind the layer has the same
+constraint. Worse, the pressure runs backwards too: `runs.legacy_attempt_id` is
+a column in the object's own schema that exists *only* so three compat views can
+project a text attempt id — `_runtime_harness_runs` and
+`_runtime_tool_invocations` as `attempt_id`, `_runtime_messages` as
+`harness_attempt_id` — with two `_runtime_harness_runs` triggers writing it. The
+object's real attempt identity is the integer `attempt_epoch`. Nothing outside
+the compat schema reads or writes `legacy_attempt_id`: it is a second identity
+the translation layer put into the authoritative table, and because its three
+readers sit in three different slices, it cannot be dropped until slices 1, 4,
+and 6 have all landed.
 
 The layer also has no owner and no end date. It is 2,188 lines across five
 files, it is invisible in a stack trace until a statement fails inside an
@@ -377,13 +387,104 @@ Cross-slice statements, which decide method ownership rather than order:
 `identity + resources` 4, `block-dashboard + harness-runs` 3, and a tail of 11
 across eight more combinations.
 
-The workspace side has no schema step and no ordering constraint. Its 56 tables
-group by owning service — Slack (`slack_*`, 11), memory (`memory_*`, 10),
-automations (`automation_*`, 7), digests (`digest_*`, 4), notes, sandbox network
-policy, connector connections, and the remainder — and the wrapper comes out
-when the last group does. Because the names already match, most conversions
-wrap the same SQL in a method; the value is the typing and the
+The workspace side has no schema step and no ordering constraint: 56 tables,
+513 statements, 55 files. It is unusually concentrated — four services hold
+nearly forty per cent of it:
+
+| Owner | Statements |
+| --- | --- |
+| `services/slack-agent-service.ts` | 58 |
+| `services/automation-service.ts` | 54 |
+| `services/connection-service.ts` | 52 |
+| `services/memory-table-service.ts` | 37 |
+| `durable-objects/workspace-do.ts` | 22 |
+| `services/integrations.ts` | 21 |
+| `services/memory-service.ts` | 20 |
+| `services/workspace-schedule-execution.ts` | 19 |
+| `services/resend-inbound-email-service.ts` | 19 |
+| everything else (46 files) | 211 |
+
+That concentration is the plan: the first four files are four changes, not
+fifty-five, and each is a coherent subsystem with its own tables. The long tail
+is single statements in files that mostly do something else, and those come out
+with whichever slice owns the table. Because the names and shapes already match,
+most conversions wrap the same SQL in a method — the value is the typing and the
 single-round-trip transaction, not a reshape.
+
+### Slice 1, specified
+
+The first slice is written out here rather than left to whoever picks it up,
+because the point of going first is to produce a template. Slices 2–7 differ in
+their tables and their traps, not in their shape.
+
+**Where the statements are.** 27 statements, five files, and it is not evenly
+spread:
+
+| File | Statements | Verbs |
+| --- | --- | --- |
+| `runtime/harness-run-runtime.ts` | 14 | 5 `INSERT`, 5 `UPDATE`, 4 `SELECT` |
+| `services/attachment-tool-receipts.ts` | 7 | 3 `INSERT`, 4 `SELECT` |
+| `services/integrations.ts` | 4 | 4 `SELECT` |
+| `telemetry/tool-usage.ts` | 1 | `SELECT` |
+| `telemetry/run-outcome.ts` | 1 | `SELECT` |
+
+**The port's operation list already exists.** `harness-run-runtime.ts` holds
+every write behind an exported function that already names an intent, not a
+table: `persistToolExecutionPlan`, `checkpointToolInvocation`,
+`completeToolInvocation`, `finalizeToolInvocationFailure`,
+`markToolInvocationTimedOut`. Those five signatures *are* the storage class's
+methods. The conversion is moving their bodies inside the object and leaving the
+signatures where the callers already reach them — which is why this slice is
+first: the hard design question, what the operations should be called, is
+already answered by code that shipped.
+
+**What the view is actually doing.** `_runtime_tool_invocations` reads
+`tool_effects JOIN runs CROSS JOIN workstream`, and the translation is larger
+than a rename. Every line of it is a decision the typed operations have to make
+explicitly:
+
+| Compat column | Real source | Translation |
+| --- | --- | --- |
+| `id` | `effect.effect_intent_id` | rename — and the reason `effectIntentId` is the vocabulary #230 introduced |
+| `input_hash` | `effect.request_hash` | rename |
+| `status` | `effect.status` | **value remap**: `admitted` → `pending`, `executing` → `started`; the other three pass through |
+| `started_at`, `completed_at` | `effect.started_at`, `effect.settled_at` | unix ms → ISO-8601, `NULL`-guarded |
+| `lease_expires_at` | `run.lease_expires_at` | unix ms → ISO-8601, and it comes from the **run**, not the effect |
+| `attempt_id` | `run.legacy_attempt_id` | a column that exists only for this projection |
+| `last_checkpoint_at` | `MAX(checkpoint.created_at)` | **a correlated subquery per row**, over `tool_effect_checkpoints` |
+| `workspace_id`, `workstream_id` | `root.parent_workspace_key`, `root.workstream_key` | from the singleton root, not stored per effect |
+
+The status remap is the trap. A caller comparing against `'started'` is asking
+about `executing`, and a typed operation that returns the real value silently
+changes what every such comparison means. Grep for the compat spellings before
+converting, not after — `'pending'` and `'started'` are also perfectly ordinary
+strings elsewhere.
+
+`last_checkpoint_at` is the second one: it is computed, so nothing writes it,
+and a typed `completeToolInvocation` that tries to *set* it has misread the
+schema. It belongs on the read operation that projects a receipt.
+
+**What the migration drops.** `_runtime_tool_invocations` with its insert,
+update, and delete triggers, and `_runtime_tool_checkpoints` with its insert
+trigger — six objects, triggers before views. `legacy_attempt_id` does not go
+with them, and it is the clearest illustration of why slices are sequenced
+rather than independent: `_runtime_messages` and `_runtime_harness_runs` project
+it too, so the column survives until slices 4 and 6 have also landed. A slice
+drops its own views; shared debris comes out last.
+
+**Where it touches the neighbours.** Twelve statements name both this slice and
+harness runs, which is expected — a receipt belongs to a run. They decide
+ownership, not order: a statement joining `tool_invocations` to `harness_runs`
+becomes one method on whichever storage class moves second, and until slice 6
+lands that method reads `runs` directly, which it may, because both tables are
+in the same object.
+
+**Its foreign-view reader.** `attachment-tool-receipts.ts` joins `resources` —
+one of the two lossy foreign views — and reads `model_content_sha256`, which
+`_runtime_resources` fabricates as `NULL`. That comparison is always false
+today, so the reconciliation always takes the changed path. Slice 1 can convert
+around it or leave the join in place for slice 5; what it must not do is
+reproduce the `NULL` and call it behavior-preserving.
 
 ### The shape of a slice
 
