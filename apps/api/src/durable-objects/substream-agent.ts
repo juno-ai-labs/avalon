@@ -6,7 +6,10 @@ import {
   PersonalSocketEventSchema,
   SubstreamIdSchema,
   UserIdSchema,
+  type Region,
   type SubstreamId,
+  type WorkspaceId,
+  type WorkstreamId,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asSubstreamId,
@@ -39,6 +42,7 @@ import {
   assertDurableObjectJurisdiction,
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   AGENT_RUN_DISPATCH_LEASE_MS,
@@ -95,7 +99,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { workstreamDOName } from "./names";
+import { substreamAgentName, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -387,7 +391,32 @@ function userFromRow(row: UserRow): User {
   };
 }
 
-export { substreamAgentName } from "./names";
+export { substreamAgentName };
+
+/**
+ * This object's own name, or `null` while its identity is not yet fully its own.
+ *
+ * Split out from the object so the rule can be proved rather than reasoned
+ * about. A `SubstreamAgent` is named by *two* durable facts — which work stream
+ * it belongs to, and which external substream it is — and both have to be
+ * present. An object holding only the first would otherwise take the main
+ * child's name and answer self-calls addressed to a sibling out of its own
+ * storage. `externalSubstreamId`'s `"0"` default is right where it is used as
+ * *am I the main child?* and wrong here, which is why this takes the raw row.
+ */
+export function substreamSelfObjectName(
+  region: Region,
+  identity: { workspaceId: WorkspaceId; workstreamId: WorkstreamId } | null,
+  externalSubstreamId: string | null,
+): string | null {
+  if (!identity || externalSubstreamId === null) return null;
+  return substreamAgentName(
+    region,
+    identity.workspaceId,
+    identity.workstreamId,
+    asSubstreamId(externalSubstreamId),
+  );
+}
 
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
   attachments: T[],
@@ -465,6 +494,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * first.
    */
   private objectStore!: WorkstreamObjectStore;
+  /** This object's own `SUBSTREAM_AGENTS` name; see {@link selfObjectName}. */
+  private objectName: string | null = null;
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private readonly initialized: Promise<void>;
@@ -487,6 +518,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Everything downstream is handed this environment or one derived from it,
+    // so a helper that addresses "the agent that owns this work stream" reaches
+    // the object it is already running in rather than the namespace. See
+    // `lib/durable-object-self.ts`.
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived. That is not hypothetical: `WorkstreamObjectProductService`
+    // below keeps its environment for the object's whole life, and resolves
+    // this work stream's own model routing through it.
+    this.env = env = withDurableObjectSelf(env, {
+      namespace: env.SUBSTREAM_AGENTS,
+      name: () => this.selfObjectName(),
+      id: state.id,
+      instance: this,
+    });
     this.keepAliveLease = new DurableAgentKeepAlive(async () => { await this.armNextAlarm(); });
     this.initialized = state.blockConcurrencyWhile(async () => {
       // The store applies this object's schema in its own constructor, so the
@@ -553,6 +600,46 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       now,
       now,
     );
+  }
+
+  /**
+   * This object's own name in `SUBSTREAM_AGENTS`, or `null` before it has one.
+   *
+   * Memoized only once a name exists. Both durable facts are write-once — a
+   * root identity is never rewritten, and `ensureSubstreamIdentity` refuses a
+   * second external id — so a derived name cannot change, while a `null` has to
+   * stay re-derivable because the facts arrive on the object's first scoped
+   * request. Freezing a `null` would leave the object permanently unable to
+   * recognize itself.
+   *
+   * The substream row is read here rather than through
+   * {@link externalSubstreamId}, whose `"0"` default is right for its own
+   * callers — they ask it *am I the main child?*, and an unwritten row reads as
+   * yes — and wrong as a name. See {@link substreamSelfObjectName}.
+   */
+  private selfObjectName(): string | null {
+    if (this.objectName !== null) return this.objectName;
+    // Genuinely absent, definite-assignment notwithstanding: the environment
+    // carrying this object's self-registration exists from the first statement
+    // of the constructor, and the store is built inside the callback below it.
+    if (!this.objectStore) return null;
+    // Guarded like every other object's name read. A throw here would not stay
+    // local: the thunk runs inside `durableObjectSelf`, so a missing table would
+    // take down *every* `SUBSTREAM_AGENTS` resolution this object makes,
+    // including the sibling calls that have nothing to do with self-recognition.
+    try {
+      const substream = this.state.storage.sql.exec<{ external_substream_id: string }>(
+        `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+      ).toArray()[0];
+      this.objectName = substreamSelfObjectName(
+        this.env.AVALON_REGION,
+        this.objectStore.identity(),
+        substream?.external_substream_id ?? null,
+      );
+    } catch {
+      return null;
+    }
+    return this.objectName;
   }
 
   private externalSubstreamId(): SubstreamId {
