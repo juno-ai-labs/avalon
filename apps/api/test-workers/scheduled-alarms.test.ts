@@ -535,7 +535,10 @@ describe("a workspace's schedule", () => {
       // An object carried over from before the alarm index existed: the row is
       // there, nothing has ever reconciled it, and the object that used to hold
       // its alarm has been deleted. This is the state the migration's one-shot
-      // entry exists for.
+      // entry exists for. The entry is written directly here — that migration 5
+      // writes it, and only for a carried-over object, is proved against the
+      // ledger itself in `test/workspace-do-schema.test.ts`; what needs the real
+      // runtime is what the alarm does when it finds one.
       store.cancelKind("schedule");
       store.schedule({ kind: "schedule_bootstrap", key: "workspace", dueAt: Date.now() - 1 });
 

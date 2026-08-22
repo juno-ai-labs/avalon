@@ -627,27 +627,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "hold this workspace's whole schedule behind its single alarm",
   statements: [
     ...SCHEDULED_ALARM_SCHEMA_STATEMENTS,
-    // The first wake after this migration reconciles everything else. Nothing
-    // else can: the per-workspace scheduler object that used to hold these
-    // alarms is deleted in the same change, so a schedule whose only pending
-    // wake-up lived there has no other writer until a person or a connector
-    // touches the workspace. One immediate entry, consumed once, closes that.
-    //
-    // Only for an object that already exists. A workspace created after this
-    // deploy runs its whole ledger before it has an identity row, and arming a
-    // reconcile for a database with nothing in it would make every new
-    // workspace pay for a wake-up that can only find zero targets.
-    `INSERT INTO _internal_durable_alarms
-       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
-        created_at, updated_at)
-     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
-            unixepoch() * 1000, unixepoch() * 1000
-      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)`,
-    // Product work already queued keeps its wake-up too. It is not covered by
-    // the reconcile above — `refreshSchedule` reads the tables with their own
-    // writers, and an opportunity window is armed by the RPC that enqueues it
-    // — so a window queued before this deploy would otherwise wait for an
-    // unrelated enqueue to rediscover it.
+    // Product work already queued keeps its wake-up across the cutover. Every
+    // other target — schedules, watches, maintenance, Terminal deadlines — is
+    // reconciled from its own table by `refreshSchedule`, which the retiring
+    // scheduler object calls on its next alarm; product work has no such
+    // second writer, so a window queued before this deploy would otherwise
+    // wait for an unrelated enqueue to rediscover it.
     `INSERT INTO _internal_durable_alarms
        (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
         created_at, updated_at)
@@ -663,6 +648,33 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        )
       WHERE due_at IS NOT NULL
      HAVING MIN(due_at) IS NOT NULL`,
+  ],
+}, {
+  version: 5,
+  description: "reconcile a carried-over workspace's schedule once",
+  statements: [
+    // Version 4 arrived with the scheduler object still running, so its final
+    // alarm was what reconciled every non-product target. This change deletes
+    // that object, and a schedule whose only pending wake-up lived there now
+    // has no other writer until a person or a connector happens to touch the
+    // workspace. One immediate entry, consumed once, closes that gap.
+    //
+    // A separate version rather than an amendment to 4: every object that
+    // constructed between the two deploys recorded a hash of 4's statements,
+    // and editing them in place throws `workspace_do_schema_hash_mismatch:4`
+    // in the constructor — permanently, for every workspace that ran the
+    // earlier release.
+    //
+    // Only for an object that already exists. A workspace created after this
+    // deploy runs its whole ledger before it has an identity row, and arming a
+    // reconcile for a database with nothing in it would make every new
+    // workspace pay for a wake-up that can only find zero targets.
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)`,
   ],
 }];
 

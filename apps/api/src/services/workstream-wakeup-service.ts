@@ -645,8 +645,9 @@ export async function refreshWorkspaceSchedule(
  * Arm the owner of an agent-created timer.
  *
  * After authority cutover that owner is the exact SubstreamAgent whose tool
- * inserted the row. The workspace scheduler remains only for the legacy D1
- * phase and for workspace-wide schedules/resource watches.
+ * inserted the row, which indexes the wake-up as an `agent_timer` entry and
+ * re-arms its own alarm. Before cutover the row is still regional, and only
+ * WorkspaceDO's schedule reaches it.
  */
 export async function refreshAgentTimerAlarm(
   env: Env,
