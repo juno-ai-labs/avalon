@@ -976,8 +976,9 @@ from that attempt on, so the Failures view carries them — and when a Slack
 ingress job is given up on (`slack_ingress_job_exhausted`). Its own outcomes
 are `ops_notification_sent` (info) and `ops_notification_failed` (warn, with
 `code` and `status`); a region whose notices are all failing is a region whose
-webhook needs attention, not a quiet one. Outside `production` and `staging`
-the notifier posts nothing.
+operator Slack app needs attention, not a quiet one — `invalid_auth` is the
+token, `channel_not_found` or `not_in_channel` is the channel or the missing
+invite. Outside `production` and `staging` the notifier posts nothing.
 
 **Work-stream flow latency** has no saved view yet, deliberately: the thresholds
 would be guesses until there are production rows to pick them from. Starting,

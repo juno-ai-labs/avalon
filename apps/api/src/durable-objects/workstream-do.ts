@@ -581,7 +581,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
     reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
       event: "workstream_object_scheduled_alarm_failed",
-      summary: "A work-stream object's alarm entry has thrown on three consecutive attempts. It is held behind its retry gate and retried up to every 30 minutes; `code` is the handler's error.",
+      summary: "A work-stream object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry.",
       attempt,
       fields: {
         workstream_id: this.metadataRow()?.workstream_id ?? null,
@@ -595,7 +595,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
     reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
       event: "workstream_object_scheduled_alarm_stalled",
-      summary: "A work-stream object's alarm entry keeps coming back due at the same instant after running. It is held behind the retry gate and retried up to every 30 minutes until its source row moves.",
+      summary: "A work-stream object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key` is not moving. Find why.",
       attempt,
       fields: {
         workstream_id: this.metadataRow()?.workstream_id ?? null,

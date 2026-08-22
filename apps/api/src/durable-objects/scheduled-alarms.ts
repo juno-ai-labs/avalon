@@ -562,8 +562,10 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
       const current = this.scheduledAlarms.get(alarm.kind, alarm.key);
       if (current === null || current.dueAt !== alarm.dueAt) continue;
       if (Math.max(current.dueAt, current.retryAt) > now) continue;
-      if (outcome && "waitMs" in outcome) {
-        this.scheduledAlarms.hold(current, now + Math.max(1, Math.floor(outcome.waitMs)), now);
+      // A wait that is not a positive finite number is not a wait: the entry
+      // takes the stall rule rather than a hold at an instant nobody chose.
+      if (outcome && "waitMs" in outcome && Number.isFinite(outcome.waitMs) && outcome.waitMs > 0) {
+        this.scheduledAlarms.hold(current, now + Math.ceil(outcome.waitMs), now);
         continue;
       }
       const attempt = this.scheduledAlarms.defer({ ...current, attempt: alarm.attempt }, now);

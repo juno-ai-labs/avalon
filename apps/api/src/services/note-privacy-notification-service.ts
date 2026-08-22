@@ -21,10 +21,11 @@ interface AffectedWorkstreamRow extends Record<string, unknown> {
   id: string;
 }
 
+/** Returns how many transitions the pass processed; the alarm reads it as progress. */
 export async function processPendingNotePrivacyNotifications(
   env: Env,
   options: { noteId?: string } = {},
-): Promise<void> {
+): Promise<number> {
   const filter = options.noteId ? "AND note_id = ?" : "";
   const bindings = options.noteId ? [options.noteId] : [];
   const pending = await env.DB.prepare(
@@ -32,9 +33,12 @@ export async function processPendingNotePrivacyNotifications(
      WHERE processed_at IS NULL ${filter}
      ORDER BY created_at ASC LIMIT 50`,
   ).bind(...bindings).all<PrivacyTransitionRow>();
+  let processed = 0;
   for (const transition of pending.results) {
     await processTransition(env, transition);
+    processed += 1;
   }
+  return processed;
 }
 
 async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {

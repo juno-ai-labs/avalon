@@ -17,7 +17,7 @@ contain, or changing how the channel is reached.
 | --- | --- |
 | `apps/api/src/observability/ops-slack-notifier.ts` | `notifyOps`: the one place a notice is rendered and posted. The single source. |
 | `apps/api/src/env.ts` | `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`, the optional per-region pair. |
-| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `reportScheduledAlarmAttempt`: the one policy for a gated alarm entry — which attempt warns, errors, and notifies. |
+| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `reportScheduledAlarmAttempt`: the one policy for a gated alarm entry — which attempt warns, errors, and notifies — and `scheduledAlarmErrorCode`, which reduces a thrown error to what may leave. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts`, `substream-agent.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
 | `apps/api/src/services/slack-agent-service.ts` | The exhausted-ingress-job notice, in `processQueuedIngress`. |
 | `apps/api/src/routes/health.ts` | `opsNotifications` — configured, half configured, or not, never required. |
@@ -35,9 +35,10 @@ A caller that has just logged an event it considers alert-worthy calls
    the secrets, and neither may page the channel. The second is the ordinary
    answer in a region whose operator has not set it up.
 2. Renders one Slack message: `[region] event` as the first line, the summary,
-   then one `• key: value` line per field, each value cut at 200 characters
-   and escaped for `mrkdwn`, so no value can form a mention, a link, or a
-   channel-wide ping.
+   then one `• key: value` line per field, each value collapsed to one line,
+   cut at 200 characters with a visible mark, and escaped for `mrkdwn`, so no
+   value can form a mention, a link, a channel-wide ping, or a line the reader
+   takes for another field.
 3. Posts it to `https://slack.com/api/chat.postMessage` with the token in the
    `Authorization` header, under a five-second cancellable deadline
    (`withDeadline`, so the call can sit inside a Durable Object alarm or a
@@ -55,7 +56,7 @@ The events that notify today:
 | `event` | Posted from | When |
 | --- | --- | --- |
 | `workspace_scheduled_alarm_failed`, `workspace_scheduled_alarm_stalled`, and the `workstream_object_` and `substream_` forms | the three objects' `onScheduledAlarmFailure` and `onScheduledAlarmStalled` hooks, through `reportScheduledAlarmAttempt` | An alarm entry is on its third consecutive attempt without progress — it threw, or ran and came back due at the same instant, and the gate in [`durable-object-alarms.md`](durable-object-alarms.md) has held it across a couple of minutes of growing backoff. The counter is shared, so the notice fires at exactly attempt three whichever hook sees it: once per episode. Every attempt writes a log row, at `warn` for the first two and `error` from the third. |
-| `slack_ingress_job_exhausted` | `SlackAgentService.processQueuedIngress` | A Slack ingress job has reached the 20-attempt ceiling, by a non-retryable error or by its twentieth attempt. The claim refuses a job at the ceiling, so a Queue redelivery cannot run, pin, or report it again; only the reauthorization re-drive, which resets the count, brings it back. Once per job. The `error` row of the same name is written first. |
+| `slack_ingress_job_exhausted` | `SlackAgentService.processQueuedIngress` | A Slack ingress job has reached the 20-attempt ceiling, by a non-retryable error or by its twentieth attempt. The claim refuses a job at the ceiling, so a Queue redelivery cannot run, pin, or report it again; only the reauthorization re-drive, which resets the count, brings it back. The `error` row of the same name is written for every job; the notice is one per installation and error code within an hour, because a broken installation fails every event the same way and a notice per job would track the channel's message volume. |
 
 ## Invariants
 
@@ -80,9 +81,14 @@ The events that notify today:
   the pair and does not gate on it. Making either required takes a region
   offline over a Slack setting.
 - **One notice per episode.** Each call site decides what an episode is — the
-  third stall of one entry, the exhaustion of one job — and posts once. A
-  call site that posts on every occurrence of a repeating condition turns the
-  channel into the log it was meant to summarize.
+  third attempt of one entry, one installation failing one way within an hour
+  — and posts once. A call site that posts on every occurrence of a repeating
+  condition turns the channel into the log it was meant to summarize.
+- **The notice is attached the way its caller can afford.** Inside a Durable
+  Object hook it rides `waitUntil`, because a hook cannot await and the gate
+  is already durable; inside the queue consumer's failure path it is awaited,
+  bounded by the deadline, because the consumer is about to ask for a retry
+  anyway and has nothing else to do with the five seconds.
 - **One fixed destination.** The endpoint is a constant; the channel is the
   configured id. A mistyped token or channel fails closed as Slack's own
   `invalid_auth` or `channel_not_found` on the log row, not as operator data
@@ -115,9 +121,9 @@ Cloudflare administration credentials never become Worker variables
 - **Slack is unreachable or refuses the post.** `"failed"`, with
   `ops_notification_failed` carrying `code`: Slack's own (`invalid_auth`,
   `channel_not_found`, `not_in_channel` — the bot was not invited), or
-  `request_failed`, `timeout`, `http_error`, `response_malformed`,
-  `response_too_large`, each with `status` where there was one. The caller
-  continues; the original log row stands.
+  `request_failed`, `timeout`, `http_error`, `response_unreadable`,
+  `response_malformed`, `response_too_large`, each with `status` where there
+  was one. The caller continues; the original log row stands.
 - **The post takes longer than five seconds.** The deadline aborts it and the
   timer is cleared, so a Durable Object alarm or queue invocation ends when its
   work does.
@@ -153,6 +159,15 @@ Cloudflare administration credentials never become Worker variables
 - Fixture token: `xoxb-ops-test`. Gitleaks runs over the full history with
   its default Slack token rules, which want digit groups; a realistic-looking
   token in a test trips it.
+
+## Regional impact
+
+Both regions post to the same channel when both are configured, and a notice
+says which region it came from in its first line. An EU notice therefore
+leaves the EU: it carries the ids, codes, and counts under *Invariants* and
+nothing a person wrote, which is the same bar `telemetry_operations_snapshot`
+holds for EU data. A deployment that wants EU notices kept apart configures a
+separate channel in the EU Worker's secrets; nothing in the code assumes one.
 
 ## Security and trust model
 

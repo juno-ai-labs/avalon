@@ -201,7 +201,18 @@ const SLACK_AUDIENCE_PROFILE_TIMEOUT_MS = 10_000;
  * the two must agree, because a reap that leaves behind what the schedule
  * counts is the hot loop of 2026-08-22.
  */
-const SLACK_LINK_CHALLENGE_GRACE_MS = 24 * 60 * 60_000;
+export const SLACK_LINK_CHALLENGE_GRACE_MS = 24 * 60 * 60_000;
+/**
+ * How long one installation's exhausted jobs count as one episode.
+ *
+ * A broken installation fails every event it receives the same way — the
+ * `session_revoked` of 2026-08-22 killed each `@Avalon` mention on its first
+ * attempt — and a notice per job would track the channel's message volume for
+ * as long as the installation stayed broken. One notice per connection and
+ * error code within this window is the episode; every job still writes its
+ * own `error` row.
+ */
+const SLACK_EXHAUSTION_NOTICE_WINDOW_MS = 60 * 60_000;
 /**
  * The `error_code` values a job carries when it failed on authorization, and so
  * the only ones a later reauthorization can plausibly repair.
@@ -382,7 +393,6 @@ export class SlackAgentService {
     // fifty thousand lines an hour.
     if (exhausted.results.length > 0) {
       logWarn(this.env, "slack_ingress_exhausted_jobs", {
-        workspace_id: exhausted.results[0]?.workspace_id ?? null,
         count: exhausted.results.length,
         job_ids: exhausted.results.slice(0, 10).map((job) => job.id),
         error_codes: [...new Set(exhausted.results.map((job) => job.error_code ?? "unknown"))],
@@ -763,11 +773,24 @@ export class SlackAgentService {
       if (failed && failed.attempt_count >= 20) {
         const fields = { workspace_id: job.workspace_id, job_id: job.id, kind: job.kind, code, retryable };
         logError(this.env, "slack_ingress_job_exhausted", fields);
-        await notifyOps(this.env, {
-          event: "slack_ingress_job_exhausted",
-          summary: "A Slack event was given up on after its retry budget. Nothing will process it again unless the installation is reauthorized, which re-drives it, or Slack delivers the event afresh; fix the cause first.",
-          fields,
-        });
+        const episode = await this.env.DB.prepare(
+          `SELECT 1 AS reported FROM slack_ingress_jobs
+            WHERE connection_id = ? AND error_code = ? AND attempt_count >= 20
+              AND id <> ? AND updated_at > ?
+            LIMIT 1`,
+        ).bind(
+          job.connection_id,
+          code,
+          job.id,
+          new Date(Date.now() - SLACK_EXHAUSTION_NOTICE_WINDOW_MS).toISOString(),
+        ).first<{ reported: number }>();
+        if (episode === null) {
+          await notifyOps(this.env, {
+            event: "slack_ingress_job_exhausted",
+            summary: "A Slack event was given up on after its retry budget. Nothing will process it again unless the installation is reauthorized, which re-drives it, or Slack delivers the event afresh; fix the cause first. Further jobs on this installation failing the same way within the hour are logged but not reported again.",
+            fields,
+          });
+        }
       }
       throw error;
     }
