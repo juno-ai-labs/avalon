@@ -234,8 +234,9 @@ time moved, go reconcile" entry points.
   re-arm at the end sees it overdue, so it is floored at `now + 1` and the
   runtime re-enters immediately. The entry runs late by however long the first
   handler took, which is inherent to one alarm and one thread, but it is never
-  skipped. Alarm invocations are serialized by the runtime, so the second wake
-  cannot overlap the first.
+  skipped. Nor is it run twice: Cloudflare guarantees that "only one instance of
+  `alarm()` will ever run at a given time per Durable Object instance", so the
+  second wake cannot overlap the first.
 - **The region is closed for maintenance.** `scheduledAlarmDeferral` holds the
   whole drain and rechecks every 5 minutes. Entries keep their due times, so a
   workspace whose entire schedule is overdue resumes when the region reopens.
