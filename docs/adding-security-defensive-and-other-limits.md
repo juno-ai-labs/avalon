@@ -1,10 +1,14 @@
-# Adding security and defensive limits
+# Adding security, defensive, and other limits
 
-Use this checklist whenever you add a bound whose job is to stop something: a
-maximum payload size, an item or depth cap, a retry ceiling, a concurrency cap, a
-timeout, a cooldown, a quarantine window. **You define the limit. You do not pick
-its number.** Read this before writing a constant that exists to contain abuse,
-runaway cost, or blast radius.
+Read this before adding any limit to Avalon — a maximum payload size, an item or
+depth cap, a retry ceiling, a concurrency cap, a timeout, a cooldown, a
+quarantine window, a page size, a threshold. [What this
+covers](#what-this-covers) sorts them into four kinds and says who picks each
+one's number; most of the document is about the kind nobody has picked yet, the
+bound whose job is to stop something.
+
+For that kind the rule is: **you define the limit, and you do not pick its
+number.**
 
 The number is not an implementation detail. It decides which abuse we accept,
 which cost we agree to pay, and which real user gets cut off on a bad day — and
@@ -18,6 +22,8 @@ owes is the *mechanism*: named, wired, enforced, tested, and one edit away from
 being real.
 
 ## The rule
+
+For a security or defensive limit — the first row of the table below:
 
 1. **Justify it, or do not add it** — a limit nobody can say the cost of
    omitting is a limit that should not exist. See
@@ -39,6 +45,11 @@ A real number reaches the branch in exactly three ways, and no others:
   guess.
 
 ## What this covers
+
+Sort the number before you write it. Only the first row is this document's
+subject; the other three have an owner already, and misfiling one is how a
+product decision ends up as an open placeholder or a guess ends up cited as a
+platform fact.
 
 | Kind of number | Example | Who picks it |
 | --- | --- | --- |
@@ -173,7 +184,7 @@ trip while the constant is open, and the shape already in the tree —
 ```ts
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
- * docs/adding-security-and-defensive-limits.md.
+ * docs/adding-security-defensive-and-other-limits.md.
  *
  * Bounds: bytes of one hosted-MCP tool result held in memory before it is
  *   returned to the model.
