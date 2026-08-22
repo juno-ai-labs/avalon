@@ -200,6 +200,14 @@ describe("adding somebody to a work stream", () => {
     if (notificationEffect.kind !== "participant_notification") {
       throw new Error("expected a participant notification");
     }
+    // The work stream is in both identities on purpose: the intents table and
+    // the activity log's dedupe key are workspace-wide, while the epoch below
+    // is object-local and starts at zero in every room. Without it, adding one
+    // person to a second work stream reuses the first one's identity and the
+    // effect is refused as a conflict rather than delivered.
+    expect(notificationEffect.intentId).toBe(`participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(notificationEffect.sourceId).toBe(`participant:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(activityEffect.dedupeKey).toBe(`participant:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
     expect(notificationEffect.recipientUserId).toBe(INVITEE_ID);
     expect(notificationEffect.actorUserId).toBe(CREATOR_ID);
     expect(notificationEffect.actorNameSnapshot).toBe("Creator");
@@ -224,7 +232,8 @@ describe("adding somebody to a work stream", () => {
     // counting rows there races the delivery it is supposed to be describing.
     // Receipts are kept for their whole retention window and are keyed by the
     // message id, which is the effect's identity.
-    expect(await notificationReceipts(stub)).toEqual([`effect:participant_added:${INVITEE_ID}:0`]);
+    expect(await notificationReceipts(stub))
+      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
 
     // Removing bumps the participant epoch, so being brought back is a new
     // thing to say rather than a redelivery of the first one.
@@ -234,8 +243,8 @@ describe("adding somebody to a work stream", () => {
     expect(removed.status).toBe(200);
     await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     expect(await notificationReceipts(stub)).toEqual([
-      `effect:participant_added:${INVITEE_ID}:0`,
-      `effect:participant_added:${INVITEE_ID}:2`,
+      `effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`,
+      `effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:2`,
     ]);
   });
 

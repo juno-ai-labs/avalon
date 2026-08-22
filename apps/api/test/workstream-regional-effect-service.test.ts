@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@avalon/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -73,6 +73,7 @@ function message(
     partitionKey: string;
     sourceVersion: number;
     requiredProjectionVersion?: number;
+    workstreamId?: WorkstreamId;
   },
 ): WorkstreamRegionalEffectEnvelope {
   const requiredProjectionVersion = isPersonNotificationEffect(effect)
@@ -83,9 +84,9 @@ function message(
     contractVersion: 1,
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
     generation: 1,
     ...input,
+    workstreamId: input.workstreamId ?? WORKSTREAM_ID,
     requiredProjectionVersion,
     payloadHash: workstreamRegionalEffectHash(effect, requiredProjectionVersion),
     effect,
@@ -570,6 +571,108 @@ describe("the WorkstreamDO regional effect inbox", () => {
       expect(workspace.database.prepare(
         `SELECT state, payload_json FROM workstream_notification_intents WHERE intent_id = ?`,
       ).get(added.intentId)).toEqual({ state: "delivered", payload_json: null });
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("keeps one person's adds to two work streams as two intents", async () => {
+    const database = seedAuthority();
+    const secondWorkstreamId = "00000000-0000-7000-8000-0000000000e1";
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at,
+         do_identity_anchor)
+      VALUES ('${secondWorkstreamId}', '${WORKSPACE_ID}', 'Second room', '', 'ad_hoc',
+              '${AUTHOR_ID}', 'idle', 1, '${AT}', '${AT}', '${AT}', 1);
+      INSERT OR REPLACE INTO workstream_authority_routes
+        (workspace_id, workstream_id, generation, object_name, state, stage_index,
+         source_cursor, source_fence_sequence, updated_at)
+      VALUES ('${WORKSPACE_ID}', '${secondWorkstreamId}', 1,
+              'global:${WORKSPACE_ID}:${secondWorkstreamId}', 'active', 0, 0, 0, '${AT}');
+    `);
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+      PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    });
+    try {
+      // The epoch is object-local and starts at zero in both rooms, while the
+      // intents table and `workspace_activity_events.dedupe_key` are
+      // workspace-wide — so an identity without the work stream in it makes
+      // the second add a conflict that retries forever instead of delivering.
+      const added = (
+        workstreamId: WorkstreamId,
+      ): Extract<WorkstreamRegionalEffect, { kind: "participant_notification" }> => ({
+        kind: "participant_notification",
+        intentId: `participant_added:${workstreamId}:${USER_ID}:0`,
+        sourceId: `participant:${workstreamId}:${USER_ID}:0`,
+        recipientUserId: USER_ID,
+        actorUserId: AUTHOR_ID,
+        actorNameSnapshot: "Author",
+        workstreamTitleSnapshot: workstreamId === WORKSTREAM_ID ? "Regional effects" : "Second room",
+        workstreamObjectiveSnapshot: "",
+        occurredAt: AT,
+      });
+      for (const workstreamId of [WORKSTREAM_ID, asWorkstreamId(secondWorkstreamId)]) {
+        const effect = added(workstreamId);
+        const applied = await applyWorkstreamRegionalEffect(env, message(effect, {
+          messageId: `notification:${effect.intentId}`,
+          partitionKey: `notification:${effect.intentId}`,
+          sourceVersion: 1,
+          workstreamId,
+        }));
+        expect(applied.notificationIntentId).toBe(effect.intentId);
+      }
+      expect(workspace.database.prepare(
+        `SELECT COUNT(*) AS count FROM workstream_notification_intents
+          WHERE recipient_user_id = ? AND notification_kind = 'participant_added'`,
+      ).get(USER_ID)).toEqual({ count: 2 });
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("re-exposes a participant intent on replay, so a failed delivery is retried", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+      PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    });
+    try {
+      const effect: WorkstreamRegionalEffect = {
+        kind: "participant_notification",
+        intentId: `participant_added:${WORKSTREAM_ID}:${USER_ID}:3`,
+        sourceId: `participant:${WORKSTREAM_ID}:${USER_ID}:3`,
+        recipientUserId: USER_ID,
+        actorUserId: AUTHOR_ID,
+        actorNameSnapshot: "Author",
+        workstreamTitleSnapshot: "Regional effects",
+        workstreamObjectiveSnapshot: "",
+        occurredAt: AT,
+      };
+      const envelope = message(effect, {
+        messageId: `notification:${effect.intentId}`,
+        partitionKey: `notification:${effect.intentId}`,
+        sourceVersion: 1,
+      });
+      await applyWorkstreamRegionalEffect(env, envelope);
+      // The redelivery a transient Slack or email failure produces. The
+      // receipt makes it a replay; the caller still needs the intent id back,
+      // or it acknowledges the effect and nothing is ever sent.
+      const replayed = await applyWorkstreamRegionalEffect(env, envelope);
+      expect(replayed.replayed).toBe(true);
+      expect(replayed.notificationIntentId).toBe(effect.intentId);
     } finally {
       database.close();
       workspace.database.close();
