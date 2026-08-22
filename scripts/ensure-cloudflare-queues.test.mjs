@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   assertPairedQueues,
+  assertSingleConsumerPerQueue,
   configuredQueues,
   createAccountQueue,
   ensureRequiredQueues,
@@ -368,4 +369,34 @@ test('strips comments without truncating a URL inside a string', () => {
   // URL, and a naive strip would cut the value in half.
   assert.equal(parsed.vars.PUBLIC_WEB_BASE_URL, 'https://rallywith.ai');
   assert.equal(parsed.queues.producers[0].queue, 'avalon-migration-reports');
+});
+
+test('the declared queues each have exactly one consumer', async () => {
+  const { required } = await configuredQueues();
+
+  assert.doesNotThrow(() => assertSingleConsumerPerQueue(required));
+});
+
+test('refuses a queue consumed by two Workers', () => {
+  // The shape a regional queue pasted into both regional files produces.
+  // `assertPairedQueues` is content with it — both sides are named — so this is
+  // the only thing standing between that edit and a half-completed release.
+  assert.throws(
+    () => assertSingleConsumerPerQueue([
+      { surface: 'api-global', role: 'producer:COMMANDS', name: 'avalon-global-migration-commands' },
+      { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
+      { surface: 'api-eu', role: 'consumer', name: 'avalon-global-migration-commands' },
+    ]),
+    /avalon-global-migration-commands is consumed by api-global and api-eu/u,
+  );
+});
+
+test('allows the same queue produced by two Workers', () => {
+  // `avalon-migration-reports` is exactly this: both API Workers produce it and
+  // only the tracker consumes it. The limit is on consumers alone.
+  assert.doesNotThrow(() => assertSingleConsumerPerQueue([
+    { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
+  ]));
 });
