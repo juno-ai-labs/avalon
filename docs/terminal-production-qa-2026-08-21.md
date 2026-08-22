@@ -10,17 +10,21 @@ No code or production configuration was changed during this QA. Tests were confi
 
 ## Follow-up remediation status
 
-All four findings have been remediated on branch `codex/fix-production-terminal-qa`; the fixes have not been deployed or production-retested. The post-QA real-workerd reproduction identified the exact multi-step root cause: a keep-alive alarm fired while the run request was draining and awaited that other request context's active drain promise. This held the alarm across the model/tool loop and could make later Durable Object I/O belong to the wrong event. The fix makes that separate alarm return immediately and leaves recovery to the durable dispatch row and its already-armed alarm.
+All four findings have been remediated on branch `codex/fix-production-terminal-qa`; the fixes have not been deployed or production-retested. The post-QA real-workerd reproduction identified the exact multi-step root cause: a keep-alive alarm fired while the run request was draining and awaited that other request context's active drain promise. This held the alarm across the model/tool loop and could make later Durable Object I/O belong to the wrong event. The fix makes that separate alarm defer without joining, arms a bounded follow-up heartbeat, and leaves recovery to the durable dispatch row and harness attempt lease. A healthy long run retains its unexpired attempt lease; a promise with no progress for five minutes and no live lease can be replaced inside the same isolate.
 
-The remediation also:
+The remediation and review hardening also:
 
 - separates pre-commit Terminal and runtime-receipt failures from alarm scheduling after commit, so a committed write is never reported as safe to retry;
 - emits content-free structured causes and preserves `tool_receipt_persistence_failed` / `run_state_persistence_failed` instead of the generic harness category;
 - advances receipt-only stale settlements into the visible tool card with schema migration 14, including a v13-to-v14 repair;
 - uses the compatibility trigger's semantic change counter on real workerd, rather than counting its receipt, bookkeeping, and transcript-projection rows as three logical writes;
-- retains provider `durationMs` and adds `acquisitionDurationMs` and `totalDurationMs`.
+- retains provider `durationMs` and adds `acquisitionDurationMs` and `totalDurationMs`;
+- gives both agent object types a bounded heartbeat plus durable harness-lease takeover for a stranded in-isolate drain, avoiding both an already-due alarm loop and a permanent stall;
+- validates typed object-port failure envelopes instead of manufacturing a retryable rollback from any non-success response;
+- chooses harness persistence categories explicitly at each required port and classifies tool lifecycle-event failures as receipt failures;
+- refuses to replay terminal command rows whose timing evidence is incomplete.
 
-Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. Visible production verification remains outstanding because the Mac is locked and the fixes have not been deployed.
+Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. On 2026-08-22 the signed-in production window was available again and still visibly reproduced the old deployment's 454 ms second-command failure with `harness_execution_failed`. Verification of the corrected cards remains outstanding because the fixes have not been deployed.
 
 ## Environment
 

@@ -140,6 +140,44 @@ async function reserve(
 }
 
 describe("Terminal authority on real workerd", () => {
+  it("returns typed non-retryable protocol and routing rejections", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    const invalid = await post(stub, "/internal/terminal", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "operation-from-a-newer-worker",
+      args: [],
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toMatchObject({
+      error: "invalid_terminal_operation",
+      failure: {
+        code: "invalid_terminal_operation",
+        outcome: "rejected",
+        retryable: false,
+      },
+    });
+
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    const misrouted = await post(stub, "/internal/terminal", {
+      workspaceId: "00000000-0000-7000-8000-00000000ffff",
+      workstreamId: WORKSTREAM_ID,
+      operation: "sandbox",
+      args: [],
+    });
+    expect(misrouted.status).toBe(409);
+    expect(misrouted.body).toMatchObject({
+      error: "workstream_terminal_identity_mismatch",
+      failure: {
+        code: "workstream_terminal_identity_mismatch",
+        outcome: "rejected",
+        retryable: false,
+      },
+    });
+  });
+
   it("returns a typed retry contract without exposing a pre-commit storage cause", async () => {
     const stub = agent();
     await boot(stub);

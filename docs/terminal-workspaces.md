@@ -247,12 +247,18 @@ network proxy, or a general GitHub administration surface.
   file, inspect paths with `pwd`/`ls`/`find`, narrow an ambiguous edit, repair Git
   state, reconnect or reselect GitHub, or ask a participant for fresh publication
   intent. Provider internals and credentials are never copied into that message.
-- An object-local Terminal transaction that throws is returned as
-  `terminal_operation_not_committed`, with `outcome=not_committed` and
-  `retryable=true`; the raw storage cause stays only in structured logs. Alarm
-  scheduling occurs after commit and cannot turn a committed operation into a
-  failure response, because retrying that response could duplicate a write.
-  The committed regional directory effect and scheduler sweep own recovery.
+- An object-local Terminal mutation has three explicit phases:
+
+  1. Validate the typed operation and commit its object-local SQLite
+     transaction. An invalid operation or identity is a non-retryable typed
+     rejection.
+  2. Only a transaction that rolls back returns
+     `terminal_operation_not_committed`, with `outcome=not_committed` and
+     `retryable=true`; the raw storage cause stays only in structured logs.
+  3. Schedule the follow-up alarm after commit. A scheduling failure is logged
+     as diagnostic state and cannot change the successful response, because
+     retrying a committed write could duplicate it. The committed regional
+     directory effect and scheduler sweep own recovery.
 - If run recovery terminalizes a durable tool receipt without a live harness
   publisher, schema migration 14 and the runtime receipt trigger project the
   same terminal status, summary, completion time, and member-safe error into
@@ -418,7 +424,11 @@ update lag before changing the default.
 ### 2026-08-21 — Production recovery distinguishes execution, persistence, and commit state
 
 **What changed:** Keep-alive alarms no longer join an already active agent
-drain. The Terminal object port returns a typed, participant-safe
+drain or spin on an already-due dispatch row. Both agent object types arm a
+bounded follow-up heartbeat and use current drain progress plus the durable
+harness attempt lease to distinguish a healthy long run from a stranded
+promise; an expired owner can be replaced in the same isolate. The Terminal
+object port returns a typed, participant-safe
 `terminal_operation_not_committed` envelope and logs its private cause; a
 post-commit alarm-scheduling failure is logged without changing the successful
 operation response. The shared runtime-SQL receipt path observes the same
@@ -426,8 +436,9 @@ pre-/post-commit boundary. Bind now preserves `tool_receipt_persistence_failed` 
 `run_state_persistence_failed` instead of collapsing both into
 `harness_execution_failed`. Workstream schema 14 projects receipt-only terminal
 settlement into the visible tool part, including a one-time repair for stranded
-rows. Command results retain provider `durationMs` and add acquisition and total
-wall clocks.
+rows. Malformed object responses fail closed as non-retryable protocol errors,
+and command replay refuses terminal rows without complete timestamps. Command
+results retain provider `durationMs` and add acquisition and total wall clocks.
 
 **Why:** Production QA reproduced successful first Terminal calls followed by
 sub-second failures in the same run, one write card left `started` until its
@@ -439,15 +450,18 @@ Durable Object event. Separate error boundaries then hid that cause and could
 report an operation as failed after its SQLite transaction had committed.
 
 **Considered and rejected:** Awaiting the active drain from every alarm,
-returning an alarm failure after commit, retrying or masking stale writes only
-in the desktop, exposing raw SQLite reasons, and renaming provider
+returning immediately forever on a stranded in-isolate promise, returning an
+alarm failure after commit, inferring rollback safety from an unvalidated
+response, retrying or masking stale writes only in the desktop, exposing raw
+SQLite reasons, and renaming provider
 `durationMs`. Those choices respectively cross request contexts, invite a
-duplicate write, leave other readers inconsistent, leak internals, or break the
-existing command-duration contract.
+permanent stall, invite a duplicate write, guess at safety, leave other readers
+inconsistent, leak internals, or break the existing command-duration contract.
 
-**Consequences:** The durable dispatch row and re-armed alarm—not a promise
-created by another event—remain the recovery owner. A caller may repeat only a
-typed not-committed Terminal operation; receipt failures retain conservative
+**Consequences:** The durable dispatch row, harness attempt lease, and re-armed
+alarm—not a promise created by another event—remain the recovery owner. A
+caller may repeat only a typed not-committed Terminal operation; receipt
+failures retain conservative
 write guidance; stale cards converge from receipt authority; and latency
 consumers can distinguish provider work from acquisition and total wait. The
 production matrix must still be rerun in both regions after deployment.

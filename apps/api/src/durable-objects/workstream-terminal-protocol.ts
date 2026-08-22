@@ -33,13 +33,35 @@ export type TerminalObjectPort = {
   ) => Promise<StorageMethods[K]["result"]>;
 };
 
-/** Stable, participant-safe failure returned when the object transaction did not commit. */
-export interface TerminalOperationFailure {
-  code: "terminal_operation_not_committed";
-  message: string;
-  outcome: "not_committed";
-  retryable: true;
-}
+/** Stable, participant-safe failures returned by the object authority. */
+export const TerminalOperationFailureSchema = z.discriminatedUnion("code", [
+  z.object({
+    code: z.literal("terminal_operation_not_committed"),
+    message: z.string().min(1).max(1_000),
+    outcome: z.literal("not_committed"),
+    retryable: z.literal(true),
+  }).strict(),
+  z.object({
+    code: z.literal("invalid_terminal_operation"),
+    message: z.string().min(1).max(1_000),
+    outcome: z.literal("rejected"),
+    retryable: z.literal(false),
+  }).strict(),
+  z.object({
+    code: z.literal("workstream_terminal_identity_mismatch"),
+    message: z.string().min(1).max(1_000),
+    outcome: z.literal("rejected"),
+    retryable: z.literal(false),
+  }).strict(),
+  z.object({
+    code: z.literal("terminal_operation_protocol_error"),
+    message: z.string().min(1).max(1_000),
+    outcome: z.literal("unknown"),
+    retryable: z.literal(false),
+  }).strict(),
+]);
+
+export type TerminalOperationFailure = z.infer<typeof TerminalOperationFailureSchema>;
 
 /**
  * Demands that a list of operation names covers the whole key set.

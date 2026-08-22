@@ -2599,6 +2599,33 @@ describe("agent harness", () => {
       .toContain("Check its card before retrying a write");
   });
 
+  it("classifies a tool lifecycle event persistence failure as a receipt failure", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const executionOrder: string[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("create_record", "write", executionOrder)])],
+      onEvent: async (event) => {
+        if (event.type === "tool_completed") throw new Error("injected receipt event failure");
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: {
+        kind: "execution",
+        code: "tool_receipt_persistence_failed",
+      },
+    });
+    expect(executionOrder).toEqual(["create_record:start", "create_record:end"]);
+  });
+
   it("bounds a signal-ignoring tool and emits one terminal event for its start", async () => {
     const responses = [
       streamResponse([{

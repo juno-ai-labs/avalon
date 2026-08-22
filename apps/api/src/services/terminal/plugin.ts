@@ -21,7 +21,7 @@ import {
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher as createRepositoryPublisher,
 } from "./repository";
-import { createTerminalPortFactory } from "./object-port";
+import { createTerminalPortFactory, TerminalObjectPortError } from "./object-port";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
 import { createTerminalRepositorySelector } from "./repository-selection";
@@ -121,7 +121,7 @@ export async function createAvalonTerminalPlugin(
       } catch (error) {
         const code = error instanceof TerminalToolError
           ? error.code
-          : error instanceof Error && "code" in error && typeof error.code === "string"
+          : error instanceof TerminalObjectPortError
             ? error.code
             : "terminal_tool_failed";
         logStructuredEvent(env, "warn", "terminal_tool_finished", {

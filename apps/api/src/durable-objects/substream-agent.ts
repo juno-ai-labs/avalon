@@ -36,6 +36,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
+  AGENT_RUN_DISPATCH_LEASE_MS,
   SUBSTREAM_AGENT_RUN_DISPATCHES,
   claimAgentRunDispatch,
   deferAgentRunDispatch,
@@ -453,6 +454,7 @@ export class SubstreamAgent extends DurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
 
   constructor(
     state: DurableObjectState,
@@ -791,6 +793,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       logError(this.env, "workstream_runtime_sql_commit_failed", {
         workspace_id: parsed.data.workspaceId,
         workstream_id: parsed.data.workstreamId,
+        harness_run_id: parsed.data.harnessRunId ?? null,
         request_id: parsed.data.requestId,
         statement_count: parsed.data.statements.length,
         code: "workstream_runtime_sql_not_committed",
@@ -814,6 +817,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
         workspace_id: parsed.data.workspaceId,
         workstream_id: parsed.data.workstreamId,
+        harness_run_id: parsed.data.harnessRunId ?? null,
         request_id: parsed.data.requestId,
         statement_count: parsed.data.statements.length,
         code: "workstream_runtime_sql_alarm_failed_after_commit",
@@ -834,20 +838,52 @@ export class SubstreamAgent extends DurableObject<Env> {
    */
   private async acceptTerminalOperation(request: Request): Promise<Response> {
     const parsed = TerminalOperationRequestSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return jsonResponse({ error: "invalid_terminal_operation" }, 400);
+    if (!parsed.success) {
+      return jsonResponse({
+        ok: false,
+        error: "invalid_terminal_operation",
+        failure: {
+          code: "invalid_terminal_operation",
+          message: "Avalon's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
+          outcome: "rejected",
+          retryable: false,
+        },
+      }, 400);
+    }
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.data.workspaceId
       || identity.workstreamId !== parsed.data.workstreamId) {
-      return jsonResponse({ error: "workstream_terminal_identity_mismatch" }, 409);
+      return jsonResponse({
+        ok: false,
+        error: "workstream_terminal_identity_mismatch",
+        failure: {
+          code: "workstream_terminal_identity_mismatch",
+          message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+          outcome: "rejected",
+          retryable: false,
+        },
+      }, 409);
     }
     const operation = parsed.data.operation;
     const method = this.terminal[operation] as (...args: unknown[]) => unknown;
     const operationInput = parsed.data.args[0];
-    const operationRunId = operationInput && typeof operationInput === "object"
-      && "runId" in operationInput && typeof operationInput.runId === "string"
-      ? operationInput.runId
-      : this.terminal.sandbox()?.operationRunId ?? null;
+    const operationRunId = (): string | null => {
+      if (operationInput !== undefined && operationInput !== null) {
+        return typeof operationInput === "object"
+          && "runId" in operationInput
+          && typeof operationInput.runId === "string"
+          ? operationInput.runId
+          : null;
+      }
+      try {
+        return this.terminal.sandbox()?.operationRunId ?? null;
+      } catch {
+        // Correlation must never replace the typed operation failure that the
+        // log is explaining. A broken sandbox read stays secondary evidence.
+        return null;
+      }
+    };
     let value: unknown;
     try {
       // Through `commitRuntimeMutation`, not directly, for the same reason
@@ -869,7 +905,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       logError(this.env, "terminal_operation_commit_failed", {
         workspace_id: parsed.data.workspaceId,
         workstream_id: parsed.data.workstreamId,
-        harness_run_id: operationRunId,
+        harness_run_id: operationRunId(),
         operation,
         code: "terminal_operation_not_committed",
         reason: error instanceof Error ? error.message : String(error),
@@ -897,7 +933,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       logError(this.env, "terminal_operation_alarm_schedule_failed", {
         workspace_id: parsed.data.workspaceId,
         workstream_id: parsed.data.workstreamId,
-        harness_run_id: operationRunId,
+        harness_run_id: operationRunId(),
         operation,
         code: "terminal_alarm_schedule_failed_after_commit",
         reason: error instanceof Error ? error.message : String(error),
@@ -1266,15 +1302,37 @@ export class SubstreamAgent extends DurableObject<Env> {
    * which invited the runtime to cancel it mid-run — and because cancellation
    * is not a thrown error, it did so silently, with no failure logged anywhere.
    */
-  private async drainRunsToCompletion(): Promise<void> {
-    // A keep-alive heartbeat is a separate Durable Object event. If it fires
-    // while this isolate is already draining, joining `activeDrain` would make
-    // the heartbeat await a promise created by the run's request context.
-    // Besides holding the alarm open for the whole model/tool loop, workerd
-    // can then reject later I/O as belonging to a different request. The
-    // dispatch row and the alarm re-armed at entry are the continuation; this
-    // invocation has no work to join.
-    if (this.agentDrain.active) return;
+  private async drainRunsToCompletion(): Promise<"drained" | "deferred"> {
+    // A keep-alive heartbeat is a separate Durable Object event. It must not
+    // await a promise created by the run's request context. A healthy long run
+    // proves ownership through the object-local harness lease it renews every
+    // five seconds. If the previous continuation was cancelled, that lease and
+    // this drain's progress horizon both lapse; only then may a later alarm
+    // forget the stranded promise and reclaim the durably fenced dispatch.
+    if (this.agentDrain.active) {
+      const now = Date.now();
+      const lastProgressAt = this.agentDrain.lastProgress;
+      const activeRun = this.activeRunDispatch;
+      const runLease = activeRun
+        ? this.state.storage.sql.exec<{ lease_expires_at: number | null }>(
+            `SELECT lease_expires_at FROM runs WHERE run_id = ?`,
+            activeRun.runId,
+          ).toArray()[0]?.lease_expires_at ?? null
+        : null;
+      const recentProgress = lastProgressAt !== null
+        && now - lastProgressAt < AGENT_RUN_DISPATCH_LEASE_MS;
+      if (recentProgress || (runLease !== null && runLease > now)) return "deferred";
+      if (this.agentDrain.abandonActive()) {
+        logWarn(this.env, "substream_agent_stale_drain_reclaimed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+          harness_run_id: activeRun?.runId ?? null,
+          last_progress_at: lastProgressAt,
+          harness_lease_expires_at: runLease,
+        });
+      }
+    }
     await this.agentDrain.resume(
       () => this.drainRunQueue()
       .catch((error: unknown) => {
@@ -1287,10 +1345,12 @@ export class SubstreamAgent extends DurableObject<Env> {
       }),
       () => undefined,
     );
+    return "drained";
   }
 
   private async drainRunQueue(): Promise<void> {
     while (true) {
+      this.agentDrain.touch();
       // Only the alarm forwards regional effects, and this loop owns the alarm
       // until it returns. Flushing between runs keeps a queue of runs from
       // holding the parent's view of all of them; effects committed *during* a
@@ -1306,6 +1366,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         { now, leaseToken: uuidV7(now) },
       );
       if (!claim) return;
+      this.agentDrain.touch();
 
       // Parsed inside the guard, not before it. A payload this build cannot
       // validate — an older shape, a truncated write — used to throw straight
@@ -1333,6 +1394,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         continue;
       }
       const identity = { workspaceId: input.workspaceId, workstreamId: input.workstreamId };
+      this.activeRunDispatch = { runId: claim.id, leaseToken: claim.leaseToken };
       try {
         if (claim.started) {
           // A run whose executor is gone still holds the substream's single
@@ -1415,6 +1477,11 @@ export class SubstreamAgent extends DurableObject<Env> {
           type: "harness_status_changed",
           status: "failed",
         }).catch(() => undefined);
+      } finally {
+        if (this.activeRunDispatch?.leaseToken === claim.leaseToken) {
+          this.activeRunDispatch = null;
+        }
+        this.agentDrain.touch();
       }
     }
   }
@@ -1881,6 +1948,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           WorkstreamRuntimeSqlRequestSchema.parse({
             workspaceId,
             workstreamId,
+            harnessRunId: this.activeRunDispatch?.runId ?? null,
             requestId: uuidV7(),
             statements,
           }),
@@ -2285,7 +2353,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     // never settles — it does not throw, so a `finally` would not run either.
     // Re-arming first is what makes the sweep floor a floor rather than
     // something reachable only when the work it guards already succeeded.
-    await this.scheduleNextAlarm();
+    await this.armAlarmDuringRunDrain();
     const pending = this.objectStore.pendingBlockDashboardRefresh();
     const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
@@ -2322,8 +2390,9 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
 
     if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
-      await this.drainRunsToCompletion();
-      await this.scheduleNextAlarm();
+      const disposition = await this.drainRunsToCompletion();
+      if (disposition === "deferred") await this.armAlarmDuringRunDrain();
+      else await this.scheduleNextAlarm();
       return;
     }
     this.objectStore.deletePendingBlockDashboardRefresh();
@@ -2340,8 +2409,9 @@ export class SubstreamAgent extends DurableObject<Env> {
       this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
-    await this.drainRunsToCompletion();
-    await this.scheduleNextAlarm();
+    const disposition = await this.drainRunsToCompletion();
+    if (disposition === "deferred") await this.armAlarmDuringRunDrain();
+    else await this.scheduleNextAlarm();
   }
 
   /** Best-effort forward of due effects; the alarm retries whatever defers. */
@@ -2865,6 +2935,23 @@ export class SubstreamAgent extends DurableObject<Env> {
   private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
     const existing = await this.state.storage.getAlarm();
     if (existing === null || existing > dueAt) await this.state.storage.setAlarm(dueAt);
+  }
+
+  /**
+   * Re-arms before an alarm begins work without immediately redelivering the
+   * same due dispatch that this invocation is responsible for. Other durable
+   * products keep their own deadlines; the run lane gets one heartbeat
+   * horizon, which bounds recovery without turning a live drain into a loop.
+   */
+  private async armAlarmDuringRunDrain(): Promise<void> {
+    const now = Date.now();
+    const dueAt = minimumTimestamp(
+      this.objectStore.nextRegionalEffectDueAt(),
+      this.objectStore.nextBlockDashboardDueAt(),
+      this.nextAgentTimerAt(),
+      now + KEEP_ALIVE_INTERVAL_MS,
+    );
+    await this.state.storage.setAlarm(Math.max(now + 1, dueAt ?? now + KEEP_ALIVE_INTERVAL_MS));
   }
 
   private async ensureNextWorkAlarm(): Promise<void> {
