@@ -489,6 +489,47 @@ describe("the force a migration page", () => {
     await expect(response.text()).resolves.toContain("Pick a class to migrate.");
   });
 
+  /**
+   * The page's class list is a rendering of what is forceable, not a constraint
+   * on it: both writes take a class name from a request body. A class no Worker
+   * can migrate has to be refused before anything is queued, or every object of
+   * it is dispatched, retried, and dead-lettered while the run says otherwise.
+   */
+  it("refuses a class no Worker can migrate, from JSON", async () => {
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await app.fetch(
+      new Request("https://migrations.internal.rallywith.ai/api/migrations", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: SITE_ORIGIN },
+        body: JSON.stringify({ className: "CrashSymbolicatorContainer" }),
+      }),
+      environment,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_migration_run_request",
+    });
+    expect(queue.sent).toEqual([]);
+  });
+
+  it("refuses the same class from a hand-edited form", async () => {
+    await sweepIn("WorkspaceDO", "global", [OBJECT_ID]);
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await post(
+      new URLSearchParams({ className: "MigrationRegistry" }),
+      { "content-type": "application/x-www-form-urlencoded", origin: SITE_ORIGIN },
+      environment,
+    );
+
+    expect(response.status).toBe(400);
+    expect(queue.sent).toEqual([]);
+  });
+
   it("serves the same run list as JSON", async () => {
     await sweepIn("WorkspaceDO", "eu", [OBJECT_ID]);
 

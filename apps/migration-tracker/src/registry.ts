@@ -18,7 +18,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
 import { applyRegistrySchema, REGISTRY_SCHEMA_VERSION } from "./schema";
 import type { Env } from "./env";
-import { ObjectStatusSchema } from "./protocol";
+import { ObjectStatusSchema, REPORTING_CLASSES } from "./protocol";
 import type {
   ComponentSummary,
   ForceableComponent,
@@ -163,31 +163,6 @@ type EventRow = {
  */
 const RENAMED_COMPONENT_FROM = "workstream";
 const RENAMED_COMPONENT_TO = "substream_agent_do";
-
-/**
- * The Durable Object classes that run `withMigrationReport`.
- *
- * The sweep enumerates every namespace in the account, which is more than the
- * classes this Worker observes: the tracker's own `MigrationRegistry` is created
- * by the sweep that discovers it, and `CrashSymbolicatorContainer` is a
- * container rather than a migrated object. Neither will ever report, so without
- * this list they accumulate in `unreported` forever and make that count
- * worthless for its actual job — spotting an API object that should have
- * reported and has not.
- *
- * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
- * class missing from here is never swept at all; a class listed here whose
- * objects never wake sits in `unreported` forever. `WorkspaceScheduler` was
- * removed when the class was deleted: its objects can no longer report, so
- * leaving it here would have parked every one of them in `unreported` — the
- * exact count this list exists to keep meaningful.
- */
-export const REPORTING_CLASSES = [
-  "SubstreamAgent",
-  "BlockDashboardAgent",
-  "WorkstreamDO",
-  "WorkspaceDO",
-] as const;
 
 const REPORTING_CLASS_LIST = REPORTING_CLASSES.map((name) => `'${name}'`).join(", ");
 
@@ -820,8 +795,24 @@ export class MigrationRegistry extends DurableObject<Env> {
    * command picks a queue by region, so those have nowhere to go, and counting
    * them is the difference between a run that covered a class and one that
    * quietly skipped part of it.
+   *
+   * The order is least-recently-heard-from first, which is what makes running a
+   * capped class again actually continue rather than re-pick the same slice: a
+   * forced object reports as it wakes, so it sorts to the back of the next run.
+   * `ORDER BY object_id` alone is stable and deterministic and would have left
+   * the tail of a class larger than the cap permanently unreachable, while the
+   * page told the operator to run it again.
    */
   migrationTargets(request: MigrationRunRequest): MigrationTargetSelection {
+    // The class filter is here as well as in `MigrationRunRequestSchema`
+    // because this is the last point before a command is built, and this method
+    // is on a Durable Object's RPC surface — a future caller could reach it
+    // without passing the schema. The schema is what gives a request a clear
+    // refusal and is where that behaviour is tested; this clause is what keeps
+    // the guarantee if something ever arrives another way. It is deliberately
+    // not covered by a test: the enum makes the call unrepresentable, and
+    // faking one would mean casting past the contract, which this repository's
+    // own lint rule refuses.
     const regionFilter = request.region ?? null;
     const matched = this.storage.sql.exec<{ matched: number; unroutable: number }>(
       `SELECT COUNT(*) AS matched,
@@ -829,6 +820,7 @@ export class MigrationRegistry extends DurableObject<Env> {
          FROM (SELECT ${RESOLVED_REGION} AS region
                  FROM durable_objects o
                 WHERE o.absent_since IS NULL
+                  AND o.class_name IN (${REPORTING_CLASS_LIST})
                   AND o.class_name = ?)
         WHERE ?2 IS NULL OR region IS NULL OR region = ?2`,
       request.className,
@@ -841,13 +833,15 @@ export class MigrationRegistry extends DurableObject<Env> {
       region: string;
     }>(
       `SELECT object_id, object_name, region FROM (
-         SELECT o.object_id, o.object_name, ${RESOLVED_REGION} AS region
+         SELECT o.object_id, o.object_name, o.last_reported_at,
+                ${RESOLVED_REGION} AS region
            FROM durable_objects o
           WHERE o.absent_since IS NULL
+            AND o.class_name IN (${REPORTING_CLASS_LIST})
             AND o.class_name = ?
        )
         WHERE region IS NOT NULL AND (?2 IS NULL OR region = ?2)
-        ORDER BY object_id
+        ORDER BY COALESCE(last_reported_at, 0), object_id
         LIMIT ?3`,
       request.className,
       regionFilter,

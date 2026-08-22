@@ -8,7 +8,9 @@ import { REGISTRY_OBJECT_NAME } from "../src/registry";
 import { applyRegistrySchema, REGISTRY_MIGRATIONS } from "../src/schema";
 import type { MigrationRegistry } from "../src/registry";
 import {
+  MigrationRunRequestSchema,
   ObjectQuerySchema,
+  REPORTING_CLASSES,
   type InventorySweep,
   type MigrationRun,
 } from "../src/protocol";
@@ -1280,5 +1282,30 @@ describe("migration runs", () => {
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.dispatched).toBe(3);
+  });
+});
+
+/**
+ * The class an operator names arrives in a request body, and the page's own
+ * list of classes is a rendering of what is forceable rather than a constraint
+ * on it — a JSON caller or a hand-edited form reaches this schema directly.
+ *
+ * A class the API Worker holds no dispatcher for would otherwise be fanned out
+ * in full, retried five times per object, and dead-lettered, while the run row
+ * recorded it as dispatched. `CrashSymbolicatorContainer` is the one that makes
+ * it concrete: the sweep enumerates it, it lives in an API script so its region
+ * resolves like any other, and nothing downstream would have stopped it.
+ */
+describe("which classes a run may name", () => {
+  it("accepts every class that runs the reporter", () => {
+    for (const className of REPORTING_CLASSES) {
+      expect(MigrationRunRequestSchema.safeParse({ className }).success).toBe(true);
+    }
+  });
+
+  it("refuses a class no Worker can migrate", () => {
+    for (const className of ["CrashSymbolicatorContainer", "MigrationRegistry", "WorkspaceScheduler"]) {
+      expect(MigrationRunRequestSchema.safeParse({ className }).success).toBe(false);
+    }
   });
 });

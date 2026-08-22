@@ -138,6 +138,17 @@ reach for and no way to migrate an object without constructing it. That makes
 the work inherently per instance, and it is why the mechanism looks the way it
 does.
 
+The class an operator names is checked against the list of classes the API
+Worker actually holds a dispatcher for, in `MigrationRunRequestSchema` and again
+in the registry query behind it. The page's own list of classes is a rendering
+of what is forceable, not a constraint on it — both writes take a class name
+from a request body, so a JSON caller or a hand-edited form reaches the schema
+directly. Without that check a class like `CrashSymbolicatorContainer`, which
+the sweep enumerates and whose region resolves like any other, would be fanned
+out in full, retried five times per object, and dead-lettered, while the run row
+recorded it as dispatched — filling the queue this system uses as its monitoring
+signal with messages that were never going to work.
+
 An operator picks a class on `/migrations`, optionally narrowed to one region.
 The tracker asks the registry for every **live** object of that class — `absent`
 ones are excluded, because their IDs no longer have objects behind them and
@@ -246,6 +257,14 @@ each other:
   it is recorded rather than silent because a cap nobody sees reads as "this
   covered the class".
 
+  Running a capped class again **continues** rather than repeating itself,
+  because targets are selected least-recently-heard-from first and a forced
+  object reports as it wakes — so the objects a run reached sort to the back of
+  the next one. Ordering by object ID alone would be equally deterministic and
+  would leave the tail of an oversized class permanently unreachable while the
+  page told the operator to try again. The reports are what advance it, so two
+  runs back to back, before any report lands, will re-pick the same slice.
+
 A dispatch that throws partway is recorded too, with the count that actually
 landed. That is the same rule the reporter follows on the other side: nothing is
 counted as delivered until the queue has taken it.
@@ -271,8 +290,10 @@ and the API's `CrashSymbolicatorContainer` are Durable Objects that will never
 call `withMigrationReport`. Without that bucket they would sit in `unreported`
 forever and make the count worthless for its actual job — spotting an API object
 that should have reported and has not. `REPORTING_CLASSES` in
-`apps/migration-tracker/src/registry.ts` is the list, and it has to stay in step
-with the call sites of `withMigrationReport`.
+`apps/migration-tracker/src/protocol.ts` is the list, and it has to stay in step
+with the call sites of `withMigrationReport`. It is also what a forced run is
+allowed to name, which is why it sits in the protocol rather than beside the
+queries: the request schema and the registry both read it.
 
 A component is shown as **retired** when the namespaces its objects live in are
 all retired. That is deliberately not the same test as "all of its objects are
@@ -356,8 +377,8 @@ full report history. Every page has a JSON twin under `/api/`.
   report and the `forceMigration` RPC come from there and from nowhere else, and
   both of its members are abstract, so a class that opts out of either does not
   compile. Adding a class means adding it to that base, to `REPORTING_CLASSES`
-  in the registry, and to the consumer's dispatcher map — the last of those is
-  what decides whether a command naming it can be applied at all.
+  in the tracker's protocol, and to the consumer's dispatcher map — the last of
+  those is what decides whether a command naming it can be applied at all.
 - **A forced migration always reports, even when nothing changed.** It is the
   operator's receipt that this object was reached, and the objects that were
   already current are exactly the ones whose silence says nothing. This is the
@@ -369,6 +390,15 @@ full report history. Every page has a JSON twin under `/api/`.
   The consumer drops a command carrying the other region's name rather than
   rerouting it, which is the same no-Global-fallback rule every split queue
   follows.
+- **A run can only name a class the API Worker can migrate.** Enforced by the
+  request schema and again by the registry query, because the page's class list
+  is not a constraint on either write. Dispatching a class with no dispatcher
+  fills the dead-letter queue with messages that can never succeed, which
+  degrades the one monitoring signal this system has.
+- **A capped run continues where the last one stopped.** Targets are ordered
+  least-recently-heard-from first, so the objects a run reached sort to the back
+  of the next. A deterministic order that does not advance would leave the tail
+  of an oversized class unreachable while the page invited a retry.
 - **An `absent` object is never a target.** Its ID no longer has an object
   behind it, so addressing one creates an empty object instead of migrating
   anything.
@@ -747,8 +777,28 @@ the list, and the list is the hard part.
   object with neither is counted as `unroutable` and shown rather than guessed
   at.
 
+**What review caught, and why it is recorded here:** two reviewers independently
+found that `MigrationRunRequestSchema` constrained `className` to an identifier
+pattern rather than to the classes that can actually be migrated, and that
+`migrationTargets` applied the reporting-class filter only to the page's list.
+A JSON caller could therefore fan out `CrashSymbolicatorContainer` — enumerated
+by the sweep, region resolvable like any other — into a run every message of
+which was going to dead-letter, with the run row recording it as dispatched. The
+through-line is worth keeping: **a list rendered in a form is not a constraint on
+the endpoint behind it**, and the page's own vocabulary was mistaken for the
+schema's. A third finding, that the capped selection never advanced, was the
+same shape of error one layer down — the documentation promised a retry would
+continue and the `ORDER BY` made that impossible.
+
 **What a future change has to respect:**
 
+- `REPORTING_CLASSES` lives in the tracker's protocol rather than beside the
+  registry's queries because it is now two things at once: the classes whose
+  silence means something, and the classes a run may name. Moving it back beside
+  the queries puts the request schema out of reach of it.
+- The target ordering is load-bearing, not cosmetic. `ORDER BY object_id` is the
+  obvious deterministic choice and it silently strands the tail of any class
+  larger than the cap.
 - The two guards inside `forceMigration` — the class and the object ID — are not
   defence against a hostile caller; a queue has no public address. They catch a
   wiring mistake in the consumer's dispatcher map, where a class name paired
@@ -756,7 +806,7 @@ the list, and the list is the hard part.
   objects in the wrong namespace. Cloudflare refuses an ID that belongs to a
   different namespace, which is the outer half of the same protection and is
   asserted in the suite rather than assumed.
-- `REPORTING_CLASSES` in the registry, the dispatcher map in the consumer, and
+- `REPORTING_CLASSES` in the tracker's protocol, the dispatcher map in the consumer, and
   the set of classes extending the base are three lists that have to agree. A
   class missing from the first is never offered; missing from the second, a
   command naming it is retried until it dead-letters.
