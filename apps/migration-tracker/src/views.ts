@@ -497,7 +497,7 @@ function eventTable(
     <thead>
       <tr>
         <th>When</th>${withObject ? html`<th>Object</th>` : ""}<th>Status</th>
-        <th>Version</th><th>Head</th><th>Applied</th><th>Worker version</th><th>Detail</th>
+        <th>Version</th><th>Head</th><th>Worker version</th><th>Detail</th>
       </tr>
     </thead>
     <tbody>
@@ -514,9 +514,6 @@ function eventTable(
           <td><span class="pill ${event.status === "failed" ? "failed" : "current"}">${event.status}</span></td>
           <td class="mono">v${event.schemaVersion}</td>
           <td class="mono muted">v${event.latestVersion}</td>
-          <td class="mono muted">${event.appliedVersions.length === 0
-            ? "—"
-            : event.appliedVersions.join(", ")}</td>
           <td class="mono muted">${event.workerVersionId}</td>
           <td class="failure">${event.failureMessage ?? ""}</td>
         </tr>`)}
