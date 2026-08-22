@@ -1056,6 +1056,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — What the compat schema holds that is not compat
+
+**What changed:** Documentation only. `workstream-runtime-compat-schema.ts` is
+now recorded as holding two objects that must outlive the layer it is named for:
+`attachment_tool_receipts`, a real `STRICT` table carrying live product data,
+and `tool_effects_run_call_uq`, the unique index that dedups a replayed tool
+call. Neither appears in `workstream-object-schema.ts` today; retiring the compat
+views has to move both there first.
+
+**Why:** the file's header comment says its statements "deliberately create no
+compatibility data tables", three lines above a `CREATE TABLE`. That sentence is
+how someone decides what a drop migration should drop, and following it deletes
+live attachment-dependency rows. The index has the same shape of problem one
+severity lower: dropping it changes nothing observable at the time and silently
+permits two receipts for one `(run_id, tool_call_id)`. The general rule, worth
+more than either instance: **derive a drop set from what each object is, never
+from the file it lives in.** `_runtime_statement_changes` lives in the same array
+and genuinely is compat machinery that goes.
+
+**Considered and rejected:** editing the header comment alone. It is accurate
+about most of the array and the failure it invites is not a misreading of the
+sentence — it is trusting a file's name to classify its contents. The check has
+to live where the drop set is chosen, so the claim is recorded in the retirement
+PRD's slice-1 inventory as an explicit *keep* and guarded by two specs in
+`workstream-tool-receipt-storage.test.ts`.
+
+**Consequences:** the compat schema is no longer a set that can be dropped
+wholesale. Any future migration that retires part of it must enumerate what it
+drops and justify each object, rather than deriving the list from the array.
+
 ### 2026-08-22 — `tool_position` is a high-water mark, not a row count
 
 **What changed:** Object schema migration 16 rebuilds
