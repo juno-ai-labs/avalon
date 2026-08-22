@@ -41,7 +41,7 @@ on:
       - "packages/contracts/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "scripts/check-cloudflare-queues.mjs"
+      - "scripts/ensure-cloudflare-queues.mjs"
       - "scripts/check-migration-tracker-health.mjs"
       - ".github/workflows/deploy-migration-tracker.yml"
   workflow_dispatch:
@@ -108,10 +108,12 @@ jobs:
         run: pnpm test:scripts
 
       # Wrangler applies a consumer's settings but will not create the queue it
-      # names, so a missing queue fails the deploy halfway through. Prove it
-      # first, and name the creation command if it is absent.
-      - name: Require every Queue declared by the Wrangler configs
-        run: node scripts/check-cloudflare-queues.mjs
+      # names, so a missing queue fails the deploy halfway through. Read every
+      # Wrangler file and create whatever is missing first; nothing about a
+      # queue is a manual step. The API deployment runs the same script, and a
+      # create the two race on is resolved by re-listing, not by failing.
+      - name: Create every Queue the Wrangler configs declare that does not exist
+        run: node scripts/ensure-cloudflare-queues.mjs
 
       - name: Deploy the migration tracker
         run: pnpm --filter @avalon/migration-tracker run deploy
