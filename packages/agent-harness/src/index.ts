@@ -2052,6 +2052,20 @@ export interface HarnessToolContext {
   harnessRunId: string;
   /** Stable durable receipt ID for this exact tool request. */
   toolCallId: string;
+  /**
+   * The host's durable identity for whatever this call does outside Avalon.
+   *
+   * `toolCallId` names the request; this names the receipt the host recorded
+   * for it, and it is what a tool keys provider-side work to — a sandbox task,
+   * a remote job — so a resumed attempt finds the effect it already started
+   * rather than starting a second one.
+   *
+   * Optional because only the host can mint it, and a host may implement no
+   * receipt ports at all. A tool that needs one must fail when it is absent;
+   * substituting `toolCallId` would key the effect to a coordinate the
+   * recorded receipt never used.
+   */
+  effectIntentId?: string;
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;
@@ -2587,6 +2601,22 @@ export interface RunHarnessInput {
     mode: "read" | "write";
     idempotency: ToolDefinition["idempotency"];
   }) => void | Promise<void>;
+  /**
+   * The durable receipt identity the host recorded for this tool call.
+   *
+   * Resolved once per dispatch, after `tool_started` — the event a host uses
+   * to write that receipt — and before the tool runs, so the answer reaches
+   * the tool as `HarnessToolContext.effectIntentId`.
+   *
+   * It is a port rather than something the harness derives because the host
+   * mints the identity and keeps it: `toolCallId` is stable across a resumed
+   * run, but its receipt row is created once, so an id recomputed here would
+   * not match the one an interrupted attempt already wrote provider work
+   * against. Returning `undefined` is how a host says it has none.
+   */
+  resolveToolEffectIntentId?: (
+    toolCallId: string,
+  ) => string | undefined | Promise<string | undefined>;
   checkpointToolInvocation?: (checkpoint: {
     toolCallId: string;
     state: "executing" | "provider_acknowledged" | "completed" | "failed" | "timed_out";

@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
-const context: HarnessToolContext = {
+const RECEIPT = "60fdb63e-25e5-4a58-a3d5-7cf7b6f8b2c1";
+
+const context: Omit<HarnessToolContext, "effectIntentId"> = {
   workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
   workstreamId: "workstream",
   harnessRunId: "run",
@@ -36,7 +38,7 @@ describe("Terminal command receipt recovery", () => {
     };
 
     await expect(__integrationTesting.reconcileRecoverableTerminalWrite({
-      row: { status: "ambiguous", inputHash: "same", inputJson: '{"command":"pwd"}' },
+      row: { id: RECEIPT, status: "ambiguous", inputHash: "same", inputJson: '{"command":"pwd"}' },
       expectedInputHash: "same",
       policyMatches: true,
       expectedPolicy: {
@@ -47,12 +49,18 @@ describe("Terminal command receipt recovery", () => {
       context,
     })).resolves.toEqual({ output: { state: "completed" }, summary: "Recovered" });
 
-    expect(execute).toHaveBeenCalledWith({ command: "pwd" }, context);
+    // The receipt being reconciled is the effect identity: re-entering the
+    // tool has to land on the provider task the interrupted attempt started,
+    // and nothing else in this context names it.
+    expect(execute).toHaveBeenCalledWith(
+      { command: "pwd" },
+      { ...context, effectIntentId: RECEIPT },
+    );
   });
 
   it("does not recover another write tool or a mismatched durable input", async () => {
     await expect(__integrationTesting.reconcileRecoverableTerminalWrite({
-      row: { status: "started", inputHash: "old", inputJson: '{}' },
+      row: { id: RECEIPT, status: "started", inputHash: "old", inputJson: '{}' },
       expectedInputHash: "new",
       policyMatches: true,
       expectedPolicy: {
@@ -91,7 +99,7 @@ describe("Terminal command receipt recovery", () => {
     };
 
     await expect(__integrationTesting.reconcileRecoverableTerminalWrite({
-      row: { status: "started", inputHash: "same", inputJson: '{"title":"Ship","body":"Why"}' },
+      row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: '{"title":"Ship","body":"Why"}' },
       expectedInputHash: "same",
       policyMatches: true,
       expectedPolicy: { pluginId: "avalon:terminal", definition },
@@ -121,7 +129,7 @@ describe("Terminal command receipt recovery", () => {
     };
 
     await expect(__integrationTesting.reconcileRecoverableTerminalWrite({
-      row: { status: "ambiguous", inputHash: "same", inputJson: '{"repositoryFullName":"owner/repo","requiredRemoteAccess":"read_only"}' },
+      row: { id: RECEIPT, status: "ambiguous", inputHash: "same", inputJson: '{"repositoryFullName":"owner/repo","requiredRemoteAccess":"read_only"}' },
       expectedInputHash: "same",
       policyMatches: true,
       expectedPolicy: { pluginId: "avalon:terminal", definition },

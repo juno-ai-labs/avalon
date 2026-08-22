@@ -27,6 +27,9 @@ const RESOURCE = "10000000-0000-4000-8000-000000000006";
 
 const context: HarnessToolContext = {
   workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "resource-call",
+  // Publication is keyed to the receipt, not the call: `terminal:<id>` is the
+  // provider resource identity a retry has to land on again.
+  effectIntentId: I,
   executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
 };
 
@@ -61,6 +64,8 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
       params: [R, W, S, JSON.stringify({ type: "user", userId: U })],
     },
     {
+      // Terminal reads the receipt id off the tool context, but publication
+      // still records its effect against this row.
       sql: `INSERT INTO tool_invocations
               (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
             VALUES (?, ?, ?, ?, 'resource-call', 'terminal_publish_resource', 'hash', '{}', 'started')`,
@@ -279,6 +284,19 @@ describe("Terminal resource bridge", () => {
       resourceId: result.resourceId,
       attachedByUserId: U,
     });
+  });
+
+  it("refuses to publish when the harness supplied no receipt identity", async () => {
+    const { database, put, bridge } = fixture();
+    const unreceipted: HarnessToolContext = { ...context };
+    delete unreceipted.effectIntentId;
+
+    await expect(bridge.publishResource(unreceipted, { filePath: "report.md" }, new TextEncoder().encode("# Report\n")))
+      .rejects.toMatchObject({ code: "tool_receipt_missing" });
+    // `terminal:<effect intent>` is what a retry recognizes. Publishing under
+    // any other identity would create a second copy on every attempt.
+    expect(put).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 0 });
   });
 
   it("publishes opaque binaries as download-only resources", async () => {

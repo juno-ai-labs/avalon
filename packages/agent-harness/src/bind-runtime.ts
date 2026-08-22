@@ -937,6 +937,14 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           input: args,
           ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
         });
+        // After `tool_started`, never before: that event is where a host writes
+        // the receipt this names, and asking earlier would read the identity of
+        // whatever the previous attempt left behind.
+        const effectIntentId = await requiredPort(
+          "tool_receipt_persistence_failed",
+          "Tool effect intent lookup failed",
+          () => input.resolveToolEffectIntentId?.(receiptId),
+        );
         const toolDeadline = combinedDeadline(
           signal,
           dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
@@ -949,6 +957,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             workstreamId: input.workstreamId,
             harnessRunId: input.harnessRunId,
             toolCallId: receiptId,
+            ...(effectIntentId ? { effectIntentId } : {}),
             executionPrincipal: input.executionPrincipal,
             ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
             signal: toolSignal,
