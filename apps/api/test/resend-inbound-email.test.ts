@@ -339,7 +339,10 @@ class FakeDatabase {
       if (resource) resource.contentRef = String(values[1]);
       return result(resource ? 1 : 0);
     }
-    if (sql.includes("INSERT INTO workstream_resources")) {
+    // `INSERT OR IGNORE` as well as plain `INSERT`: the attachment used to be a
+    // statement in this service's own batch and is now `attachWorkstreamRuntimeResource`,
+    // which writes the same columns in the same order through the runtime port.
+    if (sql.includes("INTO workstream_resources")) {
       const workstreamId = String(values[0]);
       const resourceId = String(values[1]);
       if (!this.attachments.some((value) => value.workstreamId === workstreamId && value.resourceId === resourceId)) {
