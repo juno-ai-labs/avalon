@@ -410,6 +410,16 @@ mistake available here, and it is always made with good intentions.
   queues, sharded queues, and fan-out topologies are answers to a problem you
   have actually hit. Add one when something told you — a backlog, a dead-letter
   queue with messages in it, a complaint — not when you imagined one.
+- **A Durable Object never addresses itself.** An object that resolves its own
+  name pays a namespace lookup, a placement-affinity read, and a round trip to
+  reach storage it is already holding, competes with itself for its own single
+  thread, and cannot include the result in the transaction it is in the middle
+  of. This is not a rule you have to remember at each call site, because almost
+  every call site is a shared helper that is right for the Worker calling it and
+  wrong only when the caller turns out to be the object: `durableObjectSelf` in
+  `apps/api/src/lib/durable-object-self.ts` recognizes the case and hands back
+  the object instead. What you do have to remember is to register a new Durable
+  Object class there, in its constructor, the way the four existing ones do.
 
 The test for all of this: if you find yourself writing infrastructure — retry
 schedules, correlation ids, backpressure, delivery receipts — stop and check

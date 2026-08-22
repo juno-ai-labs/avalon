@@ -2,29 +2,27 @@
 
 ## Executive summary
 
-Every self-referencing Durable Object RPC in this repository belongs to one
-object class: **`SubstreamAgent`**. `WorkspaceDO`, `WorkstreamDO`,
-`BlockDashboardAgent`, `WorkspaceScheduler`, and the tracker's
-`MigrationRegistry` never resolve a stub in their own binding, directly or
-through anything they call.
+Two Durable Object classes addressed themselves through their own namespace:
+**`SubstreamAgent`** and **`WorkspaceDO`**. `WorkstreamDO`,
+`BlockDashboardAgent`, and the tracker's `MigrationRegistry` did not.
 
-Not one of the twelve `SubstreamAgent` cases is written as a self-call. Each one
-is a shared Worker-side helper — the runtime-SQL port, `publishWorkstreamEvent`,
-the Terminal port, the agent-timer refresh — that resolves *the owning agent for
-this work stream* by name. That is exactly right when a Worker, a queue
-consumer, or the scheduler calls it. It becomes a self-call when the caller is
-already inside that agent, which is now the normal case: the agent runs the
-whole harness in-object, then calls the same helpers on the way out.
+Not one of the twelve paths was written as a self-call. Each one is a shared
+Worker-side helper — the runtime-SQL ports, `publishWorkstreamEvent`,
+`launchWorkstreamHarness`, `refreshAgentTimerAlarm`, `refreshWorkspaceSchedule`,
+digest settlement — that addresses an object by *role*: "the agent that owns this
+work stream", "the WorkspaceDO for this workspace". That is exactly right for the
+Worker, queue consumer, or Workflow that is almost always calling it. It became a
+self-call as the objects grew inward: a work stream's whole agent loop now runs
+inside its `SubstreamAgent`, and since #226 deleted the workspace scheduler, a
+workspace's schedule runs inside its `WorkspaceDO`. The same helpers now run
+*inside* the object they are addressing, and each call left it over RPC and came
+straight back in.
 
-The object already has the seam that fixes this. `createTerminalObjectPort` takes
-a `localStorage` override and `workstreamRuntimeDatabase` takes a `localExecutor`,
-and `SubstreamAgent.localRuntimeEnvironment` uses the latter for the SQL it
-issues itself. The gap is that the seam is applied at the agent's own top-level
-entry points only; the moment control passes into a helper that re-derives an
-execution environment or publishes an event, the local path is lost and the call
-goes out over RPC and back into the same object.
-
-**No code was changed.** This audit is a finding list only, as asked.
+The repository had been closing these one at a time — an in-object runtime-SQL
+executor, then an in-object Terminal port — and each round left the rest. The fix
+in this change is the general one: an object registers itself, and the resolver
+recognizes its own name. **All twelve are fixed.** The findings below are kept as
+the record of what was wrong and why, with the resolution at the end.
 
 ## What counts as a finding
 
@@ -38,7 +36,7 @@ workspace — is a normal cross-object hop and is not listed here.
 For `SubstreamAgent`, `substreamAgentName()` defaults `substreamId` to `"0"`, and
 the main conversation is external substream `0`, whose object name is the work
 stream's own name. So every helper below, called from the main agent for its own
-work stream, addresses the object it is already running in. On a hypothetical
+work stream, addressed the object it was already running in. On a hypothetical
 non-main substream the same helper would address the main agent instead — a
 sibling, not a self-call, and a second bug rather than a mitigation.
 
@@ -47,217 +45,202 @@ sibling, not a self-call, and a second bug rather than a mitigation.
 - Every stub in this codebase is resolved through
   `apps/api/src/lib/durable-object-namespace.ts`; `scripts/eslint-rules/durable-object-region-routing.mjs`
   rejects direct namespace construction, so enumerating the resolver's call sites
-  enumerates all of them. There are 72, across 35 modules.
+  enumerates all of them.
 - Each site was tagged with the binding it resolves, then the module import graph
   under `apps/api/src` was walked from each Durable Object class to find sites
   reachable from it in its own binding.
 - Every reachable site was then read to decide whether the object actually
-  reaches it *at runtime* and with which name. Four candidates were rejected this
-  way: `socket-service.ts:423` (edge upgrade only), `workstream-object-client.ts`
-  and `workstream-object-creation-service.ts` (constructed only with a
-  request-scoped `auth`, never inside the agent), and
-  `workstream-wakeup-service.ts:629` for `WorkspaceScheduler` (module-reachable,
-  but no function the scheduler calls reaches it — the scheduler's own refresh is
-  the direct `this.refresh(workspaceId)` at `workspace-scheduler.ts:684`).
+  reaches it *at runtime* and with which name. Several candidates were rejected
+  this way: `socket-service.ts` (the edge upgrade path only), and
+  `workstream-object-client.ts` / `workstream-object-creation-service.ts`, which
+  are only ever constructed with a request-scoped `auth` and never inside the
+  agent.
 
 ## Findings
 
-All paths below start inside `SubstreamAgent` and end on `SubstreamAgent`, same
-object. Line numbers are as of `7ab37d8`.
+Line numbers are as of `ae7e504`, the commit this was verified against.
 
-### 1. Runtime SQL: the agent asks itself to run its own SQL
+### 1. Runtime SQL: an object asked itself to run its own SQL
 
-**The general defect, and the source of findings 1a–1e.** `withWorkstreamRuntimeDatabase`,
+**The general defect, and the source of 1a–1f.** `withWorkstreamRuntimeDatabase`,
 `workstreamExecutionEnvironment`, and `bootstrapWorkstreamRuntimeEnvironment`
 (`services/workstream-runtime-database.ts`) each build a D1-compatible port whose
 `executeLocal` resolves the owning `SubstreamAgent` and calls `executeRuntimeSql`
-(`:209–232`) or `bootstrapRuntime` (`:428–437`). The optional `localExecutor`
-skips that, and `SubstreamAgent.localRuntimeEnvironment` (`substream-agent.ts:1934–1959`)
-supplies one that runs the statements against `this.state.storage` directly.
+or `bootstrapRuntime`; `withWorkspaceRuntimeDatabase` does the same against
+`WorkspaceDO`. Both take an optional local executor that skips the hop, and both
+objects supply one — `SubstreamAgent.localRuntimeEnvironment`
+(`substream-agent.ts:2074`) and `WorkspaceDO.localWorkspaceEnv`
+(`workspace-do.ts:1293`), the latter with a comment saying in as many words that
+routing back through the namespace "would have the object call itself".
 
-The local executor is not inherited. Anything the agent calls that builds its own
-execution environment gets the RPC path, even when handed an env that already had
-a local one — `withWorkstreamRuntimeDatabase` constructs a fresh
-`WorkstreamRuntimeDatabase` with `localExecutor` undefined and proxies `DB` to it.
+**The executor was not inherited.** Anything that built its own execution
+environment got the RPC path, even when handed an environment that already
+carried a local one, because `withWorkstreamRuntimeDatabase` constructed a fresh
+port with `localExecutor` undefined.
 
-| # | Entry point in the agent | Path to the self-call |
+| # | Entry point | Path to the self-call |
 | --- | --- | --- |
-| 1a | `alarm()` → `fireNextAgentTimer` (`substream-agent.ts:1961–1978`) | `fireWorkstreamWakeup` → `launchWorkstreamHarness` (`workstream-service.ts:173`) re-wraps the env, so every admission statement in that function — the supersede update, the `harness_runs` insert, `scheduledWorkstreamModelForExisting` — is a separate RPC into this object |
-| 1b | post-run settlement → `refreshWorkstreamName` (`substream-agent.ts:1828`) | `runStructuredInference` → `resolveAgentModelRouting` (`agent-model-flags.ts:153`) → `loadFlagTargetingAttributes` → `workstreamFacts` (`flag-targeting-attributes.ts:272–277`) builds an execution env to read one `workstreams` row |
-| 1c | post-run settlement → `refreshWorkstreamDescription` (`substream-agent.ts:1832`) | same chain as 1b; the description service passes `workstreamId` in its inference context (`workstream-description-service.ts:425–427`) |
-| 1d | run admission and model selection inside the agent's own product layer | `workstream-object-product.ts:444` and `:1902` call `resolveAgentModelRouting` with a `workstreamId`, reaching the same `workstreamFacts` path |
-| 1e | `deliverAgentRunResult` → `settleDigestRun` (`substream-agent.ts:1858`, passing raw `this.env`) | `digest-run-settlement.ts:235` builds an execution env for the same work stream |
+| 1a | `SubstreamAgent` alarm → `fireWorkstreamWakeup` (`substream-agent.ts:2541`) | `launchWorkstreamHarness` re-wraps the environment (`workstream-service.ts:173`), so every admission statement — the supersede update, the `harness_runs` insert, `scheduledWorkstreamModelForExisting` — became a separate RPC into this object |
+| 1b | `SubstreamAgent` post-run → `refreshWorkstreamName` (`:1968`) | `runStructuredInference` → `resolveAgentModelRouting` → `loadFlagTargetingAttributes` → `workstreamFacts` (`flag-targeting-attributes.ts:277`) builds an execution environment to read one `workstreams` row |
+| 1c | `SubstreamAgent` post-run → `refreshWorkstreamDescription` (`:1972`) | same chain as 1b; the description service passes `workstreamId` in its inference context |
+| 1d | `SubstreamAgent` run admission, in its own product layer | `workstream-object-product.ts` calls `resolveAgentModelRouting` with a `workstreamId`, reaching the same `workstreamFacts` path |
+| 1e | `SubstreamAgent.deliverAgentRunResult` → `settleDigestRun` (`:1998`, passing raw `this.env`) | `digest-run-settlement.ts:235` builds an execution environment for the same work stream |
+| 1f | `WorkspaceDO` alarm → any maintenance task (`workspace-schedule-execution.ts:208–217`) | each is handed `ctx.workspaceEnv`, which *had* a local executor, and several then call `withWorkspaceRuntimeDatabase(env, workspaceId)` themselves — `reapSettledWorkspaceNotificationIntents` is the plainest — which discarded it and went back out through the namespace |
 
-**Effect.** Each statement becomes a full namespace resolution plus an RPC round
-trip — including a D1 read for placement affinity on a cold isolate cache — to
-reach SQLite the caller is already holding. It cannot join the caller's
-`transactionSync`, so a read-then-write that reads locally and writes through the
-port is no longer one critical section. A failure arrives as
+**Effect.** Each statement became a namespace resolution plus an RPC round trip —
+including a D1 read for placement affinity on a cold isolate cache — to reach
+SQLite the caller was already holding. It could not join the caller's
+`transactionSync`, so a read-then-write that read locally and wrote through the
+port was no longer one critical section. A failure arrived as
 `workstream_runtime_sql_failed` from a foreign object rather than as a local
 exception.
 
 **Note on 1b–1d.** These fire only when `env.FLAGS` is bound; without Flagship,
 `resolveAgentModelRouting` returns the fallback before touching targeting
-attributes. So this path is quiet in local development and live in staging and
+attributes. So that path was quiet in local development and live in staging and
 production.
 
-### 2. Realtime publishing: the agent asks itself to broadcast
+### 2. Realtime publishing: the agent asked itself to broadcast
 
-`publishWorkstreamEvent` (`integrations.ts:1957–1978`) and
-`publishPersonalWorkstreamEvent` (`:1981–1999`) resolve the owning agent and call
-`publishEvent`. Inside the agent, `this.broadcast` / `publishAgentRuntimeEvent`
-already does this locally.
+`publishWorkstreamEvent` and `publishPersonalWorkstreamEvent`
+(`integrations.ts:1957–1999`) resolve the owning agent and call `publishEvent`.
+Inside the agent, `this.broadcast` / `publishAgentRuntimeEvent` already does this
+locally.
 
-| # | Entry point in the agent | Path to the self-call |
+| # | Entry point | Path to the self-call |
 | --- | --- | --- |
-| 2a | `alarm()` → `fireNextAgentTimer` | `fireWorkstreamWakeup` → `appendWakeupSystemMessage` → `publishWorkstreamEvent` (`workstream-service.ts:479`) |
+| 2a | alarm → `fireWorkstreamWakeup` | `appendWakeupSystemMessage` → `publishWorkstreamEvent` (`workstream-service.ts:479`) |
 | 2b | same | `launchWorkstreamHarness` publishes twice more (`workstream-service.ts:322`, `:335`) |
-| 2c | post-run settlement → `refreshWorkstreamName` | `advanceTitle` → `publishWorkstreamEvent` (`workstream-naming-service.ts:333`) |
-| 2d | harness tool call (`runWorkstreamHarness` at `substream-agent.ts:1634`) | the elicitation tool in `createAvalonTools` publishes `elicitation_created` (`integrations.ts:6663`) |
+| 2c | post-run → `refreshWorkstreamName` | `advanceTitle` → `publishWorkstreamEvent` (`workstream-naming-service.ts:333`) |
+| 2d | a harness tool call (`substream-agent.ts:1761`) | the elicitation tool publishes `elicitation_created` (`integrations.ts:6683`) |
 
-**Effect.** A local `broadcast` is replaced by a round trip whose result is then
+**Effect.** A local broadcast replaced by a round trip whose result was then
 discarded — both publish helpers swallow their own failures by contract. The
-agent's own event ordering now depends on a second invocation of itself
-interleaving with the one that produced the event.
+agent's own event ordering depended on a second invocation of itself interleaving
+with the one that produced the event.
 
-**Deliberately not on this list:** the streaming-delta publisher at
-`integrations.ts:2246–2248`. `SubstreamAgent` passes `publishRealtime: false`
-(`substream-agent.ts:1638`) and hands its own local `publishAgentRuntimeEvent` as
-the `onEvent` callback. That is the existing, correct guard — it just was not
-extended to 2a–2d.
+**Deliberately not on this list:** the streaming-delta publisher
+(`integrations.ts:2246`). `SubstreamAgent` passes `publishRealtime: false` and
+hands its own local `publishAgentRuntimeEvent` as the `onEvent` callback. That was
+the existing, correct guard — it just was not extended to 2a–2d.
 
-### 3. Terminal operations: the agent asks itself to touch its own tables
+### 3. Agent timers: the agent asked itself to re-arm its own alarm
 
-`createTerminalObjectPort` (`services/terminal/object-port.ts:72–109`) resolves
-the owning agent and calls `executeTerminalOperation` for every operation. The
-Terminal plugin builds the port with no local override
-(`services/terminal/plugin.ts:53`, reached from `loadHarnessTools` at
-`integrations.ts:4749`), and the harness runs inside the agent — which holds
-`this.terminal = new WorkstreamTerminalStorage(state.storage)`
-(`substream-agent.ts:488`) and services the RPC by calling the very same object
-(`:869`, `:897`).
-
-The port's own documentation names the seam: `localStorage` exists "for the same
-reason" as the runtime database's local executor. It is used by the Node tests
-and not by the agent.
-
-**Effect.** Every Terminal tool call in a run — and Terminal work is multi-step by
-nature — is an RPC from the object into itself, each one re-deriving the stub and
-re-checking identity. It also puts a network boundary inside the operation's
-commit path, which is the seam that [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md)
-already found hard to reason about.
-
-### 4. Agent timers: the agent asks itself to re-arm its own alarm
-
-`refreshAgentTimerAlarm` (`workstream-wakeup-service.ts:645–668`) resolves the
-owning agent and calls `refreshTimerAlarm`, whose handler validates identity and
-then calls `this.scheduleNextAlarm()`. The agent's timer tools call it three
-times inside `createAvalonTools` (`integrations.ts:6399`, `:6447`, `:6559`),
-which runs inside the harness, which runs inside the agent.
+`refreshAgentTimerAlarm` (`workstream-wakeup-service.ts:645`) resolves the owning
+agent and calls `refreshTimerAlarm`, whose handler validates identity and then
+calls `this.scheduleNextAlarm()`. The agent's timer tools call it three times
+inside `createAvalonTools` (`integrations.ts:6419`, `:6467`, `:6579`), which runs
+inside the harness, which runs inside the agent.
 
 **Effect.** A round trip to reach a private method on the object making the call.
-The identity check in the handler (`substream-agent.ts:756–767`) is checking the
-object against itself.
+The identity check in the handler was checking the object against itself.
 
-### 5. Run dispatch: the agent asks itself to queue a run
+### 4. Run dispatch: the agent asked itself to queue a run
 
 `launchWorkstreamHarness` calls `dispatchRun` on the owning agent
-(`workstream-service.ts:272–283`), and `startWorkstreamWorkflow` does the same
-(`integrations.ts:1826–1837`). Reached from `alarm()` → `fireNextAgentTimer` →
-`fireWorkstreamWakeup` (`substream-agent.ts:1978`), the target is this object:
-the alarm handler RPCs into itself to insert a row in `agent_run_dispatches` and
-arm an alarm, then returns to `alarm()` which drains that row at `:2393`.
+(`workstream-service.ts:282`), as does `startWorkstreamWorkflow`
+(`integrations.ts:1837`). Reached from the alarm through `fireWorkstreamWakeup`,
+the target was this object: the alarm handler RPC'd into itself to insert a row in
+`agent_run_dispatches` and arm an alarm, then returned to `alarm()`, which drained
+that row.
 
-**Effect.** The round trip is short — `acceptRunDispatch` inserts and returns
-`202` without awaiting the run — but it is a network hop to write one row of the
-caller's own SQLite, and the wake-up claim it settles is held across it.
+### 5. Workspace scheduling: the workspace asked itself to re-arm
 
-## How dangerous is this today
+`refreshWorkspaceSchedule` (`workstream-wakeup-service.ts:625`) resolves the
+workspace object and calls `refreshSchedule`. It is reached from inside
+`WorkspaceDO`'s own alarm through the Terminal sandbox coordinator
+(`terminal/plugin.ts:62`) and through the notification-intent settlement in
+`workstream-regional-effect-service.ts`.
 
-Honestly: it is a correctness *hazard* and a real cost, not an active outage.
+Everything else the moved schedule code reaches — `recordActivityEvent`,
+`connectorEvent`, `applyWorkstreamDirectoryEffects`, `lookupWorkstreamDirectory`,
+`publishSync`, `enqueueOpportunitySource`, `resourceAccess`,
+`notificationDirectoryState`, `opportunityOriginEvents` — is the same shape: a
+service resolving `WORKSPACE_DOS` for the workspace whose object is calling it.
 
-**Not currently a deadlock.** A Durable Object's input gate stays open while an
-invocation awaits non-storage I/O, so these self-calls are delivered as a second
-concurrent invocation and complete. The one place that is not true is
-`blockConcurrencyWhile`, and `SubstreamAgent`'s only use of it is the constructor
-(`substream-agent.ts:467–509`), which reaches none of these paths. That is the
-invariant holding the whole list up, and nothing in the code states it or tests
-it. Any future self-call added inside a `blockConcurrencyWhile`, or any handler
-that comes to wait on work the outer invocation owns, hangs the object until the
-duration limit — which is precisely the shape of the alarm-joins-drain fault this
-repository already hit once, recorded in
+## How dangerous was this
+
+Honestly: a correctness *hazard* and a real cost, not an active outage.
+
+**Not a deadlock as it stood.** A Durable Object's input gate stays open while an
+invocation awaits non-storage I/O, so these self-calls were delivered as a second
+concurrent invocation and completed. The one place that is not true is
+`blockConcurrencyWhile`, and both classes use it only in their constructors,
+which reach none of these paths. That is the invariant the whole list rested on,
+and nothing in the code stated or tested it. Any future self-call added inside a
+`blockConcurrencyWhile`, or any handler that came to wait on work the outer
+invocation owned, would hang the object until the duration limit — which is
+precisely the shape of the alarm-joins-drain fault recorded in
 [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md).
 
-What is being paid for right now:
+What was being paid for:
 
 - **Throughput against a soft limit.** One Durable Object is single-threaded and
   tops out near 1,000 requests/second ([`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#the-limits-that-decide-the-argument)).
-  A busy run makes the object compete with itself for its own thread: a Terminal-
-  heavy run generates one self-invocation per operation, and finding 1a turns a
-  single wake-up into several.
-- **Subrequests.** Each self-call counts toward the per-invocation subrequest
-  budget for work that needs no subrequest at all.
-- **Lost transactional locality.** Statements routed out and back cannot join a
+  A busy object competed with itself for its own thread.
+- **Subrequests**, spent on work that needs no subrequest at all.
+- **Lost transactional locality.** A statement routed out and back cannot join a
   `transactionSync` in the calling invocation.
-- **Re-entrancy the code does not model.** The second invocation observes and
-  mutates the same SQLite while the first is mid-flight. Nothing here is known to
-  be racing today, but the interleaving is unmodelled and untested.
-- **Worse diagnostics.** Local invariant violations surface as foreign-object
-  failures — `workstream_runtime_sql_failed`, `substream_agent_unavailable`,
-  `terminal_operation_not_committed` — which is what makes a fault like the one
-  above expensive to localize.
+- **Re-entrancy the code does not model.** The second invocation observed and
+  mutated the same SQLite while the first was mid-flight.
+- **Worse diagnostics.** Local invariant violations surfaced as foreign-object
+  failures, which is what made the fault above expensive to localize.
 - **A routing dependency on D1.** `durableObjectStubForWorkspace` reads the
-  workspace's placement affinity, and fails closed in staging and production. An
-  object can therefore fail to reach *itself* because a D1 read failed.
+  workspace's placement affinity and fails closed in staging and production, so
+  an object could fail to reach *itself* because a D1 read failed.
 
-## Adjacent: cross-object re-entrancy
+## Resolution
 
-Not self-referencing, so not counted above, but the same shape one hop out and
-worth recording while the map is fresh: `WorkspaceDO` calls into `SubstreamAgent`
-(`workspace-do.ts:2433`, `WorkstreamObjectClient`), and `SubstreamAgent`'s product
-layer calls back into `WorkspaceDO` through `withWorkspaceRuntimeDatabase`
-(`workstream-object-product.ts:323–324`, used from `initialize` at `:390` and from
-the message and pin paths at `:664`, `:1185`, `:1995`). A message write can therefore be `WorkspaceDO` →
-`SubstreamAgent` → `WorkspaceDO`, with the first invocation still open. It relies
-on the same open-input-gate property as the findings above.
+Fixed in the same change as this report, in two parts.
 
-## Suggested direction, if these are to be fixed
+**An object recognizes its own name.** Every Durable Object class registers
+itself in its constructor with `apps/api/src/lib/durable-object-self.ts` — the
+binding it answers on, a thunk for its own deterministic name, its id, and the
+instance — and both stub resolvers consult that registration first. When the name
+being resolved is the caller's own, the resolver returns a stand-in stub over the
+object itself: the same method, the same arguments, no request leaving the
+isolate, and no placement-affinity read. Any other name still resolves through
+the namespace, and so does every name until the object has an identity to compare
+against. The registration rides on `env`, which is how it reaches helpers several
+layers below the object that never hear about it, and `env` cannot leave the
+isolate — a Queue message and a Workflow parameter are both serialized — so a
+registration cannot outlive the object that made it.
 
-Not applied. Recorded so the next change has a starting point.
+**The local SQL executors are inherited.** `withWorkspaceRuntimeDatabase` and
+`withWorkstreamRuntimeDatabase` now carry the executor they are given on the
+environment they return, and reuse it when a later caller derives an execution
+environment for the same workspace, work stream, and substream without supplying
+one. A different work stream or workspace never borrows it. This keeps the hot
+path — per-SQL-statement — a direct function call rather than a direct call
+through the object's own RPC envelope.
 
-1. **Thread the local seam instead of adding more of them.** Both escapes already
-   exist (`localExecutor`, `localStorage`). The cheapest correct fix for findings
-   1 and 3 is to make the agent's execution environment carry its local executor
-   through the helpers it calls, rather than letting each helper re-derive an env
-   from `this.env`. Finding 1a is the sharpest case: `launchWorkstreamHarness`
-   re-wraps an env that already had a local executor.
-2. **Give the object local variants of the four thin helpers.** `publishEvent`,
-   `refreshTimerAlarm`, and `dispatchRun` all have a private method behind them
-   that the agent could call directly. Findings 2, 4, and 5 are one indirection
-   each.
-3. **Make it impossible to reintroduce.** The repository already lints Durable
-   Object storage and routing (`scripts/eslint-rules/durable-object-*.mjs`). A
-   runtime guard is also available and cheaper to trust than a lint: the resolver
-   could compare the derived id against `state.id` when called from inside an
-   object and refuse, which turns every case above into a loud local failure
-   rather than a silent round trip.
-4. **Order the work by blast radius, not by count.** Finding 3 (Terminal) is
-   per-tool-call and sits on a commit path that has already produced one
-   production incident; finding 1 is per-SQL-statement and the largest volume;
-   findings 2, 4, and 5 are per-event and mostly cost.
+Between them: finding 1 is fixed by both (inheritance where an environment is
+threaded, the resolver everywhere else); findings 2 through 5 by the resolver.
+All four Durable Object classes are registered, including the two that had no
+self-call, so the next path added is covered before it is written.
 
-Whatever is done, [`workstream-durable-object.md`](workstream-durable-object.md)
-needs the invariant written down — that a helper resolving "the owning agent" is
-addressing *this* object when it runs inside it — because the code reads as
-correct at every individual call site and only goes wrong in composition.
+The tests are `apps/api/test/durable-object-self-reference.test.ts`. They prove
+both directions — that the object's own name resolves locally, and that a
+sibling's name, the same name under another binding, and any name before the
+object has an identity all still resolve through the namespace — and that the
+inherited executor is not lent to a different work stream or workspace.
+
+**What a future change has to respect.** A new Durable Object class registers
+itself in its constructor, or it is silently exempt. A name thunk must return
+`null` until the object's identity is durably its own, because a name derived too
+early is a name for a different object. And the comparison is binding identity
+plus name equality, which is what keeps a genuine sibling call a genuine hop.
 
 ## Scope checked
 
-| Class | Binding | Self-referencing RPC |
-| --- | --- | --- |
-| `SubstreamAgent` (`apps/api/src/durable-objects/substream-agent.ts`) | `SUBSTREAM_AGENTS` | **Yes — 5 groups, 12 paths** |
-| `WorkspaceDO` (`workspace-do.ts`) | `WORKSPACE_DOS` | No |
-| `WorkstreamDO` (`workstream-do.ts`) | `WORKSTREAM_DOS` | No |
-| `BlockDashboardAgent` (`block-dashboard-agent.ts`) | `BLOCK_DASHBOARD_AGENTS` | No |
-| `WorkspaceScheduler` (`workspace-scheduler.ts`) | `WORKSPACE_SCHEDULERS` | No — refreshes via `this.refresh()` |
-| `MigrationRegistry` (`apps/migration-tracker/src/registry.ts`) | `MIGRATION_REGISTRY` | No — only the Worker resolves it |
+| Class | Binding | Self-referencing RPC found | Registered |
+| --- | --- | --- | --- |
+| `SubstreamAgent` (`apps/api/src/durable-objects/substream-agent.ts`) | `SUBSTREAM_AGENTS` | Yes — findings 1–4 | Yes |
+| `WorkspaceDO` (`workspace-do.ts`) | `WORKSPACE_DOS` | Yes — findings 1f and 5 | Yes |
+| `WorkstreamDO` (`workstream-do.ts`) | `WORKSTREAM_DOS` | No | Yes |
+| `BlockDashboardAgent` (`block-dashboard-agent.ts`) | `BLOCK_DASHBOARD_AGENTS` | No | Yes |
+| `MigrationRegistry` (`apps/migration-tracker/src/registry.ts`) | `MIGRATION_REGISTRY` | No — only the Worker resolves it | Not applicable |
+
+`WorkspaceScheduler` was a sixth class when this audit began and had no
+self-referencing RPC; #226 deleted it and moved its work into `WorkspaceDO`,
+which is how findings 1f and 5 came to exist.
