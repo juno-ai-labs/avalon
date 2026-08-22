@@ -16,6 +16,7 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -91,14 +92,19 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     ...(options.images ? { IMAGES: options.images } : {}),
     ...(options.ai ? { AI: options.ai } : {}),
     SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
+    // Receipts reach their object through the typed port now, not through the
+    // routed D1 handle, so the binding has to be here for the port to resolve.
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
   });
   return {
     database,
     objectStore,
     bucket,
-    // Wrapped the way the harness wraps its execution environment, so
-    // `regionalDatabase(env)` sees through to the regional half and the
-    // receipt services take their per-authority paths.
+    // Wrapped the way the harness wraps its execution environment. This used to
+    // matter to the receipt services as well, because they branched on
+    // `regionalDatabase(env) !== env.DB`; that branch is gone and they reach
+    // their object through the typed port. It still matters to everything else
+    // routed through this env.
     env: withWorkstreamRuntimeDatabase(
       baseEnv,
       WORKSPACE_ID,

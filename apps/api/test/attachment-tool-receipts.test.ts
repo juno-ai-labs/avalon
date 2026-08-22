@@ -8,11 +8,18 @@ import {
   registerAttachmentToolReceipt,
   validateAttachmentToolReceiptReplay,
 } from "../src/services/attachment-tool-receipts";
+import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
+import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
+import type { ToolReceiptObjectPort } from "../src/durable-objects/workstream-tool-receipt-protocol";
+import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
 import {
+  createCloudflareTestBinding,
   createTestD1Database,
+  createTestEnv,
   createTestD1PreparedStatement,
   createTestD1Result,
 } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const RESOURCE_ID = "00000000-0000-4000-8000-000000000001";
 const SECOND_RESOURCE_ID = "00000000-0000-4000-8000-000000000003";
@@ -20,6 +27,7 @@ const INVOCATION_ID = "00000000-0000-4000-8000-000000000002";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000004";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000005";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000006");
+const RUN_ID = "00000000-0000-4000-8000-000000000007";
 const HASH = "a".repeat(64);
 const OUTPUT_REF = "receipts/output.json";
 
@@ -39,6 +47,9 @@ class SqliteStatement {
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
     });
+  }
+  async first<T>(): Promise<T | null> {
+    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
   }
 }
 
@@ -68,25 +79,16 @@ function fixture() {
   databases.push(database);
   database.exec(`
     PRAGMA foreign_keys = ON;
-    CREATE TABLE resources (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'avalon_upload', model_content_sha256 TEXT);
+    CREATE TABLE resources (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'avalon_upload', model_content_sha256 TEXT, updated_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z');
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
-    CREATE TABLE workstream_resources (workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, PRIMARY KEY (workstream_id, resource_id));
-    CREATE TABLE notes (resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, archived_at TEXT, scope TEXT, owner_user_id TEXT);
-    CREATE TABLE tool_invocations (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      workstream_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      output_ref TEXT
-    );
-    CREATE TABLE attachment_tool_receipts (
-      workspace_id TEXT NOT NULL,
-      resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
-      tool_invocation_id TEXT NOT NULL REFERENCES tool_invocations(id) ON DELETE CASCADE,
-      derivative_sha256 TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (resource_id, tool_invocation_id)
-    );
+    CREATE TABLE workstream_resources (workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, relationship_type TEXT NOT NULL DEFAULT 'attached', attached_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z', watch_enabled INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workstream_id, resource_id));
+    CREATE TABLE notes (resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, archived_at TEXT, scope TEXT, owner_user_id TEXT, updated_at TEXT);
+    -- Reached by loadVisibleWorkstreamResourcesByIds, which the deleted D1 arm
+    -- never called: it answered visibility with one hand-written join instead.
+    -- Converting to the live path brought the real visibility loader into this
+    -- test's reach, which is more coverage than the file had before.
+    CREATE TABLE messages (id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL);
+    CREATE TABLE message_attachments (message_id TEXT NOT NULL, resource_id TEXT NOT NULL);
     CREATE TABLE resource_object_deletion_outbox (
       object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
       attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -95,8 +97,6 @@ function fixture() {
     INSERT INTO resources (id, workspace_id, model_content_sha256) VALUES
       ('${RESOURCE_ID}', '${WORKSPACE_ID}', '${HASH}'),
       ('${SECOND_RESOURCE_ID}', '${WORKSPACE_ID}', '${HASH}');
-    INSERT INTO tool_invocations (id, workspace_id, workstream_id, status, output_ref)
-      VALUES ('${INVOCATION_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'completed', 'receipts/output.json');
     INSERT INTO workstreams (id, workspace_id) VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}');
     INSERT INTO workstream_resources (workstream_id, resource_id) VALUES
       ('${WORKSTREAM_ID}', '${RESOURCE_ID}'), ('${WORKSTREAM_ID}', '${SECOND_RESOURCE_ID}');
@@ -122,111 +122,187 @@ function readOutput(sha256 = HASH) {
   };
 }
 
+/**
+ * The work-stream half of the fixture: a real receipt authority on real schema.
+ *
+ * This module spans two Durable Objects and that is the whole reason it is
+ * shaped the way it is. `resources` and the deletion outbox belong to the
+ * workspace and stay on `env.DB` above; receipts belong to the work stream and
+ * are reached through the typed port. Injecting a `WorkstreamToolReceiptStorage`
+ * over the checked-in object schema keeps both halves real — no double stands in
+ * for anything that could run here.
+ *
+ * The previous version of this file called the exported functions with a bare
+ * `D1Database`, which selected a second implementation that has since been
+ * deleted. It was green against a schema regional D1 has not had since migration
+ * 0090, and it was the only coverage the register path had. That is why this
+ * rebuild is part of the same change rather than a follow-up.
+ */
+function receiptAuthority(): { receipts: ToolReceiptObjectPort; sql: ReturnType<typeof createTestSqlStorage> } {
+  const database = new DatabaseSync(":memory:");
+  databases.push(database);
+  const sql = createTestSqlStorage(database);
+  const binding = createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql,
+  });
+  applyWorkstreamObjectSchema(binding, "v", 1);
+  sql.exec(`INSERT INTO workstream (
+      id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+      authority_mode, authority_generation, title, description, preview, scope,
+      exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+      unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+      source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+      created_at, last_people_activity_at, state_changed_at, updated_at
+    ) VALUES (1,'${WORKSTREAM_ID}','${WORKSPACE_ID}',NULL,0,'global','authoritative',1,'T','','','workspace',
+              'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
+  sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+    VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
+  sql.exec(`INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
+      model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+      active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+      tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+      created_at, updated_at, legacy_attempt_id, lease_owner, lease_expires_at)
+    VALUES ('${RUN_ID}','0','running','{}',0,0,'',0,0,1,0,0,0,0,0,0,0,0,0,0,1,1,'attempt-1','owner-1',9999999999999)`);
+  sql.exec(`INSERT INTO tool_effects
+      (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
+       mode, request_hash, authority_revision, status, tool_call_id, input_json, output_ref)
+    VALUES ('${INVOCATION_ID}','${RUN_ID}',0,0,'runtime:${INVOCATION_ID}','read_resource',
+            'read','request-hash','runtime','completed','call-1','{}','receipts/output.json')`);
+  return {
+    receipts: createToolReceiptObjectPort(
+      createTestEnv({}),
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      new WorkstreamToolReceiptStorage(binding),
+    ),
+    sql,
+  };
+}
+
+function target<T extends Record<string, unknown>>(overrides: T): T & {
+  workspaceId: string; workstreamId: string;
+} {
+  return { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, ...overrides };
+}
+
 describe("attachment tool receipts", () => {
   it("registers a dependency only while the exact derivative is still current", async () => {
     const { database, d1 } = fixture();
+    const { receipts, sql } = receiptAuthority();
+    const env = createTestEnv({ DB: d1 });
 
-    await registerAttachmentToolReceipt(d1, {
-      workspaceId: WORKSPACE_ID,
+    await registerAttachmentToolReceipt(env, target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
-    });
-    expect(database.prepare(
+    }), receipts);
+    expect(sql.exec(
       "SELECT resource_id, derivative_sha256 FROM attachment_tool_receipts",
-    ).get()).toEqual({ resource_id: RESOURCE_ID, derivative_sha256: HASH });
+    ).toArray()).toEqual([{ resource_id: RESOURCE_ID, derivative_sha256: HASH }]);
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
       .run("b".repeat(64), RESOURCE_ID);
-    await expect(registerAttachmentToolReceipt(d1, {
-      workspaceId: WORKSPACE_ID,
+    await expect(registerAttachmentToolReceipt(env, target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
-    })).rejects.toThrow("attachment_receipt_version_changed");
-    expect(database.prepare("SELECT COUNT(*) AS count FROM attachment_tool_receipts").get())
-      .toEqual({ count: 0 });
+    }), receipts)).rejects.toThrow("attachment_receipt_version_changed");
+    expect(sql.exec("SELECT COUNT(*) AS count FROM attachment_tool_receipts").one().count).toBe(0);
+  });
+
+  it("refuses to register against a receipt this work stream does not hold", async () => {
+    const { d1 } = fixture();
+    const { receipts } = receiptAuthority();
+
+    // Cross-work-stream protection used to be a `WHERE workstream_id = ?` on a
+    // shared table. It is now structural: another work stream's receipts are in
+    // another object, so the row is simply absent and the register fails closed.
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
+      invocationId: "00000000-0000-4000-8000-0000000000ff",
+      canonicalToolName: "read_resource",
+      output: readOutput(),
+    }), receipts)).rejects.toThrow("attachment_receipt_version_changed");
   });
 
   it("requires current authorization and derivative identity on every attachment replay", async () => {
     const { database, d1 } = fixture();
-    await registerAttachmentToolReceipt(d1, {
-      workspaceId: WORKSPACE_ID,
+    const { receipts, sql } = receiptAuthority();
+    const env = createTestEnv({ DB: d1 });
+    const validate = (capability: string) => validateAttachmentToolReceiptReplay(env, target({
+      principal: { type: "user", userId: USER_ID },
+      invocationId: INVOCATION_ID,
+      capability,
+    }), receipts);
+
+    await registerAttachmentToolReceipt(env, target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
-    });
+    }), receipts);
 
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "workstream.resources.read",
-    })).resolves.toBe("valid");
-    database.prepare("UPDATE tool_invocations SET workstream_id = 'another-workstream' WHERE id = ?")
-      .run(INVOCATION_ID);
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "workstream.resources.read",
-    })).resolves.toBe("invalid");
-    database.prepare("UPDATE tool_invocations SET workstream_id = ? WHERE id = ?")
-      .run(WORKSTREAM_ID, INVOCATION_ID);
+    await expect(validate("workstream.resources.read")).resolves.toBe("valid");
+
+    // A receipt that has not completed has nothing to replay, and must be
+    // indistinguishable from one with no dependencies at all.
+    sql.exec("UPDATE tool_effects SET status = 'executing'");
+    await expect(validate("workstream.resources.read")).resolves.toBe("invalid");
+    sql.exec("UPDATE tool_effects SET status = 'completed'");
+
     database.prepare("DELETE FROM workstream_resources WHERE resource_id = ?").run(RESOURCE_ID);
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "workstream.resources.read",
-    })).resolves.toBe("invalid");
+    await expect(validate("workstream.resources.read")).resolves.toBe("invalid");
     database.prepare("INSERT INTO workstream_resources (workstream_id, resource_id) VALUES (?, ?)")
       .run(WORKSTREAM_ID, RESOURCE_ID);
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "workstream.resources.list",
-    })).resolves.toBe("invalid");
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "slack.search",
-    })).resolves.toBe("not_attachment");
+
+    await expect(validate("workstream.resources.list")).resolves.toBe("invalid");
+    await expect(validate("slack.search")).resolves.toBe("not_attachment");
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
       .run("b".repeat(64), RESOURCE_ID);
-    await expect(validateAttachmentToolReceiptReplay(d1, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      principal: { type: "user", userId: USER_ID },
-      invocationId: INVOCATION_ID,
-      capability: "workstream.resources.read",
-    })).resolves.toBe("invalid");
+    await expect(validate("workstream.resources.read")).resolves.toBe("invalid");
   });
 
   it("removes an invalid replay and queues its durable output for cleanup", async () => {
     const { database, d1 } = fixture();
+    const { receipts, sql } = receiptAuthority();
 
-    await invalidateAttachmentToolReplay(d1, WORKSPACE_ID, INVOCATION_ID);
+    await invalidateAttachmentToolReplay(
+      createTestEnv({ DB: d1 }),
+      target({ invocationId: INVOCATION_ID }),
+      receipts,
+    );
 
-    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations").get()).toEqual({ count: 0 });
+    expect(sql.exec("SELECT COUNT(*) AS count FROM tool_effects").one().count).toBe(0);
     expect(database.prepare(
       "SELECT object_ref, object_kind FROM resource_object_deletion_outbox",
     ).get()).toEqual({ object_ref: "receipts/output.json", object_kind: "receipt" });
   });
 
+  it("queues nothing for a receipt that was already gone", async () => {
+    const { database, d1 } = fixture();
+    const { receipts } = receiptAuthority();
+
+    await invalidateAttachmentToolReplay(
+      createTestEnv({ DB: d1 }),
+      target({ invocationId: "00000000-0000-4000-8000-0000000000ff" }),
+      receipts,
+    );
+
+    // The ref is what authorizes the outbox row, and a receipt that is not there
+    // has none. Enqueuing on a guess would schedule a deletion against an object
+    // this work stream may not own.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 0 });
+  });
+
   it("rolls back every dependency when one image version changes before registration", async () => {
     const { database, d1 } = fixture();
+    const { receipts, sql } = receiptAuthority();
     const output = {
       requested: 2,
       returned: 2,
@@ -250,15 +326,15 @@ describe("attachment tool receipts", () => {
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
       .run("b".repeat(64), SECOND_RESOURCE_ID);
 
-    await expect(registerAttachmentToolReceipt(d1, {
-      workspaceId: WORKSPACE_ID,
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "view_resource",
       output,
-    })).rejects.toThrow("attachment_receipt_version_changed");
-    expect(database.prepare("SELECT COUNT(*) AS count FROM attachment_tool_receipts").get())
-      .toEqual({ count: 0 });
+    }), receipts)).rejects.toThrow("attachment_receipt_version_changed");
+    // Both, not just the one that moved: a multi-image replay is valid only if
+    // every dependency still holds, so a partial receipt is worse than none.
+    expect(sql.exec("SELECT COUNT(*) AS count FROM attachment_tool_receipts").one().count).toBe(0);
   });
 
   it("does not attach or delete dependencies after a successor replaces the output reference", async () => {

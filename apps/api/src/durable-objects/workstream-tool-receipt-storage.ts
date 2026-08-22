@@ -225,6 +225,16 @@ export class WorkstreamToolReceiptStorage {
     return "held";
   }
 
+  /** The `output_ref` of a *completed* receipt, or undefined for anything else. */
+  #settledOutputRef(effectIntentId: string): string | undefined {
+    const row = first(this.sql.exec<{ output_ref: string | null } & Record<string, SqlStorageValue>>(
+      `SELECT output_ref FROM tool_effects
+        WHERE effect_intent_id = ? AND status = 'completed'`,
+      effectIntentId,
+    ));
+    return row?.output_ref ?? undefined;
+  }
+
   #effect(effectIntentId: string): EffectRow | undefined {
     return first(this.sql.exec<EffectRow>(
       `SELECT effect_intent_id, request_hash, execution_plan_hash, execution_plan_json,
@@ -606,10 +616,21 @@ export class WorkstreamToolReceiptStorage {
     workspaceId: string;
     effectIntentId: string;
     dependencies: readonly AttachmentDependency[];
+    /**
+     * The exact completion these dependencies belong to.
+     *
+     * The caller completes the receipt before registering, so by the time this
+     * runs the row may already have been replanned onto a different call and
+     * completed again. Matching the settled `output_ref` is what makes the
+     * dependency belong to the result the caller actually saw, rather than to
+     * whatever the receipt happens to hold now.
+     */
+    expectedOutputRef: string;
     now: number;
   }): "recorded" | "receipt_missing" {
     return this.storage.transactionSync(() => {
-      if (!this.#effect(input.effectIntentId)) return "receipt_missing";
+      const effect = this.#settledOutputRef(input.effectIntentId);
+      if (effect !== input.expectedOutputRef) return "receipt_missing";
       for (const dependency of input.dependencies) {
         this.sql.exec(
           `INSERT INTO attachment_tool_receipts
@@ -637,7 +658,13 @@ export class WorkstreamToolReceiptStorage {
    * has already committed — a different failure mode, and therefore a different
    * operation.
    */
-  clearAttachmentDependencies(input: { workspaceId: string; effectIntentId: string }): number {
+  clearAttachmentDependencies(input: {
+    workspaceId: string;
+    effectIntentId: string;
+    /** Same fence as the write: only unwind rows belonging to that completion. */
+    expectedOutputRef: string;
+  }): number {
+    if (this.#settledOutputRef(input.effectIntentId) !== input.expectedOutputRef) return 0;
     this.sql.exec(
       `DELETE FROM attachment_tool_receipts
         WHERE workspace_id = ? AND tool_invocation_id = ?`,

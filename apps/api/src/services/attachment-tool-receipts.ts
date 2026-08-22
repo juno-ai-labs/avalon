@@ -5,9 +5,10 @@ import {
   WorkstreamViewResourceOutputSchema,
   type ExecutionPrincipal,
 } from "@avalon/contracts";
+import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
-import { regionalDatabase } from "./workstream-runtime-database";
 
 interface ReceiptDependency {
   resourceId: string;
@@ -16,172 +17,72 @@ interface ReceiptDependency {
 
 export type AttachmentReceiptReplayValidation = "not_attachment" | "valid" | "invalid";
 
+/**
+ * Which resource versions a replayable attachment read depended on, and whether
+ * they still hold.
+ *
+ * Two things about this module are easy to get wrong and expensive to get wrong.
+ *
+ * **The digest comparison is the only invalidation there is.** D1 migration 0073
+ * carried a trigger that deleted these receipts eagerly whenever a resource's
+ * `model_content_sha256` changed. It has no successor and cannot have one:
+ * receipts live in the work-stream object and resources live in the workspace
+ * object, so no trigger spans them. Comparing at read time is now the whole
+ * mechanism. Simplifying it away puts a stale derivative in front of the model.
+ *
+ * **The read and the write cannot be one transaction, and never were.** The
+ * digest lives in the workspace object; the receipt rows live here. This checks
+ * the first, writes the second, and re-checks — which is why
+ * `clearAttachmentDependencies` exists as its own operation rather than being
+ * folded into the write it compensates for.
+ *
+ * An earlier version of this file carried a second implementation of all three
+ * functions, selected by `regionalDatabase(target) !== target.DB`. That arm read
+ * `model_content_sha256` through `_runtime_resources`, which fabricates it as
+ * `NULL` — and was widely believed, including by this repository's own PRD, to
+ * mean the comparison always failed. It never ran: the guard is false for every
+ * routed environment by construction, and migration 0090 dropped the tables it
+ * named. It is deleted rather than converted.
+ */
+interface ReceiptTarget {
+  workspaceId: string;
+  workstreamId: string;
+}
+
+function port(env: Env, target: ReceiptTarget, override?: ToolReceiptObjectPort): ToolReceiptObjectPort {
+  return override ?? createToolReceiptObjectPort(env, target.workspaceId, target.workstreamId);
+}
+
 export async function registerAttachmentToolReceipt(
-  target: D1Database | Env,
-  input: {
-    workspaceId: string;
-    invocationId: string;
-    expectedOutputRef: string;
-    canonicalToolName: string;
-    output: unknown;
-  },
-): Promise<void> {
-  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
-    return registerObjectAttachmentToolReceipt(target, input);
-  }
-  const database = isEnv(target) ? target.DB : target;
-  const dependencies = attachmentReceiptDependencies(input.canonicalToolName, input.output);
-  if (dependencies.length === 0) return;
-  const at = new Date().toISOString();
-  const results = await database.batch(dependencies.map((dependency) => database.prepare(
-    `INSERT INTO attachment_tool_receipts
-      (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-     SELECT resource.workspace_id, resource.id, invocation.id, ?, ?
-       FROM resources resource
-       JOIN tool_invocations invocation
-         ON invocation.id = ?
-        AND invocation.workspace_id = resource.workspace_id
-        AND invocation.status = 'completed'
-        AND invocation.output_ref = ?
-      WHERE resource.workspace_id = ?
-        AND resource.id = ?
-        AND resource.model_content_sha256 = ?
-     ON CONFLICT(resource_id, tool_invocation_id)
-     DO UPDATE SET derivative_sha256 = excluded.derivative_sha256`,
-  ).bind(
-    dependency.derivativeSha256,
-    at,
-    input.invocationId,
-    input.expectedOutputRef,
-    input.workspaceId,
-    dependency.resourceId,
-    dependency.derivativeSha256,
-  )));
-  if (results.some((result) => (result.meta.changes ?? 0) === 0)) {
-    await database.prepare(
-      `DELETE FROM attachment_tool_receipts
-        WHERE workspace_id = ?1 AND tool_invocation_id = ?2
-          AND EXISTS (
-            SELECT 1 FROM tool_invocations invocation
-             WHERE invocation.id = ?2 AND invocation.workspace_id = ?1
-               AND invocation.status = 'completed' AND invocation.output_ref = ?3
-          )`,
-    ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).run();
-    throw new Error("attachment_receipt_version_changed");
-  }
-}
-
-export async function validateAttachmentToolReceiptReplay(
-  target: D1Database | Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    principal: ExecutionPrincipal;
-    invocationId: string;
-    capability: string;
-  },
-): Promise<AttachmentReceiptReplayValidation> {
-  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
-    return validateObjectAttachmentToolReceiptReplay(target, input);
-  }
-  const database = isEnv(target) ? target.DB : target;
-  if (!input.capability.startsWith("workstream.resources.")) return "not_attachment";
-  if (input.capability === "workstream.resources.list") return "invalid";
-  const result = await database.prepare(
-    `SELECT receipt.resource_id, receipt.derivative_sha256, resource.model_content_sha256,
-            CASE WHEN EXISTS (
-              SELECT 1
-                FROM workstream_resources wr
-                JOIN workstreams workstream
-                  ON workstream.id = wr.workstream_id
-                 AND workstream.workspace_id = receipt.workspace_id
-               WHERE wr.workstream_id = ?3
-                 AND wr.resource_id = receipt.resource_id
-                 AND (resource.provider != 'avalon_note' OR EXISTS (
-                   SELECT 1 FROM notes visible_note
-                    WHERE visible_note.resource_id = resource.id
-                      AND visible_note.workspace_id = receipt.workspace_id
-                      AND visible_note.workspace_id = resource.workspace_id
-                      AND visible_note.archived_at IS NULL
-                      AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?4)
-                 ))
-            ) THEN 1 ELSE 0 END AS visible
-       FROM attachment_tool_receipts receipt
-       JOIN resources resource ON resource.id = receipt.resource_id
-       JOIN tool_invocations invocation
-         ON invocation.id = receipt.tool_invocation_id
-        AND invocation.workspace_id = receipt.workspace_id
-        AND invocation.workstream_id = ?3
-        AND invocation.status = 'completed'
-      WHERE receipt.workspace_id = ?1
-        AND resource.workspace_id = receipt.workspace_id
-        AND receipt.tool_invocation_id = ?2
-      ORDER BY receipt.resource_id ASC`,
-  ).bind(
-    input.workspaceId,
-    input.invocationId,
-    input.workstreamId,
-    input.principal.type === "user" ? input.principal.userId : null,
-  ).all<{
-    resource_id: string;
-    derivative_sha256: string;
-    model_content_sha256: string | null;
-    visible: number;
-  }>();
-  const dependencies = result.results ?? [];
-  if (dependencies.length === 0) return "invalid";
-  return dependencies.every((dependency) =>
-    dependency.visible === 1
-    && dependency.model_content_sha256 === dependency.derivative_sha256
-  ) ? "valid" : "invalid";
-}
-
-export async function invalidateAttachmentToolReplay(
-  target: D1Database | Env,
-  workspaceId: string,
-  invocationId: string,
-): Promise<void> {
-  if (isEnv(target) && regionalDatabase(target) !== target.DB) {
-    return invalidateObjectAttachmentToolReplay(target, workspaceId, invocationId);
-  }
-  const database = isEnv(target) ? target.DB : target;
-  const at = new Date().toISOString();
-  await database.batch([
-    database.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       SELECT output_ref, workspace_id, 'attachment-receipt:' || id, 'receipt', ?, ?
-         FROM tool_invocations
-        WHERE workspace_id = ? AND id = ? AND output_ref IS NOT NULL`,
-    ).bind(at, at, workspaceId, invocationId),
-    database.prepare(
-      "DELETE FROM tool_invocations WHERE workspace_id = ? AND id = ?",
-    ).bind(workspaceId, invocationId),
-  ]);
-}
-
-function isEnv(target: D1Database | Env): target is Env {
-  return "DB" in target;
-}
-
-async function registerObjectAttachmentToolReceipt(
   env: Env,
-  input: {
-    workspaceId: string;
+  input: ReceiptTarget & {
     invocationId: string;
     expectedOutputRef: string;
     canonicalToolName: string;
     output: unknown;
   },
+  receipts: ToolReceiptObjectPort = createToolReceiptObjectPort(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  ),
 ): Promise<void> {
   const dependencies = attachmentReceiptDependencies(input.canonicalToolName, input.output);
   if (dependencies.length === 0) return;
-  const invocation = await env.DB.prepare(
-    `SELECT id FROM tool_invocations
-      WHERE workspace_id = ? AND id = ?
-        AND status = 'completed' AND output_ref = ?`,
-  ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).first<{ id: string }>();
-  if (!invocation) throw new Error("attachment_receipt_version_changed");
+
+  const recorded = await receipts.recordAttachmentDependencies({
+    workspaceId: input.workspaceId,
+    effectIntentId: input.invocationId,
+    dependencies,
+    expectedOutputRef: input.expectedOutputRef,
+    now: Date.now(),
+  });
+  if (recorded === "receipt_missing") throw new Error("attachment_receipt_version_changed");
+
+  // The digests are re-read after the rows land, not before. Reading first would
+  // not make this atomic — the digest is in another object either way — and
+  // checking after means a version that moved during the write is caught by the
+  // same code path as one that moved before it.
   for (const dependency of dependencies) {
     const resource = await env.DB.prepare(
       `SELECT model_content_sha256 FROM resources
@@ -189,121 +90,88 @@ async function registerObjectAttachmentToolReceipt(
     ).bind(input.workspaceId, dependency.resourceId)
       .first<{ model_content_sha256: string | null }>();
     if (resource?.model_content_sha256 !== dependency.derivativeSha256) {
-      await deleteExactAttachmentToolReceipts(env.DB, input);
+      // All of them, not just this one: a multi-image `view_resource` replay is
+      // only valid if every dependency still holds, so a partial receipt would
+      // be worse than none.
+      await receipts.clearAttachmentDependencies({
+        workspaceId: input.workspaceId,
+        effectIntentId: input.invocationId,
+        expectedOutputRef: input.expectedOutputRef,
+      });
       throw new Error("attachment_receipt_version_changed");
     }
   }
-  const at = Date.now();
-  const results = await env.DB.batch(dependencies.map((dependency) => env.DB.prepare(
-    `INSERT INTO attachment_tool_receipts
-       (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?5
-      WHERE EXISTS (
-        SELECT 1 FROM tool_invocations invocation
-         WHERE invocation.id = ?3 AND invocation.workspace_id = ?1
-           AND invocation.status = 'completed' AND invocation.output_ref = ?6
-      )
-     ON CONFLICT(resource_id, tool_invocation_id) DO UPDATE SET
-       derivative_sha256 = excluded.derivative_sha256`,
-  ).bind(
-    input.workspaceId,
-    dependency.resourceId,
-    input.invocationId,
-    dependency.derivativeSha256,
-    at,
-    input.expectedOutputRef,
-  )));
-  if (results.some((result) => (result.meta.changes ?? 0) === 0)) {
-    await deleteExactAttachmentToolReceipts(env.DB, input);
-    throw new Error("attachment_receipt_version_changed");
-  }
 }
 
-async function deleteExactAttachmentToolReceipts(
-  database: D1Database,
-  input: { workspaceId: string; invocationId: string; expectedOutputRef: string },
-): Promise<void> {
-  await database.prepare(
-    `DELETE FROM attachment_tool_receipts
-      WHERE workspace_id = ?1 AND tool_invocation_id = ?2
-        AND EXISTS (
-          SELECT 1 FROM tool_invocations invocation
-           WHERE invocation.id = ?2 AND invocation.workspace_id = ?1
-             AND invocation.status = 'completed' AND invocation.output_ref = ?3
-        )`,
-  ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).run();
-}
-
-async function validateObjectAttachmentToolReceiptReplay(
+export async function validateAttachmentToolReceiptReplay(
   env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
+  input: ReceiptTarget & {
     principal: ExecutionPrincipal;
     invocationId: string;
     capability: string;
   },
+  receipts?: ToolReceiptObjectPort,
 ): Promise<AttachmentReceiptReplayValidation> {
   if (!input.capability.startsWith("workstream.resources.")) return "not_attachment";
+  // A listing names no resource, so it records no dependency and can never be
+  // proved still-current.
   if (input.capability === "workstream.resources.list") return "invalid";
-  const receipts = await env.DB.prepare(
-    `SELECT receipt.resource_id, receipt.derivative_sha256
-       FROM attachment_tool_receipts receipt
-       JOIN tool_invocations invocation ON invocation.id = receipt.tool_invocation_id
-      WHERE receipt.workspace_id = ? AND receipt.tool_invocation_id = ?
-        AND invocation.workstream_id = ? AND invocation.status = 'completed'
-      ORDER BY receipt.resource_id`,
-  ).bind(input.workspaceId, input.invocationId, input.workstreamId).all<{
-    resource_id: string;
-    derivative_sha256: string;
-  }>();
-  const dependencies = receipts.results ?? [];
+
+  const dependencies = await port(env, input, receipts).attachmentDependencies({
+    workspaceId: input.workspaceId,
+    effectIntentId: input.invocationId,
+  });
+  // Empty means either "no dependencies recorded" or "the receipt has not
+  // completed". The caller must not be able to tell those apart: neither is
+  // replayable.
   if (dependencies.length === 0) return "invalid";
+
   const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.principal,
-    resourceIds: dependencies.map((dependency) => dependency.resource_id),
+    resourceIds: dependencies.map((dependency) => dependency.resourceId),
   });
   const visibleIds = new Set(visible.map((resource) => resource.id));
   for (const dependency of dependencies) {
-    if (!visibleIds.has(dependency.resource_id)) return "invalid";
+    if (!visibleIds.has(dependency.resourceId)) return "invalid";
     const resource = await env.DB.prepare(
       `SELECT model_content_sha256 FROM resources
         WHERE workspace_id = ? AND id = ?`,
-    ).bind(input.workspaceId, dependency.resource_id)
+    ).bind(input.workspaceId, dependency.resourceId)
       .first<{ model_content_sha256: string | null }>();
-    if (resource?.model_content_sha256 !== dependency.derivative_sha256) return "invalid";
+    if (resource?.model_content_sha256 !== dependency.derivativeSha256) return "invalid";
   }
   return "valid";
 }
 
-async function invalidateObjectAttachmentToolReplay(
+export async function invalidateAttachmentToolReplay(
   env: Env,
-  workspaceId: string,
-  invocationId: string,
+  input: ReceiptTarget & { invocationId: string },
+  receipts?: ToolReceiptObjectPort,
 ): Promise<void> {
-  const invocation = await env.DB.prepare(
-    `SELECT output_ref FROM tool_invocations WHERE workspace_id = ? AND id = ?`,
-  ).bind(workspaceId, invocationId).first<{ output_ref: string | null }>();
-  if (invocation?.output_ref) {
-    const at = new Date().toISOString();
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'receipt', ?, ?)`,
-    ).bind(
-      invocation.output_ref,
-      workspaceId,
-      `attachment-receipt:${invocationId}`,
-      at,
-      at,
-    ).run();
-  }
+  // Delete first, then queue the payload. The routed version enqueued the
+  // outbox row from inside the same batch that deleted the receipt, so a failed
+  // delete stranded a deletion request against a receipt that still existed.
+  const discarded = await port(env, input, receipts).discardReceipt({
+    workspaceId: input.workspaceId,
+    effectIntentId: input.invocationId,
+  });
+  if (!discarded.outputRef) return;
+  const at = new Date().toISOString();
   await env.DB.prepare(
-    "DELETE FROM tool_invocations WHERE workspace_id = ? AND id = ?",
-  ).bind(workspaceId, invocationId).run();
+    `INSERT OR IGNORE INTO resource_object_deletion_outbox
+       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+     VALUES (?, ?, ?, 'receipt', ?, ?)`,
+  ).bind(
+    discarded.outputRef,
+    input.workspaceId,
+    `attachment-receipt:${input.invocationId}`,
+    at,
+    at,
+  ).run();
 }
+
 
 function attachmentReceiptDependencies(canonicalToolName: string, output: unknown): ReceiptDependency[] {
   if (canonicalToolName === "read_resource") {
