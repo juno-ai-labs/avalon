@@ -1,6 +1,6 @@
 import { asWorkspaceId } from "@avalon/contracts";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import type { DatabaseSync} from "node:sqlite";
+import { type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import {
@@ -9,11 +9,11 @@ import {
   WorkOpportunityService,
 } from "../src/services/work-opportunity-service";
 import { createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const activeUser = "00000000-0000-7000-8000-000000000002";
 const dormantUser = "00000000-0000-7000-8000-000000000003";
-const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
 const databases: DatabaseSync[] = [];
 const now = "2026-08-10T12:00:00.000Z";
 
@@ -63,11 +63,7 @@ afterEach(() => {
 });
 
 function migratedDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
-  for (const file of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (file.startsWith("0090_")) break;
-    database.exec(readFileSync(new URL(file, migrationsDirectory), "utf8"));
-  }
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
   return database;
 }
