@@ -425,6 +425,24 @@ does.
 
 ## Changelog
 
+### 2026-08-22 — The report tables drop the Applied column
+
+**What changed:** the `Applied` column is gone from the report tables on both the
+overview's Recent reports and an object's Report history. Nothing else moved:
+the reports still carry `appliedVersions`, the registry still stores
+`applied_versions`, and both JSON twins still return the list.
+
+**Why:** it was asked for by the operator who reads this site. Nothing about the
+data changed, so the column was removed from the HTML alone rather than from the
+protocol or the registry schema — the list is one JSON fetch away for anyone who
+needs it, and dropping the field would have made the change irreversible for the
+history already recorded.
+
+**What a future change has to respect:** `appliedVersions` is now carried but
+unrendered. That is deliberate; do not read it as dead weight and delete it from
+`MigrationEvent`, the queue message, or the `migration_events` row on the
+strength of the HTML no longer using it.
+
 ### 2026-08-21 — A deleted class stops looking deployed
 
 **What changed:** registry schema v2 adds `retired_at` to
