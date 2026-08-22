@@ -1,5 +1,8 @@
 import {
   ActiveStreamCheckpointSchema,
+  asBlockId,
+  asWorkspaceId,
+  asWorkstreamId,
   BlockDashboardBlockSocketClientEventSchema,
   BlockDashboardBlockSocketEventSchema,
   BlockDashboardBlockRunSchema,
@@ -26,6 +29,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
 import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import {
@@ -62,7 +66,7 @@ import {
   type BlockDashboardBlockDispatch,
   type BlockDashboardSocketRetractionRequest,
 } from "./block-dashboard-protocol";
-import { workstreamDOName } from "./names";
+import { blockDashboardAgentName, workstreamDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -297,6 +301,8 @@ const MIGRATION_COMPONENT = "block_dashboard_block_agent";
 
 export class BlockDashboardAgent extends DurableObject<Env> {
   private readonly state: DurableObjectState;
+  /** This object's own `BLOCK_DASHBOARD_AGENTS` name; see {@link selfObjectName}. */
+  private objectName: string | null = null;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -310,6 +316,20 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Everything downstream is handed this environment or one derived from it,
+    // so a helper that addresses "the agent that owns this block" reaches the
+    // object it is already running in rather than the namespace. See
+    // `lib/durable-object-self.ts`.
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived.
+    this.env = env = withDurableObjectSelf(env, {
+      namespace: env.BLOCK_DASHBOARD_AGENTS,
+      name: () => this.selfObjectName(),
+      id: state.id,
+      instance: this,
+    });
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.publicationQueue = new DurableAgentPublicationQueue(
       (phase, error) => {
@@ -747,6 +767,39 @@ export class BlockDashboardAgent extends DurableObject<Env> {
 
   private queueCheckpointBroadcast(broadcast: () => Promise<void>, phase: string): void {
     this.publicationQueue.enqueueCheckpoint(phase, broadcast);
+  }
+
+  /**
+   * This object's own name in `BLOCK_DASHBOARD_AGENTS`, or `null` before it has
+   * one.
+   *
+   * Memoized: a block agent's identity is written once, on its first dispatch,
+   * and is refused if it ever disagrees. The read is guarded because a first
+   * wake reaches here before the schema exists.
+   */
+  private selfObjectName(): string | null {
+    if (this.objectName !== null) return this.objectName;
+    let identity: { workspace_id: string; workstream_id: string; block_id: string } | undefined;
+    try {
+      identity = this.state.storage.sql.exec<{
+        workspace_id: string;
+        workstream_id: string;
+        block_id: string;
+      }>(
+        `SELECT workspace_id, workstream_id, block_id
+           FROM block_dashboard_block_identity WHERE id = 1`,
+      ).toArray()[0];
+    } catch {
+      return null;
+    }
+    if (!identity) return null;
+    this.objectName = blockDashboardAgentName(
+      this.env.AVALON_REGION,
+      asWorkspaceId(identity.workspace_id),
+      asWorkstreamId(identity.workstream_id),
+      asBlockId(identity.block_id),
+    );
+    return this.objectName;
   }
 
   private ensureIdentity(dispatch: BlockDashboardBlockIdentityInput): void {

@@ -1,4 +1,5 @@
 import {
+  asWorkspaceId,
   IdSchema,
   UserIdSchema,
   WORKSPACE_SYNC_TOPICS,
@@ -31,6 +32,7 @@ import {
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import { identityAttributes, inFlowSpan } from "../observability/tracing";
@@ -71,6 +73,7 @@ import {
   type WorkspaceScheduleTargetKind,
 } from "../services/workspace-schedule-execution";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { workspaceDOName } from "./names";
 import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceDirectoryExistsRequestSchema,
@@ -977,6 +980,8 @@ const MIGRATION_COMPONENT = "workspace_do";
 export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
+  /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
+  private objectName: string | null = null;
 
   constructor(
     state: DurableObjectState,
@@ -985,6 +990,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
+    // Everything downstream is handed this environment or one derived from it,
+    // so a helper that addresses "the WorkspaceDO for this workspace" reaches
+    // the object it is already running in rather than the namespace. See
+    // `lib/durable-object-self.ts`.
+    //
+    // The parameter is rebound as well as the field, so the rest of this
+    // constructor cannot hand the unregistered environment to something
+    // long-lived.
+    this.env = env = withDurableObjectSelf(env, {
+      namespace: env.WORKSPACE_DOS,
+      name: () => this.selfObjectName(),
+      id: state.id,
+      instance: this,
+    });
     this.initialized = state.blockConcurrencyWhile(async () => {
       await withMigrationReport({
         state,
@@ -3449,6 +3468,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ workspace_id: string }>(
       `SELECT workspace_id FROM workspace_identity WHERE id = 1`,
     ).toArray()[0]?.workspace_id ?? null;
+  }
+
+  /**
+   * This object's own name in `WORKSPACE_DOS`, or `null` before it has one.
+   *
+   * Memoized because a workspace identity is written once and never changes,
+   * and because this is read on every name resolution the object performs.
+   */
+  private selfObjectName(): string | null {
+    if (this.objectName !== null) return this.objectName;
+    let workspaceId: string | null;
+    try {
+      workspaceId = this.workspaceId();
+    } catch {
+      // First wake: the identity table does not exist until the constructor's
+      // migrations have run, and nothing can address this object by name yet.
+      return null;
+    }
+    if (workspaceId === null) return null;
+    this.objectName = workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId));
+    return this.objectName;
   }
 
   private placementAffinity(): WorkspacePlacementAffinity | null {
