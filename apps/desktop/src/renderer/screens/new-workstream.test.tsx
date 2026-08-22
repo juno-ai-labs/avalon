@@ -22,8 +22,8 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 
 const workspaceSocket = vi.hoisted(() => ({
   createMessage: vi.fn(),
-  listSidebar: vi.fn(),
   listWorkstreams: vi.fn(),
+  sidebarConnect: { generation: 1, nextCursor: null },
   state: 'connected' as const,
 }));
 
@@ -135,12 +135,6 @@ describe('New work-stream home', () => {
       nextCursor: null,
     };
     workspaceSocket.listWorkstreams.mockResolvedValue(directoryPage);
-    // The cold read is the sidebar batch, which carries the same first page.
-    workspaceSocket.listSidebar.mockResolvedValue({
-      ...directoryPage,
-      automations: [],
-      notes: [],
-    });
     api.getWorkOpportunities.mockResolvedValue([]);
     api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);
     api.dismissWorkOpportunity.mockResolvedValue(undefined);

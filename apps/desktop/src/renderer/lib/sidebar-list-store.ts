@@ -4,8 +4,8 @@ import type { AutomationSummary, NoteSummary } from './types';
 /**
  * The one receiver for the sidebar's two pushed lists.
  *
- * Both producers write through here — the opening `list_sidebar` batch and
- * every later `workspace_sidebar_list` push — because they are two senders of
+ * Both producers write through here — the `workspace_sidebar` connect payload
+ * and every later `workspace_sidebar_list` push — because they are two senders of
  * one field family, and `docs/choosing-sockets-or-rest.md` asks for a single
  * receiver owning the ledger rather than a comparison at each call site. Two
  * handlers each deciding for themselves is how a batch that was read before a
