@@ -626,6 +626,21 @@ export function selectBaseline(baselines, migrationsOnDisk, digestFor) {
  * ahead of this checkout — a branch that added migrations, or a rollback — and
  * it is reported rather than acted on, because guessing which is wrong.
  *
+ * `outOfOrder` names pending migrations that sort *below* something the
+ * database has already applied. Wrangler applies whatever is missing in sort
+ * order without regard to what ran before, so such a file runs late on an old
+ * database and early on a fresh one — and the two end up with different
+ * schemas. It is silent: `ALTER TABLE` in the late file appends its column
+ * after the earlier one's instead of before, so the columns exist, the
+ * migration succeeds, and only the order differs. Where the inserted file
+ * *creates* something a later one already used, it fails outright instead.
+ *
+ * A baseline makes this easier to hit rather than causing it: a baselined
+ * database is fresh by construction, so it takes the fresh ordering while
+ * production takes the late one. Reported rather than refused, because the
+ * repair is a decision about migrations — renumber, or accept — that this
+ * script cannot make.
+ *
  * `applied` may be **null**, meaning the ledger was deliberately not read: a
  * database with tables is never baselined whatever its ledger says, so reading
  * it there costs a wrangler start-up to learn something that cannot change the
@@ -648,6 +663,12 @@ export function planMigration({
   const unknownApplied = ledgerKnown
     ? applied.filter((name) => !migrationsOnDisk.includes(name)).sort()
     : [];
+  const highestApplied = ledgerKnown && applied.length > 0
+    ? applied.reduce((highest, name) => (name > highest ? name : highest))
+    : null;
+  const outOfOrder = highestApplied === null
+    ? []
+    : (pending ?? []).filter((name) => name < highestApplied);
   const isEmpty = userTables === 0 && ledgerKnown && applied.length === 0;
 
   if (isEmpty && allowBaseline) {
@@ -659,6 +680,7 @@ export function planMigration({
         thenApply: migrationsOnDisk.filter((name) => name > baseline.through),
         pending,
         unknownApplied,
+        outOfOrder,
       };
     }
   }
@@ -669,14 +691,25 @@ export function planMigration({
     thenApply: [],
     pending,
     unknownApplied,
+    outOfOrder,
   };
 }
 
 /** One line saying what a region is about to do, and why. */
 export function describePlan(region, plan) {
-  const suffix = plan.unknownApplied.length > 0
-    ? ` (${plan.unknownApplied.length} applied migration(s) not in this checkout: ${plan.unknownApplied.join(", ")})`
-    : "";
+  const notes = [];
+  if (plan.unknownApplied.length > 0) {
+    notes.push(`${plan.unknownApplied.length} applied migration(s) not in this checkout: `
+      + plan.unknownApplied.join(", "));
+  }
+  if (plan.outOfOrder.length > 0) {
+    // Worth a sentence rather than a word: the reader has to know this produces
+    // a different schema from a fresh database, not merely an odd ordering.
+    notes.push(`out of order — ${plan.outOfOrder.join(", ")} sort(s) below a migration `
+      + "this database already applied, so applying now gives it a different schema than a "
+      + "fresh database gets");
+  }
+  const suffix = notes.length > 0 ? ` (${notes.join("; ")})` : "";
   if (plan.action === "baseline") {
     const after = plan.thenApply.length === 0
       ? "nothing after it"

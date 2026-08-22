@@ -155,8 +155,17 @@ function executePlan(database, context, plan) {
 /** Everything about a database two different routes must agree on. */
 function stateOf(database) {
   const { objects, rows } = snapshotDatabase(database);
+  const tables = objects.filter((object) => object.type === "table");
   return {
     schema: objects.map((object) => `${object.type}:${object.name}:${object.sql.replace(/\s+/gu, " ").trim()}`),
+    // The engine's own column order, which is what an `ALTER TABLE ADD COLUMN`
+    // applied at a different point in the sequence actually changes. Reading it
+    // back through PRAGMA rather than parsing the CREATE text, because after
+    // several ALTERs that text is a shape no regex should be asked about.
+    columns: Object.fromEntries(tables.map((table) => [
+      table.name,
+      database.prepare("SELECT name FROM pragma_table_info(?)").all(table.name).map((row) => String(row.name)),
+    ])),
     rows,
     ledger: database.prepare("SELECT name FROM d1_migrations ORDER BY name").all().map((row) => String(row.name)),
   };
@@ -707,4 +716,249 @@ test("a finished database says so plainly", async () => {
     assert.equal(plan.action, "up-to-date");
     assert.equal(describePlan("global", plan), "global: already up to date.");
   });
+});
+
+// ---------------------------------------------------------------------------
+// Numbering that is not a tidy sequence
+// ---------------------------------------------------------------------------
+
+/**
+ * A chain with holes at 0002 and 0004, and a number carrying two files.
+ *
+ * Both shapes are real here: `packages/db/migrations/` skips 0084, and six
+ * numbers carry two files each. The migrations are order-sensitive on purpose —
+ * each `ALTER TABLE` appends a column, so applying the same set in a different
+ * order produces a different table rather than the same one.
+ */
+const GAPPED = [
+  ["0001_base.sql", "CREATE TABLE t (id TEXT PRIMARY KEY);"],
+  ["0003_alpha.sql", "ALTER TABLE t ADD COLUMN alpha TEXT;"],
+  ["0003_beta.sql", "ALTER TABLE t ADD COLUMN beta TEXT;"],
+  ["0005_gamma.sql", "ALTER TABLE t ADD COLUMN gamma TEXT;"],
+];
+
+const columnsOf = (state) => state.columns.t.join(",");
+
+test("a gap in the numbering is not a gap in the chain", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    // 0002 and 0004 do not exist; the boundary is a file name, so nothing here
+    // is inferred from the numbers being consecutive.
+    assert.deepEqual(baseline.migrations, ["0001_base.sql", "0003_alpha.sql", "0003_beta.sql"]);
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.deepEqual(plan.thenApply, ["0005_gamma.sql"]);
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), columnsOf(replayedState(context)));
+  });
+});
+
+test("a migration that fills a gap above the boundary is applied on top", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    // 0004 sorts above the boundary and below the tip. The baseline stays valid
+    // and the new file slots into place ahead of 0005 on a fresh database.
+    context.write("0004_delta.sql", "ALTER TABLE t ADD COLUMN delta TEXT;");
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.equal(plan.action, "baseline");
+    assert.deepEqual(plan.thenApply, ["0004_delta.sql", "0005_gamma.sql"]);
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), "id,alpha,beta,delta,gamma");
+  });
+});
+
+test("a migration that fills a gap below the boundary invalidates the baseline", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    // 0002 sorts below the boundary, so the snapshot no longer describes what
+    // replaying would produce — it would place `two` after `beta` rather than
+    // before it. The digest catches the changed file list.
+    context.write("0002_two.sql", "ALTER TABLE t ADD COLUMN two TEXT;");
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.equal(plan.action, "migrate", "the stale baseline must not be used");
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), "id,two,alpha,beta,gamma");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A boundary that shares its number with other migrations
+// ---------------------------------------------------------------------------
+
+test("a boundary sharing a number subsumes its siblings up to and including itself", async () => {
+  await withChain(GAPPED, async (context) => {
+    // Boundary at the *first* of the 0003 pair: its sibling is above the
+    // boundary and applied on top, even though they share a number. A numeric
+    // comparison would swallow both and produce a baseline claiming a migration
+    // it never ran.
+    const baseline = await generateBaseline(context, "0003_alpha.sql");
+    assert.deepEqual(baseline.migrations, ["0001_base.sql", "0003_alpha.sql"]);
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.deepEqual(plan.thenApply, ["0003_beta.sql", "0005_gamma.sql"]);
+    assert.deepEqual(state, replayedState(context));
+  });
+});
+
+test("a migration added to the boundary's number after the fact, sorting above it, is applied on top", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    // Same number as the boundary, added later, and `zeta` > `beta`. It is
+    // above the boundary despite sharing 0003, so the baseline stays usable.
+    context.write("0003_zeta.sql", "ALTER TABLE t ADD COLUMN zeta TEXT;");
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.equal(plan.action, "baseline");
+    assert.deepEqual(plan.thenApply, ["0003_zeta.sql", "0005_gamma.sql"]);
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), "id,alpha,beta,zeta,gamma");
+  });
+});
+
+test("a migration added to the boundary's number, sorting below it, invalidates the baseline", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    // Same number again, but `aardvark` < `beta`, so it lands *inside* what the
+    // baseline claims to have run. Sharing a number is not what decides this —
+    // sorting is.
+    context.write("0003_aardvark.sql", "ALTER TABLE t ADD COLUMN aardvark TEXT;");
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.equal(plan.action, "migrate");
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), "id,aardvark,alpha,beta,gamma");
+  });
+});
+
+test("two baselines on the same number are both kept and the later one wins", async () => {
+  await withChain(GAPPED, async (context) => {
+    const atAlpha = await generateBaseline(context, "0003_alpha.sql");
+    const atBeta = await generateBaseline(context, "0003_beta.sql");
+    const merged = mergeIntoManifest([atAlpha], atBeta);
+    assert.deepEqual(merged.map((entry) => entry.through), ["0003_alpha.sql", "0003_beta.sql"]);
+
+    const { plan, state } = planAndExecute(context, merged);
+    assert.equal(plan.baseline.through, "0003_beta.sql");
+    assert.deepEqual(state, replayedState(context));
+  });
+});
+
+test("when the later of two same-numbered baselines goes stale, the earlier one is still used", async () => {
+  await withChain(GAPPED, async (context) => {
+    const atAlpha = await generateBaseline(context, "0003_alpha.sql");
+    const atBeta = await generateBaseline(context, "0003_beta.sql");
+    // Sorts above alpha and below beta: invalidates only the later baseline.
+    context.write("0003_atlas.sql", "ALTER TABLE t ADD COLUMN atlas TEXT;");
+
+    assert.deepEqual(
+      usableBaselines([atAlpha, atBeta], context.onDisk(), context.digestFor).map((entry) => entry.through),
+      ["0003_alpha.sql"],
+    );
+    const { plan, state } = planAndExecute(context, [atAlpha, atBeta]);
+    assert.equal(plan.baseline.through, "0003_alpha.sql");
+    assert.ok(plan.thenApply.includes("0003_atlas.sql"));
+    assert.deepEqual(state, replayedState(context));
+    assert.equal(columnsOf(state), "id,alpha,atlas,beta,gamma");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The divergence a late insertion causes on a database that has moved on
+// ---------------------------------------------------------------------------
+
+test("a migration inserted below what a database already applied is flagged as out of order", async () => {
+  await withChain(GAPPED, async (context) => {
+    const applied = ["0001_base.sql", "0003_alpha.sql", "0003_beta.sql", "0005_gamma.sql"];
+    context.write("0004_delta.sql", "ALTER TABLE t ADD COLUMN delta TEXT;");
+
+    const plan = planMigration({
+      applied, userTables: 1, baselines: [],
+      migrationsOnDisk: context.onDisk(), digestFor: context.digestFor,
+    });
+    assert.deepEqual(plan.outOfOrder, ["0004_delta.sql"]);
+    assert.match(describePlan("global", plan), /sort\(s\) below a migration this database already applied/u);
+  });
+});
+
+test("the out-of-order case really does produce a different schema, which is why it is flagged", async () => {
+  await withChain(GAPPED, async (context) => {
+    const applied = ["0001_base.sql", "0003_alpha.sql", "0003_beta.sql", "0005_gamma.sql"];
+    context.write("0004_delta.sql", "ALTER TABLE t ADD COLUMN delta TEXT;");
+
+    // The database that had already moved on: Wrangler applies the missing file
+    // now, so `delta` lands after `gamma`.
+    const { state: late } = planAndExecute(context, [], { applied, userTables: 1 });
+    // A database created today replays in file order, so `delta` lands before it.
+    const fresh = replayedState(context);
+
+    assert.equal(columnsOf(late), "id,alpha,beta,gamma,delta");
+    assert.equal(columnsOf(fresh), "id,alpha,beta,delta,gamma");
+    assert.notEqual(columnsOf(late), columnsOf(fresh),
+      "if these ever agree, the flag is measuring nothing");
+    // Both succeeded. Nothing errored, nothing was skipped — the two databases
+    // are simply different, which is exactly why a warning is the only thing
+    // that catches it.
+    assert.deepEqual(late.ledger, fresh.ledger);
+  });
+});
+
+test("a baselined database takes the fresh ordering, which is the half production will not have", async () => {
+  await withChain(GAPPED, async (context) => {
+    const baseline = await generateBaseline(context, "0003_beta.sql");
+    context.write("0004_delta.sql", "ALTER TABLE t ADD COLUMN delta TEXT;");
+
+    const { plan, state } = planAndExecute(context, [baseline]);
+    // No warning here: nothing was applied before, so nothing is out of order.
+    assert.deepEqual(plan.outOfOrder, []);
+    assert.equal(columnsOf(state), "id,alpha,beta,delta,gamma");
+    assert.deepEqual(state, replayedState(context));
+  });
+});
+
+test("nothing is flagged out of order when every pending file sorts above what ran", async () => {
+  await withChain(GAPPED, async (context) => {
+    context.write("0006_later.sql", "ALTER TABLE t ADD COLUMN later TEXT;");
+    const plan = planMigration({
+      applied: GAPPED.map(([name]) => name), userTables: 1, baselines: [],
+      migrationsOnDisk: context.onDisk(), digestFor: context.digestFor,
+    });
+    assert.deepEqual(plan.pending, ["0006_later.sql"]);
+    assert.deepEqual(plan.outOfOrder, []);
+    assert.ok(!describePlan("eu", plan).includes("out of order"));
+  });
+});
+
+test("an unread ledger reports nothing out of order rather than guessing", async () => {
+  await withChain(GAPPED, async (context) => {
+    const plan = planMigration({
+      applied: null, userTables: 1, baselines: [],
+      migrationsOnDisk: context.onDisk(), digestFor: context.digestFor,
+    });
+    assert.deepEqual(plan.outOfOrder, []);
+    assert.equal(plan.pending, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The repository's own numbering, which has both shapes
+// ---------------------------------------------------------------------------
+
+test("the real chain's shared numbers are subsumed together, and its 0084 hole stays a hole", () => {
+  const onDisk = listMigrationFiles(join(API_DIRECTORY, "..", "..", "packages", "db", "migrations"));
+  const numbers = onDisk.map((name) => name.slice(0, 4));
+  const shared = [...new Set(numbers.filter((number, index) => numbers.indexOf(number) !== index))];
+  assert.ok(shared.length >= 6, `expected several shared numbers, found ${shared.join(", ")}`);
+  assert.ok(!numbers.includes("0084"), "0084 is the live gap this tooling is careful about");
+
+  // Every shared number's files must land on the same side of the checked-in
+  // boundary, or the baseline would claim one and leave its sibling pending.
+  const baselines = readBaselineManifest(
+    readFileSync(join(API_DIRECTORY, "..", "..", "packages", "db", "baselines", "manifest.json"), "utf8"),
+  );
+  for (const baseline of baselines) {
+    for (const number of shared) {
+      const siblings = onDisk.filter((name) => name.startsWith(number));
+      const subsumed = siblings.filter((name) => baseline.migrations.includes(name));
+      assert.ok(
+        subsumed.length === 0 || subsumed.length === siblings.length,
+        `${number} is split across the ${baseline.through} boundary: ${subsumed.join(", ")}`,
+      );
+    }
+  }
 });
