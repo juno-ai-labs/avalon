@@ -1056,6 +1056,41 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — Object schema 17: the tool-receipt views retire
+
+**What changed:** Migration 17 drops `_runtime_tool_invocations` with its
+insert, update and delete triggers and `_runtime_tool_checkpoints` with its
+insert trigger, and first adopts `attachment_tool_receipts` (with its index) and
+`tool_effects_run_call_uq` into this object's own schema.
+`WORKSTREAM_OBJECT_SCHEMA_VERSION` → 17. `LOCAL_TABLES` and `TABLE_REWRITES`
+lose the three table names and two rewrites, so the routers no longer recognize
+`tool_invocations` at all.
+
+**Why:** the five receipt writers and every reader now speak to
+`WorkstreamToolReceiptStorage` through a typed port, so nothing named the views.
+The adoption is the part that is not bookkeeping: both objects live in
+`workstream-runtime-compat-schema.ts` and neither is a compatibility object —
+one is a real table of live product data, the other the constraint that dedups a
+replayed tool call. A migration that derived its drop set from the file would
+have taken both.
+
+**Considered and rejected:** dropping the views without moving migration 14's
+transcript settlement out of the update trigger first. That trigger projects a
+settled receipt into its same-id tool part, and the stale-run sweep depends on
+it because it has no event publisher and never rewrites the transcript row. The
+projection moved into `abandonRunReceipts` in the preceding change and has its
+own spec; dropping the trigger before that would have left reaped runs showing a
+spinning tool card with nothing failing.
+
+**Consequences:** migration 16's trigger repair is now historical — it still has
+to exist for objects that applied it before 17 arrived, but the allocation it
+fixed lives in the typed `admit`. A routed statement against a normalized table
+reports workerd's `rowsWritten` rather than a trigger's counter, and
+`rowsWritten` counts index writes: the workerd suite pins that at 2 for a
+one-row update of an indexed column, because a caller moving a statement off a
+view and keeping an `=== 1` check would be wrong in exactly that way.
+
+
 ### 2026-08-22 — What the compat schema holds that is not compat
 
 **What changed:** Documentation only. `workstream-runtime-compat-schema.ts` is
