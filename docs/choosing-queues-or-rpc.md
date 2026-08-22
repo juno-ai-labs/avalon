@@ -360,6 +360,74 @@ against `apps/api/src/lib/rpc-contracts.ts`. Adding a cross-region RPC is a
 change to that boundary and belongs in
 [`regionalization.md`](regionalization.md), not here.
 
+## Which Wrangler file each half goes in
+
+Provisioning a queue is not a step any more — declare it and the deployment
+preflight creates it, per [the section above](#what-a-queue-makes-you-handle).
+What is still a decision is *where* the declaration goes, and that is not a
+detail: a queue declared on the wrong Worker is valid JSON, deploys, and fails
+in a way the preflight was never asked about.
+
+- **The producer binding goes in the Worker that sends.** It is a binding, so it
+  belongs to the sender's config and nowhere else.
+- **The consumer goes in the Worker that has to do the work** — the one holding
+  the D1, R2, or Durable Object namespaces the messages are about.
+- **Exactly one Worker may consume a queue.** A platform limit, not a
+  convention, and it is what forces a split when the work has to happen in a
+  particular region.
+- **A dead-letter queue on every consumer**, named after that consumer's queue.
+  A shared dead-letter queue behind split queues defeats the split at exactly
+  the moment it matters.
+- **Naming**: `avalon-<region>-<purpose>` when split. A shared queue breaks that
+  convention, so it has to say why in a comment next to the resource, or the
+  next reader will "fix" it.
+
+The forced-migration hop is the worked example, because it uses all of these at
+once. Its two producer bindings sit in `apps/migration-tracker/wrangler.jsonc`,
+because the tracker is what sends; its consumers sit one each in
+`apps/api/wrangler.global.jsonc` and `apps/api/wrangler.eu.jsonc`, because only
+that region's Worker binds that region's Durable Object namespaces. The report
+queue going the other way is the mirror image — one consumer on the tracker, and
+a producer binding in each regional API file pointing at the same name.
+
+### Verifying it landed in the right file
+
+Two of the three placement errors are refused by
+`scripts/ensure-cloudflare-queues.mjs` before it creates anything, so they fail
+`pnpm test:scripts` and the deploy rather than a review:
+
+- **A name only one side declares** — `assertPairedQueues`. A misspelled
+  producer would otherwise be created and attached, the deploy would go green,
+  and messages would land in a queue nothing drains.
+- **A queue two Workers consume** — `assertSingleConsumerPerQueue`. Cloudflare
+  allows one, and nothing local refuses a second: the *second* deployment fails,
+  after the first has shipped and attached itself.
+
+The third has no automatic check, because it is a judgement rather than a
+contradiction: **a consumer on the wrong Worker, where that Worker can still do
+the work.** For that, read the inventory. `pnpm test:scripts` pins every
+surface, role, and queue name in `ensure-cloudflare-queues.test.mjs`, so a queue
+that moves between files fails the suite and adding one is a deliberate edit to
+that list — which is where to look first. For what a deploy would actually
+carry, the dry-run builds print the resolved bindings per surface:
+
+```text
+pnpm --filter @avalon/api build      # global
+pnpm --filter @avalon/api build:eu
+pnpm --filter @avalon/migration-tracker build
+```
+
+### What none of that checks
+
+**A consumer that is declared but not routed.** A Worker gets one `queue`
+handler for every queue it consumes, so `apps/api/src/index.ts` dispatches on
+`batch.queue` by name. A new queue added to a Wrangler file with no matching
+branch there is still consumed — its messages fall through to whichever handler
+the chain ends in. Nothing fails; the wrong consumer runs. Add the branch in the
+same change as the declaration, and prefer a predicate exported beside the
+contract over a string literal in the `if`, so the queue's name and the test for
+it cannot drift.
+
 ## Trust the primitives
 
 **Take Cloudflare's guarantees at face value and build on them optimistically.**
