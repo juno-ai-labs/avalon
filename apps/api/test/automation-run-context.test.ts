@@ -31,6 +31,8 @@ const TEMPLATE = "00000000-0000-7000-8000-000000000005";
 const VERSION = "00000000-0000-7000-8000-000000000006";
 const SUBSCRIPTION = "00000000-0000-7000-8000-000000000007";
 const TARGET = "00000000-0000-7000-8000-000000000008";
+const CONNECTION = "00000000-0000-7000-8000-000000000009";
+const LINK = "00000000-0000-7000-8000-00000000000a";
 const ATTEMPT = "attempt-1";
 const LEASE_OWNER = "lease-owner-1";
 
@@ -52,13 +54,20 @@ function envFor(database: DatabaseSync): Env {
 }
 
 /**
- * One personal automation, run by its schedule, with the owner's own email
- * address frozen on it as a delivery target — the shape behind the duplicate
- * this test exists for.
+ * One personal automation, run by its schedule, with a delivery target frozen
+ * on it — the shape behind the duplicate this test exists for.
  *
  * The frozen memory context is pre-inserted so `loadRunPromptContext` returns
  * from its cached branch: this test is about what reaches the model, and
  * memory retrieval would otherwise decide whether it runs at all.
+ *
+ * **What this cannot prove.** The automation tables live in WorkspaceDO, and
+ * migration 0090 dropped their regional copies; this seeds the pre-retirement
+ * SQLite shape and reaches it through the work-stream runtime port, so it
+ * proves the statement and the mapping but not that the read routes to
+ * WorkspaceDO in production. That routing is `WORKSPACE_LOCAL_TABLES`' job and
+ * is exercised by the subscription read in the same function; a test that
+ * proved it here would have to run against a real object, in `test-workers/`.
  */
 function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
@@ -93,6 +102,16 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
     VALUES ('${SUBSCRIPTION}', '${WORKSPACE}', '${TEMPLATE}', '${VERSION}', 'personal', '${OWNER}',
             '{"type":"user","userId":"${OWNER}"}', 'active',
             'calm-bright-gentle-otter@automation.with-avalon.com', 'active', '2026-01-01', '2026-01-01');
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, model_plugin_id, scope, owner_user_id, display_name,
+       status, granted_scopes_json, created_at, updated_at)
+    VALUES ('${CONNECTION}', '${WORKSPACE}', 'slack', 'plugin_slack_acme', 'workspace', NULL,
+            'Acme', 'healthy', '[]', '2026-01-01', '2026-01-01');
+    INSERT INTO slack_user_links
+      (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id, status,
+       created_at, updated_at)
+    VALUES ('${LINK}', '${WORKSPACE}', '${CONNECTION}', '${OWNER}', 'T1', 'U1', 'active',
+            '2026-01-01', '2026-01-01');
     ${options.targets ?? `
     INSERT INTO automation_delivery_targets
       (id, workspace_id, automation_subscription_id, target_type, user_id, email_address,
@@ -171,8 +190,9 @@ describe("what an automation run is told about its own delivery", () => {
     // owner receives the same briefing twice, from two different senders.
     expect(context.systemPrompt).toContain('"channel": "email"');
     expect(context.systemPrompt).toContain('"destination": "alex@example.com"');
+    expect(context.systemPrompt).toContain("# Result delivery");
     expect(context.systemPrompt).toContain(
-      "Never send, draft, or post a copy of the result to a destination listed there",
+      "drop every recipient — to, cc, channel, or DM target — that matches one of those destinations",
     );
   });
 
@@ -184,6 +204,90 @@ describe("what an automation run is told about its own delivery", () => {
     // A run with no frozen destination is free to do the sending the task asks
     // for, so the context must not imply somebody else already sent it.
     expect(context.systemPrompt).toContain('"resultDelivery": []');
+  });
+
+  it("names a Slack destination by the id a tool call can be matched against", async () => {
+    const env = envFor(seededDatabase({
+      targets: `
+        INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+           slack_team_id, slack_user_id, status, created_at, updated_at)
+        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
+                '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');`,
+    }));
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // The rule the run applies is "does this recipient match one of these", so
+    // a description is not something a tool argument can be compared against.
+    expect(context.systemPrompt).toContain('"channel": "slack_agent_dm"');
+    expect(context.systemPrompt).toContain('"destination": "U1"');
+  });
+
+  it("lists a Slack target that failed once, because Avalon still delivers to it", async () => {
+    const env = envFor(seededDatabase({
+      targets: `
+        INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+           slack_team_id, slack_user_id, status, created_at, updated_at)
+        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
+                '${OWNER}', 'T1', 'U1', 'needs_input', '2026-01-01', '2026-01-01');`,
+    }));
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // The Slack sender deliberately attempts a `needs_input` target rather than
+    // trusting a stale belief. Filtering it out here would tell the run nothing
+    // is sending and put the duplicate back for the targets most likely to be
+    // in that state.
+    expect(context.systemPrompt).toContain('"destination": "U1"');
+  });
+
+  it("leaves out a Slack target whose owner turned both notifications off", async () => {
+    const env = envFor(seededDatabase({
+      targets: `
+        INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+           slack_team_id, slack_user_id, status, created_at, updated_at)
+        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
+                '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');
+        INSERT INTO slack_delivery_preferences
+          (connection_id, user_id, slack_user_id, notify_automation_completed, notify_needs_input,
+           updated_at)
+        VALUES ('${CONNECTION}', '${OWNER}', 'U1', 0, 0, '2026-01-01');`,
+    }));
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // Avalon sends nothing to it, so telling the run to stand down on its
+    // account would deliver the result nowhere.
+    expect(context.systemPrompt).toContain('"resultDelivery": []');
+  });
+
+  it("orders destinations so two renders of one run are the same bytes", async () => {
+    const env = envFor(seededDatabase({
+      targets: `
+        INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+           slack_team_id, slack_user_id, status, created_at, updated_at)
+        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
+                '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');
+        INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, user_id, email_address,
+           status, created_at, updated_at)
+        VALUES ('${LINK}', '${WORKSPACE}', '${SUBSCRIPTION}', 'email', '${OWNER}',
+                'alex@example.com', 'active', '2026-01-01', '2026-01-01');`,
+    }));
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // The prefix is re-rendered every turn and must survive a retry unchanged,
+    // and nothing constrains the order two rows come back in.
+    const start = context.systemPrompt.indexOf('"resultDelivery"');
+    const delivery = context.systemPrompt.slice(start, context.systemPrompt.indexOf("]", start));
+    expect(delivery).toContain("alex@example.com");
+    expect(delivery).toContain("U1");
+    expect(delivery.indexOf("alex@example.com")).toBeLessThan(delivery.indexOf("U1"));
   });
 
   it("ignores a destination that is not delivering", async () => {

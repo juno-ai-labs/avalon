@@ -83,7 +83,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "6e290ce270bf7d9dd8378405f2d87c56fd729d6ded5761bab912fe86672851a0",
+        hash: "057749eb1e20721c7153ab9c02a5df2e77bbe6ffab01e351f3b4b7d158d2aa61",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -94,14 +94,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "3a6f987b732cbfe2080bb9a1e86e5850e49710c8b13dfd1b9d9884bc6d0af137",
+        hash: "454024ba860693fa42a27d79e7cc1022f105383eca9093050009c2ca21dd74ee",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "958972525820211ae470097871ad7c3237ff9993ed275b5268d17be05860e6cc",
+        hash: "8c65d13a515af943f34b7fc81aa6aa4c781fcbb30e6528cd3fb7a4d560e6fe3e",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -109,7 +109,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "ac6004fdd636619c6489071d81b356da237eb764e7522dd985e4f286fa0c47b0",
+        hash: "03f68f2a1227069c472134057567cbfd0a18ccfda427dd6ee08c8676510ffe08",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -215,8 +215,30 @@ describe("prompt renderers", () => {
     });
 
     expect(prompt).toContain('"destination": "owner@example.com"');
-    expect(prompt).toContain("Avalon delivers a run's final message itself to every destination listed under the task context's automation.resultDelivery");
-    expect(prompt).toContain("Never send, draft, or post a copy of the result to a destination listed there");
+    expect(prompt).toContain("# Result delivery");
+    expect(prompt).toContain("Avalon sends this run's final message to every destination in the task context's automation.resultDelivery");
+    // A recipient list to filter, rather than a category to reason about: the
+    // case that produced the duplicate is an automation whose own instructions
+    // name the very address Avalon delivers to.
+    expect(prompt).toContain("drop every recipient — to, cc, channel, or DM target — that matches one of those destinations");
+  });
+
+  it("charges the delivery rule to nobody it does not apply to", () => {
+    const interactive = renderWorkstreamSystemPrompt({
+      title: "Investigate checkout failures",
+      objective: "Find the cause and create a concise incident note.",
+    });
+    const undelivered = renderWorkstreamSystemPrompt({
+      title: "Weekly engineering brief: 2026-08-07",
+      objective: "Produce the scheduled weekly engineering brief.",
+      automation: { ...workstreamAutomation, resultDelivery: [] },
+    });
+
+    // An interactive run asked to "email this to Bob" must not meet a rule
+    // about a list its context does not carry, and reading it as applying is
+    // how a requested send becomes a description of one.
+    expect(interactive).not.toContain("# Result delivery");
+    expect(undelivered).not.toContain("# Result delivery");
   });
 
   it("tells the automation compiler that a destination is not a send step", () => {
@@ -224,8 +246,8 @@ describe("prompt renderers", () => {
       messages: [{ role: "user", content: "Email me a competitor briefing every morning." }],
     });
 
-    expect(system?.content).toContain("never instruct a provider send such as gmail.send for it");
-    expect(system?.content).toContain("Avalon itself sends each run's final message to the destinations chosen when the automation is accepted");
+    expect(system?.content).toContain("never write a provider send for it");
+    expect(system?.content).toContain("Avalon itself sends each run's final message to the destinations the owner picks");
   });
 
   it("keeps hostile checkpoint data ordered inside one user-role payload", () => {

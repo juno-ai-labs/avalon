@@ -938,6 +938,108 @@ describe('New automation composer', () => {
     ));
   });
 
+  it('arrives with email ticked when the draft promises an emailed result', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-email-briefing',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Morning competitor briefing',
+        description: 'Summarizes competitor movement.',
+        overview: 'Runs every morning.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every day at 9:00 AM',
+        capabilities: [],
+        requiresSlackDelivery: false,
+        requiresEmailDelivery: true,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Email me a competitor briefing every morning' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // Avalon is the only sender: the run is forbidden to mail the result
+    // itself. An unticked box here is an automation that emails nobody, on the
+    // path where the reader agrees with the screen and presses Create.
+    const email = await screen.findByRole('checkbox', { name: /^Email/ });
+    expect(email).toBeChecked();
+    expect(screen.getByRole('region', { name: 'Deliver results' }))
+      .toHaveTextContent('This draft mentions email delivery.');
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Email/ })).toBeChecked());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-email-briefing', [], {}, {
+      scope: 'you',
+      delivery: { email: true },
+    }));
+  });
+
+  it('reads a promise to deliver, not the word email in the subject matter', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-inbox-triage',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Morning inbox triage',
+        description: 'Ranks the inbox.',
+        overview: 'Runs every morning.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every day at 9:00 AM',
+        capabilities: ['gmail.read'],
+        requiresSlackDelivery: false,
+        // What the API derives for "A ranked list of your five most important
+        // emails" — a briefing *about* email, promising no delivery.
+        requiresEmailDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Rank my five most important emails each morning' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // A destination frozen by mistake cannot be changed afterwards, so the
+    // nudge has to be wrong in the recoverable direction.
+    const email = await screen.findByRole('checkbox', { name: /^Email/ });
+    expect(email).not.toBeChecked();
+  });
+
+  it('leaves email untouched when the draft never asked for it', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-quiet',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Weekly changelog',
+        description: 'Summarizes merged work in Avalon.',
+        overview: 'Runs on Fridays.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Fridays at 9:00 AM',
+        capabilities: [],
+        requiresSlackDelivery: false,
+        requiresEmailDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Summarize merged work every Friday' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const email = await screen.findByRole('checkbox', { name: /^Email/ });
+    expect(email).not.toBeChecked();
+    expect(screen.getByRole('region', { name: 'Deliver results' }))
+      .not.toHaveTextContent('mentions email delivery');
+  });
+
   it('freezes one Slack destination at a time alongside email', async () => {
     api.getConnections.mockResolvedValue([
       {
