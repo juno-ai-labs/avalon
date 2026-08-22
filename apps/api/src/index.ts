@@ -1,8 +1,10 @@
+import { isDurableObjectMigrationCommandQueue } from "@avalon/contracts/durable-object-migrations";
 import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeAccessRevocationQueue } from "./queues/access-revocation-consumer";
+import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
@@ -150,6 +152,15 @@ export default {
     // hangs up. See docs/access-revocation.md.
     if (isAccessRevocationQueue(batch.queue)) {
       return consumeAccessRevocationQueue(batch, env);
+    }
+    // Forced migrations dispatch before the gate too, and for a closely related
+    // reason: a migration pass is schema work, not new work-stream work — it
+    // wakes an object, applies whatever its ledger is missing, and says where it
+    // landed. Refusing it during maintenance would retry an operator's whole
+    // fan-out into the dead-letter queue while the site they started it from
+    // showed nothing happening. See docs/durable-object-migration-tracking.md.
+    if (isDurableObjectMigrationCommandQueue(batch.queue)) {
+      return consumeMigrationCommandQueue(batch, env);
     }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {

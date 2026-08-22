@@ -7,7 +7,13 @@ import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-obj
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
 import { applyRegistrySchema, REGISTRY_MIGRATIONS } from "../src/schema";
 import type { MigrationRegistry } from "../src/registry";
-import { ObjectQuerySchema, type InventorySweep } from "../src/protocol";
+import {
+  MigrationRunRequestSchema,
+  ObjectQuerySchema,
+  REPORTING_CLASSES,
+  type InventorySweep,
+  type MigrationRun,
+} from "../src/protocol";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
@@ -87,6 +93,23 @@ function rewindToLegacyComponent(state: DurableObjectState): void {
   );
 }
 
+function migrationRun(overrides: Partial<MigrationRun> = {}): MigrationRun {
+  return {
+    runId: nextReportId(),
+    className: "SubstreamAgent",
+    region: null,
+    requestedBy: "operator@example.test",
+    requestedAt: 1_700_000_000_000,
+    matched: 1,
+    dispatched: 1,
+    unroutable: 0,
+    truncated: false,
+    status: "dispatched",
+    errorMessage: null,
+    ...overrides,
+  };
+}
+
 /** A fresh registry per test; the object is a singleton, so it is reset by hand. */
 async function withRegistry<T>(
   run: (registry: MigrationRegistry, state: DurableObjectState) => T | Promise<T>,
@@ -106,6 +129,7 @@ beforeEach(async () => {
       "component_versions",
       "inventory_sweeps",
       "durable_object_namespaces",
+      "migration_runs",
     ]) {
       storage.sql.exec(`DELETE FROM ${table}`);
     }
@@ -461,7 +485,7 @@ describe("recordSweep", () => {
  * applied together, so none of them exercises the step production will take.
  */
 describe("the registry schema", () => {
-  it("adds the retirement column to an existing v1 database", async () => {
+  it("brings a deployed v1 database up to the current head", async () => {
     const applied = await withRegistry((_registry, state) => {
       const storage = state.storage;
       // Rewind to v1: drop what the constructor built and replay the first
@@ -483,7 +507,13 @@ describe("the registry schema", () => {
 
       // Only through v2: this test owns the v1 -> v2 step, and applying the
       // whole list would make every later migration change its expectation.
-      return applyRegistrySchema(storage, REGISTRY_MIGRATIONS.slice(0, 2));
+      const applied = applyRegistrySchema(storage, REGISTRY_MIGRATIONS.slice(0, 2));
+
+      // Then back to head, because the registry object is a singleton: leaving
+      // it two versions short would strand every later test in this file on a
+      // database missing the tables and receipts it expects.
+      applyRegistrySchema(storage);
+      return applied;
     });
 
     expect(applied).toEqual([2]);
@@ -502,6 +532,28 @@ describe("the registry schema", () => {
       return registry.overview().namespaces;
     });
     expect(namespaces[0]?.retiredAt).toBeNull();
+  });
+
+  /**
+   * v4 adds `migration_runs`. It reaches the deployed registry as a
+   * `CREATE TABLE` inside the constructor's `blockConcurrencyWhile`, so a
+   * statement it rejected would take the tracker down for every read rather
+   * than only for the new page. Replayed on its own, per the step above.
+   */
+  it("adds the forced-migration run log to a database that predates it", async () => {
+    const applied = await withRegistry((_registry, state) => {
+      state.storage.sql.exec(`DROP TABLE IF EXISTS migration_runs`);
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 4`);
+      expect(() => state.storage.sql.exec(`SELECT run_id FROM migration_runs`)).toThrow();
+      return applyRegistrySchema(state.storage);
+    });
+    expect(applied).toEqual([4]);
+
+    const runs = await withRegistry((registry) => {
+      registry.recordMigrationRun(migrationRun({}));
+      return registry.listMigrationRuns();
+    });
+    expect(runs).toHaveLength(1);
   });
 
   /**
@@ -1035,5 +1087,225 @@ describe("listObjects", () => {
     expect(page.total).toBe(5);
     expect(page.objects).toHaveLength(2);
     expect(page.objects[0]?.status).toBe("failed");
+  });
+});
+
+/**
+ * The queries behind the **Force a migration** page.
+ *
+ * The one thing worth being careful about here is where a target's region comes
+ * from. A command picks a queue by region, and the object an operator most wants
+ * to force — one an inventory sweep found and that has never woken — has no
+ * reported region at all. The script name its namespace carries is what resolves
+ * it, and an object with neither is unroutable rather than guessed at.
+ */
+describe("forced migration targets", () => {
+  it("offers only the classes that run the reporter, in a region it can name", async () => {
+    const components = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [
+            { objectId: objectId("a"), hasStoredData: true },
+            { objectId: objectId("b"), hasStoredData: true },
+          ],
+        }, {
+          // A class in the same Worker that runs no schema at all. It has to be
+          // excluded by the class filter rather than by anything else, which is
+          // why it is seeded in a script whose region *is* resolvable.
+          namespaceId: "ns-container",
+          scriptName: "avalon-api-global",
+          className: "CrashSymbolicatorContainer",
+          usesSqlite: false,
+          objects: [{ objectId: objectId("c"), hasStoredData: true }],
+        }, {
+          // A migrating class in a Worker this tracker cannot route to. There
+          // is no queue to send it on, so offering it would be offering a run
+          // that reaches nothing.
+          namespaceId: "ns-elsewhere",
+          scriptName: "some-other-worker",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("d"), hasStoredData: true }],
+        }],
+      }));
+      record(registry, report({ objectId: objectId("a"), schemaVersion: 2, latestVersion: 3 }));
+      return registry.forceableComponents();
+    });
+
+    expect(components).toEqual([{
+      className: "SubstreamAgent",
+      region: "global",
+      objects: 2,
+      behind: 1,
+      unreported: 1,
+      failed: 0,
+    }]);
+  });
+
+  it("routes an object that has never reported by its script name", async () => {
+    const selection = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-eu",
+          scriptName: "avalon-api-eu",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("d"), hasStoredData: true }],
+        }],
+      }));
+      return registry.migrationTargets({ className: "WorkspaceDO" });
+    });
+
+    expect(selection.targets).toEqual([{
+      objectId: objectId("d"),
+      objectName: null,
+      region: "eu",
+    }]);
+    expect(selection.unroutable).toBe(0);
+  });
+
+  it("counts an object whose region cannot be resolved as unroutable", async () => {
+    const selection = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-unknown",
+          scriptName: "some-other-worker",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("e"), hasStoredData: true }],
+        }],
+      }));
+      return registry.migrationTargets({ className: "WorkspaceDO" });
+    });
+
+    expect(selection.targets).toEqual([]);
+    expect(selection.matched).toBe(1);
+    expect(selection.unroutable).toBe(1);
+  });
+
+  it("narrows to one region when the run asks for one", async () => {
+    const selection = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "WorkstreamDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: true }],
+        }, {
+          namespaceId: "ns-eu",
+          scriptName: "avalon-api-eu",
+          className: "WorkstreamDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("b"), hasStoredData: true }],
+        }],
+      }));
+      return registry.migrationTargets({ className: "WorkstreamDO", region: "eu" });
+    });
+
+    expect(selection.targets.map((target) => target.objectId)).toEqual([objectId("b")]);
+    expect(selection.matched).toBe(1);
+  });
+
+  /**
+   * An absent object's ID no longer has an object behind it, so addressing it
+   * would create an empty one — the opposite of migrating anything.
+   */
+  it("does not target an object a sweep has marked absent", async () => {
+    const selection = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: true }],
+        }],
+      }));
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [],
+        }],
+      }));
+      return registry.migrationTargets({ className: "WorkspaceDO" });
+    });
+
+    expect(selection.matched).toBe(0);
+    expect(selection.targets).toEqual([]);
+  });
+});
+
+describe("migration runs", () => {
+  it("lists the newest run first and keeps what it could not reach", async () => {
+    const runs = await withRegistry((registry) => {
+      registry.recordMigrationRun(migrationRun({ className: "WorkspaceDO" }));
+      registry.recordMigrationRun(migrationRun({
+        className: "SubstreamAgent",
+        region: "eu",
+        matched: 40,
+        dispatched: 25,
+        unroutable: 15,
+        truncated: true,
+        status: "failed",
+        errorMessage: "queue refused the batch",
+      }));
+      return registry.listMigrationRuns();
+    });
+
+    expect(runs.map((run) => run.className)).toEqual(["SubstreamAgent", "WorkspaceDO"]);
+    expect(runs[0]).toMatchObject({
+      region: "eu",
+      matched: 40,
+      dispatched: 25,
+      unroutable: 15,
+      truncated: true,
+      status: "failed",
+      errorMessage: "queue refused the batch",
+    });
+  });
+
+  it("ignores a run id it has already recorded", async () => {
+    const runs = await withRegistry((registry) => {
+      const run = migrationRun({ dispatched: 3 });
+      registry.recordMigrationRun(run);
+      registry.recordMigrationRun({ ...run, dispatched: 99 });
+      return registry.listMigrationRuns();
+    });
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.dispatched).toBe(3);
+  });
+});
+
+/**
+ * The class an operator names arrives in a request body, and the page's own
+ * list of classes is a rendering of what is forceable rather than a constraint
+ * on it — a JSON caller or a hand-edited form reaches this schema directly.
+ *
+ * A class the API Worker holds no dispatcher for would otherwise be fanned out
+ * in full, retried five times per object, and dead-lettered, while the run row
+ * recorded it as dispatched. `CrashSymbolicatorContainer` is the one that makes
+ * it concrete: the sweep enumerates it, it lives in an API script so its region
+ * resolves like any other, and nothing downstream would have stopped it.
+ */
+describe("which classes a run may name", () => {
+  it("accepts every class that runs the reporter", () => {
+    for (const className of REPORTING_CLASSES) {
+      expect(MigrationRunRequestSchema.safeParse({ className }).success).toBe(true);
+    }
+  });
+
+  it("refuses a class no Worker can migrate", () => {
+    for (const className of ["CrashSymbolicatorContainer", "MigrationRegistry", "WorkspaceScheduler"]) {
+      expect(MigrationRunRequestSchema.safeParse({ className }).success).toBe(false);
+    }
   });
 });

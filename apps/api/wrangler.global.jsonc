@@ -230,6 +230,25 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-access-revocations-dead-letter"
+      },
+      {
+        "queue": "avalon-global-migration-commands",
+        // Operator-initiated forced migrations, one message per Durable Object.
+        // The batch is the maximum and the wait is long on purpose, and neither
+        // is about latency: each message wakes one object, so a batch is a
+        // hundred cold starts this Worker takes on at once, and a full ten
+        // seconds of gathering is what keeps a fan-out over a whole class
+        // arriving as paced batches rather than as a herd. Nobody is watching
+        // an individual object land — the tracker's own page is the progress
+        // display, and it is fed by the reports the objects send.
+        //
+        // Five retries and a dead-letter queue: a migration that throws is
+        // retried, and the objects that never come good end up counted in the
+        // dead-letter queue, which is the tally of how many are stuck.
+        "max_batch_size": 100,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-migration-commands-dead-letter"
       }
     ]
   },
