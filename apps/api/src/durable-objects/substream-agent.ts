@@ -331,6 +331,21 @@ function minimumTimestamp(...timestamps: Array<number | null>): number | null {
 }
 
 /**
+ * Whether this event can have taken somebody's read access away.
+ *
+ * A work stream becoming `personal` narrows it to its participants, and losing
+ * a participant narrows it again. Both are facts this object already holds in
+ * its own SQL, which is what makes acting on them here different from the D1
+ * membership read that was removed from this path: that one asked a question
+ * only the revocation queue can answer, this one asks a question only this
+ * object can.
+ */
+function retractsReadAccess(event: ServerSocketEvent): boolean {
+  if (event.type === "workstream_scope_changed") return event.scope === "personal";
+  return event.type === "participant_removed";
+}
+
+/**
  * Take a socket out of the room and close it.
  *
  * The attachment is marked unsubscribed first, which is what {@link
@@ -2859,7 +2874,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const event = await this.commitRealtimeEvent(unsequencedEvent.data, requestedSequence);
 
     this.recordRecentEvent(event);
+    // Before the broadcast, so the event that excluded them is not the last
+    // thing they are sent. This is the transcript feed — the highest-frequency
+    // socket in the product — so it is gated on an event that can actually
+    // narrow visibility, and it reads only this object's own SQL. The D1
+    // membership query that used to sit here is gone for good; losing workspace
+    // membership is the revocation queue's job. See docs/access-revocation.md.
+    const evicted = retractsReadAccess(event) ? this.evictReadersWhoLostLocalAccess() : false;
     this.broadcast(event);
+    // After the event, not before: presence allocates a sequence of its own and
+    // this event's was allocated first, so sending the roster ahead of it would
+    // put a higher sequence on the wire before a lower one and the client would
+    // drop the event that closed the work stream. `webSocketClose` fires only
+    // for a client-initiated close, so closing here invokes nothing and the
+    // people who remain would otherwise keep seeing an evicted reader present.
+    if (evicted) {
+      const identity = this.objectStore.identity();
+      if (identity) await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
+    }
     if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(event.type)) {
       await this.scheduleBlockDashboardRefresh(event.sequence);
     }
@@ -3342,6 +3374,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * feed is the highest-frequency socket in the product, and an authorization
    * question on that path would be asked per token frame.
    */
+  /**
+   * Close the sockets of readers this work stream itself no longer admits.
+   *
+   * Object-local and synchronous: `product.canRead` reads this object's own
+   * root and participant rows. It answers "may this person read *this work
+   * stream*", which no queue message carries and no other object knows. Losing
+   * workspace membership is the separate question that {@link revokeSocketAccess}
+   * answers, and the two must not be confused for each other.
+   */
+  private evictReadersWhoLostLocalAccess(): boolean {
+    let evicted = false;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = this.readAttachment(socket);
+      if (!attachment || this.product.canRead(attachment.userId)) continue;
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+      evicted = true;
+    }
+    return evicted;
+  }
+
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
@@ -3349,7 +3401,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
       if (!attachment || attachment.userId !== request.userId) continue;
-      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      // A socket whose session is unknown is closed, not skipped. This schema
+      // alone makes `sessionId` optional — a socket accepted before the command
+      // gateway carries none — and `undefined !== "<id>"` would quietly exempt
+      // exactly the transcript feed from every logout and expiry. It cannot be
+      // shown *not* to be the revoked session, and closing it costs a
+      // reconnect where skipping it keeps a dead session reading.
+      if (request.sessionId !== null
+        && attachment.sessionId !== undefined
+        && attachment.sessionId !== request.sessionId) continue;
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
       evicted = true;
     }

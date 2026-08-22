@@ -24,6 +24,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent}.ts` | `revokeSocketAccess` on each of the four socket-holding objects. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
+| `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the pre-existing expired-session backlog revoked so the sweep starts clean, and indexes the query it runs every five minutes. |
 
 ## How it works
 
@@ -94,9 +95,11 @@ room would go on seeing an evicted reader listed as present.
 
 ## Invariants
 
-- **The queue is the only way an open socket is closed for lost access.** No
-  object polls, revalidates on a timer, or re-checks authorization while
-  publishing. Adding any of those back reintroduces a per-broadcast D1 read on
+- **The queue is the only way an open socket is closed for losing access to the
+  workspace.** No object polls, revalidates on a timer, or asks D1 anything while
+  publishing. An object still enforces its *own* visibility from its own SQL —
+  see [Boundary](#boundary) — and that is a different question, not a second
+  answer to this one. The line to hold: no D1 read on a publish path, ever. Adding any of those back reintroduces a per-broadcast D1 read on
   the hot path, and — as the changelog records — an ordering bug that silently
   dropped invalidations. If you are here because you grepped for
   `AUTHORIZATION_REVALIDATE_MS`, `SOCKET_AUTHORIZATION_REVALIDATE_MS`,
@@ -130,6 +133,11 @@ own:
 - **Admission.** Whether a socket may open at all is
   [`realtime-sockets.md`](realtime-sockets.md) and the objects' own connect
   paths. This module never re-runs admission; it only closes.
+- **Object-local visibility.** Whether one work stream still admits one reader
+  is held in that object's SQL — `WorkstreamDO.canRead`, `product.canRead` — and
+  the object enforces it itself when it publishes. No message here carries it,
+  and none should: it is not a D1 fact, and routing it through a queue would put
+  a round trip between a scope change and the reader it excludes.
 - **Authorization queries.** Membership and session validity are D1 facts owned
   by `middleware/auth.ts` and the services that write them.
 - **What flows over a socket while it is open.** That is
@@ -174,14 +182,32 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   socket.
 - **`sendBatch` caps at 100 messages**, so `publishDescendantRevocations` chunks.
   A workspace with more than 100 work streams fans out over several sends.
-- **The expiry sweep is bounded at 200 rows per run.** A backlog drains over
-  several five-minute runs rather than turning one invocation into a migration.
-- **Not covered:** work-stream-level participation and visibility retraction, and
-  block visibility changes. Those facts live in object storage rather than D1, so
-  no producer publishes them, and removing somebody from one work stream does not
-  close their socket on it — it closes on their next reconnect. Wiring them up
-  means giving the object a producer of its own; see the changelog entry for why
-  that was not done here.
+- **The expiry sweep is bounded at 200 rows per run**, which is 40 sessions a
+  minute. That is a real ceiling: a sustained expiry rate above it grows a
+  backlog indefinitely. It is sized for the steady state, where a five-minute
+  window holds a handful of expiries, and the historical backlog is not its
+  problem because migration `0091` marked it revoked once. If the ceiling is
+  ever reached the visible symptom is expired sessions staying connected longer
+  and longer; the fix is paging within one invocation under a time budget, not a
+  bigger single page.
+- **Not covered by the queue, and deliberately not left to it:** losing
+  participation in, or visibility of, one work stream. Those are facts in the
+  object's *own* SQL, not in D1, so no producer here can publish them — and the
+  object that holds them enforces them itself, synchronously, on its own publish
+  paths (`WorkstreamDO.broadcastMetadata`, `broadcastBlockDashboardEvent`, and
+  `SubstreamAgent` on an event that narrows visibility). That is not a second
+  answer to this module's question. This module answers "does this person still
+  have access to the workspace", which only D1 knows; those checks answer "does
+  this work stream still admit this reader", which only that object knows. The
+  distinction to hold on to: what was removed from those paths is the **D1**
+  read, not the object-local one.
+- **Genuinely not covered:** a block's visibility narrowing within a dashboard
+  the reader still has access to. That closes on their next reconnect.
+- **A revocation is not versioned.** A message names `(workspaceId, userId)` and
+  nothing more, so one delayed or dead-letter-replayed message can close sockets
+  belonging to a membership that was since restored. Admission decides what
+  reopens, so this costs a reconnect rather than access, but a replay procedure
+  should confirm the membership is still absent before replaying.
 
 ## Testing
 
@@ -237,6 +263,73 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-08-22 — Review pass: the queue owns workspace access, the object owns its own
+
+**What changed:** Six fixes from review, all on the mechanism this module made
+load-bearing. Revocations now dispatch ahead of the work-stream maintenance gate
+in the queue handler. `SubstreamAgent` closes a socket whose attachment carries
+no `sessionId` instead of skipping it. `removeMember`'s delete re-asserts the
+caller's own active membership in the same statement. The expiry sweep publishes
+before it marks. Migration `0091` marks every already-expired session revoked and
+indexes the sweep's query. And — the substantive one —
+`WorkstreamDO.broadcastMetadata`, `broadcastBlockDashboardEvent`, and
+`SubstreamAgent`'s publish path enforce *object-local* visibility again, which
+the first pass had removed along with the D1 read.
+
+**Why:** The first pass treated "an object must not re-check authorization
+before publishing" as one rule, and it is two. Asking **D1** whether somebody is
+still a workspace member is a question the object cannot answer, costs a round
+trip on a hot path, and produced the waterline ordering bug — that read is gone
+for good. Asking its **own SQL** whether this work stream still admits this
+reader is a question only that object can answer, is synchronous, and has no
+alternative: no queue message carries work-stream scope, because scope is not a
+D1 fact. Removing it did not delay a retraction, it stopped enforcing one — an
+excluded reader's open socket kept receiving the live transcript, title,
+description and preview until the window closed, which for a desktop left open
+is days. That is a content-visibility regression against the previous behaviour,
+not a latency trade.
+
+The other five are holes in the single mechanism. The maintenance gate threw
+before the queue was dispatched, so during maintenance — including the ordinary
+version-skew window of a rolling deploy — every revocation retried five times and
+dead-lettered while the cron kept producing more. `undefined !== "<id>"` exempted
+pre-command-gateway transcript sockets from every logout and expiry. Two owners
+removing each other concurrently both passed the guards and both deletes landed,
+leaving no owner. Marking a session revoked before publishing made a transient
+queue failure permanent. And nothing has ever deleted from `sessions`, so the
+sweep's first run would have drained years of dead sessions at a full workspace
+fan-out each, against a query no index could serve.
+
+**Considered and rejected:**
+
+- *Documenting the work-stream case as a known gap rather than fixing it*, which
+  is what the first pass did. The doc called it "takes effect on the next
+  reconnect", which described a delay; the code had stopped enforcing it
+  entirely. A note cannot stand in for a check that used to exist.
+- *Routing work-stream visibility through the queue too*, for symmetry. It puts a
+  queue round trip between a scope change and the reader it excludes, and makes
+  one object's private SQL into a message contract.
+- *Returning no children from `WorkspaceDO.revokeSocketAccess` when it closed
+  nothing*, to cut the fan-out for dead sessions. It assumes a child socket
+  cannot outlive its window's workspace socket, which nothing guarantees; the
+  seeding migration removes the same cost without betting on that.
+
+**Consequences:**
+
+- **Two questions, two mechanisms, and they must not be merged again.** A future
+  reader who deletes the `canRead` checks "because the queue handles revocation"
+  will reintroduce exactly this regression. The rule is narrower than it looks:
+  no *D1* read on a publish path.
+- **`0091` must run before the first deploy of the sweep**, or that deploy spends
+  its first hours fanning out revocations for sessions that expired years ago.
+- **A revocation is still not versioned**, so a replayed message can close
+  sockets of a membership since restored. Costs a reconnect, not access.
+- **The durable-producer gap stands**: a dropped publish on the membership path
+  is retried by nothing. Stated in Failure modes; an outbox is the fix and is not
+  built.
+
+Shipped in #229.
 
 ### 2026-08-22 — A queue is the only way an open socket loses access
 
