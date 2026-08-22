@@ -5,6 +5,7 @@ import {
   durableObjectStubForRegionalSingleton,
 } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
+import { opsNotificationsConfigured } from "../observability/ops-slack-notifier";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 /** The probe's own shape — this route owns it, so the contract lives here. */
@@ -157,6 +158,11 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
     message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
   };
+  checks.opsNotifications = opsNotificationsConfigured(c.env)
+    ? { ok: true, message: "configured" }
+    : c.env.OPS_SLACK_BOT_TOKEN?.trim() || c.env.OPS_SLACK_CHANNEL_ID?.trim()
+      ? { ok: false, message: "half configured: the bot token and the channel id are set together" }
+      : { ok: false, message: "not configured" };
   const linearValues = [
     c.env.LINEAR_OAUTH_CLIENT_ID?.trim(),
     c.env.LINEAR_OAUTH_CLIENT_SECRET?.trim(),

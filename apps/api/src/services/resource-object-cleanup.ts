@@ -23,7 +23,8 @@ function boundedCleanupErrorCode(error: unknown): string {
   return "r2_delete_failed";
 }
 
-export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<void> {
+/** Returns how many outbox rows the pass retired; the alarm reads it as progress. */
+export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<number> {
   if (!workspaceId && env.WORKSPACE_DOS) throw new Error("resource_cleanup_workspace_required");
   if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const pending = await env.DB.prepare(
@@ -33,6 +34,7 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
      LIMIT ?`,
   ).bind(MAXIMUM_CLEANUP_BATCH).all<PendingResourceObject>();
 
+  let retired = 0;
   for (const object of pending.results) {
     try {
       const active = await env.DB.prepare(
@@ -48,12 +50,14 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
         await env.DB.prepare(
           "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
         ).bind(object.workspace_id, object.object_ref).run();
+        retired += 1;
         continue;
       }
       await env.PAYLOADS.delete(object.object_ref);
       await env.DB.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(object.workspace_id, object.object_ref).run();
+      retired += 1;
     } catch (error) {
       const reason = boundedCleanupErrorCode(error);
       await env.DB.prepare(
@@ -73,10 +77,14 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
       });
     }
   }
+  return retired;
 }
 
-/** Remove unattached upload drafts from one WorkspaceDO; its SQL trigger queues R2 cleanup. */
-export async function reapExpiredDraftResources(env: Env, workspaceId: string): Promise<void> {
+/**
+ * Remove unattached upload drafts from one WorkspaceDO; its SQL trigger queues
+ * R2 cleanup. Returns how many it removed, which the alarm reads as progress.
+ */
+export async function reapExpiredDraftResources(env: Env, workspaceId: string): Promise<number> {
   env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const cutoff = new Date(
     Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000,
@@ -94,7 +102,7 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
       ORDER BY resource.created_at, resource.id
       LIMIT ?`,
   ).bind(workspaceId, cutoff, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
-  if (stale.results.length === 0) return;
+  if (stale.results.length === 0) return 0;
   await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
     `DELETE FROM resources
       WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
@@ -104,4 +112,5 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
            WHERE link.resource_id = resources.id
         )`,
   ).bind(resource.id, workspaceId, cutoff)));
+  return stale.results.length;
 }

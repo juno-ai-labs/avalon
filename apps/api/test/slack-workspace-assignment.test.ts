@@ -1,11 +1,17 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
+import {
+  runWorkspaceScheduleTarget,
+  workspaceScheduleTargets,
+  type WorkspaceScheduleContext,
+  type WorkspaceScheduleTarget,
+} from "../src/services/workspace-schedule-execution";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
@@ -1368,6 +1374,197 @@ describe("Slack ingress re-drive after reauthorization", () => {
   });
 });
 
+describe("Slack ingress maintenance reaps link challenges", () => {
+  const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+  const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
+
+  function seedChallenge(
+    database: DatabaseSync,
+    tokenHash: string,
+    expiresAt: string,
+    consumedAt: string | null = null,
+  ): void {
+    database.prepare(
+      `INSERT INTO slack_link_challenges
+         (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, consumed_at, created_at)
+       VALUES (?, ?, 'T123', 'U456', ?, ?, '2026-01-01T00:00:00.000Z')`,
+    ).run(tokenHash, CONNECTION_ID, expiresAt, consumedAt);
+  }
+
+  it("reaps a spent challenge a day later, not after the 30-day retention", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+    const soon = new Date(Date.now() + 600_000).toISOString();
+    // A day and an hour past expiry: the row the retention-bound reap kept,
+    // and the alarm counted as due, for a month.
+    seedChallenge(database, await sha256("expired-long-ago"), hoursAgo(25));
+    // An hour past expiry: still inside the grace that lets a late click be
+    // refused as expired rather than unknown.
+    seedChallenge(database, await sha256("expired-recently"), hoursAgo(1));
+    seedChallenge(database, await sha256("consumed-long-ago"), soon, hoursAgo(25));
+    seedChallenge(database, await sha256("consumed-recently"), soon, hoursAgo(1));
+    seedChallenge(database, await sha256("live"), soon);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).maintainIngress();
+
+    const kept = database.prepare("SELECT token_hash FROM slack_link_challenges").all() as { token_hash: string }[];
+    expect(kept.map((row) => row.token_hash).sort()).toEqual([
+      await sha256("consumed-recently"),
+      await sha256("expired-recently"),
+      await sha256("live"),
+    ].sort());
+  });
+
+  it("stops reporting the slack_ingress target once the spent challenge is reaped", async () => {
+    // The alarm counts a challenge as due a day after it is spent — the same
+    // horizon the reap removes it at. A reap that leaves the row behind leaves
+    // that instant in the past for as long as the row lasts, and the workspace
+    // alarm comes back for it as fast as it can: the 2026-08-22 hot loop.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    seedChallenge(database, await sha256("expired"), "2026-01-01T00:15:00.000Z");
+    const env = slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined));
+    const ctx: WorkspaceScheduleContext = {
+      env,
+      workspaceEnv: env,
+      workspaceId: WORKSPACE_ID,
+      directory: {
+        workstreamScheduleTargets: async () => ({ items: [] }),
+        plannedWorkstream: async () => null,
+      },
+    };
+    const slackIngress = (targets: WorkspaceScheduleTarget[]) =>
+      targets.filter((target) => target.kind === "maintenance" && target.id === "slack_ingress");
+
+    // A day after expiry, rounded up to the next whole second.
+    expect(slackIngress(await workspaceScheduleTargets(ctx)))
+      .toEqual([{ kind: "maintenance", id: "slack_ingress", dueAt: "2026-01-02T00:15:01Z" }]);
+
+    await runWorkspaceScheduleTarget(
+      ctx,
+      { kind: "maintenance", id: "slack_ingress", dueAt: "2026-01-02T00:15:01Z" },
+      new Date(),
+    );
+
+    expect(slackIngress(await workspaceScheduleTargets(ctx))).toEqual([]);
+  });
+});
+
+describe("Slack ingress jobs given up on", () => {
+  // Not credential-shaped: Gitleaks' Slack token rules want digit groups.
+  const OPS_BOT_TOKEN = "xoxb-ops-test";
+  const OPS_CHANNEL_ID = "C0OPSTEST";
+  const OPS_SECRETS = { OPS_SLACK_BOT_TOKEN: OPS_BOT_TOKEN, OPS_SLACK_CHANNEL_ID: OPS_CHANNEL_ID };
+
+  /**
+   * Stub `fetch` so the operator notifier's posts are captured and everything
+   * else falls through. The product code posts to `chat.postMessage` too; the
+   * operator post is the one carrying the operator app's token.
+   */
+  function captureOpsPosts(
+    fallback: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  ): string[] {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (authorization === `Bearer ${OPS_BOT_TOKEN}`) {
+        const body = JSON.parse(String(init?.body)) as { channel: string; text: string };
+        expect(body.channel).toBe(OPS_CHANNEL_ID);
+        posted.push(body.text);
+        return new Response(JSON.stringify({ ok: true }));
+      }
+      return fallback(input, init);
+    }));
+    return posted;
+  }
+
+  it("posts one ops notification when a job reaches the attempt ceiling", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).run();
+    insertSlackEventJob(database, "event:exhausted", appMention("EvExhausted"));
+    const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
+    const failure = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { APP_ENV: "production", ...OPS_SECRETS },
+    );
+
+    await expect(new SlackAgentService(env).processQueuedIngress("event:exhausted"))
+      .rejects.toThrow(/has not granted slack\.agent/iu);
+
+    expect(database.prepare(
+      "SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:exhausted'",
+    ).get()).toEqual({ attempt_count: 20 });
+    // The row first, then the notice.
+    expect(failure).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_ingress_job_exhausted",
+      job_id: "event:exhausted",
+      code: "unsupported_capability",
+    }));
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("`slack_ingress_job_exhausted`");
+    expect(posted[0]).toContain("• job_id: event:exhausted");
+    expect(posted[0]).toContain("• code: unsupported_capability");
+    expect(posted[0]).toContain("• workspace_id: 22222222-2222-4222-8222-222222222222");
+
+    // The Queue redelivers a message whose processing threw. A job at the
+    // ceiling is no longer claimable, so the redelivery is acknowledged
+    // without running, pinning, or reporting it again.
+    await expect(new SlackAgentService(env).processQueuedIngress("event:exhausted")).resolves.toBeUndefined();
+
+    expect(database.prepare(
+      "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:exhausted'",
+    ).get()).toEqual({ status: "failed", attempt_count: 20 });
+    expect(posted).toHaveLength(1);
+  });
+
+  it("stays quiet for a failure the queue will retry", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:expired", {
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: "EvExpired",
+      event: { type: "channel_created", channel: { id: "CNEW", name: "new-channel" } },
+    });
+    const posted = captureOpsPosts(async () => new Response(JSON.stringify({
+      ok: false,
+      error: "token_expired",
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const env = slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { APP_ENV: "production", ...OPS_SECRETS },
+    );
+
+    await expect(new SlackAgentService(env).processQueuedIngress("event:expired"))
+      .rejects.toMatchObject({ message: "token_expired" });
+
+    expect(database.prepare(
+      "SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:expired'",
+    ).get()).toEqual({ attempt_count: 1 });
+    expect(posted).toEqual([]);
+  });
+});
+
 function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknown): void {
   database.prepare(
     `INSERT INTO slack_ingress_jobs
@@ -1438,7 +1635,7 @@ function appMention(eventId: string): Record<string, unknown> {
 function slackTaskApiFetcher(
   database: DatabaseSync,
   reactionResponse: Record<string, unknown>,
-): { fetcher: ReturnType<typeof vi.fn>; methods: string[] } {
+): { fetcher: Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>; methods: string[] } {
   const methods: string[] = [];
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -1496,8 +1693,9 @@ function slackMembershipEnvironment(
   credentialsKey: string,
   send: (body: unknown) => Promise<void>,
   objectStores?: Map<string, DatabaseSync>,
+  overrides: Partial<Env> = {},
 ): Env {
-  return createTestEnv({
+  return { ...createTestEnv({
     DB: sqliteD1(database),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     AVALON_REGION: "global",
@@ -1511,7 +1709,7 @@ function slackMembershipEnvironment(
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
-  });
+  }), ...overrides };
 }
 
 
