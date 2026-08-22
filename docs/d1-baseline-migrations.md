@@ -32,10 +32,14 @@ boundary, or changing how a local database is created.
 migration sorted at or below that file into an in-memory SQLite database, reads
 the resulting schema and seeded rows back out, and renders them as one file.
 
-The boundary is a **file name, not a number**. Six sequence numbers in this
-repository carry two files each, so a numeric comparison would take one of a pair
-and leave the other pending forever on a baselined database while production ran
-both.
+The boundary is a **file name**, ordered the way Wrangler orders migrations —
+`compareMigrationPaths` replicates its comparator, which parses the leading
+integer and compares numerically, falling back to a string compare only when the
+numbers tie. That fallback is what keeps the six doubled sequence numbers in this
+repository together; the numeric half is what stops an unpadded name from landing
+on the wrong side of a boundary. Sorting as plain strings agrees with Wrangler for
+every zero-padded name and disagrees the moment one is not, which is a divergence
+nothing else in the tooling can see.
 
 The chain is applied **twice, about a second apart**. Two control rows are seeded
 with `datetime('now')`, and comparing two independent replays is how a column the
@@ -163,6 +167,19 @@ for one.
 
 ## Failure modes and limits
 
+- **Seeded rows are inserted in foreign-key order, and a cycle is refused.**
+  `sqlite_schema` order is alphabetical, which has nothing to do with what
+  references what, so a child whose name sorts before its parent's was inserted
+  first and the file died on `FOREIGN KEY constraint failed` — naming no table,
+  and partway through, leaving a database with schema, no ledger, and no way
+  forward but a manual drop. Only seeded tables are ordered; an empty parent
+  constrains nothing. A cycle among seeded tables has no working order, since D1
+  does not allow `PRAGMA defer_foreign_keys`, so generation stops.
+- **Volatility is decided by value, and BLOBs are compared by content.** SQLite
+  returns a fresh `Uint8Array` per read, so `!==` reported every seeded blob as
+  moving in every row — and the generator refused, citing a `datetime('now')`
+  that was not there. Any future value type read back as an object needs the
+  same treatment.
 - **The guard fires.** The command fails with
   `CHECK constraint failed: baseline_requires_empty_database` and nothing of the
   baseline's schema is created. The database is left as it was — apart from the
@@ -202,6 +219,19 @@ for one.
   fails loudly if someone silently fixes it.
 - **`pnpm db:baseline:verify` needs Cloudflare credentials** and is not a CI
   gate. The recorded fingerprint is what keeps its result enforced.
+- **Ordering is Wrangler's, not JavaScript's.** Anything that compares migration
+  names with `<`, `>` or a bare `.sort()` is wrong for an unpadded filename:
+  `89_backfill.sql` is below `0090_boundary.sql` for Wrangler and above it for a
+  string compare. When those two disagree, the subsumed set never changes, so the
+  manifest digest never changes, the baseline stays "usable", and the database
+  silently differs from a replay — the digest cannot be the backstop for a
+  hazard it cannot see. Use `compareMigrationPaths`.
+- **State the chain leaves that is not schema and not a row still has to be
+  reproduced.** `sqlite_sequence` is the live example: AUTOINCREMENT never
+  reissues an id, so re-inserting the surviving rows leaves the counter at the
+  highest *surviving* id and a baselined database hands out ids the chain
+  retired. It is snapshotted explicitly, because it is excluded from the object
+  list as internal.
 - **A migration inserted below what a database already ran gives it a different
   schema.** Wrangler applies whatever is missing in sort order without regard to
   what ran before, so a file added below an applied one runs late on an old
@@ -214,6 +244,13 @@ for one.
   as `outOfOrder` and the migrate script prints it; it is not refused, because
   the repair is a decision about migrations — renumber, or accept — that the
   tooling cannot make.
+- **Volatility detection has a one-second window.** The two replays are
+  separated by 1.1s, so anything coarser than a second — `date('now')`, a
+  month or billing-period stamp, a truncated day — is identical across both runs
+  and frozen into the file as a literal. Widening the gap does not fix it: the
+  detector can only see what changes between two runs. A seeded column whose
+  value is derived from a coarse clock has to be recognised by the person
+  writing the migration, not by the generator.
 - **Regenerating is not free of judgement.** The generator will happily produce a
   baseline from a chain that no longer matches production. Verify against remote
   before recording a new fingerprint.
@@ -286,6 +323,47 @@ the migrations. That is an incident in the schema, not in the baseline; do not
 regenerate to make it pass.
 
 ## Changelog
+
+### 2026-08-22 — Order migrations as Wrangler does, and reproduce the state a snapshot was losing
+
+**What changed:** `compareMigrationPaths` replicates Wrangler's own comparator
+and is used everywhere migration names are ordered or compared. Seeded rows are
+emitted in foreign-key order and a cycle among them is refused. `sqlite_sequence`
+is snapshotted and restored. Volatility compares BLOBs by content. Virtual tables
+stop generation instead of being rendered alongside the shadow tables they create
+for themselves.
+
+**Why:** an adversarial pass over the generator found five ways an ordinary
+migration produces a wrong or unappliable database, none of which any test or
+guard caught. The worst was the ordering: this tooling compared names as strings
+while Wrangler compares the leading integer first, so a single unpadded filename
+sits below a boundary for Wrangler and above it for us. The subsumed set does not
+change, so the manifest digest does not change, so the baseline stays usable and
+the database silently diverges from a replay — and the `outOfOrder` check written
+for exactly that hazard missed it because it compared as strings too. Two
+docstrings claimed protection that did not exist: the digest's "however that file
+sorts", and `assertEveryObjectRenderable` naming migrations 0036/0037 and
+claiming the generator stops on FTS5. It did not; it rendered them.
+
+**Considered and rejected:** *enforcing zero-padded filenames* instead of
+matching Wrangler's order. That polices one shape of the divergence rather than
+removing it, leaves the tooling and Wrangler disagreeing in principle, and would
+reject a name Wrangler handles perfectly well. Matching the comparator makes the
+two agree by construction. Also *refusing when a table uses AUTOINCREMENT*
+rather than snapshotting `sqlite_sequence` — D1 permits writing that table
+directly (verified against local D1), so refusing would block a legitimate
+feature to avoid work that turned out to be four lines.
+
+**Consequences:** nothing may compare migration names with `<`, `>` or a bare
+`.sort()`; `compareMigrationPaths` is the only ordering, and it is a copy of
+Wrangler's, so if Wrangler changes its comparator this has to follow rather than
+be argued with. Anything the chain leaves behind that is neither schema nor a
+table row — `sqlite_sequence` today — has to be snapshotted explicitly, because
+the internal-table filter hides exactly that class from the object list. Values
+read back as objects need content comparison, not `!==`. The current baseline is
+byte-identical after all five fixes: every one of these was latent, and the
+tests, not the artifact, are what changed.
+
 
 ### 2026-08-21 — One migrate script, discovered regions, and a calculated baseline
 
