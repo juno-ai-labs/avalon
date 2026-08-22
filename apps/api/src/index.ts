@@ -3,7 +3,7 @@ import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeAccessRevocationQueue } from "./queues/access-revocation-consumer";
-import { reapExpiredSessions } from "./services/access-revocation";
+import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reconcileDigestDefaults } from "./services/digest-service";
@@ -148,7 +148,7 @@ export default {
     // Dispatch by queue: access revocations are a separate resource because
     // they are the only path from a retraction to an open socket, and must not
     // wait behind an activity backlog. See docs/access-revocation.md.
-    if (batch.queue.includes("access-revocations")) {
+    if (isAccessRevocationQueue(batch.queue)) {
       return consumeAccessRevocationQueue(batch, env);
     }
     return consumeActivityQueue(batch, env);
