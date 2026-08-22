@@ -438,217 +438,108 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T) =>
 }
 
 async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventRow): Promise<ModelSource | null> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  const workspace = authority.phase === "durable_object_open"
-    ? await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-    )
-    : null;
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
   if (event.source_kind === "activity") {
-    if (workspace) {
-      const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
-      const durable = WorkspaceConnectorEventSchema.nullable().parse(
-        await workspace.connectorEvent({ workspaceId, eventId: event.source_id }),
-      );
-      if (!durable) return null;
-      const activity = durable.activity;
-      const connection = await workspaceEnv.DB.prepare(
-        `SELECT provider_account_id FROM connector_connections
-          WHERE id = ? AND workspace_id = ? LIMIT 1`,
-      ).bind(activity.connectionId, workspaceId).first<{ provider_account_id: string | null }>();
-      const metadata = activity.metadata;
-      const actor = boundedRecord(activity.actor);
-      const subject = boundedRecord(activity.subject);
-      let hydratedText = "";
-      let hydratedCanonicalUrl: string | null = null;
-      let hydratedPeople: Array<Record<string, unknown>> = [];
-      if (
-        ["notion", "granola"].includes(activity.provider)
-        && activity.providerResourceId !== null
-        && activity.resourceType !== null
-      ) {
-        try {
-          const hydrated = await hydrateConnectorActivitySource(workspaceEnv, {
-            workspaceId,
-            connectionId: activity.connectionId,
-            providerResourceId: activity.providerResourceId,
-            resourceType: activity.resourceType,
-          });
-          hydratedText = hydrated == null ? "" : JSON.stringify(hydrated).slice(0, 8_000);
-          if (activity.provider === "granola") {
-            const hydratedRecord = boundedRecord(hydrated);
-            hydratedCanonicalUrl = [hydratedRecord.web_url, hydratedRecord.webUrl, hydratedRecord.url]
-              .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null;
-            hydratedPeople = granolaHydratedPeople(
-              hydrated,
-              connection?.provider_account_id ?? null,
-            );
-          }
-        } catch (error) {
-          if (isTransientSourceHydrationError(error)) throw error;
-          logWarn(env, "work_opportunity_source_hydration_failed", {
-            activity_id: event.source_id,
-            provider: activity.provider,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      }
-      const explicitPeople = (activity.externalPeople ?? []).slice(0, 100);
-      return {
-        id: event.source_id,
-        kind: "activity",
-        provider: activity.provider,
-        providerTenantId: connection?.provider_account_id ?? null,
-        connectionId: activity.connectionId,
-        title: activity.title.slice(0, 1_000),
-        summary: activity.summary.slice(0, 3_000),
-        text: (hydratedText || activity.textSnippet).slice(0, 8_000),
-        actor,
-        subject,
-        externalPeople: explicitPeople.length > 0 || hydratedPeople.length > 0
-          ? [...explicitPeople, ...hydratedPeople].slice(0, 100)
-          : deriveExternalPeople(activity.provider, connection?.provider_account_id ?? null, actor, subject),
-        entityKeys: activity.entityKeys.slice(0, 20).map((item) => item.slice(0, 200)),
-        canonicalUrl: [hydratedCanonicalUrl, metadata.canonicalUrl, metadata.canonical_url, metadata.url]
-          .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null,
-        workstreamId: null,
-        occurredAt: activity.occurredAt,
-      };
-    }
-    const row = await env.DB.prepare(
-      `SELECT a.*, c.provider_account_id
-       FROM activities a JOIN connector_connections c ON c.id = a.connection_id
-       WHERE a.id = ? AND a.workspace_id = ? LIMIT 1`,
-    ).bind(event.source_id, workspaceId).first<Record<string, unknown>>();
-    if (!row) return null;
-    const metadata = parseRecord(row.metadata_json);
-    const actor = boundedRecord(row.actor_json);
-    const subject = boundedRecord(row.subject_json);
-    const explicitPeople = boundedArray(row.external_people_json);
+    const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
+    const durable = WorkspaceConnectorEventSchema.nullable().parse(
+      await workspace.connectorEvent({ workspaceId, eventId: event.source_id }),
+    );
+    if (!durable) return null;
+    const activity = durable.activity;
+    const connection = await workspaceEnv.DB.prepare(
+      `SELECT provider_account_id FROM connector_connections
+        WHERE id = ? AND workspace_id = ? LIMIT 1`,
+    ).bind(activity.connectionId, workspaceId).first<{ provider_account_id: string | null }>();
+    const metadata = activity.metadata;
+    const actor = boundedRecord(activity.actor);
+    const subject = boundedRecord(activity.subject);
     let hydratedText = "";
     let hydratedCanonicalUrl: string | null = null;
     let hydratedPeople: Array<Record<string, unknown>> = [];
     if (
-      ["notion", "granola"].includes(String(row.provider))
-      && typeof row.provider_resource_id === "string"
-      && typeof row.resource_type === "string"
+      ["notion", "granola"].includes(activity.provider)
+      && activity.providerResourceId !== null
+      && activity.resourceType !== null
     ) {
       try {
-        const hydrated = await hydrateConnectorActivitySource(env, {
+        const hydrated = await hydrateConnectorActivitySource(workspaceEnv, {
           workspaceId,
-          connectionId: String(row.connection_id),
-          providerResourceId: row.provider_resource_id,
-          resourceType: row.resource_type,
+          connectionId: activity.connectionId,
+          providerResourceId: activity.providerResourceId,
+          resourceType: activity.resourceType,
         });
         hydratedText = hydrated == null ? "" : JSON.stringify(hydrated).slice(0, 8_000);
-        if (String(row.provider) === "granola") {
+        if (activity.provider === "granola") {
           const hydratedRecord = boundedRecord(hydrated);
           hydratedCanonicalUrl = [hydratedRecord.web_url, hydratedRecord.webUrl, hydratedRecord.url]
             .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null;
           hydratedPeople = granolaHydratedPeople(
             hydrated,
-            row.provider_account_id == null ? null : String(row.provider_account_id),
+            connection?.provider_account_id ?? null,
           );
         }
       } catch (error) {
         if (isTransientSourceHydrationError(error)) throw error;
         logWarn(env, "work_opportunity_source_hydration_failed", {
           activity_id: event.source_id,
-          provider: row.provider,
+          provider: activity.provider,
           reason: error instanceof Error ? error.message : "unknown",
         });
       }
     }
+    const explicitPeople = (activity.externalPeople ?? []).slice(0, 100);
     return {
       id: event.source_id,
       kind: "activity",
-      provider: String(row.provider),
-      providerTenantId: row.provider_account_id == null ? null : String(row.provider_account_id),
-      connectionId: String(row.connection_id),
-      title: String(row.title).slice(0, 1_000),
-      summary: String(row.summary ?? "").slice(0, 3_000),
-      text: (hydratedText || String(row.text_snippet ?? "")).slice(0, 8_000),
+      provider: activity.provider,
+      providerTenantId: connection?.provider_account_id ?? null,
+      connectionId: activity.connectionId,
+      title: activity.title.slice(0, 1_000),
+      summary: activity.summary.slice(0, 3_000),
+      text: (hydratedText || activity.textSnippet).slice(0, 8_000),
       actor,
       subject,
       externalPeople: explicitPeople.length > 0 || hydratedPeople.length > 0
         ? [...explicitPeople, ...hydratedPeople].slice(0, 100)
-        : deriveExternalPeople(String(row.provider), row.provider_account_id == null ? null : String(row.provider_account_id), actor, subject),
-      entityKeys: parseArray(row.entity_keys_json)
-        .filter((item): item is string => typeof item === "string")
-        .slice(0, 20)
-        .map((item) => item.slice(0, 200)),
+        : deriveExternalPeople(activity.provider, connection?.provider_account_id ?? null, actor, subject),
+      entityKeys: activity.entityKeys.slice(0, 20).map((item) => item.slice(0, 200)),
       canonicalUrl: [hydratedCanonicalUrl, metadata.canonicalUrl, metadata.canonical_url, metadata.url]
         .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null,
       workstreamId: null,
-      occurredAt: String(row.occurred_at),
-    };
-  }
-  if (workspace) {
-    const activity = await workspace.activityEventSource({
-      workspaceId,
-      sourceKind: "workstream_message",
-      sourceId: event.source_id,
-    });
-    if (!activity?.audienceWorkstreamId) return null;
-    const author = activity.actorUserId
-      ? await env.DB.prepare("SELECT id, name, email FROM users WHERE id = ? LIMIT 1")
-        .bind(activity.actorUserId).first<{ id: string; name: string; email: string }>()
-      : null;
-    return {
-      id: event.source_id,
-      kind: "message",
-      provider: "avalon",
-      providerTenantId: workspaceId,
-      connectionId: null,
-      title: activity.title,
-      summary: "A workspace member mentioned someone in an Avalon work stream.",
-      text: activity.body.slice(0, 8_000),
-      actor: author ?? { id: activity.actorUserId, name: activity.actorLabel },
-      subject: {},
-      externalPeople: [],
-      entityKeys: [activity.audienceWorkstreamId],
-      canonicalUrl: null,
-      workstreamId: activity.audienceWorkstreamId,
       occurredAt: activity.occurredAt,
     };
   }
-  const row = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT activity.source_id AS id, activity.body AS text_content,
-              activity.occurred_at AS created_at,
-              activity.audience_workstream_id AS workstream_id,
-              activity.title AS workstream_title,
-              user.id AS author_id, user.name AS author_name, user.email AS author_email
-         FROM activity_events activity
-         LEFT JOIN users user ON user.id = activity.actor_user_id
-        WHERE activity.workspace_id = ?2 AND activity.source_id = ?1
-          AND activity.source_kind = 'workstream_message'
-          AND activity.audience_workstream_id IS NOT NULL LIMIT 1`
-    : `SELECT m.id, m.text_content, m.created_at, m.workstream_id, w.title AS workstream_title,
-              u.id AS author_id, u.name AS author_name, u.email AS author_email
-         FROM messages m JOIN workstreams w ON w.id = m.workstream_id
-         LEFT JOIN users u ON u.id = m.author_user_id
-        WHERE m.id = ?1 AND m.workspace_id = ?2 LIMIT 1`,
-  ).bind(event.source_id, workspaceId).first<Record<string, unknown>>();
-  if (!row) return null;
+  const activity = await workspace.activityEventSource({
+    workspaceId,
+    sourceKind: "workstream_message",
+    sourceId: event.source_id,
+  });
+  if (!activity?.audienceWorkstreamId) return null;
+  const author = activity.actorUserId
+    ? await env.DB.prepare("SELECT id, name, email FROM users WHERE id = ? LIMIT 1")
+      .bind(activity.actorUserId).first<{ id: string; name: string; email: string }>()
+    : null;
   return {
     id: event.source_id,
     kind: "message",
     provider: "avalon",
     providerTenantId: workspaceId,
     connectionId: null,
-    title: String(row.workstream_title),
+    title: activity.title,
     summary: "A workspace member mentioned someone in an Avalon work stream.",
-    text: String(row.text_content).slice(0, 8_000),
-    actor: { id: row.author_id, name: row.author_name, email: row.author_email },
+    text: activity.body.slice(0, 8_000),
+    actor: author ?? { id: activity.actorUserId, name: activity.actorLabel },
     subject: {},
     externalPeople: [],
-    entityKeys: [String(row.workstream_id)],
+    entityKeys: [activity.audienceWorkstreamId],
     canonicalUrl: null,
-    workstreamId: String(row.workstream_id),
-    occurredAt: String(row.created_at),
+    workstreamId: activity.audienceWorkstreamId,
+    occurredAt: activity.occurredAt,
   };
 }
 

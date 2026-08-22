@@ -25,52 +25,25 @@ them were covering unreachable code.
 
 ---
 
-## `loadSource` reads a table migration 0090 dropped
+## Resolved, and kept briefly as a warning about this file's own method
 
-**Severity:** wrong-answer
+Two entries lived here and were deleted within the hour, both because a closer
+read turned "live bug" into "dead code".
 
-**Observed.** `services/work-opportunity-service.ts` `loadSource` selects
-`FROM activity_events` for a `workstream_message` source, on the
-`durable_object_open` arm — the live one. `activity_events` was dropped from
-regional D1 by `packages/db/migrations/0090_drop_legacy_product_tables.sql:540`,
-and it is not in `WORKSPACE_LOCAL_TABLES`, so a routed handle would not reach it
-either. The `env` at that call site is the plain Worker env, unrouted.
+`loadSource` in `work-opportunity-service.ts` appeared to query the dropped
+`activity_events` table on its live arm, for the `'message'` batch events that
+`enqueueMentionOpportunitySnapshot` really does produce. It does not: the
+`if (workspace)` block above it returns first, and `workspace` is non-null
+exactly when the authority is open. Both halves of the ternary below it were
+unreachable, and are deleted. Slack's `assignWorkspaceSessions` was the same
+shape and is deleted too.
 
-**Why it is suspicious.** Every other `activity_events` reader in the tree was
-on a legacy arm and has been deleted. This one is on the *live* arm, so if the
-branch is reachable it raises `no such table: activity_events` rather than
-returning a source. The function returns `ModelSource | null`, and callers treat
-`null` as "nothing to summarise" — so a throw here is not a quiet degradation,
-it fails the opportunity batch.
-
-**What would settle it.** Whether any `opportunity_batch_events` row is written
-with `source_kind = 'workstream_message'` post-cutover. If none is, the branch is
-dead and should be deleted with its sibling. If some are, this is a live failure
-and the query needs to move to whatever now owns work-stream messages. Grep the
-producers of that table; the answer is in what they set `source_kind` to.
-
----
-
-## Slack workspace-session assignment spans two objects in one statement
-
-**Severity:** wrong-answer (if reachable)
-
-**Observed.** `services/slack-agent-service.ts` `assignWorkspaceSessions` has a
-fall-through arm that runs one `INSERT INTO workstream_participants … SELECT …
-FROM slack_agent_sessions`. `workstream_participants` belongs to the work-stream
-object; `slack_agent_sessions` is defined only in
-`durable-objects/workspace-domain-schema.ts`. Both were dropped from D1 by 0090
-(`:460`, `:483`). No database anywhere holds both.
-
-**Why it is suspicious.** It cannot succeed on any routing path: unrouted it
-hits two dropped tables, work-stream-routed it fails on
-`slack_agent_sessions`, workspace-routed it is handed down to the work-stream
-port and fails the same way.
-
-**What would settle it.** It sits below `if (authority.phase ===
-"durable_object_open") { … return }`, so it is unreachable wherever 0090 has
-applied — which is everywhere supported. Deleting it is the resolution, and it
-is in scope for the dead-arm sweep. Entry stays until that deletion lands.
+**The method that produced both false alarms was tracing a table to a query and
+stopping.** What settled them was tracing the *control flow* to the query — the
+early return, and the guard that makes it unconditional. That is the same
+mistake, in the same file, that this repository's own PRD made about five
+statements at once. Assume a suspicious query is reachable only after reading
+everything above it that can return.
 
 ---
 
