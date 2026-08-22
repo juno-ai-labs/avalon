@@ -28,7 +28,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   compareMigrationPaths,
@@ -49,6 +49,7 @@ import {
   assertRegionalEnvFilesExist,
   inspectDatabase,
   inspectForPlan,
+  pnpmExecutable,
   loadCatalog,
   parseArguments,
   resolveTargets,
@@ -490,6 +491,48 @@ test("regions come from the Wrangler configs that actually own a migration histo
   assert.ok(!testConfig.d1_databases.some((entry) => entry.migrations_dir));
 });
 
+/** Where `../../packages/db/migrations` lands for a throwaway `apps/api`. */
+function sharedChain(apiDirectory) {
+  return resolve(apiDirectory, "../../packages/db/migrations");
+}
+
+test("a region whose migrations_dir is a different chain is refused", () => {
+  // `migrations_dir` is what Wrangler applies; everything here plans against
+  // `packages/db/migrations` — the baseline, its ledger rows, the digest, the
+  // pending count. A region naming a different directory would be given this
+  // chain's baseline and then have another chain applied on top of it, which no
+  // later check would notice because each half is internally consistent.
+  const directory = mkdtempSync(join(tmpdir(), "avalon-chain-"));
+  try {
+    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+      d1_databases: [{ binding: "DB", migrations_dir: "../../other/migrations" }],
+    }), "utf8");
+    assert.throws(
+      () => discoverRegions(directory, { migrationsDirectory: sharedChain(directory) }),
+      /points migrations_dir at \.\.\/\.\.\/other\/migrations/u,
+    );
+
+    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+      d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations" }],
+    }), "utf8");
+    assert.deepEqual(
+      discoverRegions(directory, { migrationsDirectory: sharedChain(directory) }).map((entry) => entry.region),
+      ["eu"],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the repository's own configs all name the shared chain", () => {
+  // The seam above lets a test say which chain a throwaway tree shares; this is
+  // the one that holds the real configs to the real directory.
+  assert.deepEqual(
+    discoverRegions().map((entry) => entry.region),
+    ["eu", "global"],
+  );
+});
+
 test("a new region config is discovered without any list being edited", () => {
   const directory = mkdtempSync(join(tmpdir(), "avalon-regions-"));
   try {
@@ -503,7 +546,7 @@ test("a new region config is discovered without any list being edited", () => {
       d1_databases: [{ binding: "DB" }],
     }), "utf8");
     assert.deepEqual(
-      discoverRegions(directory).map((entry) => entry.region),
+      discoverRegions(directory, { migrationsDirectory: sharedChain(directory) }).map((entry) => entry.region),
       ["apac", "global"],
     );
   } finally {
@@ -529,6 +572,34 @@ test("a URL inside a config string is not mistaken for a comment", () => {
   assert.deepEqual(JSON.parse(stripJsonComments(source)), { a: "https://with-avalon.com/app", c: 1 });
   const real = stripJsonComments(readFileSync(join(API_DIRECTORY, "wrangler.global.jsonc"), "utf8"));
   assert.ok(JSON.parse(real).routes?.length > 0, "the real config must still parse with its routes intact");
+});
+
+test("pnpm is launched through the shim its platform installs", () => {
+  // `execFile` and `spawn` run an executable directly rather than through a
+  // shell, and on Windows the installed entry point is `pnpm.cmd` — so a bare
+  // "pnpm" is not found there. `scripts/dev-regional-api.mjs` already knew this;
+  // both D1 scripts now share one answer instead of each carrying their own.
+  assert.equal(pnpmExecutable("win32"), "pnpm.cmd");
+  assert.equal(pnpmExecutable("linux"), "pnpm");
+  assert.equal(pnpmExecutable("darwin"), "pnpm");
+});
+
+test("a trailing comma is accepted, because Wrangler accepts it", () => {
+  // Wrangler reads these files with a real JSONC parser, so a trailing comma is
+  // valid input rather than a mistake. Discovery parses every wrangler.*.jsonc
+  // before choosing a region, so rejecting one would fail local migration,
+  // hosted migration and baseline verification for every region at once.
+  const source = `{
+    "d1_databases": [
+      { "binding": "DB", "migrations_dir": "../../packages/db/migrations", },
+    ],
+  }`;
+  assert.deepEqual(JSON.parse(stripJsonComments(source)), {
+    d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations" }],
+  });
+  // A comma inside a string is data, and a comment may sit between the comma
+  // and the bracket that makes it trailing.
+  assert.deepEqual(JSON.parse(stripJsonComments('{"a": "x,", "b": [1, /* c */ ]}')), { a: "x,", b: [1] });
 });
 
 test("a string ending in an escaped backslash does not swallow its own closing quote", () => {
@@ -1308,12 +1379,13 @@ test("a region declaring its own migrations_table is refused rather than silentl
     writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "custom_ledger" }],
     }), "utf8");
-    assert.throws(() => discoverRegions(directory), /sets migrations_table to "custom_ledger"/u);
+    const options = { migrationsDirectory: sharedChain(directory) };
+    assert.throws(() => discoverRegions(directory, options), /sets migrations_table to "custom_ledger"/u);
 
     writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "d1_migrations" }],
     }), "utf8");
-    assert.deepEqual(discoverRegions(directory).map((entry) => entry.region), ["eu"],
+    assert.deepEqual(discoverRegions(directory, options).map((entry) => entry.region), ["eu"],
       "spelling out the default explicitly is fine");
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -525,17 +525,41 @@ const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u;
  * and the fingerprint reads `sqlite_schema` and never a row. So the assumption
  * is asserted here, at generation, where the message can name the column and
  * say what the renderer needs to learn.
+ *
+ * The shape alone does not prove it. `datetime('now', '+1 day')` produces the
+ * same `YYYY-MM-DD HH:MM:SS`, passes a shape test, and is then written back as
+ * `datetime('now')` — a value silently a day earlier than a replay's, in a
+ * column whose whole purpose was to hold a date the chain computed. So the
+ * value is also required to *be* roughly now: the snapshot was taken seconds
+ * ago, so anything an offset modifier could shift it by is far outside
+ * `toleranceMs` while a slow chain replay is comfortably inside it. An offset
+ * smaller than the tolerance stays undetectable, which is the same limitation
+ * the 1.1-second replay gap has and is documented with it.
  */
-export function assertVolatileValuesAreTimestamps(rows, volatileColumns) {
+export function assertVolatileValuesAreTimestamps(rows, volatileColumns, {
+  now = Date.now(),
+  toleranceMs = 10 * 60 * 1000,
+} = {}) {
   for (const [table, columns] of Object.entries(volatileColumns)) {
     for (const row of rows[table] ?? []) {
       for (const column of columns) {
         const value = row[column];
-        if (typeof value === "string" && SQLITE_DATETIME.test(value)) continue;
+        if (typeof value !== "string" || !SQLITE_DATETIME.test(value)) {
+          throw new Error(
+            `${table}.${column} is volatile but holds ${JSON.stringify(value)}, which `
+            + "datetime('now') does not produce. renderBaselineSql would rewrite it as a text "
+            + "timestamp and change its type. Teach the renderer that column's expression.",
+          );
+        }
+        // `datetime()` renders UTC without a zone, so it is read back as one.
+        const drift = Math.abs(Date.parse(`${value.replace(" ", "T")}Z`) - now);
+        if (drift <= toleranceMs) continue;
         throw new Error(
-          `${table}.${column} is volatile but holds ${JSON.stringify(value)}, which `
-          + "datetime('now') does not produce. renderBaselineSql would rewrite it as a text "
-          + "timestamp and change its type. Teach the renderer that column's expression.",
+          `${table}.${column} is volatile and holds ${JSON.stringify(value)}, which is `
+          + `${Math.round(drift / 1000)}s from now — so the chain computes it with a modifier `
+          + "(`datetime('now', '+1 day')` and the like), not plain datetime('now'). "
+          + "renderBaselineSql only writes datetime('now'), which would silently move the value. "
+          + "Teach the renderer that column's expression.",
         );
       }
     }
@@ -634,13 +658,13 @@ export function assertSeededTextIsIntact(rows, byteLengths = {}) {
   }
 }
 
-export function renderBaselineSql({ through, files, digest, snapshot, volatileColumns = {} }) {
+export function renderBaselineSql({ through, files, digest, snapshot, volatileColumns = {}, now = Date.now() }) {
   const tables = snapshot.objects.filter((object) => object.type === "table");
   const indexes = snapshot.objects.filter((object) => object.type === "index");
   const triggers = snapshot.objects.filter((object) => object.type === "trigger");
 
   assertEveryObjectRenderable(snapshot.objects);
-  assertVolatileValuesAreTimestamps(snapshot.rows, volatileColumns);
+  assertVolatileValuesAreTimestamps(snapshot.rows, volatileColumns, { now });
   assertSeededTextIsIntact(snapshot.rows, snapshot.byteLengths);
 
   const sections = [];
