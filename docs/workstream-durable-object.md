@@ -32,7 +32,7 @@ serve workspace product state or transcripts after cutover.
 | --- | --- |
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, work-stream, and substream object names. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative workspace product database, work-stream directory, hibernating synchronization/command socket, typed product SQL RPC, local product alarm, bounded topic replay, and one-time workspace-ticket receipts. |
-| `apps/api/src/durable-objects/workspace-socket-authorization.ts` | The one question a workspace-socket sweep asks D1 — which connected session-and-user pairs may still hold a socket — batched under D1's bound-parameter limit. Separate from the object so it can be proved against the checked-in migrations in the Node suite. |
+| `apps/api/src/queues/access-revocation-consumer.ts`, `apps/api/src/services/access-revocation.ts` | The only way an open socket is closed for lost access: a queue message per object, and the `revokeSocketAccess` walk it drives. Owned by [`access-revocation.md`](access-revocation.md). |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
@@ -204,36 +204,16 @@ Electron does not fall back to a D1 work-stream list. A user message is never ac
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
 
-A window that only listens is still revalidated. Both publish paths —
-`publishSync` and `publishWorkstreamState` — sweep the connected set before they
-send: immediately when the payload names a topic that can retract access
-(`member_directory` today), and otherwise at most once per 30 seconds
-(`AUTHORIZATION_REVALIDATE_MS`). The sweep asks the same question the connection
-was admitted with — an unrevoked, unexpired regional session joined to an active
-membership in this region — of every connected identity at once, in batches of
-48 to stay inside D1's 100-parameter statement limit, and closes the sockets
-that fail it with `1008`, which is the code the desktop reads as final. An
-identity is a session *and* a user, never a session alone: the development
-bypass issues the id `development` to everyone, so a sweep keyed on the session
-would let one member's membership decide every local window's fate. The answer
-is also keyed by the session row's own `user_id` rather than the socket's claim,
-so a socket presenting someone else's session is not permitted by it.
-Concurrent publications join the sweep already running instead of each starting
-their own — a directory batch fans out to one publication per changed work
-stream, and all of them would otherwise pass the interval check before the first
-sweep recorded itself. Publications are also serialized: `publishSync`
-allocates its waterline and sends inside a queue, one at a time. The sweep
-between those two steps is a D1 round trip and the input gate is open across it,
-so without the queue a cheaper concurrent publication — one that skips the sweep
-because the interval is fresh — allocates the higher waterline and sends first,
-and the desktop's `waterline <= lastWaterline` guard then discards the parked
-payload along with every topic it named. A `member_directory` publication is the
-guaranteed victim, because forcing the sweep is what it does. When the query
-itself fails during a retraction the object closes every socket with `1011`
-instead: a reconnect is authorized at connect time, so everyone still entitled
-returns within a second rather than being stranded on an access-revoked screen by
-one failed query. The interval lives in memory, so a hibernation eviction resets
-it and the next publication sweeps.
+A window that only listens is never revalidated. A socket is authorized when it
+connects and then holds until something closes it; no publish path asks D1
+whether the person may still listen, and no object re-checks on a timer. The one
+thing that closes an open socket is a message on the access-revocation queue,
+which the Worker that wrote the retraction publishes and a consumer carries to
+each object's `revokeSocketAccess`. That method closes the person's sockets with
+`WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` and returns the children the object knows
+about, which the consumer turns into further messages. See
+[`access-revocation.md`](access-revocation.md) — it is the only mechanism, and
+nothing here is to grow a second one.
 
 All four socket roles use short-lived, audience-specific, single-use tickets. The
 edge Worker verifies the signed ticket and passes only verified headers to the
@@ -379,10 +359,11 @@ BlockDashboardAgent -- state + stream checkpoints --> Electron
 Block authorization is intentionally outside the checkpoint hot path. Admission
 checks current regional membership plus WorkstreamDO's strict block/viewer
 authorization RPC, then records the decision time in the hibernation attachment.
-Live sockets are grouped by session and user and revalidated after at most 60
-seconds. WorkstreamDO also requests immediate child sweeps after configuration,
-visibility, or affected-viewer access changes. Token/checkpoint broadcasts
-therefore remain object-local; they do not issue a D1 or parent RPC per frame.
+A live socket is not revalidated afterwards: it holds until the
+[access-revocation queue](access-revocation.md) closes it, or the block itself is
+removed from the configuration, which WorkstreamDO still sweeps for at the
+configuration-change site. Token/checkpoint broadcasts therefore remain
+object-local; they do not issue a D1 or parent RPC per frame.
 
 This is intentionally not a direct source-to-block dispatch. The source owns
 message order, not block configuration, user preference, block status, or
@@ -704,9 +685,9 @@ misrouted product statement now fails because the table or column is absent.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
-- **Sync waterlines are allocated and sent one publication at a time.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. Anything that lets two publications interleave between their allocation and their send silently drops the slower one's invalidation.
-- **A socket that has stopped being authorized is closed, not merely skipped.** Every role that pushes to a listening socket bounds its authorization: `SubstreamAgent` and `WorkspaceDO` sweep the connected set before publishing — immediately on a retraction, otherwise once per 30 seconds — and `BlockDashboardAgent` revalidates its attachment after 60. A push may then trust an open socket, which is what keeps an authorization query off the token path. Without the sweep a revoked session keeps receiving whatever that object publishes until the window closes.
-- **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** HyperSight attachments carry only a bounded 60-second authorization cache and receive explicit parent sweeps; no long-lived ticket or attachment is continuing authority for a new write.
+- **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
+- **A push trusts an open socket; the access-revocation queue is what closes one.** No object here re-checks authorization before publishing, on a timer, or on any other schedule — the single mechanism is `revokeSocketAccess`, driven by the queue in [`access-revocation.md`](access-revocation.md). Adding a second one puts a D1 query back on the publish path and, as the changelog records, is where the waterline ordering bug came from. Anything new that ends a person's access publishes to that queue instead.
+- **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
@@ -739,6 +720,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
+| Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
@@ -769,7 +751,8 @@ constructor migrations, per-object SQL isolation across eviction, keep-alive
 alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
 and work-stream control sockets, typed native-RPC success/conflict envelopes,
 bidirectional message pages without room-cursor movement, page revocation,
-compaction recovery, HyperSight checkpoint recovery/revocation, obsolete queued
+compaction recovery, HyperSight checkpoint recovery/revocation, socket
+revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
 Node tests cover migration
@@ -1043,6 +1026,63 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-22 — A queue closes revoked sockets; every object-side sweep is gone
+
+**What changed:** All four socket roles gained `revokeSocketAccess`, called by the
+access-revocation queue consumer, and lost every mechanism that re-checked
+authorization on an already-open socket. Removed: WorkspaceDO's
+revalidate-before-publish sweep with its 30-second interval, single-flight, and
+serialized publication queue, together with `workspace-socket-authorization.ts`;
+SubstreamAgent's reader eviction on the same interval and its `retractsReadAccess`
+topic list; BlockDashboardAgent's 60-second attachment re-authorization;
+WorkstreamDO's per-broadcast `workspace_members` reads and its visibility-driven
+child sweeps. The block-lifecycle sweep at the configuration-change site stays —
+a block leaving the dashboard is this object's own fact, not a D1 one. This
+entry overturns [2026-08-21 — WorkspaceDO sweeps the sockets it publishes
+to](#2026-08-21--workspacedo-sweeps-the-sockets-it-publishes-to).
+
+**Why:** Every one of those mechanisms was an object trying to discover on its
+own something only D1 knew, and each one discovered it late — up to a minute — at
+the cost of a D1 read on a publish path. The sweep also caused the ordering bug
+its own entry records: an `await` between waterline allocation and send let a
+concurrent publication overtake, and the desktop's `waterline <= lastWaterline`
+guard dropped the parked invalidation silently. Fixing that needed a publication
+queue *inside* the object, which is a lot of machinery in service of asking a
+question at the wrong time. The retraction is known exactly once, in the request
+that writes it; publishing it there reaches a socket in about a second instead of
+thirty, and costs no read at all when nothing has been revoked.
+
+**Considered and rejected:**
+
+- *Keeping the sweep and tightening the interval.* Faster polling multiplies the
+  D1 cost of the thing that was already the expensive part, and does nothing
+  about the ordering hazard.
+- *Each object publishing its own descendants to the queue.* It couples all four
+  objects to a queue binding and a message schema for no gain over returning a
+  list. They answer with what only they know — a directory, a substream list, a
+  block configuration — and the consumer decides what carries it.
+- *One RPC chain from the workspace down.* A single invocation would hold the
+  whole hierarchy open and one unreachable object would restart the walk.
+
+**Consequences:**
+
+- **A publish path may trust an open socket, and must not re-check.** Putting a
+  membership query back in front of a broadcast reintroduces both the cost and
+  the ordering hazard. `publishSync` now allocates and sends with no `await`
+  between the two, and that has to stay true.
+- **Two retractions no longer reach an open socket**: losing participation or
+  visibility on a single work stream, and a block's visibility narrowing. Both
+  are object-local facts that the D1-fed queue cannot see, so they take effect on
+  the next reconnect. Restoring them means giving WorkstreamDO a producer of its
+  own.
+- **A new socket role owes a `revokeSocketAccess`**, and its parent owes it a
+  place in the list it returns, or the new role's sockets survive every
+  revocation.
+- The reasoning for the removed mechanisms is preserved in the entry below; this
+  is a reversal of it, not a correction of the record.
+
+Shipped in #TBD. Owned by [`access-revocation.md`](access-revocation.md).
 
 ### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
 

@@ -25,16 +25,22 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
 
   assert.deepEqual(required, [
     { surface: 'api-global', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-global-activities' },
+    { surface: 'api-global', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-global-access-revocations' },
     { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-activities' },
+    { surface: 'api-global', role: 'consumer', name: 'avalon-global-access-revocations' },
     { surface: 'api-eu', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-eu-activities' },
+    { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocations' },
     { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-activities' },
+    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
   ]);
   assert.deepEqual(createdOnDeploy.map((queue) => queue.name), [
     'avalon-global-activities-dead-letter',
+    'avalon-global-access-revocations-dead-letter',
     'avalon-eu-activities-dead-letter',
+    'avalon-eu-access-revocations-dead-letter',
     'avalon-migration-reports-dead-letter',
   ]);
 });
@@ -49,7 +55,9 @@ test('passes and reports each queue when the account holds every one', async () 
     fetchImpl: queueListing([
       ...required.map((queue) => queue.name),
       'avalon-global-activities-dead-letter',
+      'avalon-global-access-revocations-dead-letter',
       'avalon-eu-activities-dead-letter',
+      'avalon-eu-access-revocations-dead-letter',
       'avalon-migration-reports-dead-letter',
     ]),
   });

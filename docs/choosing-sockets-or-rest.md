@@ -678,16 +678,17 @@ consequence of breaking it.
   wrong until something unrelated refreshes it.
 - **Revocation closes the socket, and a push trusts an open one.** Authorizing
   is the job of the code that admits a connection and the code that retracts
-  access — the authority sweeps the readers who lost it and closes them with a
-  policy close, which also tells the client to stop retrying. A sender may
-  therefore write to an open socket without asking again. Put an authorization
-  query on the push path instead and the hot path pays continuously for a
-  decision that changes rarely, which is why `SubstreamAgent` skips its periodic
-  revalidation for `stream_delta` entirely. Break it the other way — never
-  sweeping — and someone who was removed keeps receiving until they close the
-  window. Every role that pushes to a listener bounds this: `SubstreamAgent` and
-  `WorkspaceDO` sweep before publishing, at 30 seconds or immediately on a
-  retraction, and `BlockDashboardAgent` revalidates its attachment after 60.
+  access. A sender may write to an open socket without asking again; the socket
+  being open *is* the authorization. Put an authorization query on the push path
+  instead and the hot path pays continuously for a decision that changes rarely.
+  Break it the other way — nothing ever closing the socket — and someone whose
+  access ended keeps receiving until they close the window. So whoever ends the
+  access closes the socket, and there is exactly one way to do it: publish to the
+  access-revocation queue, which carries the retraction to every object holding
+  one of that person's sockets and closes them with a policy close, which also
+  tells the client to stop retrying. See
+  [`access-revocation.md`](access-revocation.md). Do not build a second path, and
+  in particular do not build one that polls.
 - **The connect payload is bounded**, and it is paid per window — Main,
   Settings, and Meeting each hold their own socket, and none of them is
   distinguishable at admission today. Break this and the cost lands on every
@@ -779,6 +780,8 @@ converting this one back requires answering the ambiguity that produced it.
   follows.
 - [`workstream-durable-object.md`](workstream-durable-object.md) — the object
   hierarchy that owns the state being pushed, and what each one publishes.
+- [`access-revocation.md`](access-revocation.md) — the one way an open socket is
+  closed when somebody loses access, which is what lets a push trust one.
 - [`architecture.md`](architecture.md) — the surfaces, the request path, and the
   effect pipeline that turns a child's write into a workspace push.
 - [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) — the same kind of

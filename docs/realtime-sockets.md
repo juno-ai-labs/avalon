@@ -212,13 +212,14 @@ batcher limits publication to the 100 ms/2,048-character boundary (at most the
 10 fps tier), so 100 tokens/second does not mean 100 socket frames or SQL rows
 per second.
 
-Authorization is not on that high-frequency path. A block socket attachment
-caches its successful session/user decision for at most 60 seconds, then the
-agent groups live sockets by session and viewer for revalidation. WorkstreamDO
-also commands immediate block-socket sweeps when a block is removed, hidden, or
-its product visibility changes. Thus every checkpoint broadcast remains local
-to the execution owner, while revocation is bounded even if the explicit sweep
-is delayed.
+Authorization is not on that high-frequency path at all. A block socket is
+authorized when it connects and holds until something closes it; the agent does
+not re-ask on a timer. WorkstreamDO still commands an immediate block-socket
+sweep when a block is removed from the dashboard, which is its own fact rather
+than a D1 one. Losing access is carried instead by the
+[access-revocation queue](access-revocation.md), which reaches every object
+holding one of that person's sockets. Every checkpoint broadcast therefore stays
+local to the execution owner.
 
 Checkpoint, queued/running, and terminal publications enter one per-agent
 serial queue only after their SQLite transition commits. Adjacent unsent
@@ -395,6 +396,34 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-22 — An admitted socket is never re-authorized, only closed
+
+**What changed:** Block sockets no longer cache an authorization decision for 60
+seconds and re-check it, and no socket role revalidates a listener on a timer.
+Admission still decides authorization fresh on every connect, and an inbound
+command or page request on an open socket still revalidates before it is served.
+What changed is the *listening* side: a socket holds until the
+[access-revocation queue](access-revocation.md) tells its object to close it.
+
+**Why:** The bounded caches were each an object rediscovering, up to a minute
+late, something D1 already knew at the moment it was written. They cost a query
+on a publish path to answer a question that is almost always "still fine", and
+the WorkspaceDO version of the same idea shipped an ordering bug that silently
+dropped invalidations. Publishing the retraction from the request that wrote it
+reaches the socket in about a second and costs nothing when nothing changed.
+
+**Considered and rejected:** Shortening the caches. That multiplies the cost of
+the expensive half without removing the window, and leaves two mechanisms where
+the whole point was to have one.
+
+**Consequences:** A socket role added later owes a `revokeSocketAccess`, and its
+parent owes it a place in the child list that parent returns; without both, its
+sockets survive every revocation. Losing participation or visibility on a single
+work stream no longer closes anything until reconnect — those are object-local
+facts the D1-fed queue cannot see.
+
+Shipped in #TBD. Owned by [`access-revocation.md`](access-revocation.md).
 
 ### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
 
