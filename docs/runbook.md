@@ -74,6 +74,10 @@ Set these shared Worker secrets separately in each regional deployment:
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
   principal accepted by that region's restricted telemetry operator surface
+- `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`; optional, as a pair — the
+  internal Slack app operator notifications are posted with, and the channel
+  they go to ([`ops-alerting.md`](ops-alerting.md)). Either absent, the Worker
+  posts nothing and `/health` reports `opsNotifications` as not or half configured
 
 Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker when PostHog delivery is
 enabled. The checked-in Global configuration fixes `POSTHOG_HOST` to the approved
@@ -963,6 +967,19 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 | Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
+**Operator notifications** are the one push surface. `notifyOps`
+([`ops-alerting.md`](ops-alerting.md)) posts to the `OPS_SLACK_CHANNEL_ID`
+channel when a Durable Object alarm entry reaches its third consecutive attempt
+without progress — `*_scheduled_alarm_failed` or `*_scheduled_alarm_stalled`
+for the workspace, work-stream, and agent objects, each also at `level = error`
+from that attempt on, so the Failures view carries them — and when a Slack
+ingress job is given up on (`slack_ingress_job_exhausted`). Its own outcomes
+are `ops_notification_sent` (info) and `ops_notification_failed` (warn, with
+`code` and `status`); a region whose notices are all failing is a region whose
+operator Slack app needs attention, not a quiet one — `invalid_auth` is the
+token, `channel_not_found` or `not_in_channel` is the channel or the missing
+invite. Outside `production` and `staging` the notifier posts nothing.
+
 **Work-stream flow latency** has no saved view yet, deliberately: the thresholds
 would be guesses until there are production rows to pick them from. Starting,
 opening, and sending a message to a work stream each emit one `perf_flow` row per
@@ -1165,7 +1182,7 @@ That deadline must be a **cancellable** one — `createDeadline`/`withDeadline` 
 
 The deadlines long enough to matter have been converted: the connector poll (20s), the Slack public-channel sync in the activity queue consumer (3 minutes), and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
 
-Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four children per chain, eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
+Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four total runs per chain (the root plus at most three inline children), eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
 
 ### Inspecting a run's raw inference
 

@@ -371,6 +371,14 @@ recovery ledger.
 
 ## Operations
 
+A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
+entries derived from `next_terminal_action_at` in the workspace directory
+([`durable-object-alarms.md`](durable-object-alarms.md)). When the pass finds
+the sandbox held by a live run it is re-checked a minute later; after a
+transition it is re-checked thirty seconds later, which is how long the
+directory effect takes to land off the Queue. Neither counts toward the stall
+report; a deadline the pass finds nothing to do for does.
+
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
 `terminal_tool_finished`, `terminal_sandbox_lifecycle_transition`, and
@@ -423,6 +431,27 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-22 — A held deadline is re-checked, not counted
+
+**What changed:** The workspace alarm's Terminal deadline pass answers the
+alarm's stall check: a sandbox held by a live run is re-checked a minute
+later, a transition just made is re-checked thirty seconds later, and neither
+counts as an attempt; a deadline the pass finds nothing to do for takes the
+stall rule. The mapping is `terminalReconcileOutcome` in
+`workspace-schedule-execution.ts`.
+
+**Why:** The alarm base now holds an entry that runs and comes back due at the
+identical instant ([`durable-object-alarms.md`](durable-object-alarms.md)), and
+a Terminal deadline does that legitimately twice: its due time lives in the
+workspace directory, which only the work stream's own effect moves, off the
+Queue. Read as a stall, every warm stop would have been held behind a growing
+backoff and reported to an operator at the third attempt.
+
+**Consequences:** A deadline behind a live run is re-examined every minute
+rather than on every alarm wake, which before this was a hot loop for the
+run's whole duration. A stale directory row — a deadline with nothing behind
+it — is what the stall report now names.
 
 ### 2026-08-22 — Terminal takes its effect identity from the tool context
 
