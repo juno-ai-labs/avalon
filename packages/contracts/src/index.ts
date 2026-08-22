@@ -1578,29 +1578,9 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }).strict(),
-  /**
-   * Open the sidebar: the first directory page, the automations and the notes,
-   * in one answer. Deliberately has no cursor — this is the cold-start read,
-   * and everything after it is a `list_workstreams` page or a topic refresh.
-   */
-  z.object({
-    type: z.literal("list_sidebar"),
-    requestId: IdSchema,
-    limit: z.number().int().min(1).max(250),
-    includeSystem: z.boolean(),
-  }).strict(),
 ]);
 
 const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
-
-export const WorkspaceSocketSyncEventSchema = z.object({
-  type: z.literal("workspace_sync"),
-  eventId: WorkstreamStateEventIdSchema,
-  waterline: z.number().int().nonnegative(),
-  occurredAt: TimestampSchema,
-  topics: z.array(WorkspaceSyncTopicSchema).min(1),
-  reason: z.enum(["initial", "change", "history_unavailable"]),
-}).strict();
 
 /**
  * Coordinates one complete work-stream UI snapshot across its two authorities.
@@ -1672,29 +1652,35 @@ export const WorkspaceWorkstreamPageEventSchema = z.object({
 }).strict().superRefine(refineWorkstreamPagePairing);
 
 /**
- * Every list the sidebar opens with, in one answer.
+ * Everything the sidebar paints, sent unprompted when a workspace socket
+ * subscribes.
  *
- * The three lists have one authority — WorkspaceDO SQLite owns the work-stream
- * directory, `automation_subscriptions` and `notes` alike — so the opening read
- * is three local queries in one object rather than a socket round trip beside
- * two Worker round trips that each turn back into RPC to this same object.
- * Sent once per cold sidebar; a later page comes from `list_workstreams`, and a
- * later refresh from the topic that owns the list that changed.
+ * It answers no request and carries no correlation id: the ticket already
+ * proved who connected and which workspace they opened, and all three lists are
+ * WorkspaceDO's own SQLite — the directory, `automation_subscriptions` and
+ * `notes`. There is nothing left for the client to tell the server before the
+ * first paint, so it is not asked to.
+ *
+ * Deliberately serves the p95 and not the debug case: the directory page here
+ * excludes system work streams. Turning Debug enabled on is rare, engineers
+ * only, and re-draws the sidebar from a `list_workstreams` request carrying
+ * `includeSystem` — a follow-up that a person's own action asked for. Loading
+ * the common case unasked and paying a round trip for the rare one is the right
+ * way round; the reverse would put a debug preference in everyone's connect.
  *
  * The automation and note arrays are bounded rather than paged: neither has a
- * cursor, and a workspace past the bound is served its first rows here and
- * reconciled by the ordinary REST refresh the next `automations`/`notes`
- * invalidation triggers. A bound that truncates keeps a very large workspace's
- * sidebar loading; a bound that rejects would fail the whole batch.
+ * cursor, and a workspace past the bound is served its first rows and
+ * reconciled by the next push. A bound that truncates keeps a very large
+ * sidebar painting; a bound that rejects would fail the whole connect.
+ *
+ * Sent on every subscribe, cold or resuming, so a client that missed pushes
+ * while it was away is correct again without replaying the gap. A resume where
+ * nothing moved costs the bytes and applies nothing: every list carries the
+ * waterline its pushes carry, so the client's ordinary comparison drops it.
  */
-export const WorkspaceSidebarPageEventSchema = z.object({
-  type: z.literal("workspace_sidebar_page"),
-  requestId: IdSchema,
+export const WorkspaceSidebarSchema = z.object({
   workstreams: z.object(workspaceWorkstreamPageFields).strict()
     .superRefine(refineWorkstreamPagePairing),
-  // Each carries the same per-list waterline its pushes carry, so the opening
-  // batch and every later push are judged by one comparison rather than by
-  // which arrived first.
   automations: z.object({
     waterline: z.number().int().nonnegative(),
     items: z.array(AutomationSummarySchema).max(250),
@@ -1704,6 +1690,43 @@ export const WorkspaceSidebarPageEventSchema = z.object({
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
 }).strict();
+
+/**
+ * The workspace socket's synchronization event, and the sidebar it carries.
+ *
+ * `sidebar` is present on exactly one kind of event: the answer to `subscribe`.
+ * A change broadcast never carries it — those go to every socket at once, and
+ * the sidebar is read per viewer.
+ *
+ * `topics` may be empty only when the sidebar is there, which is the resume
+ * where nothing else moved: the event exists to hand over current state, not to
+ * report news. Everywhere else an event with no topics would be a broadcast
+ * saying nothing, so the refinement keeps that impossible.
+ */
+export const WorkspaceSocketSyncEventSchema = z.object({
+  type: z.literal("workspace_sync"),
+  eventId: WorkstreamStateEventIdSchema,
+  waterline: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema,
+  topics: z.array(WorkspaceSyncTopicSchema),
+  reason: z.enum(["initial", "change", "history_unavailable", "resume"]),
+  sidebar: WorkspaceSidebarSchema.optional(),
+}).strict().superRefine((event, context) => {
+  if (event.topics.length === 0 && event.sidebar === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["topics"],
+      message: "must name at least one topic unless the event carries the sidebar",
+    });
+  }
+  if (event.reason === "resume" && event.sidebar === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["sidebar"],
+      message: "a resume exists to carry the sidebar",
+    });
+  }
+});
 
 /**
  * One sidebar list and the version WorkspaceDO stamped on it.
@@ -1716,9 +1739,9 @@ export const WorkspaceSidebarPageEventSchema = z.object({
  * the transaction of the write that earned it. Two counters rather than one
  * because the lists change independently, and one counter would let a note
  * write hide an automation update. It is the same number the opening
- * `workspace_sidebar_page` carries for that list, which is what lets the batch
- * and the pushes be ordered against each other instead of racing: both land in
- * one receiver that applies only a strictly greater version.
+ * `workspace_sidebar` connect payload carries for that list, which is what lets
+ * the payload and the pushes be ordered against each other instead of racing:
+ * both land in one receiver that applies only a strictly greater version.
  *
  * The rows carry no per-row version of their own — unlike a work-stream row,
  * which is assembled from child objects over an unordered Queue and needs one
@@ -1849,7 +1872,7 @@ export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
-export type WorkspaceSidebarPageEvent = z.infer<typeof WorkspaceSidebarPageEventSchema>;
+export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;

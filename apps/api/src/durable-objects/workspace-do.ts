@@ -5,7 +5,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkspaceSidebarListEventSchema,
-  WorkspaceSidebarPageEventSchema,
+  WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
@@ -14,6 +14,7 @@ import {
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
   type AutomationSummary,
+  type WorkspaceSidebar,
   type NoteSummary,
   type Workstream,
   type WorkspaceSocketSyncEvent,
@@ -1099,36 +1100,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
         ...page,
-      })));
-      return;
-    }
-    if (parsed.data.type === "list_sidebar") {
-      const auth = await this.sessionAuth(attachment);
-      if (!auth) {
-        socket.close(1008, "Session no longer active");
-        return;
-      }
-      // Three local SQLite reads, no await between them: the directory, the
-      // automations and the notes all belong to this object, so the sidebar's
-      // opening state is one consistent snapshot rather than three answers a
-      // concurrent write could land between.
-      socket.send(JSON.stringify(WorkspaceSidebarPageEventSchema.parse({
-        type: "workspace_sidebar_page",
-        requestId: parsed.data.requestId,
-        workstreams: this.listDirectory({
-          workspaceId: attachment.workspaceId,
-          userId: attachment.userId,
-          limit: parsed.data.limit,
-          includeSystem: parsed.data.includeSystem,
-        }),
-        automations: {
-          waterline: this.sidebarListWaterline("automations"),
-          items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
-        },
-        notes: {
-          waterline: this.sidebarListWaterline("notes"),
-          items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
-        },
       })));
       return;
     }
@@ -3312,6 +3283,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * on the same socket. That ordering is what lets the event carry no
    * waterline; see the schema in `packages/contracts`.
    */
+  /**
+   * The whole sidebar for one viewer, from three local reads with no `await`
+   * between them, so it is one consistent snapshot rather than three answers a
+   * concurrent write could land between.
+   *
+   * `includeSystem` is false and not a parameter: this is the connect payload
+   * every window gets, and system rows belong to a debug preference the server
+   * does not hold. A client with it on asks for the wider directory afterwards.
+   */
+  private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
+    return WorkspaceSidebarSchema.parse({
+      workstreams: this.listDirectory({
+        workspaceId: attachment.workspaceId,
+        userId: attachment.userId,
+        limit: SIDEBAR_LIST_LIMIT,
+        includeSystem: false,
+      }),
+      automations: {
+        waterline: this.sidebarListWaterline("automations"),
+        items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+      },
+      notes: {
+        waterline: this.sidebarListWaterline("notes"),
+        items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+      },
+    });
+  }
+
   private sidebarListWaterline(list: SidebarList): number {
     return this.state.storage.sql.exec<{ waterline: number }>(
       `SELECT waterline FROM workspace_sidebar_list_state WHERE list = ?`,
@@ -3445,6 +3444,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const earliest = this.state.storage.sql.exec<{ waterline: number | null }>(
       `SELECT MIN(waterline) AS waterline FROM workspace_sync_events`,
     ).one().waterline;
+    // Built once and attached to whichever event this subscribe answers with.
+    // Every branch carries it, including the resume where no topic moved: a
+    // push can have been missed while the socket was away — a scheduled
+    // automation advancing its next run publishes no topic at all — and the
+    // client's per-list comparison makes a resume that missed nothing free to
+    // ignore.
+    const sidebar = this.sidebarPayload(attachment);
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -3454,6 +3460,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         occurredAt: new Date().toISOString(),
         topics: [...WORKSPACE_SYNC_TOPICS],
         reason: "initial",
+        sidebar,
       }];
     } else if (afterWaterline > latest || (earliest !== null && afterWaterline < earliest - 1)) {
       events = [{
@@ -3463,6 +3470,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         occurredAt: new Date().toISOString(),
         topics: [...WORKSPACE_SYNC_TOPICS],
         reason: "history_unavailable",
+        sidebar,
       }];
     } else {
       const rows = this.state.storage.sql.exec<{
@@ -3482,14 +3490,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           changedTopics.add(topic);
         }
       }
-      events = newest ? [WorkspaceSocketSyncEventSchema.parse({
+      events = [WorkspaceSocketSyncEventSchema.parse(newest ? {
         type: "workspace_sync",
         eventId: newest.event_id,
         waterline: newest.waterline,
         occurredAt: new Date(newest.occurred_at).toISOString(),
         topics: WORKSPACE_SYNC_TOPICS.filter((topic) => changedTopics.has(topic)),
         reason: "change",
-      })] : [];
+        sidebar,
+      } : {
+        // Nothing to report, which is not the same as nothing to send.
+        type: "workspace_sync",
+        eventId: uuidV7(),
+        waterline: latest,
+        occurredAt: new Date().toISOString(),
+        topics: [],
+        reason: "resume",
+        sidebar,
+      })];
     }
     for (const event of events) socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse(event)));
     socket.serializeAttachment({

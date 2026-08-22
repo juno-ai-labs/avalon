@@ -7,7 +7,7 @@ import type { AutomationSummary, NoteSummary } from "@avalon/contracts";
  *
  * Both lists live in WorkspaceDO SQLite, and both are now read two ways: by the
  * REST services through the workspace runtime router, and directly by the
- * object itself when it answers `list_sidebar` on the workspace socket. The
+ * object itself when it builds the sidebar a workspace socket subscribes to. The
  * statement and the row mapping are shared rather than written twice, because
  * two copies of a query whose results are written into the same client cache
  * drift into two different sidebars — and the socket copy has no response

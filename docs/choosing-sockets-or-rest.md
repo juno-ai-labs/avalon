@@ -709,14 +709,14 @@ describes behaviour to replace, not a pattern to copy into something new.**
 
 | Surface | Channel today | Matches this document |
 | --- | --- | --- |
-| Work-stream directory pages (membership, order, pins) | Requested with `list_sidebar` for the first page and `list_workstreams` for later ones, on the workspace socket; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** It stays on the socket and never falls back to a D1 list endpoint, but the first page is requested rather than pushed, and a pin or a reorder arrives as news rather than as the changed row. |
+| Work-stream directory pages (membership, order, pins) | First page carried on the `workspace_sync` answer to `subscribe`; later pages requested with `list_workstreams`; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** The first page is pushed and later ones are a scroll the reader asked for, but a pin or a reorder still arrives as news rather than as the changed row. |
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | HyperSight block output | BlockDashboardAgent socket, checkpoint on connect | Yes. |
 | Transcript pagination | Correlated request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority. |
 | Opening a work stream | `GET /workstreams/:id`, whose response embeds the metadata **and** the first message window, then sockets take over | Partly. One round trip instead of a push, but one — not one per surface. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
-| The sidebar's automations and notes | Carried in the `list_sidebar` answer, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | **Partly.** The data is on the socket and no REST read serves it, but the first copy still arrives in answer to a request rather than in the connect payload. |
+| The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
 | Sending a message | Command frame on the WorkspaceDO command socket, answered with a private receipt | **No** — and deliberately, for now. See below. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
@@ -736,28 +736,35 @@ and whose reason is `initial`. The client reads that as "all of it may be new"
 and refetches each mounted surface, so the home screen's first paint waits on
 `GET /workspace`, `GET /workspace/members`, and
 `GET /work-opportunities?limit=4`. One of those three reads tables in the object
-that sent the frame; the other two are one D1 read away from it. Closing this
+that sent the frame; the other two are one D1 read away from it. The sidebar
+used to be in that list and no longer is — the same event now carries it, which
+is what the rest of this should look like. Closing this
 means giving the connect path a payload rather than a topic list, per-topic
 waterlines so a later push can order against it, and a client that applies
 frames instead of invalidating query keys. Until then, `initial` is the boundary
 between what this document describes and what runs.
 
-The sidebar is inside that boundary even though it never leaves the socket, and
-it is the half-closed case worth reading before adding a surface. Its three
-lists — the first directory page, the automations and the notes — arrive
-together in the answer to one `list_sidebar` request, and the two that used to
-be REST reads are now pushed whole on every write, each carrying a waterline the
-client orders against. What is still divergent is the shape of the first
-delivery: `list_sidebar` is a request naming a page size and a filter, which is
-exactly what [Designing a connect
-payload](#designing-a-connect-payload) says a subscribe frame must not become.
-It replaced three round trips with one rather than with none, and it is not a
-pattern to copy into a fourth list — the next one belongs in the connect
-payload. Pins are the other unclosed half: a pin, an unpin, or a reorder calls
+The sidebar is the part of that boundary that has been closed, and it is the
+worked example to copy rather than the gap. Its three lists — the first
+directory page, the automations and the notes — ride on the `workspace_sync`
+event that answers `subscribe`, so opening it costs no request; the two that
+were REST reads are pushed whole on every write, each carrying a waterline the
+client orders against. Two details are worth taking from it. A resume where no
+topic moved still carries the payload, under `reason: "resume"` with an empty
+topic list, because a push can be missed while a socket is away and produce no
+topic at all — and the receiver applies the sidebar *before* the topic-waterline
+guard, or that resume would be discarded along with the state it exists to
+deliver. And system work streams are deliberately left out: Debug enabled is
+rare, internal, and lives in the desktop's own settings, so a viewer who wants
+those rows re-draws from a `list_workstreams` request. Serving the p95 unasked
+and charging the rare case a round trip is the trade this document is asking
+for, not an exception to it.
+
+What is still open on the sidebar is pins: a pin, an unpin, or a reorder calls
 `publishDirectorySync`, which emits only the `workstream_directory` topic, so
 the client invalidates and asks again. Work-stream row state is genuinely
-pushed, as a waterlined `workspace_workstream_state`. Closing the rest means the
-connect carrying the first page, and pin changes publishing the changed row.
+pushed, as a waterlined `workspace_workstream_state`. Closing the rest means pin
+changes publishing the changed row.
 
 **The connector list re-reads itself on window focus.**
 `apps/desktop/src/renderer/screens/workspace-settings.tsx` sets

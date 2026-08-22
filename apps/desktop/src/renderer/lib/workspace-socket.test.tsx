@@ -138,6 +138,9 @@ describe('WorkspaceSocketProvider', () => {
     for (const pushed of [['automations'], ['notes']]) {
       expect(invalidatedRoots).not.toContain(JSON.stringify(pushed));
     }
+    // This event carried no sidebar, so the directory topic still means "go and
+    // read it again". The case where it does carry one is below.
+    expect(invalidatedRoots).toContain(JSON.stringify(['workstreams']));
     const invalidationCount = invalidations.mock.calls.length;
     act(() => socket.message({
       type: 'workspace_sync',
@@ -334,7 +337,7 @@ describe('WorkspaceSocketProvider', () => {
     });
   });
 
-  it('opens the sidebar with one batched answer carrying all three lists', async () => {
+  it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -342,21 +345,13 @@ describe('WorkspaceSocketProvider', () => {
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    let listSidebar: ReturnType<typeof useWorkspaceSocket>['listSidebar'] | null = null;
-    function Probe(): null {
-      const workspaceSocket = useWorkspaceSocket();
-      useEffect(() => {
-        listSidebar = workspaceSocket.listSidebar;
-      }, [workspaceSocket.listSidebar]);
-      return null;
-    }
     render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
-          <Probe />
+          <div />
         </WorkspaceSocketProvider>
       </QueryClientProvider>,
     );
@@ -364,22 +359,14 @@ describe('WorkspaceSocketProvider', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
 
-    let result: Promise<unknown> | null = null;
-    act(() => {
-      result = listSidebar!({ limit: 250, includeSystem: false });
-    });
-    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
-      type: string;
-      requestId: string;
-    };
-    // No cursor: the batch is the cold read, and a later page is the paged
-    // command's job.
-    expect(command).toMatchObject({ type: 'list_sidebar', limit: 250, includeSystem: false });
-    expect(command).not.toHaveProperty('before');
-
     act(() => socket.message({
-      type: 'workspace_sidebar_page',
-      requestId: command.requestId,
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000017',
+      waterline: 4,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
       workstreams: {
         directoryWaterline: 7,
         nextCursor: null,
@@ -451,25 +438,73 @@ describe('WorkspaceSocketProvider', () => {
         updatedAt: '2026-08-17T21:00:00.000Z',
         archivedAt: null,
       }] },
+      },
     }));
 
-    await expect(result).resolves.toMatchObject({
-      nextCursor: null,
-      items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
-      // Mapped the way the REST list maps it: the sidebar renders `you` for a
-      // personal row, so the wire's `personal`/`workspace` cannot reach it raw.
-      automations: {
-        waterline: 3,
-        items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Monday brief', scope: 'workspace' }],
-      },
-      notes: { waterline: 1, items: [{ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' }] },
-    });
-    // The batch also lands in the shared ledger, so a row it carried is not
-    // re-fetched by the work-stream caches behind it.
-    expect(queryClient.getQueryData(['workstreams'])).toBeDefined();
+    // All three painted from a frame nobody asked for.
+    expect(queryClient.getQueryData(['workstreams']))
+      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000002' })]);
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
+    expect(queryClient.getQueryData(['notes']))
+      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' })]);
+
+    // The point of the payload: the only thing the client said was where it
+    // had got to. A directory request here would be the round trip this frame
+    // exists to remove.
+    const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
+    expect(sent.map((frame) => frame.type)).toEqual(['subscribe']);
   });
 
-  it('replaces a pushed sidebar list wholesale, so a removed row disappears', async () => {
+  it('does not ask for the directory it was just handed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    invalidations.mockClear();
+
+    // `initial` names every topic, the directory among them — and carries the
+    // directory. Invalidating it here would send the client straight back for
+    // the page this event just delivered, which is the round trip the payload
+    // exists to remove.
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-00000000001a',
+      waterline: 11,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory', 'workspace_profile'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+        automations: { waterline: 0, items: [] },
+        notes: { waterline: 0, items: [] },
+      },
+    }));
+
+    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
+    expect(roots).not.toContain(JSON.stringify(['workstreams']));
+    // Every other topic on the same event is untouched by this.
+    expect(roots).toContain(JSON.stringify(['workspace']));
+  });
+
+  it('takes the sidebar off a resume whose waterline is not newer', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -491,74 +526,50 @@ describe('WorkspaceSocketProvider', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
 
-    const automation = (id: string, name: string) => ({
-      id,
-      name,
-      description: 'Every Monday',
-      emailAddress: null,
-      scope: 'workspace' as const,
-      status: 'active' as const,
-      nextRunAt: null,
-      lastRunAt: null,
-      updatedAt: '2026-08-17T19:00:00.000Z',
-      updateAvailable: false,
+    const sidebar = (waterline: number, name: string) => ({
+      workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+      automations: { waterline, items: [{
+        id: '00000000-0000-7000-8000-000000000005',
+        name,
+        description: 'Every Monday',
+        emailAddress: null,
+        scope: 'workspace' as const,
+        status: 'active' as const,
+        nextRunAt: null,
+        lastRunAt: null,
+        updatedAt: '2026-08-17T19:00:00.000Z',
+        updateAvailable: false,
+      }] },
+      notes: { waterline: 0, items: [] },
     });
 
     act(() => socket.message({
-      type: 'workspace_sidebar_list',
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000018',
+      waterline: 9,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      list: 'automations',
-      waterline: 5,
-      items: [
-        automation('00000000-0000-7000-8000-000000000005', 'Monday brief'),
-        automation('00000000-0000-7000-8000-000000000006', 'Former-client monitor'),
-      ],
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: sidebar(1, 'First'),
     }));
-    expect(queryClient.getQueryData(['automations'])).toEqual([
-      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005' }),
-      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006' }),
-    ]);
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'First' })]);
 
-    // One deleted elsewhere. The list is the whole truth, so the row leaves by
-    // being absent — there is no tombstone and nothing merges the old copy back.
+    // A reconnect where no topic moved: the server repeats the waterline the
+    // client already holds. The topic half is rightly ignored, but the sidebar
+    // rides on the same event and is the whole reason it was sent — a guard
+    // that ran before it would leave this socket on state it missed.
     act(() => socket.message({
-      type: 'workspace_sidebar_list',
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000019',
+      waterline: 9,
       occurredAt: '2026-08-17T20:01:00.000Z',
-      list: 'automations',
-      waterline: 6,
-      items: [automation('00000000-0000-7000-8000-000000000005', 'Monday brief')],
+      topics: [],
+      reason: 'resume',
+      sidebar: sidebar(2, 'Caught up while away'),
     }));
-    expect(queryClient.getQueryData(['automations'])).toEqual([
-      expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005' }),
-    ]);
-
-    act(() => socket.message({
-      type: 'workspace_sidebar_list',
-      occurredAt: '2026-08-17T20:02:00.000Z',
-      list: 'notes',
-      waterline: 2,
-      items: [{
-        id: '00000000-0000-7000-8000-000000000007',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        resourceId: '00000000-0000-7000-8000-000000000008',
-        ownerUserId: '00000000-0000-7000-8000-000000000003',
-        scope: 'workspace',
-        title: 'Standup',
-        recordingStatus: 'idle',
-        recordedMs: 0,
-        startedAt: null,
-        endedAt: null,
-        generatedAt: null,
-        lastActivityAt: '2026-08-17T21:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T21:00:00.000Z',
-        archivedAt: null,
-      }],
-    }));
-    expect(queryClient.getQueryData(['notes']))
-      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000007', title: 'Standup' })]);
-    // The lists are separate pushes; one must not clear the other.
-    expect(queryClient.getQueryData(['automations'])).toHaveLength(1);
+    expect(queryClient.getQueryData(['automations']))
+      .toEqual([expect.objectContaining({ name: 'Caught up while away' })]);
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
