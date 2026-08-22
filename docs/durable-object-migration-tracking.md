@@ -275,7 +275,7 @@ Traps:
   owns SQLite storage, and a node double would not exercise it.
 - The registry is a **singleton**, so `beforeEach` clears its tables by hand.
   Adding a table means adding it to that list, or a later test inherits rows.
-- The API-side suite uses **a distinct scheduler object per test**, because the
+- The API-side suite uses **a distinct object per test**, because the
   reporter's ledger lives inside the object; sharing one would make every
   assertion depend on execution order.
 - A successful report is delivered in `state.waitUntil`, so those tests
@@ -418,9 +418,10 @@ throughput nothing needs and turn each read into a scatter-gather.
 The steady state is not the case this is built for. Objects do not wake *because*
 of a deploy, so an ordinary release produces a trickle shaped by user traffic.
 The herd is any fan-out that touches many objects at once on a build whose
-`APP_VERSION` has just changed: `WorkspaceScheduler` sweeping every workspace's
-due schedules, watches, and wake-ups, or an operator pass walking the fleet to
-seed or repair it.
+`APP_VERSION` has just changed: an operator pass walking the fleet to seed or
+repair it, or a deploy whose migration arms an immediate alarm in every object
+that carries state — as WorkspaceDO migration 5's `schedule_bootstrap` entry
+does.
 
 ## Changelog
 

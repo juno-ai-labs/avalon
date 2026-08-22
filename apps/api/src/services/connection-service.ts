@@ -59,7 +59,7 @@ import {
 } from "../telemetry/product-usage";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { persistNormalizedActivity } from "./normalized-activity-service";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -2942,7 +2942,7 @@ export class ConnectionService {
   }
 
   private async refreshScheduler(workspaceId: string): Promise<void> {
-    await refreshWorkspaceSchedulerAlarm(this.env, workspaceId);
+    await refreshWorkspaceSchedule(this.env, workspaceId);
   }
 }
 

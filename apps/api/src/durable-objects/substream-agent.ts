@@ -952,7 +952,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // `acceptRuntimeSql` does: a write that moves a Terminal deadline has to
       // enqueue the `directory_common` effect, because
       // `workspace_workstream_directory.next_terminal_action_at` is the only
-      // thing `WorkspaceScheduler` reads to decide a sandbox is due, and that
+      // thing the workspace's alarm reads to decide a sandbox is due, and that
       // effect is its only writer. Calling the storage method on its own
       // committed the row and told nobody.
       value = await this.product.commitRuntimeMutation(

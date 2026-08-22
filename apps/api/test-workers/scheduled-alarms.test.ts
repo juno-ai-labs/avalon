@@ -507,6 +507,61 @@ describe("a workspace's schedule", () => {
     });
   });
 
+  it("reconciles itself once from the entry its alarm migration leaves behind", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+    const dueAt = new Date(Date.now() + 90_000).toISOString();
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000000c1",
+      statements: [{
+        sql: `INSERT INTO schedules
+                (id, workspace_id, connector_connection_id, schedule_type, interval_seconds,
+                 timezone, next_run_at, enabled, version, created_at, updated_at)
+              VALUES (?, ?, ?, 'interval', 300, 'UTC', ?, 1, 1, ?, ?)`,
+        params: [
+          "00000000-0000-7000-8000-0000000000c2",
+          WORKSPACE_ID,
+          "00000000-0000-7000-8000-0000000000c3",
+          dueAt,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ],
+      }],
+    });
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      // An object carried over from before the alarm index existed: the row is
+      // there, nothing has ever reconciled it, and the object that used to hold
+      // its alarm has been deleted. This is the state the migration's one-shot
+      // entry exists for. The entry is written directly here — that migration 5
+      // writes it, and only for a carried-over object, is proved against the
+      // ledger itself in `test/workspace-do-schema.test.ts`; what needs the real
+      // runtime is what the alarm does when it finds one.
+      store.cancelKind("schedule");
+      store.schedule({ kind: "schedule_bootstrap", key: "workspace", dueAt: Date.now() - 1 });
+
+      await instance.alarm();
+
+      expect(store.list("schedule").map((entry) => entry.key))
+        .toEqual(["00000000-0000-7000-8000-0000000000c2"]);
+      // One-shot: a second wake must not spend another reconcile on it.
+      expect(store.list("schedule_bootstrap")).toEqual([]);
+      expect(await state.storage.getAlarm()).toBe(Date.parse(dueAt));
+    });
+  });
+
+  it("leaves a workspace created after the migration nothing to bootstrap", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      // The ledger runs before this object has an identity, so a new workspace
+      // never pays for a reconcile that can only find zero targets.
+      expect(new ScheduledAlarmStore(state.storage.sql).list("schedule_bootstrap")).toEqual([]);
+    });
+  });
+
   it("holds every due target while the region is closed, then keeps its due times", async () => {
     await seedOpenAuthority();
     await env.DB.prepare(

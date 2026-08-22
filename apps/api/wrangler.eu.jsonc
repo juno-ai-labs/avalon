@@ -140,7 +140,6 @@
       { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
-      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
@@ -148,7 +147,12 @@
   // byte-stable. v3 renames the room class so every existing per-workstream
   // object keeps its SQLite database (the SubstreamAgent migration runner
   // inherits the WorkstreamRoom ledger verbatim), and introduces only the
-  // classes production has never seen.
+  // classes production has never seen. v4 deletes the per-workspace scheduler:
+  // WorkspaceDO now holds the alarm for every target that object used to fire,
+  // so the class has no code left. Deleting a class is how its objects and
+  // their storage are actually released — leaving the binding behind would
+  // keep a namespace of empty objects alive forever — and it is irreversible,
+  // which is why it is its own tag rather than an edit to v1.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -156,7 +160,8 @@
       "tag": "v3",
       "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }],
       "new_sqlite_classes": ["BlockDashboardAgent", "WorkstreamDO", "WorkspaceDO"]
-    }
+    },
+    { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] }
   ],
   "queues": {
     "producers": [

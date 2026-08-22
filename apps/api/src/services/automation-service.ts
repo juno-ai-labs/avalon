@@ -41,7 +41,7 @@ import {
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
-import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
@@ -2165,7 +2165,7 @@ export class AutomationService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    await refreshWorkspaceSchedulerAlarm(this.env, this.auth.workspaceId);
+    await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
   }
 }
 
