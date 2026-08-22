@@ -50,9 +50,14 @@ What it costs now is not hypothetical. All four of these have already happened:
 `workstream_resource_links` that fabricates the columns the real table does not
 have — `NULL AS content_sha256`, `'ready' AS model_content_status`. A caller
 reading `model_content_sha256` gets `NULL` and no error. `_runtime_users`
-fabricates `'' AS email` and returns `participant.user_id` as `name`, so
-`work-opportunity-service.ts` and `workstream-description-service.ts` both
-select `u.name AS author_name` and get a UUID.
+fabricates `'' AS email` and returns `participant.user_id` as `name`, so a
+caller selecting `u.name AS author_name` gets a UUID.
+
+That this has not yet *hurt* anyone is luck, not design, and establishing it took
+tracing five separate statements to their runtime guards — four of which turned
+out to be dead. A view that answers wrong is a defect whether or not the caller
+that would have been misled still executes; the next caller written against it
+will not be dead.
 
 **It splits transactions across the Worker boundary.** A load-then-decide
 sequence written as two prepared statements crosses an RPC boundary between
@@ -101,7 +106,10 @@ object, and every new query written against the old vocabulary makes it larger.
    available to a later slice.
 5. Each converted subsystem's module document gains a changelog entry saying why
    its port is shaped the way it is.
-6. The two surfaces that render a fabricated `author_name` render a real one.
+6. Every fabricated column is either deleted or documented as a placeholder
+   nothing reads. (This goal originally read "the two surfaces that render a
+   fabricated `author_name` render a real one" — neither surface renders it; see
+   [Product behavior](#product-behavior).)
 7. The work lands as fifteen independently reviewable, independently revertable
    changes, not one.
 
@@ -134,31 +142,50 @@ object, and every new query written against the old vocabulary makes it larger.
 
 ## Product behavior
 
-This is an internal refactor and the product is expected to be invariant across
-it. Two exceptions are worth naming, because they are the parts a reviewer can
-actually check against a running window.
+**Nothing user-visible changes, in any slice.** An earlier draft of this section
+claimed two user-visible wins. Both were wrong, and how they were wrong is the
+most useful thing this PRD can hand its implementer, so they are recorded rather
+than quietly deleted.
 
-**Author names stop being UUIDs.** `_runtime_users` returns
-`participant.user_id AS name`. Two callers read it:
-`work-opportunity-service.ts`, when projecting a work-stream message into a work
-opportunity's `actor`, and `workstream-description-service.ts`, when building
-the transcript excerpt a description refresh summarizes. Today the first shows a
-UUID where the opportunity card names who spoke, and the second feeds a UUID to
-the model as `author_name`. After the identity slice both read the real display
-name from the object's `participants` projection, or omit the field when the
-object does not hold one — an omitted name renders as the existing unattributed
-state, which is a state both surfaces already have.
+**Claimed: author names stop being UUIDs.** `_runtime_users` does return
+`participant.user_id AS name`, and `workstream-description-service.ts` does read
+it. But that value's only consumer is a `JSON.stringify` into the
+description-refresh *prompt*; it is not in `packages/contracts` and never
+reaches the desktop client. The name a person actually sees comes from a
+separate regional-D1 join inside the object — `messageUsers` in
+`workstream-object-product.ts`, which reads the real `users` table and feeds
+`Message.author.user`. The compat view never touches the rendered path. The
+second caller, `work-opportunity-service.ts`, does not even read the view: it
+runs against real D1, in a branch gated on `phase !== 'durable_object_open'`
+that also queries `activity_events` — a table migration 0090 dropped. It is dead
+twice over.
 
-**Attachment derivative reconciliation stops comparing against `NULL`.**
-`attachment-tool-receipts.ts` compares `receipt.derivative_sha256` against
-`resource.model_content_sha256`, which `_runtime_resources` fabricates as `NULL`,
-so the comparison is always false and the reconciliation always takes the
-"changed" path. After the resources slice it compares against the real stored
-digest. The user-visible consequence is that an attachment whose derivative has
-not changed stops being re-projected on every pass.
+**Claimed: attachment reconciliation stops comparing against `NULL`.**
+`attachment-tool-receipts.ts` has two arms, chosen by
+`regionalDatabase(target) !== target.DB`. The arm that reads
+`_runtime_resources.model_content_sha256` is the one taken when the environment
+is *not* routed — and `withWorkstreamRuntimeDatabase` returns a proxy whose `DB`
+is the routed port while `regionalDatabase` returns the raw binding, so the two
+are never equal under a routed env. The routed path therefore always takes the
+*other* arm, which reads `model_content_sha256` from the real `resources` table
+in WorkspaceDO, because bare `resources` is absent from the work-stream router's
+`LOCAL_TABLES` and is claimed by the workspace router instead. The comparison
+already works. The unrouted arm is unreachable, and would fail with
+`no such table` if it were reached, since 0090 dropped `resources`,
+`attachment_tool_receipts` and `tool_invocations` from D1.
 
-Every other slice is expected to be behavior-identical, and the
-[Acceptance](#acceptance) section says how that is demonstrated rather than
+**The lesson both share, which is the one worth carrying into every slice.** Both
+claims came from reading a statement's SQL and the view it *would* hit, without
+tracing the runtime guard that decides whether the statement reaches that view at
+all. This layer is full of paired arms where the dead one is the one that names
+the compat view. Grep finds the dead arm first, because it is the one written in
+compat vocabulary. **Establish which arm executes before writing down what a
+statement does.**
+
+So the product is invariant across all fifteen slices, and the value is
+engineering: typed operations instead of rewritten SQL, one round trip instead of
+three, and the deletion of a large volume of unreachable code. The
+[Acceptance](#acceptance) section says how invariance is demonstrated rather than
 assumed.
 
 ## Impact on the product contract
@@ -330,7 +357,8 @@ from SQLite behavior and both carry forward:
   the view is used, so `DROP TABLE` under a live view succeeds and leaves a view
   that fails on next read.
 
-`WORKSTREAM_OBJECT_SCHEMA_VERSION` is 15. Each slice takes the next free number
+`WORKSTREAM_OBJECT_SCHEMA_VERSION` is 16 (v16 landed the `tool_position`
+high-water fix). Each slice takes the next free number
 **at the time it lands**: two branches that each claim the next version merge
 cleanly in Git and collide in the ledger. This already happened once — #212 had
 to renumber v11→v12 and v12→v13 after #206 landed, and move a test's
@@ -349,22 +377,41 @@ Three views answer with values the underlying tables do not hold:
 | `_runtime_resources` | `content_sha256`, `model_content_ref`, `model_mime_type`, `model_content_sha256`, `model_metadata_json`, `model_content_error_code` | `NULL` |
 | `_runtime_resources` | `model_content_status` | `'ready'` |
 
-Only 7 statements route to the work-stream object *and* read one of these
-foreign views. Each needs a decision before the resources or identity slice can
-finish:
+An earlier draft listed 7 statements as the readers of these views and said each
+needed a decision. Traced to their runtime guards, **5 of the 7 are dead** and
+the list missed the live ones entirely. The corrected inventory:
 
-| File | Foreign view | Note |
+| File | Foreign view | Status |
 | --- | --- | --- |
-| `services/work-opportunity-service.ts` | `users` | `u.name AS author_name` — a UUID today |
-| `services/workstream-description-service.ts` | `users` | `u.name AS author_name` — a UUID today |
-| `services/attachment-tool-receipts.ts` | `resources` | insert…select |
-| `services/attachment-tool-receipts.ts` | `resources` | reads `model_content_sha256` — `NULL` today |
-| `services/integrations.ts` | `resources` | joined to `workstream_resources` |
-| `services/resource-service.ts` | `resources` | joined to `workstream_resources` |
-| `queues/activity-consumer.ts` | `resources` | joined to `workstream_resources` and `workstreams` |
+| `services/attachment-tool-receipts.ts` (insert…select) | `resources` | **dead** — the unrouted arm; see [Product behavior](#product-behavior) |
+| `services/attachment-tool-receipts.ts` (`model_content_sha256`) | `resources` | **dead** — same arm |
+| `services/integrations.ts` | `resources` | **dead** — legacy arm of a `phase` conditional |
+| `services/resource-service.ts` | `resources` | **dead** — legacy arm |
+| `queues/activity-consumer.ts` | `resources` | **dead** — legacy arm |
+| `services/work-opportunity-service.ts` | `users` | **dead** — legacy arm, and queries `activity_events`, dropped by 0090 |
+| `services/workstream-description-service.ts` | `users` | **live** — `author_name` into a prompt, not a rendered surface |
+| `packages/db/src/index.ts` ×3 | `resources` | **live, and outside `apps/api/src`** — the transcript loaders, joining `message_attachments` → `resources` |
 
-A slice that "preserves behavior" by returning the same fabricated constant has
-preserved a bug. Establish what the caller does with the value first.
+The last row is the one that matters and the one a repo-scoped search misses:
+`getMessageByClientId`, `listMessages` and `listMessagesAfter` read `id`,
+`title`, `mime_type`, `metadata_json`, `content_ref` and `created_at` through
+`_runtime_resources`. Those six the view projects *for real*, out of
+`workstream_resource_links.resource_json` — they are the reason schema migration
+v4 exists. None of the six fabricated columns is among them.
+
+So the resources slice does not have to decide what to do about a fabricated
+constant. After deleting the dead arms, **no live statement reads any of the
+seven fabricated columns**, and the view can be trimmed to the six real ones
+rather than converted around. `_runtime_users.name` has one live reader, feeding
+a prompt; the identity slice should record that it is a placeholder nothing
+renders, so the next reader does not "fix" it by denormalizing display names into
+`participants` — a second, staleable copy that the actual read path never
+consults.
+
+The original warning still stands in principle, restated to match what was
+actually found: **a slice that "preserves behavior" by reproducing a fabricated
+constant has preserved a bug — but first establish that the statement executes
+at all.** Here, five of seven did not.
 
 ### Slices
 
@@ -463,6 +510,7 @@ explicitly:
 | Compat column | Real source | Translation |
 | --- | --- | --- |
 | `id` | `effect.effect_intent_id` | rename — and the reason `effectIntentId` is the vocabulary #230 introduced |
+| `harness_run_id` | `effect.run_id` | rename |
 | `input_hash` | `effect.request_hash` | rename |
 | `status` | `effect.status` | **value remap**: `admitted` → `pending`, `executing` → `started`; the other three pass through |
 | `started_at`, `completed_at` | `effect.started_at`, `effect.settled_at` | unix ms → ISO-8601, `NULL`-guarded |
@@ -480,6 +528,19 @@ strings elsewhere.
 `last_checkpoint_at` is the second one: it is computed, so nothing writes it,
 and a typed `completeToolInvocation` that tries to *set* it has misread the
 schema. It belongs on the read operation that projects a receipt.
+
+That is 11 translated columns out of the view's 23; the rest pass through. Three
+of the eleven turn out to have no reader at all — nothing reads `attempt_id`,
+`lease_expires_at`, or `last_checkpoint_at`. `loadToolInvocation` pulls them only
+because it says `SELECT *`. So the read operation need not project them, and the
+correlated subquery goes away rather than being reimplemented.
+
+**Where the translation goes instead of away.** `ToolInvocationSchema` in
+`packages/contracts` pins `status` to the compat spellings and its timestamps to
+ISO-8601. That is a published wire shape, not a reader's habit, so slice 1 moves
+the translation from the SQL view into the Worker-side port at the
+`loadToolInvocation` boundary. Changing the wire enum is a separate, deliberate
+change; it must not be smuggled in here.
 
 **What the write triggers fabricate, and the bug in it.** The read view
 translates; the `INSTEAD OF INSERT` trigger *invents*. `tool_effects` has five
@@ -537,17 +598,58 @@ The fix is a high-water mark rather than a count —
 across deletes. That does not need to wait for slice 1: migration 14 already
 rebuilt this view's *update* trigger in place, so the same technique repairs the
 insert trigger now, ahead of the slice that deletes it entirely. The typed
-operation inherits the corrected allocation. It also has to decide what
-`occurrence_key`, `authority_revision`, and `result_hash` actually mean, rather
-than inheriting three placeholders. Slice 1 should fix the position allocation
-and say so; the other three can keep their current values under an explicit
-comment if nothing reads them, but "nothing reads them" is a claim to verify,
-not assume.
+operation inherits the corrected allocation.
+
+**The other three fabrications, now verified rather than assumed.** An earlier
+draft said "nothing reads them" was a claim to check. Checked, across the whole
+repository including migrations, tests, scripts and the desktop app:
+
+| Column | Verdict |
+| --- | --- |
+| `occurrence_key` | **No reader.** No index, no constraint, not projected by the view. Its value is `'runtime:' \|\| effect_intent_id` — a restatement of the primary key. |
+| `authority_revision` | **No reader.** `execution_plan_hash` with `'runtime'` substituted for `NULL`, and `execution_plan_hash` is a real column that *is* read. |
+| `result_hash` | **One reader: itself.** The update trigger's `COALESCE(NEW.output_ref, NEW.output_summary, result_hash)` preserves the prior value. Nothing outside the column observes it. |
+
+`result_hash` is therefore droppable *in the same change that drops
+`_runtime_tool_invocations_update`*, and not before. The typed writers already
+match its behavior without the self-read: `complete` always supplies a non-null
+first arm, and `fail` and the rebind omit the column entirely, which preserves it
+exactly as the third `COALESCE` arm did.
+
+A caution on actually removing the two dead ones: both are `NOT NULL` with no
+default on a `STRICT` table carrying a table-level `UNIQUE`, so this is a
+create-copy-drop-rename rebuild, not `ALTER TABLE … DROP COLUMN`. That is a real
+migration for two columns of dead text per row. Fold it into slice 1's own
+migration rather than spending a version on it alone.
+
+And one near-miss worth naming, because it is the same shape as the mistake this
+PRD already made once: `occurrence_key` **does** carry a unique index — on the
+`parts` table, not on `tool_effects`. Same column name, different table. Check
+the table, not the name.
 
 **What the migration drops, and the one thing it must not.**
 `_runtime_tool_invocations` with its insert, update, and delete triggers, and
 `_runtime_tool_checkpoints` with its insert trigger — six objects, triggers
 before views.
+
+Two things in that file are **kept**, and the second is worse to get wrong than
+the first.
+
+`attachment_tool_receipts` is **kept, and moved**. It is a real `STRICT` data
+table holding live product data — the resource version each replayable
+attachment read depends on — and it is created *only* by
+`workstream-runtime-compat-schema.ts`, appearing nowhere in
+`workstream-object-schema.ts`. It is not a view, it has no trigger, and nothing
+about it is a compatibility shim except its address. Slice 1 moves its
+`CREATE TABLE` and `attachment_tool_receipts_invocation_idx` into the object's
+own schema.
+
+The trap is that the compat file's header comment says, three lines above that
+`CREATE TABLE`, that "these statements deliberately create no compatibility data
+tables". Anyone deriving the drop set from that sentence deletes live data. It is
+true of `_runtime_statement_changes` — a genuine compat mechanism that does go —
+and false of this table. **The rule slice 1 establishes: derive the drop set
+from what each object is, never from the file it lives in.**
 
 `tool_effects_run_call_uq` is **kept**. It lives in the compat schema and it
 looks like compat debris, but it is a unique index on real columns of a real
@@ -583,12 +685,71 @@ becomes one method on whichever storage class moves second, and until slice 6
 lands that method reads `runs` directly, which it may, because both tables are
 in the same object.
 
-**Its foreign-view reader.** `attachment-tool-receipts.ts` joins `resources` —
-one of the two lossy foreign views — and reads `model_content_sha256`, which
-`_runtime_resources` fabricates as `NULL`. That comparison is always false
-today, so the reconciliation always takes the changed path. Slice 1 can convert
-around it or leave the join in place for slice 5; what it must not do is
-reproduce the `NULL` and call it behavior-preserving.
+**Its foreign-view reader, corrected.** `attachment-tool-receipts.ts` has two
+arms. The one that joins `_runtime_resources` and reads the fabricated
+`model_content_sha256` is dead (see [Product behavior](#product-behavior)); the
+live arm reads the real digest from WorkspaceDO's `resources` as its own
+single-authority statement, correlating in TypeScript rather than joining. That
+is already the pattern the resources slice would have had to invent, so slice 1
+deletes the dead arm and leaves the live one alone.
+
+Two things about the live arm must survive that deletion, because both are
+load-bearing and neither is obvious:
+
+- **The digest comparison is now the *only* receipt-invalidation mechanism.** D1
+  migration 0073 had a trigger that eagerly deleted receipts when
+  `model_content_sha256` changed. WorkspaceDO has no equivalent and cannot have
+  one — receipts live in a different object now. Read-time comparison is the
+  whole mechanism. Anyone "simplifying" that check removes the only thing between
+  a stale derivative and a replayed model turn.
+- **The only test of the register path covers the dead arm.**
+  `attachment-tool-receipts.test.ts` calls the exported functions with a bare
+  `D1Database`, so it exercises arm A exclusively, against a schema D1 has not
+  had since 0090, seeded with a non-`NULL` digest. It is green over code that
+  cannot execute. Deleting the dead arm without rebuilding that test on the
+  harness-shaped fixture leaves the live register path with no coverage at all.
+
+**What is left of slice 1, per object rather than per file.** The five writers
+are converted; the readers are not. Decomposed by trigger, the remaining surface
+is much smaller than a file list suggests:
+
+| Object | Remaining users |
+| --- | --- |
+| `_runtime_tool_checkpoints` view + insert trigger | **none** — six test assertions only |
+| `_runtime_tool_invocations` insert trigger | the dev seed route |
+| `_runtime_tool_invocations` update trigger | the lease sweep in `harness-run-runtime.ts` |
+| `_runtime_tool_invocations` delete trigger | one delete in `attachment-tool-receipts.ts` |
+| `_runtime_tool_invocations` read view | nine live SELECTs |
+
+Half the view surface is already free: rewriting six assertions onto
+`tool_effect_checkpoints` retires the checkpoint view with no production change.
+
+**The lease sweep needs its own guard, and that is why it was left behind.**
+Every method on `WorkstreamToolReceiptStorage` opens with `#fence`, which
+requires a live lease. `reapStaleHarnessRuns`'s entire premise is that no lease
+exists — so `admit`, `checkpoint`, `complete` and `fail` would each return
+`ownership_lost` by construction. It needs a method fenced on the run's
+`terminalized_at` instead, which is a guard the existing four cannot express.
+Two decisions that conversion must make deliberately rather than inherit:
+
+- **Keep the `json_extract(execution_plan_json, '$.mode')` derivation, or change
+  it on purpose.** It disagrees with the real `mode` column: for an absent or
+  malformed plan the column says `read`, while the sweep treats the same plan as
+  possibly-a-write and settles `ambiguous`. Switching to the column silently
+  demotes those receipts to `failed` — turning "we could not confirm the write"
+  into "it definitely failed", which is exactly the wrong direction for a
+  receipt whose provider call may have landed.
+- **Decide whether the sweep appends a checkpoint.** It does not today, while
+  `#settle` makes checkpoint-then-move structural for every other terminal
+  write. Matching that is probably right and is still a behavior change.
+
+**No statement blocks slice 1.** The three that look like cross-slice blockers
+are not: the `messages` join in the transcript projection is id-equality on data
+the caller already holds, and the two telemetry statements join only tables
+inside the same object. The telemetry pair should be retargeted at `tool_effects`
+in place rather than given port methods — their primary table is `harness_runs`,
+so slice 6 owns them; retargeting stops them naming a slice-1 table, which is all
+the view drop requires.
 
 ### The shape of a slice
 
@@ -709,21 +870,72 @@ showing a name rather than a UUID.
 
 ## Open questions
 
-1. **Does `packages/db/src/index.ts` need to move before slice 4?** It builds
-   message projections naming `message_mentions` in three places. If those
-   helpers are called through a routed handle they are slice-4 work; if they are
-   only called against real D1 they are untouched. Resolving this needs a
-   caller-by-caller read and it blocks slice 4's scope, not its start.
+All three of this PRD's original open questions have been answered by tracing the
+code rather than by deciding. They are kept, with their answers, because each was
+resolved in a way that changes the plan.
+
+1. **Does `packages/db/src/index.ts` need to move before slice 4?** ~~Unresolved.~~
+   **Yes — it is routed.** `message_mentions` is in both `LOCAL_TABLES` and
+   `TABLE_REWRITES`, and every live caller of the three projections reaches them
+   through a work-stream-routed handle. Two specifics for whoever scopes slice 4:
+   `workstream-service.ts`'s `appendWakeupSystemMessage` reads
+   `createDatabase(env.DB)` on a plain parameter and looks unrouted — it is
+   wrapped two frames up inside the object, and is the one path routed
+   *unconditionally*, through a local executor rather than an RPC hop. And
+   `listMessagesAfter` has zero callers repo-wide; slice 4 deletes it rather than
+   converting it.
+
+   The gate itself is slice 4's real work. `workstreamExecutionEnvironment` wraps
+   only when `phase === 'durable_object_open'`, and the unrouted branch is
+   unreachable-but-live: 0090 dropped both `messages` and `message_mentions` from
+   D1, so that branch would fail with `no such table` rather than read stale
+   rows. Retiring the layer means retiring the gate.
+
 2. **Do `_runtime_users`'s readers need a display name the object does not
-   hold?** The object's `participants` table holds `user_id` and participation
-   metadata. If no projection carries a display name, the identity slice either
-   adds one — fed by the existing regional effect that already syncs
-   participants — or the two surfaces render unattributed. This decides whether
-   goal 6 is a projection change or a rendering change, and it should be settled
-   before slice 7 starts, not during it.
-3. **Does the workspace side want a smaller port shape?** Its objects hold no
-   compat views and its table names already match, so a slice there may be a
-   thinner thing than a work-stream slice — possibly a storage class with no
-   protocol module, since there is no vocabulary to translate. Worth deciding
-   once slice 1 has landed and the pattern's real cost per table is known
-   rather than estimated. It changes how slices 8–15 are built, not whether.
+   hold?** ~~Unresolved; decides whether goal 6 is a projection change or a
+   rendering change.~~ **Neither. Nothing renders it.** Only one of the two
+   readers is live, and its `author_name` goes into an LLM prompt, not into
+   `packages/contracts` and not to the client. The rendered author name comes
+   from a separate regional-D1 join inside the object. The identity slice adds
+   no projection and changes no rendering; it should instead record in the compat
+   schema that `_runtime_users.name` is a placeholder nothing renders, so the
+   next reader does not denormalize display names into `participants` and create
+   a staleable second copy the read path never consults. Separately and
+   cheaply: stop feeding a bare UUID to the description model as `authorName`,
+   which is prompt noise that could be echoed into a user-visible description.
+
+3. **Does the workspace side want a smaller port shape?** ~~Worth deciding once
+   slice 1 has landed.~~ **No — keep all three modules.** The premise was right:
+   `workspace-runtime-sql.ts` has no `TABLE_REWRITES` at all, against 25 on the
+   work-stream side, so a workspace slice translates no vocabulary. But
+   translation is only one of the protocol module's four jobs and the only one
+   that lapses. The `Exhaustive<T>` guard is about the dispatch list covering the
+   storage class; the identity re-check guards a misrouted stub; and the
+   directory-effect record is *more* load-bearing there, not less — WorkspaceDO
+   holds four outboxes of its own plus its own alarm schedule, so "does this
+   write move a deadline something else reads?" has four more ways to be answered
+   wrong.
+
+   What shrinks is the storage class, not the module count. Measured rather than
+   estimated: Terminal cost 1,256 + 207 + 169 lines for three tables and tool
+   receipts cost 624 + 117 + 110 for three, both carrying translation. A
+   workspace slice pays neither the timestamp conversion nor the status remap, so
+   its storage class approaches a method-per-statement wrapper — while the
+   protocol and port stay near-fixed at roughly 110–200 lines each regardless of
+   table count.
+
+### What is genuinely still open
+
+- **How much of the 983 counted statements is dead.** There are 83
+  `authority.phase` gates across `apps/api/src`, concentrated in
+  `work-opportunity-service.ts` (20), `automation-service.ts` (9) and
+  `resource-service.ts` (8). Every dead arm found so far — and this PRD's
+  research found five in one pass — was written in compat vocabulary, which is
+  why a static count picks them up. The statement figures are therefore inflated
+  by an unknown but probably large factor, and step 1 of each slice ("delete the
+  dead legacy arms") may be most of the work. This does not change the slice
+  boundaries; it means the per-slice estimates should be read as ceilings.
+- **Whether `occurrence_key` and `authority_revision` are worth a table
+  rebuild.** They are provably dead, and removing them is a
+  create-copy-drop-rename on a `STRICT` table. Recommendation: fold into slice
+  1's migration, do not spend a version on it alone.
