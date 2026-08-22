@@ -199,3 +199,118 @@ export interface InventoryObject {
   objectId: string;
   hasStoredData: boolean;
 }
+
+/**
+ * What an operator asked for on the **Force a migration** page.
+ *
+ * The class is the unit because a migration belongs to a class: one schema
+ * list, one component key, one head version. The region is optional and means
+ * "both" when absent, which is the ordinary case — the same classes are
+ * deployed in both Workers and a schema change lands in both.
+ */
+/**
+ * The Durable Object classes that run `withMigrationReport`.
+ *
+ * The sweep enumerates every namespace in the account, which is more than the
+ * classes this Worker observes: the tracker's own `MigrationRegistry` is created
+ * by the sweep that discovers it, and `CrashSymbolicatorContainer` is a
+ * container rather than a migrated object. Neither will ever report, so without
+ * this list they accumulate in `unreported` forever and make that count
+ * worthless for its actual job — spotting an API object that should have
+ * reported and has not.
+ *
+ * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
+ * class missing from here is never swept at all; a class listed here whose
+ * objects never wake sits in `unreported` forever. `WorkspaceScheduler` was
+ * removed when the class was deleted: its objects can no longer report, so
+ * leaving it here would have parked every one of them in `unreported` — the
+ * exact count this list exists to keep meaningful.
+ */
+export const REPORTING_CLASSES = [
+  "SubstreamAgent",
+  "BlockDashboardAgent",
+  "WorkstreamDO",
+  "WorkspaceDO",
+] as const;
+
+export const MigrationRunRequestSchema = z.object({
+  /**
+   * Only a class the API Worker can actually migrate.
+   *
+   * An enum rather than an identifier pattern, because the page's own list of
+   * classes is a rendering of what is forceable, not a constraint on it: a JSON
+   * caller or a hand-edited form reaches this schema directly. A class the
+   * consumer holds no dispatcher for would otherwise be fanned out, retried five
+   * times per object, and dead-lettered — while the run row recorded it as
+   * dispatched. That spends an operator's afternoon and, worse, fills the
+   * dead-letter queue this platform relies on as its monitoring signal with
+   * messages that were never going to work.
+   */
+  className: z.enum(REPORTING_CLASSES),
+  region: z.enum(["global", "eu"]).nullish(),
+});
+export type MigrationRunRequest = z.infer<typeof MigrationRunRequestSchema>;
+
+/** One object a forced migration will be sent to, and the region that owns it. */
+export interface MigrationTarget {
+  objectId: string;
+  objectName: string | null;
+  region: "global" | "eu";
+}
+
+/**
+ * The objects a run will reach, and everything about it that is not those.
+ *
+ * `matched` counts every live object of the class before the cap, so a
+ * truncated run reports the size it could not cover rather than the size it
+ * did.
+ *
+ * `unroutable` counts the objects a command cannot be addressed to, and it has
+ * two disjoint causes that the run reports as one number because the operator's
+ * remedy for both is the same — the object was not reached. Here it is the
+ * objects whose *region* could not be resolved from either a report or a known
+ * script name. The dispatcher adds the other cause: an object whose region is
+ * known but whose command queue this deployment holds no binding for. They
+ * cannot overlap, because an object with no region never reaches `targets`.
+ */
+export interface MigrationTargetSelection {
+  targets: MigrationTarget[];
+  matched: number;
+  unroutable: number;
+  truncated: boolean;
+}
+
+/** One class an operator may force, per region, with what it would reach. */
+export interface ForceableComponent {
+  className: string;
+  region: "global" | "eu";
+  /** Live objects of this class in this region — the size of a run. */
+  objects: number;
+  behind: number;
+  failed: number;
+  unreported: number;
+}
+
+/** One recorded run, as the page lists it. */
+export interface MigrationRun {
+  runId: string;
+  className: string;
+  /** Null means every region the class runs in. */
+  region: "global" | "eu" | null;
+  requestedBy: string;
+  requestedAt: number;
+  matched: number;
+  dispatched: number;
+  unroutable: number;
+  truncated: boolean;
+  status: "dispatched" | "empty" | "failed";
+  errorMessage: string | null;
+}
+
+/** Everything the **Force a migration** page renders. */
+export interface MigrationsOverview {
+  components: ForceableComponent[];
+  runs: MigrationRun[];
+  /** Regions whose command queue this Worker actually holds a binding for. */
+  dispatchableRegions: ("global" | "eu")[];
+}

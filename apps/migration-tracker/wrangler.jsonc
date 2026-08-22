@@ -46,6 +46,29 @@
   // split per region — every report lands in the one registry object either
   // way, so a second queue would buy resources rather than isolation.
   "queues": {
+    // The forced-migration commands this Worker fans out, one queue per region.
+    //
+    // Split where the report queue is shared, and the two are decided by the
+    // same test in docs/choosing-queues-or-rpc.md: a queue has exactly one
+    // consumer, and a Durable Object can only be reached by a Worker holding a
+    // binding to its namespace. The reports converge on one destination — this
+    // Worker's registry object — so one queue serves both regions. The commands
+    // diverge to two fleets in two Workers, so they cannot.
+    //
+    // Two bindings in one config, rather than one binding pointing at a
+    // different queue per deployment, because this Worker is deployed once and
+    // addresses both regions. Selecting between them by region is the one place
+    // in the system where that is not a branch on region in code that should
+    // have been configuration.
+    //
+    // Arithmetic, per docs/choosing-queues-or-rpc.md: an operator run over the
+    // largest class in the account is under a thousand messages, against a
+    // ceiling of 5,000 a second. The batch settings are on the consumer side,
+    // in apps/api/wrangler.<region>.jsonc.
+    "producers": [
+      { "binding": "GLOBAL_MIGRATION_COMMAND_QUEUE", "queue": "avalon-global-migration-commands" },
+      { "binding": "EU_MIGRATION_COMMAND_QUEUE", "queue": "avalon-eu-migration-commands" }
+    ],
     "consumers": [
       {
         "queue": "avalon-migration-reports",

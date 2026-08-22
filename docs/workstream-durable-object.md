@@ -673,6 +673,19 @@ Large data rewrites use the fleet maintenance/import control plane and resumable
 receipts, never unbounded constructor work. `durable-utils` is intentionally not
 a dependency.
 
+The runner is *called* from `MigratableDurableObject`, the base every class in
+this hierarchy extends — directly for `BlockDashboardAgent`, and through
+`ScheduledDurableObject` for the other three. A subclass declares its schema
+once, in `migrationPlan()`, and says when it is ready, in `migrationsReady()`;
+in exchange it gets the report to the migration tracker and a public
+`forceMigration` RPC without writing either. Both members are abstract, so a new
+Durable Object class that reports nothing, or that cannot be asked to catch up,
+does not compile. `forceMigration` is called only by the regional queue consumer
+behind the tracker's operator site, and it applies nothing itself — waking the
+object is what runs its schema, so the method awaits construction and reports
+where the object landed. See
+[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
+
 ### Retired maintenance-window cutover
 
 The one-time D1-to-object authority cutover (drain -> import -> verify ->
@@ -1042,6 +1055,37 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-22 — Every object in the hierarchy shares one migration base
+
+**What changed:** `MigratableDurableObject` is a new base that
+`ScheduledDurableObject` and `BlockDashboardAgent` both extend, so all four
+classes reach the migration runner through it. Each declares its schema once in
+`migrationPlan()`; `scheduleReady()` is renamed `migrationsReady()` and moves
+down to the new base, because it was never about scheduling. Every class gains a
+public `forceMigration` RPC.
+
+**Why:** four constructors were each wiring up the same `withMigrationReport`
+call around their own runner invocation, with the component key, the class name,
+and the migration list repeated at every site. That is tolerable duplication
+until something needs to be added to all of them — which is what forcing a
+migration is — and then the cost is not writing it four times, it is the fifth
+class. A class added later would have compiled, deployed, and been silently
+unreachable and unreported. Making both members abstract is what removes that
+possibility rather than documenting against it.
+
+**The rename is not cosmetic.** `scheduleReady()` promised "the scheduler is
+ready" and delivered "the object's migrations have run" — every implementation
+returned the constructor's `initialized` promise. With the migration pass now
+living one level down, keeping the old name would have left the schema half of
+the base awaiting a method named after the half above it.
+
+**What a future change has to respect:** `migrationPlan()` is read during the
+subclass's own constructor, before its fields are assigned, so every
+implementation must answer with module constants and nothing else. And the
+class list here is one of three that have to agree — the others are
+`REPORTING_CLASSES` in the tracker's protocol and the dispatcher map in
+`apps/api/src/queues/migration-command-consumer.ts`.
 
 ### 2026-08-22 — The object-store migration component takes the agent's name
 
