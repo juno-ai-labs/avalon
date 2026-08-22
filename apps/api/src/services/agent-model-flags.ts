@@ -150,10 +150,11 @@ function evaluationContext(
  * plan: a malformed flag value is rejected whole so an agent cannot end up with
  * a new default model and stale fallbacks.
  */
-export async function resolveAgentModelRouting(
+async function resolveAgentModelRoutingForSubject(
   env: Env,
   role: AgentModelRole,
-  context: AgentModelFlagContext = {},
+  context: AgentModelFlagContext,
+  attributeSubject: FlagTargetingSubject,
 ): Promise<AgentModelRouting> {
   const fallback = defaultAgentModelRouting(env, role);
   const flags = env.FLAGS;
@@ -164,7 +165,7 @@ export async function resolveAgentModelRouting(
   // it as `agent_model_flag_unavailable` at a level chosen to keep local runs
   // quiet; an attribute failure caught there would wear the wrong name. The
   // loader guarantees its own no-throw contract and logs its own diagnostics.
-  const attributes = await loadFlagTargetingAttributes(env, context);
+  const attributes = await loadFlagTargetingAttributes(env, attributeSubject);
   let details: FlagshipEvaluationDetails<AgentModelRouting>;
   try {
     details = await flags.getObjectDetails(
@@ -235,14 +236,47 @@ export async function resolveAgentModelRouting(
   return { model: parsed.data.model, fallbackModels: parsed.data.fallbackModels };
 }
 
+export function resolveAgentModelRouting(
+  env: Env,
+  role: AgentModelRole,
+  context: AgentModelFlagContext = {},
+): Promise<AgentModelRouting> {
+  return resolveAgentModelRoutingForSubject(env, role, context, context);
+}
+
+/**
+ * Resolve the first run of a work stream while its object root is still
+ * `preparing`.
+ *
+ * The work-stream id remains in the Flagship evaluation context, where it is
+ * identity and bucketing input. It is deliberately omitted only from the
+ * attribute loader: reading WorkstreamDO product facts before the atomic root,
+ * opening message, and first run commit would cross the authority fence and
+ * turn an expected not-yet-readable row into a logged runtime-SQL failure.
+ * Workspace attributes are already authoritative and remain available. Later
+ * runs use the ordinary resolver and load the complete work-stream facts.
+ */
+export function resolveNewWorkstreamModelRouting(
+  env: Env,
+  context: { workspaceId: string; workstreamId: string },
+): Promise<AgentModelRouting> {
+  return resolveAgentModelRoutingForSubject(
+    env,
+    "workstream",
+    context,
+    { workspaceId: context.workspaceId },
+  );
+}
+
 /**
  * The model a work-stream run is expected to use, recorded on `harness_runs`
  * rows at schedule time. Resolved from the same flag the run itself reads.
  *
- * Flag-only: this is what the paths that are *creating* the work stream call,
- * where there is no row to carry an override yet. A caller that already knows
- * the override it is about to write passes it through `pinnedModelRouting`;
- * every path reading an existing work stream uses
+ * Flag-only: this is what scheduled creation paths call where there is no row
+ * to carry an override yet. Durable Object creation instead uses
+ * `resolveNewWorkstreamModelRouting` while its root is preparing. A caller that
+ * already knows the override it is about to write passes it through
+ * `pinnedModelRouting`; every path reading an existing work stream uses
  * `resolveWorkstreamModelRouting` below.
  */
 export async function scheduledWorkstreamModel(
