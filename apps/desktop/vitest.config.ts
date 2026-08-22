@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
@@ -37,6 +38,14 @@ const shared = {
 // `// @vitest-environment jsdom` docblock, which overrides the project.
 export default defineConfig({
   test: {
+    // Vitest keeps one core free by default (`availableParallelism() - 1`),
+    // which is the right hedge for a watch run sharing a machine with an editor
+    // and a dev server. A one-shot `vitest run` — what CI and the quality gates
+    // do — has nothing to share with, and these files spend enough of their time
+    // off-CPU (module resolution, SQLite, reading fixtures) that the freed core
+    // is idle rather than held in reserve. Measured on a 4-core sandbox: api
+    // 98s -> 84s, desktop 84s -> 78s.
+    maxWorkers: availableParallelism(),
     projects: [
       {
         plugins: [react()],
