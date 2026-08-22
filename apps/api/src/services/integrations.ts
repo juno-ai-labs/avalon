@@ -4726,6 +4726,7 @@ async function settleRootHarnessToolCompletion(
   // invalidates the receipt, and executes again instead of trusting the JSON.
   await registerAttachmentToolReceipt(env, {
     workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
     invocationId: result.invocationId,
     expectedOutputRef: outputRef,
     canonicalToolName: result.canonicalToolName,
@@ -4826,12 +4827,20 @@ async function loadAuthorizedAttachmentReplay(
     capability: receipt.capability,
   });
   if (validation !== "valid" || !receipt.outputRef) {
-    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      invocationId: receipt.invocationId,
+    });
     return null;
   }
   const output = await loadToolReplayOutput(env, receipt.outputRef);
   if (output === null) {
-    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      invocationId: receipt.invocationId,
+    });
     return null;
   }
   let contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
@@ -4840,11 +4849,19 @@ async function loadAuthorizedAttachmentReplay(
       ? await rehydrateWorkstreamViewReceipt(env, input, receipt.rawInput, output)
       : [];
   } catch {
-    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      invocationId: receipt.invocationId,
+    });
     return null;
   }
   if (receipt.canonicalToolName === "view_resource" && contentParts.length === 0) {
-    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      invocationId: receipt.invocationId,
+    });
     return null;
   }
   return { output, contentParts };

@@ -424,6 +424,43 @@ export function testSubstreamAgentsBinding(
         };
       }
     }),
+    /**
+     * The tool-receipt port's counterpart, on the same object database.
+     *
+     * Same shape and same reasoning as `executeTerminalOperation` above: real
+     * storage, real schema, real constraints, with only the transport standing
+     * in. A lost lease comes back as a 200 carrying `ownership_lost`, because
+     * that is an ordinary end to a run rather than a fault — a stub that threw
+     * for it would let a test pass against error handling production never
+     * reaches.
+     */
+    executeToolReceiptOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamToolReceiptStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "tool_receipt_operation_failed",
+          }),
+        };
+      }
+    }),
     executeRuntimeSql: vi.fn((input: {
       workspaceId: string;
       workstreamId?: string;
