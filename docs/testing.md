@@ -211,11 +211,23 @@ beforeEach(async () => {
   terminalizes its own row. Both stayed green in isolation and failed under
   whole-monorepo load; both were reproduced on demand by inserting a two-second
   wait before the assertion, which is how to check whether a green test here is
-  proving anything. Fix it by closing the window rather than shortening it: keep
-  the mutation and its check inside one invocation the input gate cannot open
-  between — one `state.blockConcurrencyWhile`, or one `runInDurableObject` that
-  makes the call and parks the alarm it arms, as `dispatchWithoutDraining` in
-  `agent-run-lifecycle.test.ts` does.
+  proving anything.
+
+  Two fixes work. **Assert on state the background work cannot reach** —
+  `durable-object-runtime.test.ts` counts `projection_keys`, written per effect
+  in the same transaction as the outbox row it stands for and deleted by
+  nothing, rather than counting the outbox rows themselves. Or **keep the call
+  and its check inside one invocation the object cannot interleave**, as
+  `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
+  and parking the alarm in a single `runInDurableObject`.
+
+  **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
+  object initializing itself, and calling it re-entrantly from inside
+  `runInDurableObject` holds the very input gate `reset()` needs in order to
+  clear storage between tests. It was tried here: the guarded test passed, and
+  the *next* test in the file started finding a work stream the previous one had
+  left behind, failing with `workstream_create_replay_incomplete` — in CI only,
+  where the object is under enough load for it to matter.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
