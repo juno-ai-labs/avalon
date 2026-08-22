@@ -20,6 +20,7 @@ import {
   type ScheduledAlarm,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000a2");
@@ -275,6 +276,141 @@ describe("a workspace's schedule", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = 'schedule'`,
       ).one().count).toBe(0);
+    });
+  });
+
+  it("arms the next occurrence of a recurring schedule it just fired", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+    const scheduleId = "00000000-0000-7000-8000-0000000000d1";
+    // Seeded in the future so nothing can fire between here and the invocation
+    // below; the row is backdated inside that invocation instead.
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000000d2",
+      statements: [{
+        sql: `INSERT INTO schedules
+                (id, workspace_id, connector_connection_id, schedule_type, interval_seconds,
+                 timezone, next_run_at, enabled, version, created_at, updated_at)
+              VALUES (?, ?, ?, 'interval', 300, 'UTC', ?, 1, 1, ?, ?)`,
+        params: [
+          scheduleId,
+          WORKSPACE_ID,
+          "00000000-0000-7000-8000-0000000000d3",
+          new Date(Date.now() + 600_000).toISOString(),
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ],
+      }],
+    });
+
+    // Backdating, arming, and firing all happen without the object's input gate
+    // opening, so the runtime cannot land the real handler — which has no
+    // Workflow binding here — on the entry first and defer it behind a gate.
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `UPDATE schedules SET next_run_at = ? WHERE id = ? AND workspace_id = ?`,
+        new Date(Date.now() - 1_000).toISOString(),
+        scheduleId,
+        WORKSPACE_ID,
+      );
+      const advancedTo = new Date(Date.now() + 300_000).toISOString();
+      scheduling(instance).runScheduledAlarm = (alarm: ScheduledAlarm) => {
+        if (alarm.kind === "schedule") {
+          // Written straight to storage, as the real runner's local executor
+          // does — deliberately not through `executeRuntimeSql`, whose
+          // auto-refresh would arm the next occurrence and hide the very gap
+          // this test exists for.
+          state.storage.sql.exec(
+            `UPDATE schedules SET next_run_at = ?, version = version + 1 WHERE id = ? AND workspace_id = ?`,
+            advancedTo,
+            scheduleId,
+            WORKSPACE_ID,
+          );
+        }
+        return Promise.resolve();
+      };
+      await instance.refreshSchedule(WORKSPACE_ID);
+
+      await instance.alarm();
+
+      // The entry the drain settled has been replaced by one for the occurrence
+      // the handler just wrote. Without the end-of-alarm reconcile the schedule
+      // fires exactly once and is never armed again.
+      const entries = new ScheduledAlarmStore(state.storage.sql).list("schedule");
+      expect(entries.map((entry) => entry.key)).toEqual([scheduleId]);
+      expect(entries[0]!.dueAt).toBe(Date.parse(advancedTo));
+      expect(await state.storage.getAlarm()).toBe(Date.parse(advancedTo));
+    });
+  });
+
+  it("reconciles more targets than a query can bind parameters for", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      // Comfortably past workerd's bound-variable ceiling. A workspace reaches
+      // this on its own: a person's digest is one `schedules` row per delivery
+      // time, so a mid-sized workspace has hundreds.
+      const targets = Array.from({ length: 250 }, (_value, index) => ({
+        key: `schedule-${index}`,
+        dueAt: now + index,
+      }));
+
+      store.reconcile("schedule", targets, now);
+      expect(store.list("schedule")).toHaveLength(250);
+
+      store.reconcile("schedule", targets.slice(0, 200), now);
+      expect(store.list("schedule")).toHaveLength(200);
+      expect(store.get("schedule", "schedule-249")).toBeNull();
+    });
+  });
+
+  it("arms a Terminal deadline as soon as the directory effect that wrote it lands", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+    const dueAt = Date.now() + 300_000;
+    const effect = {
+      kind: "directory_common" as const,
+      title: "Terminal",
+      description: "",
+      preview: "",
+      scope: "workspace" as const,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: new Date().toISOString(),
+      completedAt: null,
+      archivedAt: null,
+      nextTerminalActionAt: new Date(dueAt).toISOString(),
+    };
+
+    // Driven through the real entry point, not the private helper: the failure
+    // this guards against is the reconcile not being wired to the only writer
+    // of `next_terminal_action_at`, which a direct helper call cannot see.
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [{
+        kind: "workstream_regional_effect" as const,
+        contractVersion: 1 as const,
+        region: "global" as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+        messageId: "00000000-0000-7000-8000-0000000000e9",
+        partitionKey: "common",
+        sourceVersion: 1,
+        requiredProjectionVersion: null,
+        payloadHash: workstreamRegionalEffectHash(effect),
+        effect,
+      }],
+    });
+
+    await runInDurableObject(stub, async (_instance: WorkspaceDO, state) => {
+      const entries = new ScheduledAlarmStore(state.storage.sql).list("terminal");
+      expect(entries.map((entry) => entry.key)).toEqual([WORKSTREAM_ID]);
+      expect(entries[0]!.dueAt).toBe(dueAt);
+      expect(await state.storage.getAlarm()).toBe(dueAt);
     });
   });
 

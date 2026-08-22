@@ -80,7 +80,13 @@ before a full re-arm.
    already past.
 4. Drain every entry whose effective instant has come, up to
    `SCHEDULED_ALARM_DRAIN_LIMIT` (100), each through `runScheduledAlarm(entry)`.
-5. Run `runDueAlarmWork(now)` — whatever the object derives rather than stores.
+5. Run `runDueAlarmWork(now)` — whatever the object derives rather than stores,
+   **including re-deriving the whole index**. A handler that just ran has
+   usually advanced its own canonical row, and it writes that row through the
+   object's local executor, which does not pass the auto-refresh in
+   `executeRuntimeSql`. Without a reconcile here, the drain settles the entry it
+   just ran and nothing arms the occurrence that replaced it: a recurring
+   automation fires exactly once.
 6. Re-arm.
 
 An entry that returns is settled: a one-shot is deleted, a repeating one
@@ -100,7 +106,10 @@ Some due times are canonical somewhere else — `schedules.next_run_at`,
 reach those tables through routed SQL, with no idea an alarm index exists.
 `reconcile(kind, targets)` makes one kind's entries exactly the given set:
 survivors keep their retry gates, vanished keys are deleted, and new ones are
-added. That is what lets a wake-up scheduled *before* the armed alarm pull the
+added. The surviving keys are bound as one JSON value and matched with
+`json_each`, not as one bound parameter each — workerd's bound-variable ceiling
+is well below the number of targets a real workspace has, and exceeding it threw
+`too many SQL variables` and rolled back the whole index. That is what lets a wake-up scheduled *before* the armed alarm pull the
 alarm in, and a cancelled schedule push it back out, without every writer
 knowing about `_internal_durable_alarms`.
 
@@ -129,9 +138,20 @@ derived source has no way to carry that distinction.
 
 ## Invariants
 
-- **An object never calls `setAlarm`, `getAlarm`, or `deleteAlarm` outside this
-  base.** A second writer means two derivations of "the earliest thing", they
-  will disagree, and the disagreement shows up as work that silently never runs.
+- **An object never derives its alarm outside this base.** A second derivation
+  of "the earliest thing" will disagree with the base's, and the disagreement
+  shows up as work that silently never runs. Two call sites do still arm
+  directly, and both are deliberate: `enqueueAgentRun` and
+  `WorkstreamObjectStore.enqueueRegionalEffect` each set an *immediate* alarm
+  the instant they commit durable work, so an isolate that dies before the full
+  re-arm cannot strand it. Both can only pull the alarm in, never push it out,
+  and the next `armNextAlarm` corrects the instant. Anything that would arm for
+  a *future* time belongs in the base.
+- **Whatever ran, re-derive before the alarm ends.** A handler that advances its
+  own source row has invalidated the index, and the settle that follows it
+  deletes the only entry pointing at that row. `WorkspaceDO.runDueAlarmWork`
+  reconciles for exactly this reason; an object that grows stored entries whose
+  handlers write their own next occurrence has to do the same.
 - **Every mutation of the entry list re-arms before returning.** A caller that
   schedules an entry and returns without arming has written a row nothing will
   ever read.
