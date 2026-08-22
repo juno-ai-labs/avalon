@@ -1,7 +1,5 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -9,7 +7,7 @@ import { encryptString, sha256 } from "../src/lib/crypto";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -21,7 +19,6 @@ import {
   workstreamObjectRun,
 } from "./helpers/durable-authority";
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const databases: DatabaseSync[] = [];
 
 /**
@@ -1519,13 +1516,8 @@ function slackMembershipEnvironment(
 
 
 function migratedDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
+  const database = legacyProductSqliteDatabase();
   databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    if (fileName.startsWith("0090_")) break;
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   // The retired pre-cutover arms are gone: Slack ingress serves work streams
   // through the Durable-Object authority, so every fixture opens it first.
   openWorkstreamAuthorityForTest(database);
