@@ -144,10 +144,20 @@ const WORKSPACE_REGIONAL_ONLY_TABLES = [
 
 const WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS = WORKSPACE_REGIONAL_ONLY_TABLES.map((table) => ({
   table,
-  // `workspaces` would otherwise match inside `workspace_members`, and
-  // `sessions` inside `slack_agent_sessions`; the word boundary plus the
-  // underscore exclusion keeps each name to itself.
-  pattern: new RegExp(`(?<![\\w_])${table}(?![\\w_])`, "iu"),
+  // The boundaries keep each name to itself: `workspaces` would otherwise
+  // match inside `workspace_members`, and `sessions` inside
+  // `slack_agent_sessions`.
+  //
+  // What they do not do is tell a table name from any other bare word in the
+  // statement. This matches the whole text, so a column alias
+  // (`COUNT(*) AS sessions`), a string literal (`WHERE scope = 'workspaces'`),
+  // or a CTE by one of these names would be refused as cross-authority even
+  // though the statement only touches local tables — and the error would read
+  // like the boundary bug rather than like the typo it is. Nothing under
+  // `apps/api/src` does that today. The alternative is parsing SQL here, which
+  // is a great deal of machinery to protect a name nobody has used yet; if one
+  // appears, rename the alias rather than teaching this to parse.
+  pattern: new RegExp(`\\b${table}\\b`, "iu"),
 }));
 
 function localStatement(sql: string): boolean {
