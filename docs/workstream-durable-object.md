@@ -1068,11 +1068,22 @@ tool_position)`, and a count allocates injectively only while nothing is ever
 removed. `attachment-tool-receipts.ts` deletes receipts from two paths, and the
 compat delete trigger turns each into a `DELETE FROM tool_effects`. One hole in
 a run's positions and the next admission computed a number another row already
-held; `INSERT OR IGNORE` dropped it, and `persistToolExecutionPlan` — which
-believes it conflicted on `(harness_run_id, tool_call_id)`, a constraint that
-does not exist on this table — looked up its own coordinates, found nothing, and
-threw `RunOwnershipLostError`. The run ended on a lease failure that never
-happened.
+held; `INSERT OR IGNORE` dropped it, and `persistToolExecutionPlan` — reading
+zero changes as "someone else already wrote my receipt" — looked up
+`(harness_run_id, tool_call_id)`, found nothing because its row was never
+written, and threw `RunOwnershipLostError`. The run ended on a lease failure
+that never happened.
+
+That call key *is* a real constraint: the compat schema creates
+`tool_effects_run_call_uq ON tool_effects(run_id, tool_call_id)`, which is what
+makes the routed `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` mean
+what it says once the SQL router strips the clause. It is simply not the
+constraint a position collision fires — that admission carries a *new*
+`tool_call_id` — so the caller's fallback lookup queries for a row the ignored
+insert never created. An earlier draft of this entry said the constraint did not
+exist; it does, it is load-bearing for replay dedup, and
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md)
+has to carry it into the object's own schema rather than drop it with the views.
 
 **Considered and rejected:** Waiting for the tool-receipt slice of
 [the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md),
@@ -1085,7 +1096,7 @@ behavior change this repair has no reason to make.
 
 **Consequences:** Migration 14's precedent — rebuilding a compat trigger in a
 later migration rather than editing the frozen v1 source — now has a second
-user, and the helper reapplies migration 15's epoch rounding because it derives
+user, and the helper reapplies migration 3's epoch rounding because it derives
 its text from v1 and would otherwise reinstate the truncation that fixed.
 Positions are no longer dense: a run that has had a receipt deleted has a gap,
 which nothing reads and the constraint does not mind.

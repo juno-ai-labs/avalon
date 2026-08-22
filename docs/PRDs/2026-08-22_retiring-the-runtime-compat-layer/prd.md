@@ -374,7 +374,15 @@ once per slice they touch, and they include dead legacy arms — separating thos
 reliably needs the per-file read that is the slice's own first step, so the
 counts come down as the work starts.
 
-**Work-stream side.** Seven slices, 25 tables, 447 statements, 25 views to drop.
+The two side totals below are 26 and 56, which is 82 rather than 81: `resources`
+is routed by *both* wrappers, so it appears in slice 5 and again in slice 14 —
+one table, converted twice — and 26 + 56 − 1 = 81. The statement columns, by
+contrast, sum to their stated totals exactly (447 and 536), so read the table
+counts as per-side and the statement counts as additive. The work-stream table
+names all 26 of its tables; the workspace one uses prefixes (`digest_*`,
+`slack_*`, `memory_*`, `automation_*`) whose expansion is the 56.
+
+**Work-stream side.** Seven slices, 26 tables, 447 statements, 25 views to drop.
 These carry the migrations and the translation traps, and they are ordered:
 
 | # | Slice | Tables | Statements | Files | Views |
@@ -487,12 +495,22 @@ each with a literal or a derivation:
 | `mode` | `json_extract(NEW.execution_plan_json, '$.mode')`, defaulting to `read` |
 | `result_hash` | `COALESCE(NEW.output_ref, NEW.output_summary)` — a ref or a human sentence, in a column named for a hash |
 
-`tool_position` as a row count is a live bug, not merely an inelegance. The real
-table's uniqueness is `UNIQUE (run_id, attempt_epoch, tool_position)`; there is
-**no** unique index on `(run_id, tool_call_id)`, so
+`tool_position` as a row count is a live bug, not merely an inelegance. The
+trigger's `INSERT OR IGNORE` resolves against three constraints on
+`tool_effects`: its primary key, `UNIQUE (run_id, attempt_epoch,
+tool_position)`, and `tool_effects_run_call_uq ON tool_effects(run_id,
+tool_call_id)` — an index the compat schema itself creates
+(`workstream-runtime-compat-schema.ts`). That third one is deliberate and
+load-bearing: the SQL router strips `ON CONFLICT` before forwarding, on the
+stated ground that "each compatibility trigger applies the equivalent conflict
+policy to its normalized table", and this index is how the equivalence holds for
 `persistToolExecutionPlan`'s `ON CONFLICT(harness_run_id, tool_call_id) DO
-NOTHING` is not the constraint it names — the trigger's `INSERT OR IGNORE`
-resolves against the primary key and that triple instead.
+NOTHING`. It is the replay dedup for every tool receipt. **See "What the
+migration drops" below: it is a keep, not a drop.**
+
+The position collision is a different constraint firing. The colliding admission
+carries a *new* `tool_call_id`, so the call key is untouched and the triple is
+what rejects the row.
 
 A count is only a safe allocator while nothing is ever removed, and receipts
 *are* removed: `attachment-tool-receipts.ts` runs
@@ -501,10 +519,11 @@ and `_runtime_tool_invocations_delete` turns that into
 `DELETE FROM tool_effects`. Deleting a receipt from the middle of a run leaves a
 hole, `COUNT(*)` then under-counts by one, and the next admission in that run
 computes a position another row already holds. `INSERT OR IGNORE` drops it
-silently; the caller sees zero changes, falls through to the existing-row lookup
-keyed on `(harness_run_id, tool_call_id)`, finds nothing — its row was never
-written — and throws `RunOwnershipLostError`, ending the run with a lease
-failure that never happened.
+silently; the caller sees zero changes, reads that as "someone else already
+wrote my receipt", falls through to the existing-row lookup keyed on
+`(harness_run_id, tool_call_id)`, finds nothing — its row was never written —
+and throws `RunOwnershipLostError`, ending the run with a lease failure that
+never happened.
 
 (An earlier draft of this section called it a concurrency bug — two admissions
 racing to the same count. That is wrong: the routed statements arrive as
@@ -525,10 +544,34 @@ and say so; the other three can keep their current values under an explicit
 comment if nothing reads them, but "nothing reads them" is a claim to verify,
 not assume.
 
-**What the migration drops.** `_runtime_tool_invocations` with its insert,
-update, and delete triggers, and `_runtime_tool_checkpoints` with its insert
-trigger — six objects, triggers before views. `legacy_attempt_id` does not go
-with them, and it is the clearest illustration of why slices are sequenced
+**What the migration drops, and the one thing it must not.**
+`_runtime_tool_invocations` with its insert, update, and delete triggers, and
+`_runtime_tool_checkpoints` with its insert trigger — six objects, triggers
+before views.
+
+`tool_effects_run_call_uq` is **kept**. It lives in the compat schema and it
+looks like compat debris, but it is a unique index on real columns of a real
+table, and it is the constraint that dedups a replayed tool call. Dropping it
+with the views is the failure this whole PRD exists to prevent: nothing would
+fail, no test would go red, and the object would quietly accept two receipts for
+one `(run_id, tool_call_id)`. Slice 1 therefore moves the index into the
+object's own schema — same name, same columns, created by the migration that
+drops the views — and the typed `admit` additionally reads
+`WHERE run_id = ? AND tool_call_id = ?` inside its transaction rather than
+inferring the outcome from an ignored insert, so the invariant is enforced twice
+and stated once.
+
+This makes the index the compat layer's *second* mark on the real schema,
+alongside `runs.legacy_attempt_id`. The two are opposites and the difference is
+the point: the column exists only so three views can project a text attempt id
+and nothing outside the compat schema reads it, so it is pure debris and is
+dropped once its readers are gone. The index carries a real invariant the
+product depends on, so it outlives the layer that created it. "It is in
+`workstream-runtime-compat-schema.ts`" is not sufficient grounds to delete
+anything; the file's own header — "these statements deliberately create no
+compatibility data tables" — is true of tables and not of this index.
+
+`legacy_attempt_id` does not go with them, and it is the clearest illustration of why slices are sequenced
 rather than independent: `_runtime_messages` and `_runtime_harness_runs` project
 it too, so the column survives until slices 4 and 6 have also landed. A slice
 drops its own views; shared debris comes out last.

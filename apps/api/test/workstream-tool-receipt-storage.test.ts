@@ -398,3 +398,55 @@ describe("checkpointing a live receipt", () => {
       .toEqual([{ checkpoint_index: 3 }]);
   });
 });
+
+/**
+ * One tool call gets one receipt, and two things enforce it.
+ *
+ * `tool_effects_run_call_uq` is a unique index on `(run_id, tool_call_id)` that
+ * the *compatibility* schema creates. That placement makes it look like debris
+ * to be swept out with the views, and it is not: it is the constraint behind
+ * the routed `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` — the SQL
+ * router strips that clause on the ground that each compat trigger applies the
+ * equivalent policy to its normalized table, and this index is the equivalence.
+ * It is the replay dedup for every tool receipt in the product.
+ *
+ * These two specs are here to make dropping it loud. Retiring the compat layer
+ * must carry this index into the object's own schema; deleting it along with
+ * the views changes nothing observable at the time and silently permits two
+ * receipts for one call, which is precisely the class of silent loss the
+ * retirement PRD exists to prevent.
+ */
+describe("one receipt per tool call", () => {
+  it("refuses a second row on the same (run_id, tool_call_id)", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+
+    // Straight at the table, bypassing `admit` entirely: the point is that the
+    // schema refuses this, not that the storage class declines to ask.
+    expect(() => sql.exec(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          input_json)
+       VALUES ('effect-2', ?, 0, 99, 'runtime:effect-2', 'read_resource', 'read',
+               'request-hash', 'runtime', 'executing', 'call-1', '{}')`,
+      RUN,
+    )).toThrow(/UNIQUE constraint failed: tool_effects\.run_id, tool_effects\.tool_call_id/u);
+  });
+
+  it("resolves a replayed admission by the call key, not by an ignored insert", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+
+    // A retry that minted a fresh effect id. The routed version inferred this
+    // from `changes() === 0` after an `INSERT OR IGNORE`, which is why a
+    // position collision could be mistaken for a replay; `admit` reads the call
+    // key first, so it returns the *stored* id rather than the one it was
+    // handed.
+    const replay = storage.admit(plan({ effectIntentId: "effect-2" }));
+
+    expect(replay).toEqual({ state: "resume_read", effectIntentId: "effect-1" });
+    expect(sql.exec(`SELECT effect_intent_id FROM tool_effects`).toArray())
+      .toEqual([{ effect_intent_id: "effect-1" }]);
+  });
+});
