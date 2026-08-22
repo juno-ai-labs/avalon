@@ -1,8 +1,21 @@
+import type { DurableObjectMigrationCommand } from "@avalon/contracts/durable-object-migrations";
+
 import type { AccessEnvironment } from "./access";
 import type { MigrationRegistry } from "./registry";
 
 export interface Env extends AccessEnvironment {
   MIGRATION_REGISTRY: DurableObjectNamespace<MigrationRegistry>;
+
+  /**
+   * The forced-migration command queues, one per region.
+   *
+   * Optional together, and for the same reason the API's report queue binding
+   * is: a local `wrangler dev` and the workerd test config run without them.
+   * The site reads them as a capability — an unbound region cannot be forced,
+   * and the page says so rather than pretending the dispatch succeeded.
+   */
+  GLOBAL_MIGRATION_COMMAND_QUEUE?: Queue<DurableObjectMigrationCommand>;
+  EU_MIGRATION_COMMAND_QUEUE?: Queue<DurableObjectMigrationCommand>;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;

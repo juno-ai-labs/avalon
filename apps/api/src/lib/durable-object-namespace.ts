@@ -135,6 +135,37 @@ export function durableObjectStubForRegion<T extends RpcDurableObject | undefine
     : regionalNamespace.get(id, { locationHint });
 }
 
+/**
+ * Resolve an object this region already has, by its Durable Object ID.
+ *
+ * The only resolver here that does not start from a name, and the only one a
+ * caller should reach for when it holds an ID instead: the forced-migration
+ * consumer is handed object IDs by the tracker, whose inventory sweep reads
+ * them from Cloudflare's account API and never learns the names behind them.
+ *
+ * The ID is parsed through the same jurisdiction-restricted namespace that
+ * minted it. `idFromString` validates the ID against the namespace it is called
+ * on, so parsing an EU object's ID through the unrestricted namespace is the
+ * kind of mistake that surfaces as a confusing throw at `get()` rather than
+ * here — and in production `assertDurableObjectJurisdiction` inside the object
+ * would refuse it anyway.
+ *
+ * No location hint, deliberately. A hint is only considered on an object's
+ * first lookup, and an object that has an ID in the account has already had one.
+ */
+export function durableObjectStubById<T extends RpcDurableObject | undefined = undefined>(
+  env: Pick<Env, "APP_ENV" | "AVALON_REGION">,
+  namespace: DurableObjectNamespace<T>,
+  objectId: string,
+): DurableObjectStub<T> {
+  const regionalNamespace = durableObjectNamespaceForRegion(
+    namespace,
+    env.AVALON_REGION,
+    env.APP_ENV,
+  );
+  return regionalNamespace.get(regionalNamespace.idFromString(objectId));
+}
+
 /** Resolve a regional singleton that has no parent workspace affinity. */
 export function durableObjectStubForRegionalSingleton<
   T extends RpcDurableObject | undefined = undefined,

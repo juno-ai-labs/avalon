@@ -20,7 +20,8 @@
  *
  * `docs/durable-object-alarms.md` is the module document.
  */
-import { DurableObject } from "cloudflare:workers";
+import type { Env } from "../env";
+import { MigratableDurableObject } from "./migratable-durable-object";
 
 /**
  * Added to an object's own migration history, not applied here.
@@ -365,15 +366,21 @@ export class ScheduledAlarmStore {
 /**
  * The base every scheduling object in this Worker extends.
  *
- * A subclass supplies four things: when its schema is ready, what its own
- * tables want it woken for, how to run one stored entry, and whatever derived
- * work its alarm did before this existed. It never calls `setAlarm` itself.
+ * A subclass supplies three things on top of what `MigratableDurableObject`
+ * already asks of it: what its own tables want it woken for, how to run one
+ * stored entry, and whatever derived work its alarm did before this existed. It
+ * never calls `setAlarm` itself.
+ *
+ * The schema half sits in the base below rather than here because it is not the
+ * scheduler's: `_internal_durable_alarms` is created by the same migration list
+ * as everything else the object stores, and `migrationsReady` — which every
+ * method here awaits before touching that table — is the promise the object's
+ * constructor already holds. A Durable Object that migrates but does not
+ * schedule extends `MigratableDurableObject` directly.
  */
-export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
+export abstract class ScheduledDurableObject<TEnv extends Env = Env>
+  extends MigratableDurableObject<TEnv> {
   private scheduledAlarmStore: ScheduledAlarmStore | null = null;
-
-  /** Resolves once this object's migrations — including `_internal_durable_alarms` — have run. */
-  protected abstract scheduleReady(): Promise<void>;
 
   /**
    * The earliest instant this object's *own* tables want it awake, or `null`.
@@ -438,20 +445,20 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
    * to notice — is what lets a caller schedule and return.
    */
   protected async scheduleAlarm(input: ScheduledAlarmInput): Promise<void> {
-    await this.scheduleReady();
+    await this.migrationsReady();
     this.scheduledAlarms.schedule(input);
     await this.armNextAlarm();
   }
 
   protected async cancelScheduledAlarm(kind: string, key: string): Promise<boolean> {
-    await this.scheduleReady();
+    await this.migrationsReady();
     const cancelled = this.scheduledAlarms.cancel(kind, key);
     await this.armNextAlarm();
     return cancelled;
   }
 
   protected async cancelScheduledAlarmKind(kind: string): Promise<number> {
-    await this.scheduleReady();
+    await this.migrationsReady();
     const cancelled = this.scheduledAlarms.cancelKind(kind);
     await this.armNextAlarm();
     return cancelled;
@@ -461,7 +468,7 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
     kind: string,
     targets: readonly Omit<ScheduledAlarmInput, "kind">[],
   ): Promise<void> {
-    await this.scheduleReady();
+    await this.migrationsReady();
     this.ctx.storage.transactionSync(() => this.scheduledAlarms.reconcile(kind, targets));
     await this.armNextAlarm();
   }
@@ -594,7 +601,7 @@ export abstract class ScheduledDurableObject<TEnv> extends DurableObject<TEnv> {
   }
 
   override async alarm(): Promise<void> {
-    await this.scheduleReady();
+    await this.migrationsReady();
     await this.armAlarmBeforeDueWork();
     const now = Date.now();
     const deferral = await this.scheduledAlarmDeferral(now);

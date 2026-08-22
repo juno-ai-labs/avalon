@@ -135,6 +135,34 @@ export function assertPairedQueues(required) {
   }
 }
 
+/**
+ * A queue may be consumed by exactly one Worker.
+ *
+ * That is a Cloudflare limit rather than a convention, and it is the one shape
+ * of "declared in the wrong file" that `assertPairedQueues` cannot see: two
+ * consumers pair just as well as one. Nothing local refuses it — Wrangler
+ * accepts the file, and the create above succeeds — so the failure surfaces at
+ * the *second* deployment, after the first has already shipped and attached
+ * itself. A regional queue pasted into both regional files is the way to get
+ * there, and it is a plausible edit rather than a hypothetical one.
+ */
+export function assertSingleConsumerPerQueue(required) {
+  const consumers = new Map();
+  for (const queue of required) {
+    if (queue.role !== 'consumer') continue;
+    consumers.set(queue.name, [...(consumers.get(queue.name) ?? []), queue.surface]);
+  }
+  const shared = [...consumers]
+    .filter(([, surfaces]) => surfaces.length > 1)
+    .map(([name, surfaces]) => `  ${name} is consumed by ${surfaces.join(' and ')}`);
+  if (shared.length > 0) {
+    throw new Error(
+      'Cloudflare allows one consumer per queue, and these have more than one.'
+      + ` Split the queue, or move the consumer to the Worker that owns the work:\n${shared.join('\n')}`,
+    );
+  }
+}
+
 function queuesUrl(accountId) {
   return `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/queues`;
 }
@@ -235,6 +263,7 @@ export async function ensureRequiredQueues(options = {}) {
   const token = required('CLOUDFLARE_API_TOKEN', environment);
   const declared = options.queues ?? await configuredQueues();
   assertPairedQueues(declared.required);
+  assertSingleConsumerPerQueue(declared.required);
   const account = { accountId, token, fetchImpl };
   const present = await listAccountQueues(account);
 

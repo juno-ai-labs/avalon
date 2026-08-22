@@ -232,6 +232,49 @@ const V3_SUBSTREAM_AGENT_COMPONENT = [
   `DELETE FROM component_versions WHERE component = 'workstream'`,
 ] as const;
 
+/**
+ * One row per forced-migration run an operator started from the site.
+ *
+ * The dispatch itself needs no record — a command is a queue message, and the
+ * objects that receive one report their own state afterwards, which is what the
+ * rest of this site already renders. This table answers the question the report
+ * log cannot: *who asked, for what, and how many objects did the ask actually
+ * reach*. Without it a run is a click that produces a slow trickle of reports
+ * indistinguishable from ordinary traffic, and an operator watching it has no
+ * way to tell a run that dispatched nine hundred messages from one that matched
+ * nothing.
+ *
+ * `matched` and `dispatched` are separate columns because they come apart in
+ * two ways worth seeing. An object whose region cannot be resolved is matched
+ * and never dispatched — it is counted in `unroutable` — and a run larger than
+ * the per-run cap stops early, which `truncated` records. A cap that is not
+ * visible reads as "this covered the class", which is the one thing a run
+ * record must never imply.
+ *
+ * `requested_by` is the Access assertion's email. It is the only place this
+ * Worker stores an identity rather than displaying one, and it is stored
+ * because a forced fan-out over a production fleet is the one action here that
+ * someone may later need to attribute. It is an Avalon operator's address, not
+ * a workspace member's; nothing about a workspace reaches this table.
+ */
+const V4_MIGRATION_RUNS = `
+  CREATE TABLE IF NOT EXISTS migration_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    class_name TEXT NOT NULL,
+    -- NULL means every region the class runs in.
+    region TEXT,
+    requested_by TEXT NOT NULL,
+    requested_at INTEGER NOT NULL,
+    matched_count INTEGER NOT NULL,
+    dispatched_count INTEGER NOT NULL,
+    unroutable_count INTEGER NOT NULL,
+    truncated INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT
+  ) STRICT
+`;
+
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
   description: "durable object inventory, migration reports, and sweep receipts",
@@ -262,6 +305,14 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 3,
   description: "rename the SubstreamAgent migration component to substream_agent_do",
   statements: V3_SUBSTREAM_AGENT_COMPONENT,
+}, {
+  version: 4,
+  description: "record forced migration runs started from the site",
+  statements: [
+    V4_MIGRATION_RUNS,
+    `CREATE UNIQUE INDEX IF NOT EXISTS migration_runs_run_id
+       ON migration_runs (run_id)`,
+  ],
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;

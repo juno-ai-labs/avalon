@@ -3,16 +3,20 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import type {
+  DurableObjectMigrationCommand,
+  DurableObjectMigrationReport,
+} from "@avalon/contracts/durable-object-migrations";
 import { app, parseObjectQuery } from "../src/app";
 import type { Env } from "../src/env";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
 import type { MigrationRegistry } from "../src/registry";
 import { ObjectQuerySchema } from "../src/protocol";
 import { consumeMigrationReports } from "../src/index";
-import { createTestMessageBatch } from "./helpers/cloudflare-test";
+import { createRecordingQueue, createTestMessageBatch } from "./helpers/cloudflare-test";
 
 const OBJECT_ID = "a".repeat(64);
+const SITE_ORIGIN = "https://migrations.internal.rallywith.ai";
 let reportSequence = 0;
 const OBJECT_NAME = "global:00000000-0000-7000-8000-0000000000a1:00000000-0000-7000-8000-0000000000a2";
 
@@ -77,6 +81,7 @@ beforeEach(async () => {
       "component_versions",
       "inventory_sweeps",
       "durable_object_namespaces",
+      "migration_runs",
     ]) {
       storage.sql.exec(`DELETE FROM ${table}`);
     }
@@ -361,5 +366,185 @@ describe("the queue consumer", () => {
     expect(delivery.messages.every((message) => !message.acked)).toBe(true);
     const page = await withRegistry((registry) => registry.listObjects(ObjectQuerySchema.parse({})));
     expect(page.total).toBe(3);
+  });
+});
+
+/**
+ * The **Force a migration** page, which is the only route on this site that
+ * writes anything.
+ */
+describe("the force a migration page", () => {
+  function sweepIn(className: string, region: "global" | "eu", ids: string[]): Promise<void> {
+    return withRegistry((registry) => {
+      registry.recordSweep({
+        startedAt: 1_700_000_000_000,
+        finishedAt: 1_700_000_001_000,
+        status: "complete",
+        namespaces: [{
+          namespaceId: `ns-${region}`,
+          scriptName: `avalon-api-${region}`,
+          className,
+          usesSqlite: true,
+          objects: ids.map((id) => ({ objectId: id, hasStoredData: true })),
+        }],
+        truncatedNamespaces: [],
+        errorMessage: null,
+      });
+    });
+  }
+
+  async function post(
+    body: BodyInit,
+    headers: Record<string, string>,
+    environment: Env,
+  ): Promise<Response> {
+    return app.fetch(
+      new Request("https://migrations.internal.rallywith.ai/migrations", {
+        method: "POST",
+        headers,
+        body,
+      }),
+      environment,
+    );
+  }
+
+  it("offers only the classes an inventory sweep has found", async () => {
+    await sweepIn("WorkspaceDO", "global", [OBJECT_ID]);
+
+    const body = await (await get("/migrations")).text();
+
+    expect(body).toContain("WorkspaceDO");
+    expect(body).toContain("Migrate every object");
+    // The size of the run is on the page before the button is pressed, not
+    // discovered from the result afterwards.
+    expect(tableHeaders(body)[0]).toEqual([
+      "Class", "Region", "Objects", "Behind", "Failed", "Unreported",
+    ]);
+  });
+
+  it("dispatches a run and redirects to the row it created", async () => {
+    await sweepIn("WorkspaceDO", "global", [OBJECT_ID]);
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await post(
+      new URLSearchParams({ className: "WorkspaceDO", region: "" }),
+      { "content-type": "application/x-www-form-urlencoded", origin: SITE_ORIGIN },
+      environment,
+    );
+
+    expect(response.status).toBe(303);
+    const location = response.headers.get("location") ?? "";
+    expect(location).toMatch(/^\/migrations\?run=/u);
+    expect(queue.sent.map((command) => command.objectId)).toEqual([OBJECT_ID]);
+
+    const page = await (await get(location, environment)).text();
+    expect(page).toContain("dispatched");
+    expect(page).toContain("developer@localhost");
+  });
+
+  /**
+   * Access authenticates the operator; it says nothing about whether they meant
+   * to submit this. Their session cookie travels with a form another site
+   * posts, so the assertion on such a request is genuine and proves the wrong
+   * thing.
+   */
+  it("refuses a write that a browser reports as coming from another site", async () => {
+    await sweepIn("WorkspaceDO", "global", [OBJECT_ID]);
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await post(
+      new URLSearchParams({ className: "WorkspaceDO" }),
+      { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.example" },
+      environment,
+    );
+
+    expect(response.status).toBe(403);
+    expect(queue.sent).toEqual([]);
+  });
+
+  it("refuses a JSON run from another origin the same way", async () => {
+    const response = await app.fetch(
+      new Request("https://migrations.internal.rallywith.ai/api/migrations", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ className: "WorkspaceDO" }),
+      }),
+      developerEnv(),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "cross_origin_write" });
+  });
+
+  it("answers a run with no class with the page and a 400", async () => {
+    const response = await post(
+      new URLSearchParams({ className: "" }),
+      { "content-type": "application/x-www-form-urlencoded", origin: SITE_ORIGIN },
+      developerEnv(),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toContain("Pick a class to migrate.");
+  });
+
+  /**
+   * The page's class list is a rendering of what is forceable, not a constraint
+   * on it: both writes take a class name from a request body. A class no Worker
+   * can migrate has to be refused before anything is queued, or every object of
+   * it is dispatched, retried, and dead-lettered while the run says otherwise.
+   */
+  it("refuses a class no Worker can migrate, from JSON", async () => {
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await app.fetch(
+      new Request("https://migrations.internal.rallywith.ai/api/migrations", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: SITE_ORIGIN },
+        body: JSON.stringify({ className: "CrashSymbolicatorContainer" }),
+      }),
+      environment,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_migration_run_request",
+    });
+    expect(queue.sent).toEqual([]);
+  });
+
+  it("refuses the same class from a hand-edited form", async () => {
+    await sweepIn("WorkspaceDO", "global", [OBJECT_ID]);
+    const queue = createRecordingQueue<DurableObjectMigrationCommand>();
+    const environment: Env = { ...developerEnv(), GLOBAL_MIGRATION_COMMAND_QUEUE: queue.queue };
+
+    const response = await post(
+      new URLSearchParams({ className: "MigrationRegistry" }),
+      { "content-type": "application/x-www-form-urlencoded", origin: SITE_ORIGIN },
+      environment,
+    );
+
+    expect(response.status).toBe(400);
+    expect(queue.sent).toEqual([]);
+  });
+
+  it("serves the same run list as JSON", async () => {
+    await sweepIn("WorkspaceDO", "eu", [OBJECT_ID]);
+
+    const body = await (await get("/api/migrations")).json();
+
+    expect(body).toMatchObject({
+      components: [{ className: "WorkspaceDO", region: "eu", objects: 1 }],
+      runs: [],
+      dispatchableRegions: [],
+    });
+  });
+
+  it("is behind the same Access check as every other route", async () => {
+    const response = await get("/migrations", { ...env, APP_ENV: "production" });
+
+    expect(response.status).toBe(403);
   });
 });
