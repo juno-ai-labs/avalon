@@ -11,6 +11,7 @@ import {
 } from "../src/services/workspace-schedule-execution";
 import { AutomationService } from "../src/services/automation-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
@@ -396,6 +397,9 @@ function seededDatabase(): DatabaseSync {
   // Every automation path serves work-stream product state from the
   // Durable-Object authority now; open it before any product rows exist.
   openWorkstreamAuthorityForTest(database);
+  // The alarm's draft arm reads the object's links table, which no regional
+  // snapshot has ever carried.
+  createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('00000000-0000-7000-8000-000000000002', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');
