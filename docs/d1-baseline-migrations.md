@@ -362,7 +362,11 @@ and is used everywhere migration names are ordered or compared. Seeded rows are
 emitted in foreign-key order and a cycle among them is refused. `sqlite_sequence`
 is snapshotted and restored. Volatility compares BLOBs by content. Virtual tables
 stop generation instead of being rendered alongside the shadow tables they create
-for themselves.
+for themselves. `packages/db/test/baseline-migration.test.ts` re-derives the same
+comparator rather than importing it — the suite exists to check the generator
+from independent evidence — and asserts that the set its own copy puts below a
+boundary is the set the manifest records, so the two cannot drift apart in
+silence.
 
 **Why:** an adversarial pass over the generator found five ways an ordinary
 migration produces a wrong or unappliable database, none of which any test or
