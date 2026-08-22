@@ -112,6 +112,7 @@ export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
 export function migrationShortfall(
   outcome: Pick<ForcedMigrationOutcome, "className" | "schemaVersion">,
 ): number | null {
+  if (!Object.hasOwn(MIGRATION_COMMAND_HEADS, outcome.className)) return null;
   const head = MIGRATION_COMMAND_HEADS[outcome.className];
   if (head === undefined) return null;
   return outcome.schemaVersion < head ? head : null;
@@ -122,9 +123,18 @@ export async function applyMigrationCommand(
   env: Env,
   command: DurableObjectMigrationCommand,
 ): Promise<ForcedMigrationOutcome> {
-  const dispatch = migrationCommandDispatchers(env)[command.className];
-  if (!dispatch) throw new Error(`migration_command_unknown_class:${command.className}`);
-  return dispatch(command);
+  const dispatchers = migrationCommandDispatchers(env);
+  // `Object.hasOwn`, not a truthiness check on the lookup. `className` is an
+  // identifier as far as the contract is concerned, and `constructor`,
+  // `toString`, and `valueOf` are all identifiers that resolve off
+  // `Object.prototype` to a function — so a plain index finds one, the unknown
+  // -class guard passes, and calling it returns something that is not an
+  // outcome at all. The consumer would then acknowledge the message as applied
+  // having woken nothing.
+  if (!Object.hasOwn(dispatchers, command.className)) {
+    throw new Error(`migration_command_unknown_class:${command.className}`);
+  }
+  return dispatchers[command.className]!(command);
 }
 
 /**
