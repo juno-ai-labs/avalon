@@ -31,9 +31,11 @@ import {
   isInternalTableName,
   listMigrationFiles,
   normalizeSchemaSql,
+  orderSeededTables,
   parseWranglerJson,
   readBaselineManifest,
   renderBaselineSql,
+  sameSeededValue,
   schemaFingerprint,
   snapshotDatabase,
   sqlLiteral,
@@ -758,4 +760,133 @@ test("a column volatile in every seeded row is still just volatile", () => {
     ),
     { ctl: ["at"] },
   );
+});
+
+// ---------------------------------------------------------------------------
+// State and shapes the renderer used to lose or choke on
+// ---------------------------------------------------------------------------
+
+test("seeded rows are inserted after the rows they reference", async () => {
+  // `sqlite_schema` order is alphabetical, so a child whose name sorts before
+  // its parent's was inserted first and the file died on a foreign key —
+  // naming no table, and partway through, leaving schema with no ledger.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE workspace (id TEXT PRIMARY KEY);
+      CREATE TABLE agent_role (id TEXT PRIMARY KEY, ws TEXT NOT NULL REFERENCES workspace(id));
+      INSERT INTO workspace (id) VALUES ('w1');
+      INSERT INTO agent_role (id, ws) VALUES ('r1', 'w1');`,
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.ok(sql.indexOf('INSERT INTO "workspace"') < sql.indexOf('INSERT INTO "agent_role"'));
+    const database = new DatabaseSync(":memory:");
+    assert.doesNotThrow(() => database.exec(sql));
+    assert.equal(database.prepare("SELECT COUNT(*) c FROM agent_role").get().c, 1);
+    database.close();
+  });
+});
+
+test("seeded tables that reference each other in a cycle are refused, not guessed at", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`CREATE TABLE a (id TEXT PRIMARY KEY, b_id TEXT REFERENCES b(id));
+                 CREATE TABLE b (id TEXT PRIMARY KEY, a_id TEXT REFERENCES a(id));
+                 INSERT INTO a VALUES ('a1', NULL); INSERT INTO b VALUES ('b1', 'a1');`);
+  const snapshot = snapshotDatabase(database);
+  assert.throws(
+    () => renderBaselineSql({ through: "0001_a.sql", files: ["0001_a.sql"], digest: "sha256:x", snapshot }),
+    /reference each other in a cycle/u,
+  );
+  database.close();
+});
+
+test("a parent with no seeded rows constrains nothing", () => {
+  // Only seeded tables need ordering; an empty parent cannot be violated.
+  assert.deepEqual(orderSeededTables({ child: [{}] }, { child: ["parent"] }), ["child"]);
+  assert.deepEqual(orderSeededTables({ child: [{}], parent: [{}] }, { child: ["parent"], parent: [] }),
+    ["parent", "child"]);
+});
+
+test("the AUTOINCREMENT high-water mark survives, including ids the chain deleted", async () => {
+  // Re-inserting the surviving rows only raises the counter to the highest
+  // surviving id, so a baselined database re-issues ids that are permanently
+  // retired everywhere else.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE tier (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+      INSERT INTO tier (name) VALUES ('a'), ('b'), ('c'), ('d');`,
+    "0002_b.sql": "DELETE FROM tier WHERE name IN ('c', 'd');",
+  }, async (directory) => {
+    const { sql } = await buildBaseline({ through: "0002_b.sql", directory, settleMilliseconds: 0 });
+    const nextIdAfter = (build) => {
+      const database = new DatabaseSync(":memory:");
+      build(database);
+      database.prepare("INSERT INTO tier (name) VALUES ('next')").run();
+      const id = database.prepare("SELECT id FROM tier WHERE name = 'next'").get().id;
+      database.close();
+      return id;
+    };
+    const chain = nextIdAfter((database) => {
+      for (const name of ["0001_a.sql", "0002_b.sql"]) {
+        database.exec(readFileSync(join(directory, name), "utf8"));
+      }
+    });
+    assert.equal(nextIdAfter((database) => database.exec(sql)), chain, "the next id must match a replay");
+    assert.equal(chain, 5, "ids 3 and 4 are retired, so the next is 5");
+  });
+});
+
+test("a seeded BLOB is frozen as a hex literal, not misread as a volatile timestamp", async () => {
+  // SQLite returns a fresh Uint8Array per read, so `!==` reported every blob as
+  // moving in every row — and the generator refused, citing `datetime('now')`.
+  await withTemporaryMigrations({
+    "0001_a.sql": `
+      CREATE TABLE app_key (id TEXT PRIMARY KEY, secret BLOB NOT NULL);
+      INSERT INTO app_key (id, secret) VALUES ('k1', X'0102030405');`,
+  }, async (directory) => {
+    const { sql, manifestEntry } = await buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 });
+    assert.deepEqual(manifestEntry.volatileColumns, {});
+    assert.match(sql, /X'0102030405'/u);
+    const database = new DatabaseSync(":memory:");
+    database.exec(sql);
+    assert.deepEqual(
+      [...database.prepare("SELECT secret FROM app_key").get().secret],
+      [1, 2, 3, 4, 5],
+    );
+    database.close();
+  });
+});
+
+test("blob equality is by content, and a blob that really does change is still volatile", () => {
+  assert.ok(sameSeededValue(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])));
+  assert.ok(!sameSeededValue(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4])));
+  assert.ok(!sameSeededValue(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3])));
+  assert.deepEqual(
+    detectVolatileColumns({ t: [{ b: new Uint8Array([1]) }] }, { t: [{ b: new Uint8Array([1]) }] }),
+    {},
+  );
+  assert.deepEqual(
+    detectVolatileColumns({ t: [{ b: new Uint8Array([1]) }] }, { t: [{ b: new Uint8Array([2]) }] }),
+    { t: ["b"] },
+  );
+});
+
+test("a virtual table stops generation rather than being rendered with its shadow tables", async () => {
+  // An FTS5 table has `type = 'table'`, so a type check alone waves it through;
+  // the renderer then emits the CREATE VIRTUAL TABLE *and* explicit CREATE
+  // TABLEs for the shadows it creates for itself, and applying dies on
+  // "table already exists".
+  await withTemporaryMigrations({
+    "0001_a.sql": "CREATE VIRTUAL TABLE note_search USING fts5(body);",
+  }, async (directory) => {
+    await assert.rejects(
+      () => buildBaseline({ through: "0001_a.sql", directory, settleMilliseconds: 0 }),
+      /Cannot render table:note_search into a baseline/u,
+    );
+  });
+});
+
+test("an ordinary table is not mistaken for a virtual one", () => {
+  assert.doesNotThrow(() => assertEveryObjectRenderable([
+    { type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (virtual_column TEXT)" },
+  ]));
 });

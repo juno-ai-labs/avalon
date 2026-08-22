@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  compareMigrationPaths,
   digestMigrations,
   listMigrationFiles,
   planMigration,
@@ -961,4 +962,71 @@ test("the real chain's shared numbers are subsumed together, and its 0084 hole s
       );
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Ordering, as Wrangler does it
+// ---------------------------------------------------------------------------
+
+test("migrations are ordered the way Wrangler orders them, not as strings", () => {
+  // Wrangler parses the leading integer and compares numerically, falling back
+  // to a string compare only when the numbers tie. `Array.sort` disagrees the
+  // moment a name is not zero-padded.
+  assert.ok(compareMigrationPaths("89_backfill.sql", "0090_boundary.sql") < 0,
+    "89 is below 90 numerically, whatever the strings do");
+  assert.ok("89_backfill.sql" > "0090_boundary.sql",
+    "…and a string compare says the opposite, which is the whole problem");
+  // A tie on the number falls through to the string compare, which is how the
+  // repository's six doubled numbers keep their order.
+  assert.ok(compareMigrationPaths("0039_a.sql", "0039_b.sql") < 0);
+  assert.ok(compareMigrationPaths("0002_a.sql", "0010_a.sql") < 0);
+  // Unparseable leading segments sort after parseable ones, as Wrangler does.
+  assert.ok(compareMigrationPaths("0001_a.sql", "readme_notes.sql") < 0);
+  assert.equal(compareMigrationPaths("0001_a.sql", "0001_a.sql"), 0);
+});
+
+test("an unpadded migration below the boundary invalidates the baseline", async () => {
+  // The case a string sort misses entirely: `89_…` is below the 0090 boundary
+  // for Wrangler and above it for `Array.sort`, so the subsumed set never
+  // changed, the digest never changed, and the baseline stayed "usable" while
+  // producing a database that differs from a replay.
+  await withChain([
+    ["0088_a.sql", "CREATE TABLE t (id TEXT PRIMARY KEY);"],
+    ["0089_b.sql", "ALTER TABLE t ADD COLUMN scopes TEXT;"],
+    ["0090_boundary.sql", "ALTER TABLE t ADD COLUMN installed_at TEXT;"],
+    ["0091_d.sql", "ALTER TABLE t ADD COLUMN region TEXT;"],
+  ], async (context) => {
+    const baseline = await generateBaseline(context, "0090_boundary.sql");
+    context.write("89_backfill_scope_defaults.sql", "ALTER TABLE t ADD COLUMN scope_defaults TEXT;");
+
+    assert.deepEqual(context.onDisk(), [
+      "0088_a.sql", "0089_b.sql", "89_backfill_scope_defaults.sql", "0090_boundary.sql", "0091_d.sql",
+    ]);
+    assert.deepEqual(usableBaselines([baseline], context.onDisk(), context.digestFor), []);
+
+    const { plan, state } = planAndExecute(context, [baseline]);
+    assert.equal(plan.action, "migrate");
+    assert.deepEqual(state, replayedState(context));
+  });
+});
+
+test("an unpadded migration below what a database applied is flagged out of order", async () => {
+  await withChain([
+    ["0088_a.sql", "CREATE TABLE t (id TEXT PRIMARY KEY);"],
+    ["0090_b.sql", "ALTER TABLE t ADD COLUMN x TEXT;"],
+  ], async (context) => {
+    context.write("89_late.sql", "ALTER TABLE t ADD COLUMN y TEXT;");
+    const plan = planMigration({
+      applied: ["0088_a.sql", "0090_b.sql"], userTables: 1, baselines: [],
+      migrationsOnDisk: context.onDisk(), digestFor: context.digestFor,
+    });
+    assert.deepEqual(plan.outOfOrder, ["89_late.sql"]);
+  });
+});
+
+test("the repository's own migrations sort identically under both orderings", () => {
+  // True today, and the reason a string sort survived this long. If this ever
+  // fails, a filename stopped being zero-padded and the two orders have parted.
+  const onDisk = listMigrationFiles(join(API_DIRECTORY, "..", "..", "packages", "db", "migrations"));
+  assert.deepEqual(onDisk, [...onDisk].sort());
 });

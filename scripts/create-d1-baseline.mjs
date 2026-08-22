@@ -31,6 +31,7 @@ import process from "node:process";
 import { isEntryPoint } from "./entry-point.mjs";
 import {
   applyMigrations,
+  compareMigrationPaths,
   readBaselineManifest,
   detectVolatileColumns,
   digestMigrations,
@@ -122,7 +123,7 @@ export async function buildBaseline({ through, directory = MIGRATIONS_DIRECTORY,
  */
 export function mergeIntoManifest(existing, entry) {
   const others = existing.filter((baseline) => baseline.through !== entry.through);
-  return [...others, entry].sort((left, right) => (left.through < right.through ? -1 : 1));
+  return [...others, entry].sort((left, right) => compareMigrationPaths(left.through, right.through));
 }
 
 async function main() {
