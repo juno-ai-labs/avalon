@@ -222,6 +222,55 @@ describe("the shared Durable Object alarm list", () => {
     });
   });
 
+  it("wakes again for an entry that came due while the previous one was still running", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const started = Date.now();
+      store.schedule({ kind: "test_slow", key: "first", dueAt: started }, started);
+      // Due five milliseconds later — inside the first entry's own runtime. A
+      // handler that overruns it is the case one alarm cannot represent, so the
+      // second entry either survives to a later wake or is lost silently.
+      store.schedule({ kind: "test_slow", key: "second", dueAt: started + 5 }, started);
+      const ran: string[] = [];
+      scheduling(instance).runScheduledAlarm = async (alarm: ScheduledAlarm) => {
+        ran.push(alarm.key);
+        // The overrun itself. Sleeping here is only safe because nothing is
+        // armed yet — `drainDueScheduledAlarms` does not arm, and the object
+        // starts with no alarm. Sleep with one armed in the past and the
+        // runtime delivers a real `alarm()` mid-test that drains these entries
+        // out from under the assertions.
+        if (alarm.key === "first") await new Promise((resolve) => setTimeout(resolve, 40));
+      };
+      expect(await state.storage.getAlarm()).toBeNull();
+
+      // The drain reads the entries due at the instant the alarm *started*, so
+      // however long the first handler runs, the second is not pulled into its
+      // pass and keeps its own due time.
+      expect(await scheduling(instance).drainDueScheduledAlarms(started)).toBe(1);
+      expect(ran).toEqual(["first"]);
+      expect(store.get("test_slow", "second")?.dueAt).toBe(started + 5);
+      expect(Date.now()).toBeGreaterThan(started + 5);
+
+      // What the alarm leaves behind is the whole answer. The skipped entry is
+      // overdue by the time the handler returns, so the re-arm floors it at the
+      // next millisecond and the runtime re-enters immediately, rather than at
+      // whatever unrelated target happens to come next.
+      const armed = await scheduling(instance).armNextAlarm();
+      expect(armed).not.toBeNull();
+      expect(armed!).toBeGreaterThan(started + 5);
+      expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+      // Park it before going any further, for the reason given above.
+      await state.storage.setAlarm(Date.now() + 600_000);
+
+      // The wake that re-arm buys.
+      expect(await scheduling(instance).drainDueScheduledAlarms(Date.now())).toBe(1);
+      expect(ran).toEqual(["first", "second"]);
+      expect(store.get("test_slow", "second")).toBeNull();
+    });
+  });
+
   it("advances a repeating entry past every occurrence it slept through", async () => {
     const stub = await initializedWorkspace();
 
