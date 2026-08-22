@@ -4,7 +4,7 @@
 
 The 2026-08-21 production pass found that Terminal was not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout worked, but repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
 
-The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed all twenty requested areas, including 28 Terminal tool calls, two generated-resource publications, and a publish/import round trip. The owning Terminal module's separate EU functional and concurrent cold-start acceptance gates remain open.
+The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. The owning Terminal module's separate EU functional and concurrent cold-start acceptance gates remain open.
 
 The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout.
 
@@ -87,9 +87,9 @@ that a keep-alive alarm must not await another event's active drain promise.
 The follow-up correction also removes the resident alarm's same-object
 Terminal-operation and generated-resource-link RPCs. It is merged, deployed,
 and production-retested in the Global acceptance above. Recovery continues to
-belong to the durable dispatch row and harness attempt lease. A healthy long run retains its unexpired
-attempt lease; a promise with no progress for five minutes and no live lease can
-be replaced inside the same isolate.
+belong to the durable dispatch row and harness attempt lease. A healthy long run
+retains its unexpired attempt lease; a promise with no progress for five minutes
+and no live lease can be replaced inside the same isolate.
 
 The remediation and review hardening also:
 
@@ -116,6 +116,10 @@ Regression evidence is recorded in real-workerd and Node tests. The new heartbea
 - UI exercised through macOS Computer Use against the signed-in production desktop. Server correlation used a read-only Wrangler tail of the Global Worker.
 
 ## Test results
+
+These are the original 2026-08-21 results. See the 2026-08-22 Global
+production acceptance above for the post-#228 sequential state and its remaining
+EU, concurrency, timeout, and stale-attempt gaps.
 
 | Area | Result | Production evidence |
 |---|---|---|
@@ -209,6 +213,12 @@ Implemented validation:
 - Stale-run reconciliation settles every started receipt and schema 14 projects that terminal state into the visible card with actionable ambiguity guidance.
 - Real workerd proves a heartbeat does not join the active run; the durable runtime test proves lease reaping settles a pending write receipt and its visible card together; the v13-to-v14 migration test proves already-stranded cards are repaired.
 
+Production status: not re-triggered in the final Global pass. A healthy run that
+never expires its lease does not prove that the production reaper settles a
+pending write receipt and visible card together. That recovery remains covered
+by real-workerd and migration tests and remains an open production acceptance
+item.
+
 ## Issue 3 — P2: reported command duration excludes most user-visible latency
 
 ### Evidence
@@ -229,6 +239,11 @@ Confidence: high.
 
 Implemented: `durationMs` remains the provider-command duration for compatibility; Terminal results now add and document `acquisitionDurationMs` and `totalDurationMs`. Tests require all three meanings and require total runtime duration to be at least acquisition duration.
 
+Production status: not explicitly revalidated. The Global pass recorded normal
+and delayed commands, not a timeout boundary, and its summary retained provider
+`durationMs` without recording all three clock fields. Timeout behavior and the
+participant-visible clock comparison remain open production acceptance items.
+
 ## Issue 4 — P2: production error reporting prevents exact RCA and safe recovery
 
 ### Evidence
@@ -248,6 +263,13 @@ Several error boundaries collapse distinct faults:
 
 Implemented locally: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
 
+Production status: the Global pass produced no durable-host failure, so it
+proved the healthy path but did not exercise these participant-safe error
+categories. Deterministic input-contract rejections were safe to correct, but
+they are not evidence for rollback, post-commit alarm, or stale-write guidance.
+The durable error UX remains covered by tests and open for targeted production
+acceptance.
+
 ## Additional observations
 
 - Production behavior matches the current lazy-allocation documentation: loading Terminal alone does not start a sandbox. The proposed plug-in-activation prewarm is not production behavior; PR #173 (“Start Terminal sandbox on plugin activation”) remains open and unmerged.
@@ -261,13 +283,14 @@ Implemented locally: the Terminal object port returns `terminal_operation_not_co
 The reproduced Global sequential receipt-persistence block is cleared. PR #228
 is merged, its exact revision deployed healthy to EU and Global, and a later
 deployed descendant passed the signed-in Global Computer Use matrix without a
-receipt or resident runtime failure. This final pass proves sequential commands, mutations,
-expected-failure recovery, local Git, delayed execution, binary handling, and
-generated-resource publication/import. Historical production passes remain the
-evidence for package installation, output overflow/sanitization, and authorized
-read-only checkout; those were not repeated in this acceptance run. EU Terminal
-execution and two-way cold-start concurrency were also not repeated, so the
-owning module's cross-region acceptance gate remains open; EU health alone is
-not functional Terminal evidence. A future
-change to resident tool authority must retain the rule that the main child uses
+receipt or resident runtime failure. This Global pass proves sequential
+commands, mutations, expected-failure recovery, local Git, delayed execution,
+binary handling, and generated-resource publication/import. Historical
+production passes remain the evidence for package installation, output
+overflow/sanitization, and authorized read-only checkout; those were not
+repeated in this acceptance run. EU Terminal execution, two-way cold-start
+concurrency, the timeout boundary, and stale-attempt recovery/UX were also not
+repeated, so the owning module's broader production acceptance gate remains
+open; EU health alone is not functional Terminal evidence. A future change to
+resident tool authority must retain the rule that the main child uses
 object-local ports while external callers use RPC.
