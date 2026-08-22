@@ -21,7 +21,7 @@
 // result enforced afterwards without credentials.
 
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,12 +29,16 @@ import { DatabaseSync } from "node:sqlite";
 import process from "node:process";
 
 import { isEntryPoint } from "./entry-point.mjs";
+import { discoverRegions, pnpmExecutable, wranglerArguments } from "./migrate-d1.mjs";
 import {
+  applyMigrations,
   compareFingerprints,
   fingerprintsMatch,
+  listMigrationFiles,
   parseWranglerJson,
   schemaFingerprint,
   snapshotDatabase,
+  subsumedMigrations,
 } from "./d1-baseline.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -42,9 +46,17 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const apiDirectory = join(repositoryRoot, "apps", "api");
 export const BASELINES_DIRECTORY = join(repositoryRoot, "packages", "db", "baselines");
+export const MIGRATIONS_DIRECTORY = join(repositoryRoot, "packages", "db", "migrations");
 export const FINGERPRINT_PATH = join(BASELINES_DIRECTORY, "production-fingerprint.json");
 
-export const REGIONS = ["global", "eu"];
+/**
+ * The regions to read, discovered from the Wrangler configs rather than listed
+ * here, so a new region is checked the day it exists instead of the day someone
+ * remembers this file.
+ */
+export function regions() {
+  return discoverRegions().map((entry) => entry.region);
+}
 
 const SCHEMA_QUERY = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
 
@@ -54,14 +66,11 @@ const SCHEMA_QUERY = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER 
  * against a live customer database an unremarkable thing to do.
  */
 export async function readRemoteSchema(region, { run = execFileAsync } = {}) {
+  const target = discoverRegions().find((entry) => entry.region === region);
+  if (!target) throw new Error(`${region} is not a region in this checkout`);
   const { stdout } = await run(
-    "pnpm",
-    [
-      "exec", "wrangler", "d1", "execute", "DB",
-      "--remote", "--json",
-      "--config", `wrangler.${region}.jsonc`,
-      "--command", SCHEMA_QUERY,
-    ],
+    pnpmExecutable(),
+    wranglerArguments({ ...target, remote: true }, ["execute"], ["--json", "--command", SCHEMA_QUERY]),
     { cwd: apiDirectory, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   const parsed = parseWranglerJson(stdout, region);
@@ -70,11 +79,32 @@ export async function readRemoteSchema(region, { run = execFileAsync } = {}) {
   return results;
 }
 
-/** The fingerprint of the checked-in baseline file, by applying it. */
-export function baselineFingerprint(baselineSql) {
+/**
+ * The fingerprint of the **migration chain**, by replaying every file.
+ *
+ * The chain rather than a baseline, deliberately. A baseline describes the
+ * schema at its own boundary, so the moment a migration lands above it the two
+ * stop being the same thing and comparing the baseline to production would
+ * report the new migration as drift. Comparing the chain keeps this check
+ * correct as migrations accumulate, and the baselines are tied in by a separate
+ * equivalence that does not need credentials: `baseline + everything after it`
+ * reproduces the chain, asserted for every baseline in
+ * `packages/db/test/baseline-migration.test.ts`. Chain equals production here,
+ * baseline equals chain there, so baseline equals production by composition —
+ * and each half is checked where it can actually be checked.
+ */
+export function chainFingerprint(directory = MIGRATIONS_DIRECTORY, { through } = {}) {
+  const onDisk = listMigrationFiles(directory);
+  // `through` truncates the replay at a migration that has actually been
+  // deployed. The live run wants the whole chain — it is asking whether
+  // production is current. The offline run wants the chain as it stood when the
+  // fingerprint was captured, because a migration merged five minutes ago is
+  // legitimately not in production yet and must not be reported as drift by a
+  // test with no way to reach a live database.
+  const files = through === undefined ? onDisk : subsumedMigrations(onDisk, through);
   const database = new DatabaseSync(":memory:");
   try {
-    database.exec(baselineSql);
+    applyMigrations(database, directory, files);
     return schemaFingerprint(snapshotDatabase(database).objects);
   } finally {
     database.close();
@@ -96,18 +126,25 @@ export function describeComparison(label, comparison) {
  * The whole check as a pure function over already-fetched schemas, so the
  * reporting and the pass/fail decision are testable without Cloudflare.
  */
-export function verifyAgainstRegions({ baseline, regionSchemas }) {
+export function verifyAgainstRegions({ expected, regionSchemas }) {
   const lines = [];
   let ok = true;
+
+  // A pass has to mean something was compared. Every loop below iterates over
+  // `regionSchemas`, so an empty one runs none of them and leaves `ok` at its
+  // initial `true` — a green result reporting on nothing at all.
+  if (Object.keys(regionSchemas).length === 0) {
+    return { ok: false, lines: ["no hosted schemas to compare against"], fingerprints: {} };
+  }
 
   const fingerprints = Object.fromEntries(
     Object.entries(regionSchemas).map(([region, objects]) => [region, schemaFingerprint(objects)]),
   );
 
   for (const [region, fingerprint] of Object.entries(fingerprints)) {
-    const comparison = compareFingerprints(baseline, fingerprint);
+    const comparison = compareFingerprints(expected, fingerprint);
     ok &&= fingerprintsMatch(comparison);
-    lines.push(...describeComparison(`baseline vs ${region}`, comparison));
+    lines.push(...describeComparison(`chain vs ${region}`, comparison));
   }
 
   // Region-to-region, so a divergence between two hosted databases is reported
@@ -124,23 +161,30 @@ export function verifyAgainstRegions({ baseline, regionSchemas }) {
 
 async function main() {
   const record = process.argv.includes("--record");
-  const baselineFile = JSON.parse(readFileSync(join(BASELINES_DIRECTORY, "manifest.json"), "utf8")).baseline;
-  const baselineSql = readFileSync(join(BASELINES_DIRECTORY, baselineFile.file), "utf8");
-  const baseline = baselineFingerprint(baselineSql);
+  const expected = chainFingerprint();
 
   const regionSchemas = {};
-  for (const region of REGIONS) {
+  const discovered = regions();
+  // Without this, a discovery regression turns the whole check into a pass: an
+  // empty `regionSchemas` has nothing to disagree with, `verifyAgainstRegions`
+  // reports `ok`, and the command exits 0 having never contacted Cloudflare.
+  if (discovered.length === 0) {
+    throw new Error("no regions discovered — every wrangler.<region>.jsonc is missing or its D1 binding "
+      + "declares no migrations_dir, so there is nothing to verify against");
+  }
+  for (const region of discovered) {
     process.stderr.write(`Reading ${region} schema…\n`);
     regionSchemas[region] = await readRemoteSchema(region);
   }
 
-  const { ok, lines, fingerprints } = verifyAgainstRegions({ baseline, regionSchemas });
+  const { ok, lines, fingerprints } = verifyAgainstRegions({ expected, regionSchemas });
   for (const line of lines) console.log(line);
 
   if (!ok) {
-    console.error("\nThe baseline does not describe the hosted schema. Do not regenerate the "
-      + "baseline to make this pass — that would encode the drift. Find out why a hosted "
-      + "database differs from the migrations first.");
+    console.error("\nThe migration chain does not describe the hosted schema. Do not regenerate a "
+      + "baseline to make this pass — a baseline is derived from the chain, so that would encode "
+      + "the drift rather than fix it. Find out why a hosted database differs from the "
+      + "migrations first.");
     process.exitCode = 1;
     return;
   }
@@ -149,12 +193,12 @@ async function main() {
     const capturedAt = new Date().toISOString().slice(0, 10);
     writeFileSync(FINGERPRINT_PATH, `${JSON.stringify({
       // Recorded from live databases; regenerate with `pnpm db:baseline:verify -- --record`.
-      through: baselineFile.through,
+      through: listMigrationFiles(MIGRATIONS_DIRECTORY).at(-1),
       capturedAt,
-      regions: REGIONS,
-      objects: fingerprints[REGIONS[0]],
+      regions: discovered,
+      objects: fingerprints[discovered[0]],
     }, null, 2)}\n`, "utf8");
-    console.log(`\nRecorded ${Object.keys(fingerprints[REGIONS[0]]).length} objects to production-fingerprint.json.`);
+    console.log(`\nRecorded ${Object.keys(fingerprints[discovered[0]]).length} objects to production-fingerprint.json.`);
   }
 }
 
