@@ -69,6 +69,96 @@ export type ToolReceiptAdmission =
 export type ToolReceiptSettlement =
   | "persisted" | "already_persisted" | "ownership_lost" | "cancelled";
 
+/**
+ * A receipt as the object holds it, which is not how the wire spells it.
+ *
+ * Real column names, real statuses, unix milliseconds. `ToolInvocationSchema`
+ * in `packages/contracts` still publishes `pending`/`started` and ISO-8601, and
+ * that is a wire contract rather than a reader's habit — so the translation the
+ * retired view did in SQL now happens in the Worker-side port, at the one
+ * boundary that serves the wire. Everything else consumes this shape directly.
+ *
+ * `attempt_id`, `lease_expires_at` and `last_checkpoint_at` are deliberately
+ * absent. The view projected all three and nothing ever read them;
+ * `loadToolInvocation` pulled them only because it said `SELECT *`. The last of
+ * them cost a correlated subquery per row, which is not reimplemented here.
+ */
+export interface ToolReceiptRecord {
+  effectIntentId: string;
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  mode: "read" | "write";
+  connectionId: string | null;
+  requestHash: string;
+  inputJson: string;
+  status: ToolReceiptStatus;
+  outputRef: string | null;
+  outputSummary: string | null;
+  providerOperationId: string | null;
+  errorJson: string | null;
+  executionPlanHash: string | null;
+  executionPlanJson: string | null;
+  startedAt: number | null;
+  settledAt: number | null;
+  checkpointIndex: number;
+}
+
+/** One resource version a replayable attachment read depended on. */
+export interface AttachmentDependency {
+  resourceId: string;
+  derivativeSha256: string;
+}
+
+interface ReceiptRow extends Record<string, SqlStorageValue> {
+  effect_intent_id: string;
+  run_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  mode: string;
+  connection_id: string | null;
+  request_hash: string;
+  input_json: string;
+  status: string;
+  output_ref: string | null;
+  output_summary: string | null;
+  provider_operation_id: string | null;
+  error_json: string | null;
+  execution_plan_hash: string | null;
+  execution_plan_json: string | null;
+  started_at: number | null;
+  settled_at: number | null;
+  checkpoint_index: number;
+}
+
+const RECEIPT_COLUMNS = `effect_intent_id, run_id, tool_call_id, tool_name, mode,
+         connection_id, request_hash, input_json, status, output_ref, output_summary,
+         provider_operation_id, error_json, execution_plan_hash, execution_plan_json,
+         started_at, settled_at, checkpoint_index`;
+
+function receiptRecord(row: ReceiptRow): ToolReceiptRecord {
+  return {
+    effectIntentId: row.effect_intent_id,
+    runId: row.run_id,
+    toolCallId: row.tool_call_id,
+    toolName: row.tool_name,
+    mode: row.mode === "write" ? "write" : "read",
+    connectionId: row.connection_id,
+    requestHash: row.request_hash,
+    inputJson: row.input_json,
+    status: row.status as ToolReceiptStatus,
+    outputRef: row.output_ref,
+    outputSummary: row.output_summary,
+    providerOperationId: row.provider_operation_id,
+    errorJson: row.error_json,
+    executionPlanHash: row.execution_plan_hash,
+    executionPlanJson: row.execution_plan_json,
+    startedAt: row.started_at,
+    settledAt: row.settled_at,
+    checkpointIndex: row.checkpoint_index,
+  };
+}
+
 interface EffectRow extends Record<string, SqlStorageValue> {
   effect_intent_id: string;
   request_hash: string;
@@ -456,6 +546,213 @@ export class WorkstreamToolReceiptStorage {
       existing.effect_intent_id,
     );
     return { state: "created", effectIntentId: existing.effect_intent_id };
+  }
+
+  // ---------------------------------------------------------------- reading
+
+  /**
+   * The receipt for one tool call, by the coordinate the run knows it as.
+   *
+   * `(run_id, tool_call_id)` is the key `tool_effects_run_call_uq` makes unique
+   * and the key `admit` already reads. Three routed statements asked this same
+   * question with three different column subsets; one full projection answers
+   * all of them, and there is no fence or failure mode separating them.
+   */
+  receiptForCall(input: { runId: string; toolCallId: string }): ToolReceiptRecord | null {
+    const row = first(this.sql.exec<ReceiptRow>(
+      `SELECT ${RECEIPT_COLUMNS} FROM tool_effects WHERE run_id = ? AND tool_call_id = ?`,
+      input.runId,
+      input.toolCallId,
+    ));
+    return row ? receiptRecord(row) : null;
+  }
+
+  /**
+   * Receipts for a set of ids, for the transcript projection.
+   *
+   * The routed statement joined `messages` to filter these, which read like a
+   * cross-slice dependency and was not one: the join was `ti.id = m.id`, pure
+   * id equality on ids the caller had already selected. Dropping it removes the
+   * only apparent reason this operation had to wait for the messages slice.
+   *
+   * A missing id is omitted rather than raised. A tool message whose receipt was
+   * discarded is an ordinary state — that is exactly what `discardReceipt` does
+   * — and the caller already treats absence as "no replay available".
+   */
+  receiptsByIds(input: { effectIntentIds: readonly string[] }): ToolReceiptRecord[] {
+    if (input.effectIntentIds.length === 0) return [];
+    const placeholders = input.effectIntentIds.map(() => "?").join(", ");
+    return this.sql.exec<ReceiptRow>(
+      `SELECT ${RECEIPT_COLUMNS} FROM tool_effects
+        WHERE effect_intent_id IN (${placeholders})
+        ORDER BY effect_intent_id`,
+      ...input.effectIntentIds,
+    ).toArray().map(receiptRecord);
+  }
+
+  // ------------------------------------------------- attachment dependencies
+
+  /**
+   * Record the resource versions a replayable attachment read depended on.
+   *
+   * The receipt is proved to exist first, in the same transaction as the writes,
+   * which is what the routed version's separate existence check could not
+   * promise. The digest comparison that decides whether these rows are still
+   * valid stays in the Worker: it reads `resources`, which belongs to the
+   * workspace object, so it cannot join here and was never atomic with this
+   * write either.
+   */
+  recordAttachmentDependencies(input: {
+    workspaceId: string;
+    effectIntentId: string;
+    dependencies: readonly AttachmentDependency[];
+    now: number;
+  }): "recorded" | "receipt_missing" {
+    return this.storage.transactionSync(() => {
+      if (!this.#effect(input.effectIntentId)) return "receipt_missing";
+      for (const dependency of input.dependencies) {
+        this.sql.exec(
+          `INSERT INTO attachment_tool_receipts
+             (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(resource_id, tool_invocation_id) DO UPDATE SET
+             derivative_sha256 = excluded.derivative_sha256`,
+          input.workspaceId,
+          dependency.resourceId,
+          input.effectIntentId,
+          dependency.derivativeSha256,
+          input.now,
+        );
+      }
+      return "recorded";
+    });
+  }
+
+  /**
+   * Drop a receipt's recorded dependencies without touching the receipt.
+   *
+   * Deliberately not folded into `recordAttachmentDependencies`. It is the
+   * compensating action taken when the Worker's `resources` read says a version
+   * moved after the rows were written, so it has to be callable once that write
+   * has already committed — a different failure mode, and therefore a different
+   * operation.
+   */
+  clearAttachmentDependencies(input: { workspaceId: string; effectIntentId: string }): number {
+    this.sql.exec(
+      `DELETE FROM attachment_tool_receipts
+        WHERE workspace_id = ? AND tool_invocation_id = ?`,
+      input.workspaceId,
+      input.effectIntentId,
+    );
+    return this.sql.exec<{ changes: number } & Record<string, SqlStorageValue>>(
+      `SELECT changes() AS changes`,
+    ).one().changes;
+  }
+
+  /**
+   * What a completed receipt depended on, or nothing.
+   *
+   * Scoped to `completed` because the caller reads an empty list as "not
+   * replayable", and an in-flight receipt has nothing to replay. The routed
+   * statement joined on that status for the same reason; keeping it here means
+   * the two cases stay indistinguishable to the caller, as they must.
+   */
+  attachmentDependencies(input: {
+    workspaceId: string;
+    effectIntentId: string;
+  }): AttachmentDependency[] {
+    return this.sql.exec<{
+      resource_id: string; derivative_sha256: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT receipt.resource_id, receipt.derivative_sha256
+         FROM attachment_tool_receipts receipt
+         JOIN tool_effects effect ON effect.effect_intent_id = receipt.tool_invocation_id
+        WHERE receipt.workspace_id = ? AND receipt.tool_invocation_id = ?
+          AND effect.status = 'completed'
+        ORDER BY receipt.resource_id`,
+      input.workspaceId,
+      input.effectIntentId,
+    ).toArray().map((row) => ({
+      resourceId: row.resource_id,
+      derivativeSha256: row.derivative_sha256,
+    }));
+  }
+
+  /**
+   * Delete a receipt whose stored replay is no longer usable, reporting its ref.
+   *
+   * The ref comes back so the Worker can queue the stored payload for deletion
+   * *after* this commits. The routed version enqueued the outbox row first and
+   * could strand it pointing at a receipt that still existed; here the order is
+   * fixed by the boundary rather than by remembering to write the statements the
+   * right way round.
+   *
+   * Dependencies go with it, by `ON DELETE CASCADE`. That cascade is
+   * load-bearing and was previously untested.
+   */
+  discardReceipt(input: {
+    workspaceId: string;
+    effectIntentId: string;
+  }): { outputRef: string | null; deleted: boolean } {
+    return this.storage.transactionSync(() => {
+      const effect = first(this.sql.exec<{
+        output_ref: string | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT output_ref FROM tool_effects WHERE effect_intent_id = ?`,
+        input.effectIntentId,
+      ));
+      if (!effect) return { outputRef: null, deleted: false };
+      this.sql.exec(
+        `DELETE FROM tool_effects WHERE effect_intent_id = ?`,
+        input.effectIntentId,
+      );
+      return { outputRef: effect.output_ref, deleted: true };
+    });
+  }
+
+  /**
+   * Settle every in-flight receipt of a run whose lease was reaped.
+   *
+   * This is the one operation here that is not fenced on a lease, and it could
+   * not be: `#fence` demands a live one, and the sweep's entire premise is that
+   * none exists. Every other method would answer `ownership_lost` by
+   * construction. The guard is the run's own `terminalized_at`, re-read here
+   * rather than trusted from the caller, so this is safe to call after the batch
+   * that terminalized the run rather than only inside it.
+   *
+   * Write-ness comes from the execution plan, not from `tool_effects.mode`, and
+   * the two disagree on purpose. For an absent or malformed plan the column says
+   * `read`, while this treats it as possibly-a-write and settles `ambiguous`.
+   * Preferring the column would silently turn "we could not confirm the write"
+   * into "it definitely failed" for exactly the receipts whose provider request
+   * may have landed — the wrong direction for the only case that matters.
+   */
+  abandonRunReceipts(input: { runId: string; terminalizedAt: number }): number {
+    return this.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE tool_effects
+            SET status = CASE
+                  WHEN status = 'executing'
+                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                  THEN 'ambiguous' ELSE 'failed' END,
+                settled_at = ?1,
+                error_json = CASE
+                  WHEN status = 'executing'
+                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                  THEN json_object('code', 'ambiguous_external_write')
+                  ELSE json_object('code', 'parent_run_terminated') END
+          WHERE run_id = ?2 AND status IN ('admitted', 'executing')
+            AND EXISTS (
+              SELECT 1 FROM runs
+               WHERE run_id = ?2 AND terminalized_at = ?1
+            )`,
+        input.terminalizedAt,
+        input.runId,
+      );
+      return this.sql.exec<{ changes: number } & Record<string, SqlStorageValue>>(
+        `SELECT changes() AS changes`,
+      ).one().changes;
+    });
   }
 
   // ----------------------------------------------------------------- settle
