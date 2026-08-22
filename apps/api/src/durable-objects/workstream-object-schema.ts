@@ -1232,9 +1232,10 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       // v1 still creates these, and it must: its statements are hashed into
       // `_sql_schema_migrations`, so editing them strands every deployed
-      // object on `workstream_schema_hash_mismatch:1`. A new object therefore
-      // creates them and drops them again in the same bootstrap transaction,
-      // which is the cost of an append-only history and is paid once.
+      // object on `substream_agent_do_schema_hash_mismatch:1`. A new object
+      // therefore creates them and drops them again in the same bootstrap
+      // transaction, which is the cost of an append-only history and is paid
+      // once.
       //
       // `terminal_commands` was provisioned for per-command receipts during
       // the D1 retirement, but the Terminal runtime settles every command
@@ -1760,8 +1761,20 @@ export function workstreamObjectSchemaImplementationHash(
  * Exported because `SubstreamAgent` reports under it while this module migrates
  * under it; a second literal there could drift from this one and file the report
  * against a component the object's own ledger does not use.
+ *
+ * The value names the class that applies this schema, not this module, because
+ * that is the only thing an operator reading the tracker can match against the
+ * fleet: every other component key there is its class (`workstream_do`,
+ * `workspace_do`). It said `workstream` while this history belonged to
+ * `WorkstreamRoom`, and kept saying it through the class rename — which put the
+ * one object in the fleet whose component and class did not correspond next to
+ * `workstream_do`, a genuinely different object, under a name that reads like
+ * its parent. Renaming the key is safe precisely because nothing but the
+ * tracker reads it: the object's own `_sql_schema_migrations` ledger has no
+ * component column, so no receipt moves and no migration re-runs. Registry
+ * migration v3 carries the stored history across.
  */
-export const WORKSTREAM_OBJECT_SCHEMA_COMPONENT = "workstream";
+export const WORKSTREAM_OBJECT_SCHEMA_COMPONENT = "substream_agent_do";
 
 export function applyWorkstreamObjectSchema(
   storage: DurableObjectStorage,
