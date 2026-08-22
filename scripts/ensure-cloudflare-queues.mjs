@@ -1,20 +1,26 @@
 /**
- * Prove every Queue the Wrangler files declare actually exists.
+ * Make every Queue the Wrangler files declare exist, creating any that do not.
  *
  * Wrangler is a deployment tool, not a provisioner. It applies a consumer's
  * settings — batch size, batch timeout, retries — on every deploy, so those are
  * already infrastructure-as-code and drift back on the next release. What it
  * does not do is create the queue a producer binding names: that fails the
- * deploy. This is the same gap `check-cloudflare-r2-buckets.mjs` covers for R2,
- * and the same answer: the Wrangler file stays the single source of truth, and
- * this preflight turns "did somebody remember to create it" into a checked
- * invariant that runs before any deployment.
+ * deploy. The Wrangler file stays the single source of truth, and this preflight
+ * closes the one gap the platform leaves: it reads every declared queue, lists
+ * the account, and creates whichever are missing before anything deploys. A
+ * release that adds a binding provisions its own queue on the way out; nothing
+ * about a queue is done by hand.
+ *
+ * It used to stop and print the `wrangler queues create` command instead. That
+ * turned every release that added a binding into a failed deploy plus a manual
+ * step — the one thing a pipeline exists to remove — and blocked five merges in
+ * an afternoon the first time it fired for real. The changelog in
+ * docs/durable-object-migration-tracking.md records the change.
  *
  * A dead-letter queue is the exception. Cloudflare creates one named in a
- * consumer's `dead_letter_queue` if it does not exist yet, so a missing one is
- * reported rather than failed — failing there would be reimplementing something
- * the platform already does, and would block the first deploy of a fresh
- * environment for no reason.
+ * consumer's `dead_letter_queue` if it does not exist yet, so it is reported
+ * rather than created — creating it here would be reimplementing something the
+ * platform already does.
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -164,13 +170,16 @@ export async function configuredQueues() {
   return { required, createdOnDeploy };
 }
 
+function queuesUrl(accountId) {
+  return `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/queues`;
+}
+
 /** Every queue name the account holds, following Cloudflare's pagination. */
 export async function listAccountQueues({ accountId, token, fetchImpl }) {
   const names = new Set();
   for (let page = 1; page <= 20; page += 1) {
     const response = await fetchImpl(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`
-      + `/queues?page=${page}&per_page=100`,
+      `${queuesUrl(accountId)}?page=${page}&per_page=100`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     const body = await response.json().catch(() => null);
@@ -184,26 +193,64 @@ export async function listAccountQueues({ accountId, token, fetchImpl }) {
   return names;
 }
 
-export async function checkRequiredQueues(options = {}) {
+/**
+ * Create one queue, the same call `wrangler queues create` makes. The name is
+ * the only setting: batch size, retries, and the dead-letter reference belong
+ * to the consumer, and Wrangler applies those on every deploy.
+ */
+export async function createAccountQueue({ accountId, token, fetchImpl, name }) {
+  const response = await fetchImpl(queuesUrl(accountId), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queue_name: name }),
+  });
+  const body = await response.json().catch(() => null);
+  if (response.ok && body?.success === true) return;
+
+  const detail = (body?.errors ?? [])
+    .map((error) => `${error.message} [code: ${error.code}]`)
+    .join('; ');
+  // Name the likely cause rather than the status: this runs in a deploy
+  // pipeline, and the next thing the reader wants is the fix. Code 10000 on a
+  // create is what a token without Queues Edit returns; the same token can
+  // still list, so the preflight gets this far before it finds out.
+  const hint = response.status === 403
+    ? ' The token must hold Queues Edit on the account; docs/runbook.md lists the required permissions.'
+    : '';
+  throw new Error(
+    `Creating Cloudflare Queue ${name} failed with HTTP ${response.status}`
+    + `${detail ? `: ${detail}` : ''}.${hint}`,
+  );
+}
+
+export async function ensureRequiredQueues(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const log = options.log ?? console.log;
   const accountId = required('CLOUDFLARE_ACCOUNT_ID', environment);
   const token = required('CLOUDFLARE_API_TOKEN', environment);
   const declared = options.queues ?? await configuredQueues();
-  const present = await listAccountQueues({ accountId, token, fetchImpl });
+  const account = { accountId, token, fetchImpl };
+  const present = await listAccountQueues(account);
 
-  const missing = declared.required.filter((queue) => !present.has(queue.name));
-  if (missing.length > 0) {
-    // Name the command rather than the problem: this runs in a deploy pipeline,
-    // and the next thing the reader wants is the fix.
-    const commands = [...new Set(missing.map((queue) => queue.name))]
-      .map((name) => `  wrangler queues create ${name}`)
-      .join('\n');
-    throw new Error(
-      `Missing Cloudflare Queue(s) for ${missing.map((q) => `${q.surface}/${q.role}`).join(', ')}.`
-      + ` Create them before deploying:\n${commands}`,
-    );
+  const missing = [...new Set(
+    declared.required.filter((queue) => !present.has(queue.name)).map((queue) => queue.name),
+  )];
+  for (const name of missing) {
+    try {
+      await createAccountQueue({ ...account, name });
+      log(`Created Queue ${name}`);
+    } catch (error) {
+      // Two deployments can run this at once — the API and the migration
+      // tracker both declare `avalon-migration-reports` — and the loser's
+      // create is refused as a duplicate. What matters is that the queue
+      // exists, so look again before failing: if it is there now, somebody
+      // else made it and this run is done.
+      const now = await listAccountQueues(account);
+      if (!now.has(name)) throw error;
+      log(`Queue ${name} was created by a concurrent deployment`);
+    }
+    present.add(name);
   }
 
   for (const queue of declared.required) {
@@ -218,5 +265,5 @@ export async function checkRequiredQueues(options = {}) {
 }
 
 if (isEntryPoint(import.meta.url)) {
-  await checkRequiredQueues();
+  await ensureRequiredQueues();
 }
