@@ -157,8 +157,8 @@ describe("email markdown rendering", () => {
 
   it("numbers a ranked list instead of bulleting it", () => {
     const html = markdownToEmailHtml([
-      "1. **Hyperagent** — priced against Sol",
-      "2. **SuperApp** — rebranded",
+      "1. **Contoso** — priced against the model cut",
+      "2. **Northwind** — rebranded",
       "   1. Announced on stage",
     ].join("\n"));
 
@@ -190,11 +190,11 @@ describe("email markdown rendering", () => {
     const html = markdownToEmailHtml([
       "| Rank | Company |",
       "| --- | --- |",
-      "| 1 | Hyperagent |",
+      "| 1 | Contoso |",
     ].join("\n"));
 
     expect(html).toContain("<pre");
-    expect(html).toContain("| Rank | Company |\n| --- | --- |\n| 1 | Hyperagent |");
+    expect(html).toContain("| Rank | Company |\n| --- | --- |\n| 1 | Contoso |");
   });
 
   it("renders the smaller structures a result actually uses", () => {
