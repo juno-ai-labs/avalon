@@ -480,14 +480,21 @@ describe("Durable Objects in the Workers runtime", () => {
       state.storage.sql.exec(`DELETE FROM durable_outbox`);
       state.storage.sql.exec(`DELETE FROM projection_keys`);
 
-      await product.initialize(auth, input);
+      // Under `blockConcurrencyWhile`, because the object's own delivery alarm
+      // drains `durable_outbox` as soon as it forwards an effect to the parent.
+      // The repair and the count have to observe the same instant; without the
+      // fence the assertion only wins when the alarm happens to be slower, and
+      // loses whenever the machine is loaded enough for it to come due first.
+      await state.blockConcurrencyWhile(async () => {
+        await product.initialize(auth, input);
 
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
-      ).one().count).toBe(2);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM projection_keys`,
-      ).one().count).toBe(2);
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
+        ).one().count).toBe(2);
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM projection_keys`,
+        ).one().count).toBe(2);
+      });
     });
   });
 
