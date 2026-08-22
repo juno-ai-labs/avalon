@@ -24,6 +24,7 @@ import {
 import { z } from "zod";
 
 import {
+  revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -3400,16 +3401,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     let evicted = false;
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
-      if (!attachment || attachment.userId !== request.userId) continue;
-      // A socket whose session is unknown is closed, not skipped. This schema
-      // alone makes `sessionId` optional — a socket accepted before the command
-      // gateway carries none — and `undefined !== "<id>"` would quietly exempt
-      // exactly the transcript feed from every logout and expiry. It cannot be
-      // shown *not* to be the revoked session, and closing it costs a
-      // reconnect where skipping it keeps a dead session reading.
-      if (request.sessionId !== null
-        && attachment.sessionId !== undefined
-        && attachment.sessionId !== request.sessionId) continue;
+      // This schema alone makes `sessionId` optional, which is why the rule is
+      // shared rather than written out at each of the four roles — see
+      // `revocationClosesSocket`.
+      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
       evicted = true;
     }

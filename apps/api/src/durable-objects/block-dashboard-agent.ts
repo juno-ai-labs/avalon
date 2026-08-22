@@ -18,6 +18,7 @@ import {
 import { z } from "zod";
 
 import {
+  revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -695,8 +696,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     const request = SocketAccessRevocationSchema.parse(revocation);
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readSocketAttachment(socket);
-      if (!attachment || attachment.userId !== request.userId) continue;
-      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
       try {
         socket.serializeAttachment({ ...attachment, subscribed: false });
       } catch {

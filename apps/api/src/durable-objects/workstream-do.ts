@@ -56,6 +56,7 @@ import { blockDashboardAgentName, substreamAgentName, workspaceDOName } from "./
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 import {
+  revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -2007,8 +2008,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     const identity = this.metadataRow();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readSocketAttachment(socket);
-      if (!attachment || attachment.userId !== request.userId) continue;
-      if (request.sessionId !== null && attachment.sessionId !== request.sessionId) continue;
+      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
       try {
         socket.serializeAttachment({ ...attachment, subscribed: false });
       } catch {
