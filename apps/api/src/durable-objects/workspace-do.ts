@@ -988,7 +988,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const target = workspaceMutationTarget(statement.sql);
         return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
       })) {
-        this.state.waitUntil(this.refreshSchedule(request.workspaceId));
+        this.state.waitUntil(this.refreshSchedule(request.workspaceId).catch((error: unknown) => {
+          // Swallowed silently, a failed refresh here leaves a schedule dark
+          // until something else reconciles. The alarm's own end-of-drain
+          // refresh is the backstop; this line is how anyone finds out the
+          // backstop was needed.
+          logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
+            workspace_id: request.workspaceId,
+            code: error instanceof Error ? error.message : "unknown_error",
+          });
+        }));
       }
       return responseToRpcResult(json({ results }));
     } catch (error) {
@@ -1106,9 +1115,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * entry: the sweep is idempotent, bounded to 500 rows, and its due time
    * moves with every event this workspace records.
    */
-  protected override runDueAlarmWork(now: number): Promise<void> {
+  protected override async runDueAlarmWork(now: number): Promise<void> {
     this.reapExpiredActivityEvents(now);
-    return Promise.resolve();
+    const workspaceId = this.workspaceId();
+    // Re-derive the whole index before this alarm ends, exactly as the object
+    // that used to own it did. A target that just fired has advanced its own
+    // canonical row — `runSchedule` writes the next `next_run_at`,
+    // `runResourceWatch` the next `next_poll_at`, a bounded maintenance pass
+    // can leave rows behind — and it writes them through the local executor,
+    // which does not pass the auto-refresh in `executeRuntimeSql`. Without
+    // this, the drain settles the one-shot entry it just ran and nothing arms
+    // the occurrence that replaced it: a recurring automation fires once and
+    // then never again until an unrelated mutation happens to reconcile.
+    if (workspaceId) await this.refreshSchedule(workspaceId);
   }
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
@@ -1179,6 +1198,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     const alarmAt = await this.armNextAlarm();
     return { alarmAt: alarmAt === null ? null : new Date(alarmAt).toISOString() };
+  }
+
+  /**
+   * Re-derive the Terminal deadlines alone.
+   *
+   * Only this kind: the other three read tables a directory effect never
+   * touches, and a full refresh on the hottest write path this object has
+   * would put ten queries behind every directory publish. The source is the
+   * same method the full reconcile reads, so there is still one derivation of
+   * when a sandbox is due.
+   */
+  private async refreshTerminalSchedule(): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const targets = await this.workstreamScheduleTargets({ workspaceId });
+    await this.reconcileScheduledAlarms(
+      "terminal",
+      targets.items
+        .filter((target) => target.kind === "terminal")
+        .map((target) => ({ key: target.workstreamId, dueAt: Date.parse(target.dueAt) }))
+        .filter((target) => Number.isFinite(target.dueAt)),
+    );
   }
 
   private scheduleContext(workspaceId: string): WorkspaceScheduleContext {
@@ -2084,6 +2125,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         viewerChanges.set(envelope.workstreamId, users);
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
+    }
+    if (commonChanges.size > 0) {
+      // A `directory_common` effect is the only writer of
+      // `next_terminal_action_at`, and it arrives outside any alarm — off the
+      // Queue — so a sandbox deadline created or moved here would otherwise
+      // wait for an unrelated target to reconcile before anything armed it.
+      await this.refreshTerminalSchedule();
     }
     if (directoryChanged) {
       await Promise.all([
