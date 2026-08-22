@@ -42,12 +42,12 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function envFor(database: DatabaseSync): Env {
+function envFor(database: DatabaseSync, appEnv: "production" | "test" = "production"): Env {
   const base = createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     AVALON_REGION: "global",
-    APP_ENV: "test",
+    APP_ENV: appEnv,
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
   });
   return withWorkstreamRuntimeDatabase(base, WORKSPACE, WORKSTREAM);
@@ -288,6 +288,19 @@ describe("what an automation run is told about its own delivery", () => {
     expect(delivery).toContain("alex@example.com");
     expect(delivery).toContain("U1");
     expect(delivery.indexOf("alex@example.com")).toBeLessThan(delivery.indexOf("U1"));
+  });
+
+  it("does not claim an email destination outside production", async () => {
+    const env = envFor(seededDatabase(), "test");
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // `sendResendEmail` refuses to send outside production, so a run told
+    // Avalon has the email covered stands down and nobody gets the briefing —
+    // which is every staging automation, going quiet with nothing to explain
+    // it now that the compiler no longer writes a provider send.
+    expect(context.systemPrompt).toContain('"resultDelivery": []');
+    expect(context.systemPrompt).not.toContain("alex@example.com");
   });
 
   it("ignores a destination that is not delivering", async () => {

@@ -302,10 +302,26 @@ sunbird, terrapin, waxbill
   duplicate back: the compiler no longer writes a provider send, so nothing else
   stops a saved instruction that says "email me the briefing".
 - **`resultDelivery` mirrors each sender's own predicate, not a third one.** Email
-  delivers from `active`; Slack deliberately delivers from `needs_input` too and
-  skips a member who turned that notification off. A convenient single predicate
-  gets one of them wrong, and being wrong here is either a duplicate delivery or a
-  result delivered nowhere. The loader and the two senders change together.
+  delivers from `active` and only in production; Slack deliberately delivers from
+  `needs_input` too and skips a member who turned that notification off. A
+  convenient single predicate gets one of them wrong, and being wrong here is
+  either a duplicate delivery or a result delivered nowhere. The loader and the
+  two senders change together.
+- **Outside production, an automation's result is not emailed at all** —
+  `sendResendEmail` refuses to send transactional mail from a developer's machine
+  or a staging Worker. That is why `resultDelivery` names no email destination
+  there: a run told Avalon has the email covered suppresses its own send, and
+  since the compiler no longer writes a provider send either, a staging
+  automation that used to mail through the connector would otherwise go quiet
+  with nothing to explain it. If a staging automation stops emailing, this is the
+  reason and it is working as intended.
+- **A destination whose owner lost workspace membership is still listed.**
+  `deliverAutomationResultEmail` re-checks membership against regional D1 and
+  skips, so that result reaches nobody — the run stood down for a delivery that
+  did not happen. It is left this way deliberately: mirroring the check would put
+  a cross-region read on every automation run start for a case that is rare and
+  self-correcting once the membership row is repaired. A future change that makes
+  the destination set richer should reconsider it.
 - **Its order is fixed.** The rows are rendered into the system prefix, which is
   re-rendered every turn and must be byte-identical across a retry; nothing
   constrains the order two rows come back in.
