@@ -463,26 +463,43 @@ the report log are left exactly as they were reported: unlike the component
 column, which is an identifier the tracker assigns, the message is what an
 object actually said on the day it broke.
 
+A migration alone does not finish the rename, because it runs once and the two
+Workers deploy from independent workflows. The tracker's is much the smaller of
+the two and usually lands first, so reports from the outgoing API build keep
+arriving under `workstream` after v3 has already swept the tables — and v3
+cannot catch them, since its receipt is what stops a migration running twice.
+`applyReport` therefore rewrites that one key on the way in. The branch is
+bounded and is meant to be deleted: once no deployed build carries the old key,
+a report arriving under it is a producer nobody can account for, which is worth
+seeing rather than silently renaming.
+
 **Considered and rejected:** letting the new key simply start a second
 component, on the theory that objects would migrate to it as they woke. They
 would not — the 795 objects that have never reported would sit under `workstream`
 at v15 indefinitely, and the ones that had reported would show `current` under a
-head of 0 until a new build raised it. Also rejected: translating the legacy key
-in the queue consumer, which handles the deploy window at the cost of a
-permanent rule in the hot path that outlives its reason.
+head of 0 until a new build raised it. Also rejected: leaving the deploy window
+to an operator cleanup, which was the first shape of this change. It
+under-counted the damage. Only `durable_objects` heals itself on an object's
+next wake; the head row needs a manual delete, and every event written in the
+window stays in the log under a key nothing else uses, where no later migration
+repairs it. Making the ingestion branch bounded costs less than a permanent one
+and less than the repair.
 
 **What a future change has to respect:** the key is the tracker's own
 identifier and its only join between a report and a head, so renaming one again
 means a registry migration in the same change — `component_versions` is keyed
 `(component, region)` and a rename without one splits the fleet silently rather
-than failing. The two Workers deploy from independent workflows, so v3's write
-to `component_versions` merges rather than updates: if `apps/api` lands first,
-the row already exists, and an `UPDATE` onto it would collide with the primary
-key inside the registry's own constructor and take the tracker down. If the
-tracker happens to deploy first, reports from the outgoing API build recreate
-`workstream` for the length of the deploy window; those objects re-report under
-the new key on their first wake against the new build, and the leftover
-`component_versions` row is an operator delete.
+than failing. It also means a compatibility branch at ingestion for as long as
+the old producer can still be deployed, because the migration cannot see what
+arrives after it. v3's write to `component_versions` merges rather than updates
+for the other order: if `apps/api` lands first, the row already exists, and an
+`UPDATE` onto it would collide with the primary key inside the registry's own
+constructor and take the tracker down.
+
+Both halves have to be tested below the writer that normalizes the key. A test
+that seeds the old key through `recordReports` proves the migration works
+against a database that never held it — it passes with every one of v3's
+statements removed, which is how this was caught.
 
 ### 2026-08-22 — The report tables drop the Applied column
 

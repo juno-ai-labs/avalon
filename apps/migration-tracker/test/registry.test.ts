@@ -61,6 +61,20 @@ function sweep(overrides: Partial<InventorySweep> = {}): InventorySweep {
   };
 }
 
+/**
+ * Rewrite every stored component back to the pre-rename key.
+ *
+ * Reports cannot seed this: `applyReport` normalizes the legacy key on the way
+ * in, which is the whole point of the compatibility branch — so a test that
+ * seeded through it would prove the migration works against a database that
+ * never held the old key. This writes the shape v3 actually meets.
+ */
+function rewindToLegacyComponent(state: DurableObjectState): void {
+  for (const table of ["durable_objects", "migration_events", "component_versions"]) {
+    state.storage.sql.exec(`UPDATE ${table} SET component = 'workstream'`);
+  }
+}
+
 /** A fresh registry per test; the object is a singleton, so it is reset by hand. */
 async function withRegistry<T>(
   run: (registry: MigrationRegistry, state: DurableObjectState) => T | Promise<T>,
@@ -489,7 +503,8 @@ describe("the registry schema", () => {
    */
   it("carries the stored history onto the renamed component", async () => {
     const applied = await withRegistry((registry, state) => {
-      record(registry, report({ component: "workstream", schemaVersion: 15, latestVersion: 15 }));
+      record(registry, report({ schemaVersion: 15, latestVersion: 15 }));
+      rewindToLegacyComponent(state);
       // Rewind to v2: the receipt is what makes the runner skip a migration, so
       // dropping it replays v3 against a database holding the old key.
       state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 3`);
@@ -521,6 +536,34 @@ describe("the registry schema", () => {
       .toEqual(["substream_agent_do"]);
   });
 
+  /**
+   * The migration alone is not enough: it runs once, and the tracker's deploy
+   * workflow is the smaller of the two, so it usually lands before the API
+   * build that stops sending the old key. A report that arrives in that window
+   * would otherwise put the legacy key back into all three tables, where only
+   * `durable_objects` heals itself on the object's next wake.
+   */
+  it("files a report that still carries the legacy key under the new one", async () => {
+    const rows = await withRegistry((registry, state) => {
+      record(registry, report({ component: "workstream", schemaVersion: 15, latestVersion: 15 }));
+      return {
+        components: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM component_versions`,
+        ).toArray(),
+        objects: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM durable_objects`,
+        ).toArray(),
+        events: state.storage.sql.exec<{ component: string }>(
+          `SELECT DISTINCT component FROM migration_events`,
+        ).toArray(),
+      };
+    });
+
+    expect(rows.components).toEqual([{ component: "substream_agent_do" }]);
+    expect(rows.objects).toEqual([{ component: "substream_agent_do" }]);
+    expect(rows.events).toEqual([{ component: "substream_agent_do" }]);
+  });
+
   it("merges into a head the renamed component already has", async () => {
     const applied = await withRegistry((registry, state) => {
       // The API deployed first, so its reports have already created the row
@@ -530,25 +573,23 @@ describe("the registry schema", () => {
       // reads as a passing test against the other region.
       record(
         registry,
-        report({ component: "workstream", schemaVersion: 15, latestVersion: 15 }),
-        report({
-          objectId: objectId("b"),
-          component: "substream_agent_do",
-          schemaVersion: 12,
-          latestVersion: 12,
-        }),
+        report({ schemaVersion: 15, latestVersion: 15 }),
         report({
           objectId: objectId("c"),
           objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
-          component: "workstream",
           region: "eu",
           schemaVersion: 12,
           latestVersion: 12,
         }),
+      );
+      rewindToLegacyComponent(state);
+      // Only now the API's side of the collision, which lands under the new key.
+      record(
+        registry,
+        report({ objectId: objectId("b"), schemaVersion: 12, latestVersion: 12 }),
         report({
           objectId: objectId("d"),
           objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
-          component: "substream_agent_do",
           region: "eu",
           schemaVersion: 15,
           latestVersion: 15,
