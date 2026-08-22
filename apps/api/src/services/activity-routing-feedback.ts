@@ -3,7 +3,6 @@ import type { WorkspaceId } from "@avalon/contracts";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * What a workspace's own accept and dismiss decisions say about suggesting
@@ -139,61 +138,27 @@ export async function suggestionAdmission(
   now: Date = new Date(),
 ): Promise<SuggestionAdmission> {
   const since = new Date(now.getTime() - EVENT_TYPE_WINDOW_MS).toISOString();
-  const authority = await readWorkstreamAuthorityControl(env);
   let accepted = 0;
   let dismissed = 0;
   const dismissingUsers = new Set<string>();
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      input.workspaceId,
-      workspaceDOName(env.AVALON_REGION, input.workspaceId),
-    );
-    const feedback = await workspace.suggestionFeedback({
-      workspaceId: input.workspaceId,
-      source: "contextual_routing",
-      since,
-      provider: input.provider,
-      eventType: input.eventType,
-    });
-    for (const item of feedback.items) {
-      if (item.status === "accepted") accepted += 1;
-      else {
-        dismissed += 1;
-        if (item.resolvedByUserId) dismissingUsers.add(item.resolvedByUserId);
-      }
-    }
-  } else {
-    // Driven from `activity_suggestions` and joined outward: the workspace's
-    // resolved suggestions are few and indexed, where `activities` holds every
-    // event the workspace has ever ingested and filtering that by event type
-    // first would read most of it.
-    const row = await env.DB.prepare(
-      `SELECT COALESCE(SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted,
-            COALESCE(SUM(CASE WHEN s.status = 'dismissed' THEN 1 ELSE 0 END), 0) AS dismissed,
-            COUNT(DISTINCT CASE WHEN s.status = 'dismissed' THEN s.resolved_by_user_id END) AS dismissers
-       FROM activity_suggestions s
-       JOIN activities a ON a.id = s.activity_id
-      WHERE s.workspace_id = ?1
-        -- Contextual routing's own cards only. The suggested-work path publishes
-        -- the same card through the same helper, and counting its resolutions
-        -- here would let one agent's record decide whether the other gets to
-        -- speak. Rows predating the column are 'unknown' and count for nobody.
-        AND s.source = 'contextual_routing'
-        AND s.status IN ('accepted', 'dismissed')
-        AND s.resolved_at >= ?2
-        AND a.provider = ?3
-        AND a.event_type = ?4`,
-    ).bind(input.workspaceId, since, input.provider, input.eventType).first<{
-      accepted: number;
-      dismissed: number;
-      dismissers: number;
-    }>();
-    accepted = Number(row?.accepted ?? 0);
-    dismissed = Number(row?.dismissed ?? 0);
-    for (let index = 0; index < Number(row?.dismissers ?? 0); index += 1) {
-      dismissingUsers.add(`legacy:${index}`);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId),
+  );
+  const feedback = await workspace.suggestionFeedback({
+    workspaceId: input.workspaceId,
+    source: "contextual_routing",
+    since,
+    provider: input.provider,
+    eventType: input.eventType,
+  });
+  for (const item of feedback.items) {
+    if (item.status === "accepted") accepted += 1;
+    else {
+      dismissed += 1;
+      if (item.resolvedByUserId) dismissingUsers.add(item.resolvedByUserId);
     }
   }
 

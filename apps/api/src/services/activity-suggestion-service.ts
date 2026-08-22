@@ -1,10 +1,9 @@
 import type { WorkspaceId, WorkstreamId } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { newId } from "@avalon/db";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
 
 /**
@@ -55,60 +54,22 @@ export async function createActivitySuggestion(
   input: CreateActivitySuggestionInput,
 ): Promise<boolean> {
   const id = newId();
-  const createdAt = nowIso();
   const title = truncateUtf16Safe(input.activityTitle, 300);
   const summary = truncateUtf16Safe(input.activitySummary, 2_000);
   const reason = truncateUtf16Safe(input.reason, 1_200);
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    const result = await createWorkstreamRuntimeSuggestion(env, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      suggestion: {
-        id,
-        activityId: input.activityId,
-        title,
-        summary,
-        confidence: Math.max(0, Math.min(1, input.confidence)),
-        reason,
-        matchedEntities: input.matchedEntities.slice(0, 100),
-        source: input.source,
-      },
-    });
-    return result.inserted;
-  }
-  const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO activity_suggestions (
-       id, workspace_id, activity_id, workstream_id, confidence, reason,
-       matched_entities_json, status, created_at, resolved_at, resolved_by_user_id, source
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?)`,
-  ).bind(
-    id,
-    input.workspaceId,
-    input.activityId,
-    input.workstreamId,
-    Math.max(0, Math.min(1, input.confidence)),
-    reason,
-    JSON.stringify(input.matchedEntities.slice(0, 100)),
-    createdAt,
-    input.source,
-  ).run();
-  if (Number(inserted.meta.changes ?? 0) === 0) return false;
-
-  await publishSubstreamAgentEvent(env, input.region, input.workspaceId, input.workstreamId, {
-    type: "activity_suggestion_created",
+  const result = await createWorkstreamRuntimeSuggestion(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
     suggestion: {
       id,
       activityId: input.activityId,
-      workstreamId: input.workstreamId,
       title,
       summary,
       confidence: Math.max(0, Math.min(1, input.confidence)),
       reason,
-      status: "pending",
-      createdAt,
-      resolvedAt: null,
+      matchedEntities: input.matchedEntities.slice(0, 100),
+      source: input.source,
     },
   });
-  return true;
+  return result.inserted;
 }
