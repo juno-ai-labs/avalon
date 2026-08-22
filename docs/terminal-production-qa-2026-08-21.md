@@ -4,7 +4,7 @@
 
 The 2026-08-21 production pass found that Terminal was not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout worked, but repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
 
-The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in production stress test passed all twenty requested areas, including 28 Terminal tool calls, two generated-resource publications, and a publish/import round trip.
+The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed all twenty requested areas, including 28 Terminal tool calls, two generated-resource publications, and a publish/import round trip. The owning Terminal module's separate EU functional and concurrent cold-start acceptance gates remain open.
 
 The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout.
 
@@ -34,10 +34,10 @@ that shares the RPC endpoint's identity, transaction, directory-effect, typed
 failure, and post-commit alarm semantics. It also keeps generated-resource link
 attachment—including oversized command output and repository-replacement
 backups—inside that same event instead of preserving a second self-RPC path.
-External Worker callers continue to use RPC. The final production sequence below
+External Worker callers continue to use RPC. The Global production sequence below
 verified the resident path after that follow-up merged and deployed.
 
-## 2026-08-22 final production acceptance
+## 2026-08-22 Global production acceptance
 
 PR #228 merged as `e7e0288e0d78c27bd8db069c2c3012dbd669be16`.
 Deployment run `32583865005` checked out that exact revision, found no pending
@@ -56,7 +56,7 @@ The harness completed in 319,526 ms with 28 tool calls over 29 iterations, and
 `tool_receipt_persistence_failed` nor `terminal_resident_runtime_incomplete`
 appeared.
 
-| Area | Final result | Production evidence |
+| Area | Global result | Production evidence |
 |---|---|---|
 | Sequential receipts | PASS | The exact first/second-command regression completed, followed by another successful command after an expected exit 7. |
 | Runtime and process execution | PASS | Node 25.9.0, Python 3.14.6, SQLite 3.46.1, and Git 2.55.0 reported; a two-second delayed command completed normally. |
@@ -74,7 +74,9 @@ envelope rather than a bare multi-file unified diff; and `publish_resource`
 only publishes a file staged under `$AVALON_RESOURCE_DIR`. The model corrected
 each input, after which the operation succeeded. None left an ambiguous write
 receipt. These boundaries are intentional path and patch validation, so no code
-change follows from them.
+change follows from them. This run clears the reproduced Global sequential
+receipt failure; it does not replace the required EU functional matrix or the
+two-way cold-start concurrency pass with health checks.
 
 ## Follow-up remediation status
 
@@ -84,7 +86,7 @@ request-context race. The post-QA real-workerd reproduction correctly showed
 that a keep-alive alarm must not await another event's active drain promise.
 The follow-up correction also removes the resident alarm's same-object
 Terminal-operation and generated-resource-link RPCs. It is merged, deployed,
-and production-retested in the final acceptance above. Recovery continues to
+and production-retested in the Global acceptance above. Recovery continues to
 belong to the durable dispatch row and harness attempt lease. A healthy long run retains its unexpired
 attempt lease; a promise with no progress for five minutes and no live lease can
 be replaced inside the same isolate.
@@ -101,7 +103,7 @@ The remediation and review hardening also:
 - chooses harness persistence categories explicitly at each required port and classifies tool lifecycle-event failures as receipt failures;
 - refuses to replay terminal command rows whose timing evidence is incomplete.
 
-Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. On 2026-08-22 the signed-in production window first reproduced the old deployment's 454 ms second-command failure, then the final acceptance above verified the corrected command, receipt, and resource cards after #228 deployed.
+Regression evidence is recorded in real-workerd and Node tests. The new heartbeat test failed against the original code because the alarm joined the active drain; the post-commit Terminal-operation test failed because the endpoint returned 409 after committing; and the stale-card test failed because the receipt became terminal while the part stayed `started`. Real-workerd validation also caught that its cursor counts every internal trigger row; the port now returns one semantic receipt change, preserving first-write/replay behavior after transcript projection. All now pass, as do the full repository tests, lint, typecheck, documentation check, and both regional Wrangler dry-run builds. On 2026-08-22 the signed-in production window first reproduced the old deployment's 454 ms second-command failure, then the Global acceptance above verified the corrected command, receipt, and resource cards after #228 deployed.
 
 ## Environment
 
@@ -177,7 +179,8 @@ Implemented validation:
 4. Bind retains participant-safe durable-host failure categories.
 5. The final production Global pass reran the exact two-command control and then
    continued through 26 additional Terminal tool calls. The deployment workflow
-   verified both regional health endpoints for the exact merge revision.
+   verified both regional health endpoints for the exact merge revision, but
+   the EU functional and two-way cold-start concurrency gates remain open.
 
 ## Issue 2 — P1: a Terminal write can remain “started” until stale-run reaping
 
@@ -249,19 +252,22 @@ Implemented locally: the Terminal object port returns `terminal_operation_not_co
 
 - Production behavior matches the current lazy-allocation documentation: loading Terminal alone does not start a sandbox. The proposed plug-in-activation prewarm is not production behavior; PR #173 (“Start Terminal sandbox on plugin activation”) remains open and unmerged.
 - Historical production QA workstreams visible from 2026-08-13 show successful sanitization, output overflow, package installation, patch atomicity, SQLite/Git, resource, and checkout tests. They are useful regression context, not current proof.
-- The Mac locked before final acceptance and no API-only claim replaced the UI
+- The Mac locked before Global acceptance and no API-only claim replaced the UI
   gate. After unlock, Computer Use reran the matrix in a fresh production window
   and visually inspected the completed workstream and both generated resources.
 
 ## Release recommendation
 
-The receipt-persistence release block is cleared. PR #228 is merged, its exact
-revision deployed healthy to EU and Global, and a later deployed descendant
-passed the signed-in Global Computer Use matrix without a receipt or resident
-runtime failure. This final pass proves sequential commands, mutations,
+The reproduced Global sequential receipt-persistence block is cleared. PR #228
+is merged, its exact revision deployed healthy to EU and Global, and a later
+deployed descendant passed the signed-in Global Computer Use matrix without a
+receipt or resident runtime failure. This final pass proves sequential commands, mutations,
 expected-failure recovery, local Git, delayed execution, binary handling, and
 generated-resource publication/import. Historical production passes remain the
 evidence for package installation, output overflow/sanitization, and authorized
-read-only checkout; those were not repeated in this acceptance run. A future
+read-only checkout; those were not repeated in this acceptance run. EU Terminal
+execution and two-way cold-start concurrency were also not repeated, so the
+owning module's cross-region acceptance gate remains open; EU health alone is
+not functional Terminal evidence. A future
 change to resident tool authority must retain the rule that the main child uses
 object-local ports while external callers use RPC.
