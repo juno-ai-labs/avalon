@@ -465,6 +465,8 @@ permission. A misspelled queue name in a Wrangler file now creates a stray queue
 rather than failing the deploy — `SAFE_QUEUE` bounds what can be created, and
 `wrangler queues list` shows the strays. A queue removed from the configuration
 lingers until an operator deletes it.
+
+Shipped in #240.
 ### 2026-08-22 — SubstreamAgent's component is named after its class
 
 **What changed:** the component key `SubstreamAgent` reports under is
