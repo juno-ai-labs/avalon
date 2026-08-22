@@ -25,7 +25,7 @@
     "dev:api:local": "pnpm env:sync && node scripts/dev-regional-api.mjs --local",
     "dev:desktop": "dotenv -e .env.local -- pnpm --filter @avalon/desktop dev",
     "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.with-avalon.com VITE_API_EU_URL=https://eu.api.with-avalon.com AVALON_DEV_AUTH=false pnpm --filter @avalon/desktop dev",
-    "db:migrate": "pnpm env:sync && pnpm --filter @avalon/api db:migrate && pnpm --filter @avalon/api db:migrate:eu",
+    "db:migrate": "pnpm env:sync && pnpm --filter @avalon/api db:migrate",
     "db:migrate:remote": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote",
     "db:migrate:remote:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:eu",
     "db:migrate:remote:list": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:list",

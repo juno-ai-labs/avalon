@@ -16,13 +16,13 @@ boundary, or changing how a local database is created.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/db/baselines/b_<nnnn>_<text>.sql` | The generated snapshot. Named after the migration it stands through. Never edited by hand. |
-| `packages/db/baselines/manifest.json` | Which migrations the baseline subsumes, their digest, the volatile columns, and the object and row counts. The one place a reader learns what the file claims. |
+| `packages/db/baselines/b_<nnnn>_<text>.sql` | A generated snapshot. Named after the migration it stands through. Several may exist. Never edited by hand. |
+| `packages/db/baselines/manifest.json` | Every baseline: which migrations each subsumes, their digest, the volatile columns, and the object and row counts. The one place a reader learns what a file claims. |
 | `packages/db/baselines/production-fingerprint.json` | Per-object digests recorded from the hosted databases, so the parity result stays enforced offline. |
 | `scripts/d1-baseline.mjs` | The library: boundary selection, the staleness digest, snapshotting, volatile-column detection, SQL rendering, fingerprints, and the shared "which tables are internal" rule. |
 | `scripts/create-d1-baseline.mjs` | `pnpm db:baseline:create <through-migration.sql>` — generates the file and the manifest. |
 | `scripts/check-d1-baseline-against-remote.mjs` | `pnpm db:baseline:verify` — compares the baseline against both hosted databases and them against each other. `-- --record` refreshes the fingerprint. |
-| `scripts/migrate-local-region.mjs` | What `pnpm db:migrate` runs per region: decides whether the baseline applies, then hands over to Wrangler. |
+| `scripts/migrate-d1.mjs` | The one migrate script — every region, local or hosted. Discovers regions, plans, then hands over to Wrangler. |
 
 ## How it works
 
@@ -51,28 +51,68 @@ consider out of phase, so creating them before the inserts would abort the file
 partway through. The ledger claim — "these migrations have run" — is written last
 of all, once the schema it describes exists.
 
+### Choosing one
+
+There may be several baselines, and which one a database gets is **calculated**,
+never named. `selectBaseline` keeps only those that still describe the chain —
+the files a baseline claims to subsume must be exactly the files at or below its
+boundary today, and still hash to its recorded digest — and picks the one whose
+boundary is highest. Everything above that boundary is applied on top, so a new
+migration does not invalidate a baseline; it just means one more thing to apply
+after it.
+
+A baseline the chain has moved underneath is skipped rather than fatal. The
+chain is always there to fall back to, and a setup command that refused to run
+because a *cache* was stale would be a bad trade. The staleness is still a test
+failure, so it is loud in CI and quiet in your terminal.
+
 ### Applying one
 
-`pnpm db:migrate` runs `scripts/migrate-local-region.mjs` for each region. It
-asks the local database how many user tables it has and how many migrations its
-ledger claims. Both must be zero for the baseline to be applied; then Wrangler
-runs as it always did, finds every subsumed migration already recorded, and
-applies only what came after. Anything else skips the baseline and is migrated
-the ordinary way.
+`pnpm db:migrate` runs `scripts/migrate-d1.mjs`, which discovers the regions,
+asks each database what it holds, and plans:
+
+| The database | The plan |
+| --- | --- |
+| No user tables, no ledger rows, a usable baseline | **`baseline`** — the snapshot, then the migrations above its boundary |
+| No user tables, no ledger rows, no usable baseline | **`migrate`** — the whole chain |
+| Has tables, or has ledger rows | **`migrate`** — Wrangler applies what is pending |
+| Nothing pending | **`up-to-date`** |
+| Hosted (`--remote`) | **`migrate`**, always — see the invariant below |
+
+A database with tables never has its ledger read: it is not getting a baseline
+whatever the ledger says, and reading it costs a Wrangler start-up per region on
+the path setup takes every session. The plan then carries `pending: null` rather
+than a count nobody computed, and says so.
 
 The generated file also refuses a non-empty database itself, through a named
 `CHECK` — the same shape migration 0090 uses, because a D1 file is a flat
 statement sequence with nowhere to put an `if`. The two checks are not redundant:
-the wrapper's exists so a warm container continues quietly, and the guard exists
+the script's exists so a warm container continues quietly, and the guard exists
 so the file cannot be misapplied by hand.
+
+### Adding a region
+
+Nothing here lists regions. `discoverRegions` reads `apps/api/wrangler.*.jsonc`
+and treats a config as a region when its D1 binding declares `migrations_dir`.
+Adding a region is adding its config and its `.dev.vars`; `wrangler.test.jsonc`
+binds D1 *without* a `migrations_dir` and is correctly not a region.
+
 
 ### Verifying one
 
-`pnpm db:baseline:verify` reads `sqlite_schema` from both hosted databases and
-compares the baseline against each, and the two regions against each other. It
-never reads a row of production data. With `-- --record` it writes
-`production-fingerprint.json`, which `scripts/d1-baseline.test.mjs` then compares
+`pnpm db:baseline:verify` reads `sqlite_schema` from every discovered region and
+compares the **migration chain** against each, and the regions against each
+other. It never reads a row of production data. With `-- --record` it writes
+`production-fingerprint.json`, which `scripts/d1-baseline.test.mjs` compares
 against on every run — so the answer stays enforced without credentials.
+
+The chain rather than a baseline, deliberately. A baseline describes its own
+boundary, so once a migration lands above it, comparing the baseline to
+production would report that migration as drift. The baselines are tied in
+separately and offline: `baseline + everything after it` reproduces the chain,
+asserted for **every** baseline in `packages/db/test/baseline-migration.test.ts`.
+Chain equals production here, baseline equals chain there, so baseline equals
+production by composition — and each half is checked where it can be.
 
 ## Invariants
 
@@ -84,9 +124,15 @@ against on every run — so the answer stays enforced without credentials.
 - **The migration chain stays authoritative and complete.** Deleting a migration
   because a baseline subsumes it would leave every hosted database that has not
   run it with no description of how to get there. A baseline is an addition.
-- **Hosted databases never apply a baseline.** `db:migrate:remote` replays the
-  full chain. If a baseline ever reached production it would collide with the
-  schema already present, and the guard would refuse it — loudly, mid-deploy.
+- **Hosted databases never apply a baseline.** The migrate script passes
+  `allowBaseline: false` for `--remote`, so the plan cannot be `baseline` — one
+  line, stated once, rather than a rule living in whichever script you ran. If a
+  baseline ever reached production it would collide with the schema already
+  present, and the guard would refuse it — loudly, mid-deploy.
+- **A baseline is chosen by calculation, never by name.** Anything that reaches
+  for "the baseline" — a hardcoded filename, `baselines[0]`, the manifest's only
+  entry — breaks the moment a second one exists, and breaks silently, by using a
+  snapshot that stops short of where it could have reached.
 - **The manifest's file list and digest describe the migrations on disk
   exactly.** This is what makes staleness loud. Editing a subsumed migration or
   inserting one below the boundary changes the digest and fails the suite. The
@@ -111,7 +157,7 @@ hosted databases; that is [`runbook.md`](runbook.md). Local setup is
 [`dev-environment.md`](dev-environment.md), which points here rather than
 restating any of it.
 
-Nothing outside `scripts/migrate-local-region.mjs` decides whether a baseline
+Nothing outside `scripts/migrate-d1.mjs` decides whether a baseline
 applies, and nothing but Wrangler ever applies a migration or writes a ledger row
 for one.
 
@@ -186,7 +232,7 @@ spending that budget again.
 | Suite | Covers |
 | --- | --- |
 | `scripts/d1-baseline.test.mjs` (`pnpm test:scripts`) | Boundary and naming rules, the staleness digest, volatile-column detection, SQL literals, rendering order, the internal-table rule, wrangler output parsing, and parity with the recorded production fingerprint. |
-| `scripts/migrate-local-region.test.mjs` (`pnpm test:scripts`) | The apply-or-skip decision and its reporting, with Wrangler injected. |
+| `scripts/migrate-d1.test.mjs` (`pnpm test:scripts`) | Selection, planning, region discovery, and the CLI — but mostly **behaviour**: it builds real migration chains, generates real baselines from them, applies the resulting plan to real SQLite, and asserts the database matches a full replay. |
 | `packages/db/test/baseline-migration.test.ts` (`pnpm --filter @avalon/db test`) | What the file does when executed: equivalence against a real chain replay, the guard, the ledger, volatile stamping, and a migration applied on top. |
 
 The two levels are deliberately independent. The `packages/db` suite does **not**
@@ -228,6 +274,54 @@ the migrations. That is an incident in the schema, not in the baseline; do not
 regenerate to make it pass.
 
 ## Changelog
+
+### 2026-08-21 — One migrate script, discovered regions, and a calculated baseline
+
+**What changed:** `scripts/migrate-local-region.mjs` and the raw Wrangler remote
+aliases became one script, `scripts/migrate-d1.mjs`, covering every region local
+or hosted. Regions are discovered from `apps/api/wrangler.*.jsonc` rather than
+listed. The manifest holds a list of baselines, and which one a database gets is
+calculated — the highest boundary still describing the chain — with everything
+above it applied on top. The hosted "never baseline" rule became a parameter
+rather than a separate code path.
+
+**Why:** the first version hardcoded `["global", "eu"]` in one script and named
+one baseline out of a manifest that could only hold one. Adding a third region
+meant editing a list plus four package aliases; adding a second baseline was not
+possible at all, and the code that would have had to choose between them did not
+exist. Both are things this repository will do — a baseline is only worth having
+if it can move forward — and neither would have failed loudly: a missing region
+is a database nobody migrated, and a wrongly chosen baseline is a slow setup, not
+an error.
+
+**Considered and rejected:**
+
+- *Keeping the local and hosted scripts separate*, on the grounds that the
+  hosted path must never baseline. That rule is better served by being visible:
+  as two scripts it lived in which command you happened to run, and as
+  `allowBaseline: false` it is one line with a test on it.
+- *Having the script compute pending migrations for `--list` too.* The deploy
+  workflow pipes that output into `classify-pending-d1-migrations.mjs`, which
+  reads every migration filename it sees as pending and gates a production
+  deploy on the answer. `--list` delegates to Wrangler verbatim so that gate
+  keeps keying off Wrangler's own answer rather than a reimplementation of it.
+- *Replacing the older baseline when a new one is generated.* Keeping both costs
+  a file and lets `selectBaseline` fall back when the newest is invalidated by a
+  migration inserted below its boundary — which is exactly when a fallback is
+  worth having.
+
+**Consequences:** nothing may reach for "the baseline" by name, index, or
+"the only entry" — `selectBaseline` is the only way to choose one, and anything
+else silently uses a snapshot that stops short of where it could reach. A region
+is defined by a Wrangler config whose D1 binding declares `migrations_dir`; a
+config that binds D1 without one is deliberately not a region, so
+`wrangler.test.jsonc` stays out. The plan reports `pending: null` when the ledger
+was not read, and callers must not render that as zero — an earlier version
+filled it in as "every migration is pending", which read as alarming nonsense on
+a fully migrated database. Remote verification compares the *chain* to
+production, not a baseline, so it stays correct once migrations land above a
+boundary.
+
 
 ### 2026-08-21 — Local D1 starts from a checked-in baseline at migration 0090
 
