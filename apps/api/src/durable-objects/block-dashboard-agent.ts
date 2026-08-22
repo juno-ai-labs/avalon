@@ -95,6 +95,14 @@ const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.
   connectionId: z.string().uuid(),
   connectedAt: z.string().datetime({ offset: true }),
   subscribed: z.boolean(),
+  /**
+   * Vestigial: nothing reads it now that time-based re-authorization is gone —
+   * the access-revocation queue closes a socket instead. The field stays in the
+   * schema because it is `.strict()`, so an attachment serialized by the
+   * previous deploy would fail to parse without it and its socket would be
+   * dropped on the first wake after release. Safe to remove once no hibernated
+   * attachment predates this change.
+   */
   authorizedAt: z.number().int().nonnegative().default(0),
 }).strict();
 type BlockDashboardSocketAttachment = z.infer<typeof BlockDashboardSocketAttachmentSchema>;
@@ -410,7 +418,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
       return;
     }
-    socket.serializeAttachment({ ...attachment, subscribed: true, authorizedAt: Date.now() });
+    socket.serializeAttachment({ ...attachment, subscribed: true });
     const run = this.latestRun();
     socket.send(JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
       type: "block_dashboard_block_snapshot",
@@ -470,7 +478,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
-      authorizedAt: Date.now(),
+      authorizedAt: 0,
     };
     this.state.acceptWebSocket(server, [
       attachment.workspaceId,
@@ -703,7 +711,6 @@ export class BlockDashboardAgent extends DurableObject<Env> {
   }
 
   private async authorizedSubscribedSockets(force = false): Promise<WebSocket[]> {
-    const now = Date.now();
     const authorization = new Map<string, boolean>();
     const permitted: WebSocket[] = [];
     for (const socket of this.state.getWebSockets()) {
@@ -720,7 +727,6 @@ export class BlockDashboardAgent extends DurableObject<Env> {
         const cached = authorization.get(key);
         allowed = cached ?? await this.authorizeViewer(attachment);
         authorization.set(key, allowed);
-        if (allowed) socket.serializeAttachment({ ...attachment, authorizedAt: now });
       }
       if (!allowed) {
         socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");

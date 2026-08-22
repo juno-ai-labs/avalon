@@ -34,6 +34,14 @@ beforeEach(() => {
   });
 });
 
+const productDatabases = new WeakMap<SubstreamAgent, DatabaseSync>();
+
+function productDatabase(room: SubstreamAgent): DatabaseSync {
+  const database = productDatabases.get(room);
+  if (!database) throw new Error("room_product_database_missing");
+  return database;
+}
+
 function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
@@ -173,6 +181,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamA
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
+  productDatabases.set(room, objectDatabase);
   return room;
 }
 
@@ -362,18 +371,70 @@ describe("who the work-stream room disconnects", () => {
     expect(otherWindow.closes).toEqual([]);
   });
 
-  it("closes nobody when a work stream narrows to its participants", async () => {
+  it("closes a legacy socket that carries no session, rather than exempting it", async () => {
+    const legacy = fakeSocket(PARTICIPANT);
+    const attachment = legacy.deserializeAttachment() as Record<string, unknown>;
+    delete attachment.sessionId;
+    legacy.serializeAttachment(attachment);
+    const room = roomFor(seededDatabase(), [legacy]);
+
+    // This schema alone makes `sessionId` optional — a socket accepted before
+    // the command gateway carries none — so `undefined !== "<id>"` would exempt
+    // exactly the transcript feed from every logout and expiry. It cannot be
+    // shown not to be the revoked session.
+    await room.revokeSocketAccess({
+      reason: "session_revoked",
+      workspaceId: asWorkspaceId(WORKSPACE),
+      userId: PARTICIPANT,
+      sessionId: SESSION,
+    });
+
+    expect(legacy.closes.map((close) => close.code)).toEqual([1008]);
+  });
+
+  it("closes a reader the work stream itself just stopped admitting", async () => {
     const reader = fakeSocket(MEMBER);
-    const room = roomFor(seededDatabase(), [reader]);
+    const kept = fakeSocket(PARTICIPANT);
+    const room = roomFor(seededDatabase(), [reader, kept]);
 
     const response = await publish(room, { type: "workstream_scope_changed", scope: "personal" });
 
     expect(response.status).toBe(202);
-    // A deliberate gap, not an oversight: work-stream participation and
-    // visibility are object-local facts, so the D1-fed revocation queue cannot
-    // see them and this reader keeps the socket until they reconnect. Recorded
-    // in docs/access-revocation.md; closing them here would be a second
-    // mechanism.
+    // Object-local, and a different question from the one the queue answers:
+    // whether *this work stream* still admits this person is held in this
+    // object's own SQL, and nothing else can answer it. Without this they keep
+    // receiving the live transcript until the window closes.
+    expect(reader.closes.map((close) => close.code)).toEqual([1008]);
+    expect(kept.closes).toEqual([]);
+    // Swept before the broadcast, so the event that excluded them is not the
+    // last thing they are sent.
+    expect(reader.sent).toEqual([]);
+    // The scope change, then a refreshed roster: the people who stay must stop
+    // seeing an evicted reader listed as present.
+    expect(kept.sent.map((payload) => (JSON.parse(payload) as { type: string }).type))
+      .toEqual(["workstream_scope_changed", "presence_changed"]);
+  });
+
+  it("closes a participant taken out of a work stream that is already private", async () => {
+    const database = seededDatabase();
+    const removed = fakeSocket(PARTICIPANT);
+    const room = roomFor(database, [removed]);
+    productDatabase(room).exec(`DELETE FROM participants WHERE user_id = '${PARTICIPANT}'`);
+
+    const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
+
+    expect(response.status).toBe(202);
+    expect(removed.closes.map((close) => close.code)).toEqual([1008]);
+  });
+
+  it("leaves everyone in place when the work stream is open to the workspace", async () => {
+    const database = seededDatabase();
+    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
+    const reader = fakeSocket(MEMBER);
+    const room = roomFor(database, [reader]);
+
+    await publish(room, { type: "participant_removed", userId: PARTICIPANT });
+
     expect(reader.closes).toEqual([]);
     expect(reader.sent).toHaveLength(1);
   });

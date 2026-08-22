@@ -386,10 +386,16 @@ export class AuthService {
     // A verified bearer session is authoritative. A stale or attacker-supplied
     // refresh token must never prevent that authenticated session from being
     // revoked; when both are present, revoke both identifiers idempotently.
+    //
+    // Both statements skip a row already revoked, so what comes back is what
+    // this call actually ended — a repeated logout revokes nothing and
+    // announces nothing. The revocation stays idempotent either way; this is
+    // the same exactly-once care the expiry sweep takes, applied here so the
+    // two do not disagree about what a revocation announcement means.
     const revoked: RevokedSessionRow[] = [];
     if (input.sessionId) {
       const row = await this.env.DB.prepare(
-        `UPDATE sessions SET revoked_at = ? WHERE id = ?
+        `UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
          RETURNING id, user_id, workspace_id`,
       )
         .bind(nowIso(), input.sessionId)
@@ -402,8 +408,9 @@ export class AuthService {
       const tokenHash = await sha256(input.refreshToken);
       const result = await this.env.DB.prepare(
         `UPDATE sessions SET revoked_at = ?
-         WHERE refresh_token_hash = ?
-           OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
+         WHERE revoked_at IS NULL
+           AND (refresh_token_hash = ?
+             OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?))
          RETURNING id, user_id, workspace_id`,
       )
         .bind(at, tokenHash, tokenHash, replayGraceStart)

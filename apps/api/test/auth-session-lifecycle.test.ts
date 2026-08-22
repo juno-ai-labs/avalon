@@ -54,7 +54,7 @@ class SessionDatabase {
           throw new Error(`Unexpected first query: ${sql}`);
         },
         all: async <T>() => {
-          if (!sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE refresh_token_hash")) {
+          if (!sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL AND (refresh_token_hash")) {
             throw new Error(`Unexpected all query: ${sql}`);
           }
           this.refreshRevocations += 1;

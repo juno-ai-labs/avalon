@@ -2845,6 +2845,97 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("closes a metadata socket when the work stream itself stops admitting its reader", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const at = "2026-08-22T12:00:00.000Z";
+    const directory = (scope: "workspace" | "personal", eventId: string) => effectEnvelope({
+      kind: "directory_common" as const,
+      title: "Narrowing work stream",
+      description: "Readable, then not",
+      preview: "idle",
+      scope,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: at,
+      completedAt: null,
+      archivedAt: null,
+      emailAddress: "workstream@automation.with-avalon.com",
+      originType: "ad_hoc" as const,
+      createdByUserId: USER_ID,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      titleStatus: "settled" as const,
+      latestAttentionOrdinal: 1,
+      unreadTrackingStartOrdinal: 0,
+      nextWakeupDueAt: null,
+      nextWakeupPrompt: null,
+      nextTerminalActionAt: null,
+      createdAt: at,
+      updatedAt: at,
+    }, eventId);
+    // Readable because the work stream is open to the workspace — this reader
+    // is explicitly not a participant, which is what the narrowing then costs
+    // them.
+    await stub.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [directory("workspace", "00000000-0000-7000-8000-000000000701"), effectEnvelope({
+        kind: "directory_user" as const,
+        userId: USER_ID,
+        isParticipant: false,
+        unreadCount: 0,
+        youAreMentioned: false,
+        listable: true,
+        seenAttentionOrdinal: 0,
+        manualUnreadFromOrdinal: null,
+        manualUnreadGeneration: 0,
+        latestMentionAttentionOrdinal: 0,
+      }, "00000000-0000-7000-8000-000000000702")],
+    });
+
+    const response = await stub.fetch("https://workstream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-workstream-id": WORKSTREAM_ID,
+        "x-avalon-user-id": USER_ID,
+        "x-avalon-session-id": SESSION_ID,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000703",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const subscribed = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe" }));
+    await subscribed;
+
+    try {
+      const closed = nextClose(socket);
+      // Object-local: whether this work stream still admits this reader lives in
+      // this object's own SQL, and no revocation message carries it. Without the
+      // check they keep receiving title, description, preview and state.
+      await stub.receiveSubstreamEffects({
+        substreamId: "0",
+        envelopes: [directory("personal", "00000000-0000-7000-8000-000000000704")],
+      });
+      expect((await closed).code).toBe(1008);
+    } finally {
+      try { socket.close(1000, "test complete"); } catch { /* already closed */ }
+      // Put the shared work stream back the way this test found it. Durable
+      // Object storage outlives the file inside one suite run, so a scope left
+      // narrowed here is a scope every later file inherits.
+      await stub.receiveSubstreamEffects({
+        substreamId: "0",
+        envelopes: [directory("workspace", "00000000-0000-7000-8000-000000000705")],
+      });
+    }
+  });
+
   it("serves complete WorkstreamDO metadata and pushes changes after hibernation", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(

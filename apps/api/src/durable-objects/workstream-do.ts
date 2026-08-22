@@ -1354,6 +1354,13 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed || !activeUsers.has(attachment.userId)) continue;
+      // Same object-local check as `broadcastMetadata`, and this path has no
+      // other guard at all: block dashboard events would otherwise keep
+      // flowing to a reader the work stream just excluded.
+      if (!this.canRead(attachment.userId)) {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+        continue;
+      }
       socket.send(payload);
     }
   }
@@ -2044,6 +2051,18 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed) continue;
+      // Object-local, and deliberately still here. What was removed from this
+      // path is the D1 `workspace_members` read — a question this object cannot
+      // answer, which the revocation queue now answers properly. Whether this
+      // work stream is still readable by this person is a different question,
+      // answered entirely from this object's own SQL, and it is the only place
+      // that can answer it. `metadataForUser` does not consult it, so without
+      // this a reader excluded by a scope change keeps receiving title,
+      // description, preview and state until they close the window.
+      if (!this.canRead(attachment.userId)) {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+        continue;
+      }
       const metadata = this.metadataForUser(attachment.userId);
       if (!metadata) continue;
       socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({

@@ -204,16 +204,26 @@ Electron does not fall back to a D1 work-stream list. A user message is never ac
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
 
-A window that only listens is never revalidated. A socket is authorized when it
-connects and then holds until something closes it; no publish path asks D1
-whether the person may still listen, and no object re-checks on a timer. The one
+A window that only listens is never re-checked against D1. A socket is authorized
+when it connects and then holds until something closes it; no publish path asks
+D1 whether the person may still listen, and no object re-checks on a timer. Two
+different things can close it. Losing access to the *workspace* is a D1 fact, so
+it arrives as a queue message. The one
 thing that closes an open socket is a message on the access-revocation queue,
 which the Worker that wrote the retraction publishes and a consumer carries to
 each object's `revokeSocketAccess`. That method closes the person's sockets with
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` and returns the children the object knows
 about, which the consumer turns into further messages. See
-[`access-revocation.md`](access-revocation.md) — it is the only mechanism, and
-nothing here is to grow a second one.
+[`access-revocation.md`](access-revocation.md) — it is the only mechanism for
+that, and nothing here is to grow a second one.
+
+Losing access to *one work stream* is a different fact, held in that object's own
+SQL, and the object enforces it itself: `WorkstreamDO.broadcastMetadata` and
+`broadcastBlockDashboardEvent` close a socket whose `canRead` has gone false, and
+`SubstreamAgent` does the same when an event narrows visibility. These read no
+D1 and add no round trip. Without them a reader excluded by a scope change keeps
+receiving the live transcript, the title, and the preview until the window
+closes, which can be days.
 
 All four socket roles use short-lived, audience-specific, single-use tickets. The
 edge Worker verifies the signed ticket and passes only verified headers to the
@@ -686,7 +696,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
-- **A push trusts an open socket; the access-revocation queue is what closes one.** No object here re-checks authorization before publishing, on a timer, or on any other schedule — the single mechanism is `revokeSocketAccess`, driven by the queue in [`access-revocation.md`](access-revocation.md). Adding a second one puts a D1 query back on the publish path and, as the changelog records, is where the waterline ordering bug came from. Anything new that ends a person's access publishes to that queue instead.
+- **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
@@ -1026,6 +1036,47 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-22 — Object-local visibility comes back; only the D1 read stays gone
+
+**What changed:** `broadcastMetadata` and `broadcastBlockDashboardEvent` close a
+socket whose `canRead` has gone false, and `SubstreamAgent` closes readers its
+own `product.canRead` no longer admits when an event narrows visibility. All
+three read this object's own SQL. The `workspace_members` query removed from
+these paths in the entry below stays removed. `SubstreamAgent` also stops
+exempting a socket whose attachment carries no `sessionId`, and
+`BlockDashboardAgent` stops writing the now-unread `authorizedAt`.
+
+**Why:** The entry below removed two different things as if they were one. The
+D1 read was right to go: it asked whether somebody is still a workspace member,
+which this object cannot answer and the revocation queue now answers properly,
+and it cost a round trip on a publish path — the same round trip that produced
+the waterline ordering bug. The `canRead` filter was not that. Work-stream scope
+and participation live in this object's SQL; no queue message carries them,
+because they are not D1 facts. Deleting the filter did not make that retraction
+late, it stopped applying it: a reader excluded by a scope change went on
+receiving the live transcript, title, description and preview until the window
+closed. Review caught it; the previous entry's framing ("takes effect on the
+next reconnect") described a delay that was really an absence.
+
+The `sessionId` gap is narrower and sharper: this schema alone makes the field
+optional, so `undefined !== "<id>"` skipped exactly the transcript socket on
+every logout and expiry.
+
+**Considered and rejected:** Publishing work-stream visibility onto the
+revocation queue so there is literally one mechanism. It puts a queue round trip
+between a scope change and the reader it excludes, and turns one object's private
+SQL into a message contract. The honest model is two questions with two owners,
+which is now stated in the invariants.
+
+**Consequences:** The invariant is narrower than "no object re-checks before
+publishing" — it is **no D1 read on a publish path**. A future change that
+deletes these `canRead` calls on the strength of the queue existing will restore
+the regression this entry fixes. A test in
+`test/workstream-room-authorization.test.ts` and one on real workerd now pin the
+behaviour rather than its absence.
+
+Shipped in #229.
 
 ### 2026-08-22 — A queue closes revoked sockets; every object-side sweep is gone
 
