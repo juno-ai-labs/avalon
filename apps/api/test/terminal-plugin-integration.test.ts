@@ -1,7 +1,7 @@
 import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { asHarnessRunId, asUserId } from "@avalon/contracts";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
@@ -12,6 +12,7 @@ import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
+  testTerminalPortFactory,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -84,6 +85,67 @@ describe("Terminal Bind integration", () => {
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
+  });
+
+  it("threads the resident object's Terminal port through plugin setup", async () => {
+    const { objectStore, env, input } = fixture("supported");
+    const messageId = "30000000-0000-4000-8000-000000000005";
+    const connectionId = "30000000-0000-4000-8000-000000000006";
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO workstream_participants
+         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+       VALUES (?, ?, ?, 'creator', '2026-08-13')`,
+      S,
+      U,
+      U,
+    );
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO messages
+         (id, workspace_id, workstream_id, author_type, author_user_id, message_type,
+          text_content, sequence_number, created_at)
+       VALUES (?, ?, ?, 'human', ?, 'text', 'Use Terminal twice', 1, '2026-08-13')`,
+      messageId,
+      W,
+      S,
+      U,
+    );
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_repository
+         (id, connection_id, repository_id, repository_full_name, base_ref, base_sha,
+          head_ref, state, selected_by_user_id, remote_access, created_at, updated_at)
+       VALUES (1, ?, 42, 'owner/repo', 'main', ?, 'avalon/resident-agent',
+               'selected', ?, 'read_only', ?, ?)`,
+      connectionId,
+      "a".repeat(40),
+      U,
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+    );
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE harness_runs SET trigger_message_id = ? WHERE id = ?",
+      messageId,
+      R,
+    );
+    input.triggerMessageId = messageId;
+    const residentPort = vi.fn(testTerminalPortFactory(objectStore));
+
+    await __integrationTesting.loadHarnessTools(
+      withWorkstreamRuntimeDatabase(env, W, S),
+      input,
+      undefined,
+      residentPort,
+    );
+
+    expect(residentPort).toHaveBeenCalledWith(W, S);
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT run_id, repository_full_name FROM terminal_publication_grants WHERE run_id = ?",
+      R,
+    )).toEqual({ run_id: R, repository_full_name: "owner/repo" });
   });
 
   it("omits Terminal in unsupported regions", async () => {
