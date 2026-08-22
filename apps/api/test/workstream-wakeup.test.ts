@@ -21,7 +21,7 @@ import {
   resolveWakeupInstant,
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
@@ -102,7 +102,6 @@ interface Fixture {
   /** Per-workstream object databases the runtime SQL port has opened. */
   objectStores: Map<string, DatabaseSync>;
   env: Env;
-  schedulerRefreshes: string[];
   /** Every agent timer refresh — how a wake-up is armed after cutover. */
   timerRefreshes: string[];
   /** Every run dispatched to the substream agent, in order. */
@@ -178,7 +177,6 @@ function fixture(): Fixture {
     JSON.stringify({ type: "user", userId: USER_ID }),
   );
 
-  const schedulerRefreshes: string[] = [];
   const timerRefreshes: string[] = [];
   const dispatches: RecordedDispatch[] = [];
   const dispatchControl: { error: Error | null } = { error: null };
@@ -187,14 +185,6 @@ function fixture(): Fixture {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    WORKSPACE_SCHEDULERS: {
-      idFromName: (name: string) => createTestDurableObjectId(name),
-      get: (id: DurableObjectId) => ({
-        refresh: async (workspaceId: string) => {
-          schedulerRefreshes.push(`${id.toString()}:${workspaceId}`);
-        },
-      }),
-    },
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
       objectStores,
       dispatches,
@@ -216,7 +206,6 @@ function fixture(): Fixture {
     objectStore,
     objectStores,
     env,
-    schedulerRefreshes,
     timerRefreshes,
     dispatches,
     dispatchControl,

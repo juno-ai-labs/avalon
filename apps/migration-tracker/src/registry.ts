@@ -102,15 +102,17 @@ type EventRow = {
  * reported and has not.
  *
  * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
- * class missing from here reads as permanently silent; a class listed here that
- * does not report reads as stranded.
+ * class missing from here is never swept at all; a class listed here whose
+ * objects never wake sits in `unreported` forever. `WorkspaceScheduler` was
+ * removed when the class was deleted: its objects can no longer report, so
+ * leaving it here would have parked every one of them in `unreported` — the
+ * exact count this list exists to keep meaningful.
  */
 export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "BlockDashboardAgent",
   "WorkstreamDO",
   "WorkspaceDO",
-  "WorkspaceScheduler",
 ] as const;
 
 const REPORTING_CLASS_LIST = REPORTING_CLASSES.map((name) => `'${name}'`).join(", ");

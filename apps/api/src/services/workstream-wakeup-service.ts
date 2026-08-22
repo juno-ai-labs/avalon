@@ -617,14 +617,12 @@ export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPri
 }
 
 /**
- * Recompute the workspace alarm.
+ * Reconcile a workspace's alarm index against its own tables.
  *
  * Every canonical mutation of a due time has to do this, or the row sits in its
- * durable authority until some unrelated target wakes the same workspace. The
- * name is historical: WorkspaceDO owns the alarm, and reconciles every target
- * it can see from its own tables when this is called.
+ * durable authority until some unrelated target wakes the same workspace.
  */
-export async function refreshWorkspaceSchedulerAlarm(
+export async function refreshWorkspaceSchedule(
   env: Pick<Env, "DB" | "WORKSPACE_DOS" | "AVALON_REGION" | "APP_ENV">,
   workspaceId: string,
 ): Promise<void> {
@@ -647,8 +645,9 @@ export async function refreshWorkspaceSchedulerAlarm(
  * Arm the owner of an agent-created timer.
  *
  * After authority cutover that owner is the exact SubstreamAgent whose tool
- * inserted the row. The workspace scheduler remains only for the legacy D1
- * phase and for workspace-wide schedules/resource watches.
+ * inserted the row, which indexes the wake-up as an `agent_timer` entry and
+ * re-arms its own alarm. Before cutover the row is still regional, and only
+ * WorkspaceDO's schedule reaches it.
  */
 export async function refreshAgentTimerAlarm(
   env: Env,
@@ -658,7 +657,7 @@ export async function refreshAgentTimerAlarm(
 ): Promise<void> {
   const authority = await readWorkstreamAuthorityControl(env);
   if (authority.phase !== "durable_object_open") {
-    await refreshWorkspaceSchedulerAlarm(env, workspaceId);
+    await refreshWorkspaceSchedule(env, workspaceId);
     return;
   }
   const agent = await durableObjectStubForWorkspace(

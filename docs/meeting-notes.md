@@ -357,8 +357,8 @@ sound once the first two exist.
 2. **Give an active recording a server-side owner.** The relay cannot hold the
    rolling transcript itself: a dictation connection is capped at five minutes,
    and the request scope dies with it, while a meeting is not so bounded. A
-   Durable Object per active note — the same shape as `WorkspaceScheduler`, which
-   already owns alarms and idempotent run creation — accumulates finalized items
+   Durable Object per active note — the same shape as WorkspaceDO's alarm half,
+   which already owns alarms and idempotent run creation — accumulates finalized items
    across successive connections and owns one alarm at the cadence this document
    names. It also gives the server an answer to "is this meeting still going":
    an alarm that fires with no new audio for long enough finalizes the note

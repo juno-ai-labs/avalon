@@ -23,7 +23,6 @@ sockets, and effects — belong to
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, so a wake-up a run scheduled fires from the object that owns it. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for regional-effect and block-dashboard outboxes, all of which stay derived. |
-| `apps/api/src/durable-objects/workspace-scheduler.ts` | The retired per-workspace scheduler object, kept only to hand its surviving alarms to WorkspaceDO. |
 
 ## How it works
 
@@ -211,7 +210,7 @@ boundary goes on a Queue — [`choosing-queues-or-rpc.md`](choosing-queues-or-rp
 has the reasoning.
 
 Callers outside the objects touch this only through
-`refreshWorkspaceSchedulerAlarm` and `refreshAgentTimerAlarm` in
+`refreshWorkspaceSchedule` and `refreshAgentTimerAlarm` in
 `apps/api/src/services/workstream-wakeup-service.ts`, which are the two "a due
 time moved, go reconcile" entry points.
 
@@ -277,6 +276,11 @@ a failing target a free immediate attempt.
   handler overran, and the agent-timer index.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
+- `apps/api/test/workspace-do-schema.test.ts` applies the WorkspaceDO ledger one
+  version at a time against `node:sqlite`. A migration that inserts a row is a
+  claim about SQL, and the version it lives in is the claim that matters: the
+  bootstrap must appear when 5 runs against a carried-over object, must not
+  appear for a new one, and must not appear in 4, which is released.
 - Driving an alarm in a test: `runDurableObjectAlarm(stub)` from
   `cloudflare:test` invokes the handler and reports whether one was armed.
   Reading state afterwards needs `runInDurableObject`, because a stored entry is
@@ -299,17 +303,18 @@ a failing target a free immediate attempt.
 
 ## Changelog
 
-### 2026-08-21 — One alarm list per object, and the workspace scheduler retires into WorkspaceDO
+### 2026-08-21 — One alarm list per object, and the workspace scheduler is deleted
 
 **What changed:** New `ScheduledDurableObject` base and `_internal_durable_alarms` table,
 adopted by `WorkspaceDO`, `WorkstreamDO`, and `SubstreamAgent` (schema versions
-4, 2, and 15 respectively). The `WorkspaceScheduler` Durable Object's work —
+4 — plus 5 for the bootstrap below — 2, and 15 respectively). The `WorkspaceScheduler` Durable Object's work —
 due schedules, resource watches, maintenance passes, and Terminal deadlines —
 moved into WorkspaceDO as reconciled entries, with its execution code extracted
-to `services/workspace-schedule-execution.ts`; the class survives only to hand
-its already-armed alarms over and then clear itself. The SubstreamAgent's agent
-timers moved from "derive `MIN(due_at)` and fire the single earliest wake-up"
-to one entry per pending wake-up.
+to `services/workspace-schedule-execution.ts`, and the class itself was deleted:
+its binding is gone and Wrangler migration tag `v4` names it in
+`deleted_classes`. The SubstreamAgent's agent timers moved from "derive
+`MIN(due_at)` and fire the single earliest wake-up" to one entry per pending
+wake-up.
 
 **Why:** Three objects had each grown their own copy of the same arithmetic and
 the copies had drifted. Two of them lowered the alarm but never raised it, so a
@@ -328,6 +333,32 @@ The rejected alternative was to keep the scheduler object and give it the
 multi-alarm store. It would have been a smaller diff, and it would have kept the
 property that made the drift possible: two objects with two derivations of one
 workspace's next instant.
+
+**Deleting the class rather than leaving it as a forwarder** is the part with a
+real cost, and it was taken deliberately. `deleted_classes` releases the
+objects and their storage — the alternative leaves a namespace of empty objects
+alive forever — but it also **discards every alarm those objects had armed**, so
+a workspace whose next automation was scheduled there loses that wake-up. A
+forwarder that handed each surviving alarm to WorkspaceDO before clearing itself
+would have avoided that, at the price of carrying a dead class through another
+release and remembering to finish the job.
+
+What replaces it is the `schedule_bootstrap` entry that WorkspaceDO migration
+**5** writes into any object that already has an identity: the first time such an
+object wakes it reconciles itself once, unprompted, and the entry is consumed.
+It is its own version rather than an addition to 4 because 4 ships in the release
+before this one — amending a released version's statements changes the hash every
+deployed object recorded and throws `workspace_do_schema_hash_mismatch:4` in its
+constructor, for good. That covers every workspace whose object is constructed after the
+deploy, which is every workspace with any traffic at all. It does **not** cover
+a workspace that is never touched again — nothing inside a Durable Object can
+wake it — so if a schedule matters there, an operator reconciles it by calling
+`refreshSchedule` for that workspace. A future change that adds a fleet sweep
+should use it for exactly this and nothing else.
+
+A residual note for whoever reads the Wrangler config: `v1` still names
+`WorkspaceScheduler` in `new_sqlite_classes` and always will. Deployed migration
+tags are immutable history; `v4` is what undoes it.
 
 Per-target retry gates were kept rather than simplified into a single object-wide
 backoff. `scheduler_retry_states` existed because one broken automation used to

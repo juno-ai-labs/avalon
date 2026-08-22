@@ -669,7 +669,7 @@ describe("Terminal authority on real workerd", () => {
       });
 
       // `workspace_workstream_directory.next_terminal_action_at` is the only
-      // input `WorkspaceScheduler` has for Terminal work, and this effect is
+      // input the workspace's alarm has for Terminal work, and this effect is
       // its only writer. A sandbox holding three durable deadlines that
       // enqueues nothing leaves the sweep with no reason to ever run.
       await runInDurableObject(stub, (_instance, state) => {

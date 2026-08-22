@@ -345,6 +345,8 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
 const PRODUCT_ALARM_KIND = "product";
 const PRODUCT_ALARM_KEY = "workspace";
+/** The one-shot entry a migrating object uses to reconcile itself once. */
+const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
 /** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
 const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
   "schedule",
@@ -646,6 +648,33 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        )
       WHERE due_at IS NOT NULL
      HAVING MIN(due_at) IS NOT NULL`,
+  ],
+}, {
+  version: 5,
+  description: "reconcile a carried-over workspace's schedule once",
+  statements: [
+    // Version 4 arrived with the scheduler object still running, so its final
+    // alarm was what reconciled every non-product target. This change deletes
+    // that object, and a schedule whose only pending wake-up lived there now
+    // has no other writer until a person or a connector happens to touch the
+    // workspace. One immediate entry, consumed once, closes that gap.
+    //
+    // A separate version rather than an amendment to 4: every object that
+    // constructed between the two deploys recorded a hash of 4's statements,
+    // and editing them in place throws `workspace_do_schema_hash_mismatch:4`
+    // in the constructor — permanently, for every workspace that ran the
+    // earlier release.
+    //
+    // Only for an object that already exists. A workspace created after this
+    // deploy runs its whole ledger before it has an identity row, and arming a
+    // reconcile for a database with nothing in it would make every new
+    // workspace pay for a wake-up that can only find zero targets.
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)`,
   ],
 }];
 
@@ -1137,6 +1166,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.runProductAlarm(workspaceId);
       return;
     }
+    if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
+      // One-shot, written by the migration that created this index: it exists
+      // so an object that has never been asked to reconcile does it once,
+      // unprompted. Settling deletes it.
+      await this.refreshSchedule(workspaceId);
+      return;
+    }
     if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
       throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
     }
@@ -1175,9 +1211,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Reconcile every workspace-wide target into the alarm index.
    *
    * Called after any mutation that can move a due time — a schedule edited, a
-   * watch enabled, an outbox row written through the runtime SQL port — and by
-   * the retiring `WorkspaceScheduler` on its final alarm. Reconciling rather
-   * than appending is what lets a cancelled schedule take its alarm with it.
+   * watch enabled, an outbox row written through the runtime SQL port — and
+   * once by the `schedule_bootstrap` entry the alarm migration writes.
+   * Reconciling rather than appending is what lets a cancelled schedule take
+   * its alarm with it.
    */
   async refreshSchedule(workspaceId: string): Promise<{ alarmAt: string | null }> {
     await this.initialized;

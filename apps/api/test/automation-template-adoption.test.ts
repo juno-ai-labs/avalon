@@ -8,10 +8,10 @@ import type { AuthContext } from "../src/env";
 // the reconcile call is the seam this file cares about.
 vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => ({
   ...await importOriginal<typeof WakeupService>(),
-  refreshWorkspaceSchedulerAlarm: vi.fn(async () => undefined),
+  refreshWorkspaceSchedule: vi.fn(async () => undefined),
 }));
 
-import { refreshWorkspaceSchedulerAlarm } from "../src/services/workstream-wakeup-service";
+import { refreshWorkspaceSchedule } from "../src/services/workstream-wakeup-service";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -155,7 +155,7 @@ describe("automation template version adoption", () => {
         "2026-08-01T00:00:00.000Z",
       ],
     });
-    expect(refreshWorkspaceSchedulerAlarm).toHaveBeenCalledWith(
+    expect(refreshWorkspaceSchedule).toHaveBeenCalledWith(
       expect.anything(),
       "668953d2-25f2-44fd-8d72-1e8cf024a277",
     );
