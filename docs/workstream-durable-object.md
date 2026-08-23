@@ -1304,6 +1304,53 @@ because the block was already settled rather than because the lease had moved �
 which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
+### 2026-08-23 — The transcript gets a typed authority, and the compat layer's ordering turns out to be wrong
+
+**What changed:** `WorkstreamMessageStorage` owns `parts`, `part_mentions` and
+`part_attachments` for every reader and writer that is not the product service,
+reached through `/internal/messages` and a typed port.
+`message-projection.ts` assembles the `Message` shape the retired reader built
+inside its query. `packages/db`'s five message functions and their projector are
+deleted — nothing calls them. This is slice 4 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same case as the slices before it, plus one thing specific to the
+transcript. `_runtime_messages`'s insert trigger did not only translate; it
+advanced the work stream's `next_attention_ordinal` and
+`last_people_activity_at` as a side effect of the insert. That is why every
+routed transcript write was a *batch*: the trigger moved one set of counters and
+the caller's own second statement moved the other, and the two were one fact
+only because the router happened to send them together. An append is one
+operation now.
+
+**The finding that matters more than the conversion: this slice cannot drop its
+views, and neither can slice 3.** Three transcript writes are batches that span
+three slices at once — an elicitation and its message and the work stream's
+counters; a harness run's final message, its lifecycle event and the work
+stream; a work stream's own creation, its opening message and its attachments.
+Each one's later statements are guarded on its earlier ones having landed, so
+splitting any of them across a port boundary puts a network hop inside a
+guarantee. `_runtime_messages`, `_runtime_message_attachments`,
+`_runtime_message_mentions` and `_runtime_elicitations` therefore all retire
+with the identity and harness-runs slices, not before. The PRD orders messages
+before identity; on the evidence of these four views that order is not
+available, and the PRD now says so.
+
+**What a future change has to respect:** two behaviours here are faithfully
+reproduced rather than fixed, and both are worth fixing on purpose later.
+
+Author identity is fabricated — empty email, the member's own id as their name,
+no avatar — because `_runtime_users` fabricated it and every converted reader
+has been getting that. The harness's description prompt has been reading UUIDs
+where it means names. The object can reach the real profile one layer away, and
+the identity slice is where all these readers should start seeing it, together.
+
+An attachment's resource is read from `workstream_resource_links`, the object's
+frozen copy, because the retired `JOIN resources` was rewritten onto a view that
+`json_extract`ed the same copy. The *product* service reads the live regional
+row instead, so a resource renamed after it was attached renders one way in the
+app and another in the harness's transcript. Reconciling them is the resources
+slice's.
 
 ### 2026-08-23 — Scheduling moves onto a typed authority, four views at a time
 
