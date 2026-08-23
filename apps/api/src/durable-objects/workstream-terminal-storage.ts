@@ -881,17 +881,19 @@ export class WorkstreamTerminalStorage {
    *
    * Expiry is the terminal case and clears everything, including the provider
    * sandbox id: past that point there is nothing left to stop, archive, or
-   * reattach to.
+   * reattach to. It therefore refuses to settle while this generation still
+   * has an unsettled task; the lifecycle claimant must finish cancellation
+   * before it can discard the provider authority needed for a retry.
    */
   settleLifecycleTransition(input: {
     lifecycleState: TerminalLifecycleState;
     claimId: string;
     now: number;
-  }): void {
+  }): boolean {
     const expired = input.lifecycleState === "expired" ? 1 : 0;
     const stoppedOrExpired = ["stopped", "expired"].includes(input.lifecycleState) ? 1 : 0;
     const archivedOrExpired = ["archived", "expired"].includes(input.lifecycleState) ? 1 : 0;
-    this.sql.exec(
+    return first<{ id: number }>(this.sql.exec(
       `UPDATE terminal_workspace
           SET lifecycle_state = ?,
               sandbox_id = CASE WHEN ? = 1 THEN NULL ELSE sandbox_id END,
@@ -903,7 +905,13 @@ export class WorkstreamTerminalStorage {
                 CASE WHEN ? = 1 THEN NULL ELSE operation_lease_expires_at END,
               lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
               failure_code = NULL, version = version + 1, updated_at = ?
-        WHERE id = 1 AND lifecycle_claim_id = ?`,
+        WHERE id = 1 AND lifecycle_claim_id = ?
+          AND (? = 0 OR NOT EXISTS (
+            SELECT 1 FROM terminal_tasks task
+             WHERE task.sandbox_generation = terminal_workspace.generation
+               AND task.state IN ('planned', 'submitting', 'running')
+          ))
+        RETURNING id`,
       input.lifecycleState,
       expired,
       stoppedOrExpired,
@@ -913,7 +921,8 @@ export class WorkstreamTerminalStorage {
       expired,
       input.now,
       input.claimId,
-    );
+      expired,
+    )) !== null;
   }
 
   finalDiffResourceId(): string | null {
@@ -1012,7 +1021,9 @@ export class WorkstreamTerminalStorage {
          FROM terminal_tasks
         WHERE sandbox_generation = ?
           AND state IN ('planned', 'submitting', 'running')
-        ORDER BY task_id LIMIT 1`,
+        ORDER BY CASE state WHEN 'submitting' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
+                 task_id
+        LIMIT 1`,
       generation,
     ));
     return row ? toTask(row) : null;
