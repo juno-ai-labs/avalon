@@ -591,8 +591,11 @@ When an executor throws a Zod error and its normalized arguments also fail the
 provider-facing schema or its code-authored refinement, the model sees
 `kind: "validation"`, at most five actionable issues from the closest union
 branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and never echoes submitted values. If those arguments pass both
-forms, the Zod failure is downstream. A read or provider-idempotent write remains
+characters and never echoes submitted values. That bounded schema message is
+the complete model recovery context for this branch; structured details from
+the executor's thrown error are not forwarded because they may describe
+downstream state rather than the rejected arguments. If those arguments pass
+both forms, the Zod failure is downstream. A read or provider-idempotent write remains
 `kind: "external"` and tells the model to retry once, then report invalid data.
 A `record_before_execute` write instead becomes `ambiguous_external_write` and
 terminates the run without retry guidance, because the provider may have applied
