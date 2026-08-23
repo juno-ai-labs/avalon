@@ -19,6 +19,8 @@ import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { readMessage } from "../runtime/message-projection";
 import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
@@ -117,9 +119,9 @@ export class SlackWorkspaceWorkstreamService {
         : { type: "workspace" },
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
-    const message = await database.workstreams.getMessageByClientId(
-      this.workspaceId,
-      created.workstream.id,
+    const message = await readMessage(
+      createMessageObjectPort(this.env, this.workspaceId, created.workstream.id),
+      { workspaceId: this.workspaceId, workstreamId: created.workstream.id },
       input.clientMessageId,
     );
     if (message) {
@@ -174,32 +176,43 @@ export class SlackWorkspaceWorkstreamService {
   }
 
   async createMessage(workstreamId: string, input: SlackExternalMessageInput) {
-    const executionEnv = await workstreamExecutionEnvironment(this.env, this.workspaceId, workstreamId);
-    const persisted = await createDatabase(executionEnv.DB).workstreams.createExternalMessage({
-      workspaceId: this.workspaceId,
-      workstreamId,
-      actor: ExternalActorSchema.parse(input.actor),
-      text: input.text,
+    const identity = { workspaceId: this.workspaceId, workstreamId };
+    const messages = createMessageObjectPort(this.env, this.workspaceId, workstreamId);
+    // Slack redelivers. The client message id is the Slack event's, so a
+    // redelivery resolves to the row the first delivery wrote — and the
+    // difference between the two is what decides whether this starts a run.
+    const appended = await messages.appendMessage({
+      messageId: newId(),
       clientMessageId: input.clientMessageId,
+      authorType: "external",
+      authorUserId: null,
+      externalActorJson: JSON.stringify(ExternalActorSchema.parse(input.actor)),
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
+      producedByRunId: null,
+      now: Date.now(),
     });
-    if (!persisted.inserted) {
-      return { message: persisted.message, harnessRunId: null };
+    const message = await readMessage(messages, identity, input.clientMessageId);
+    if (!message) throw new ApiError(500, "message_write_failed", "The message could not be stored");
+    if (appended.outcome === "replayed") {
+      return { message, harnessRunId: null };
     }
     await publishWorkstreamEvent(this.env, this.workspaceId, workstreamId, {
       type: "message_created",
-      message: persisted.message,
+      message,
     });
     await this.recordExternalActorAudit(
       "slack.workspace_workstream.message_created",
       workstreamId,
       "message",
-      persisted.message.id,
+      message.id,
       input.actor,
     );
     const harnessRunId = await launchWorkstreamHarness(this.env, {
       workspaceId: this.workspaceId,
       workstreamId: asWorkstreamId(workstreamId),
-      triggerMessageId: persisted.message.id,
+      triggerMessageId: message.id,
       origin: "slack_workspace_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
       slackOrigin: input.slackOrigin,
@@ -208,18 +221,16 @@ export class SlackWorkspaceWorkstreamService {
         : {}),
       supersedeActiveRun: true,
     });
-    return { message: persisted.message, harnessRunId };
+    return { message, harnessRunId };
   }
 
   async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
     const executionEnv = await workstreamExecutionEnvironment(this.env, this.workspaceId, workstreamId);
-    const database = createDatabase(executionEnv.DB);
     const clientMessageId = input.clientMessageId.slice(0, 120);
-    const existing = await database.workstreams.getMessageByClientId(
-      this.workspaceId,
-      workstreamId,
-      clientMessageId,
-    );
+    // The replay check only needs to know whether the row is there, so it reads
+    // the row rather than a fully assembled message.
+    const existing = await createMessageObjectPort(this.env, this.workspaceId, workstreamId)
+      .messageByClientId({ clientMessageId });
     if (existing) return { elicitation: null, harnessRunId: null };
     const scheduling = createSchedulingObjectPort(this.env, this.workspaceId, workstreamId);
     const raw = await scheduling.oldestOpenElicitation();
