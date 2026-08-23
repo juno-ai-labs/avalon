@@ -21,6 +21,7 @@ export async function registerAttachmentToolReceipt(
   input: {
     workspaceId: string;
     invocationId: string;
+    expectedOutputRef: string;
     canonicalToolName: string;
     output: unknown;
   },
@@ -40,6 +41,8 @@ export async function registerAttachmentToolReceipt(
        JOIN tool_invocations invocation
          ON invocation.id = ?
         AND invocation.workspace_id = resource.workspace_id
+        AND invocation.status = 'completed'
+        AND invocation.output_ref = ?
       WHERE resource.workspace_id = ?
         AND resource.id = ?
         AND resource.model_content_sha256 = ?
@@ -49,14 +52,21 @@ export async function registerAttachmentToolReceipt(
     dependency.derivativeSha256,
     at,
     input.invocationId,
+    input.expectedOutputRef,
     input.workspaceId,
     dependency.resourceId,
     dependency.derivativeSha256,
   )));
   if (results.some((result) => (result.meta.changes ?? 0) === 0)) {
     await database.prepare(
-      "DELETE FROM attachment_tool_receipts WHERE workspace_id = ? AND tool_invocation_id = ?",
-    ).bind(input.workspaceId, input.invocationId).run();
+      `DELETE FROM attachment_tool_receipts
+        WHERE workspace_id = ?1 AND tool_invocation_id = ?2
+          AND EXISTS (
+            SELECT 1 FROM tool_invocations invocation
+             WHERE invocation.id = ?2 AND invocation.workspace_id = ?1
+               AND invocation.status = 'completed' AND invocation.output_ref = ?3
+          )`,
+    ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).run();
     throw new Error("attachment_receipt_version_changed");
   }
 }
@@ -159,6 +169,7 @@ async function registerObjectAttachmentToolReceipt(
   input: {
     workspaceId: string;
     invocationId: string;
+    expectedOutputRef: string;
     canonicalToolName: string;
     output: unknown;
   },
@@ -167,8 +178,9 @@ async function registerObjectAttachmentToolReceipt(
   if (dependencies.length === 0) return;
   const invocation = await env.DB.prepare(
     `SELECT id FROM tool_invocations
-      WHERE workspace_id = ? AND id = ?`,
-  ).bind(input.workspaceId, input.invocationId).first<{ id: string }>();
+      WHERE workspace_id = ? AND id = ?
+        AND status = 'completed' AND output_ref = ?`,
+  ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).first<{ id: string }>();
   if (!invocation) throw new Error("attachment_receipt_version_changed");
   for (const dependency of dependencies) {
     const resource = await env.DB.prepare(
@@ -177,17 +189,20 @@ async function registerObjectAttachmentToolReceipt(
     ).bind(input.workspaceId, dependency.resourceId)
       .first<{ model_content_sha256: string | null }>();
     if (resource?.model_content_sha256 !== dependency.derivativeSha256) {
-      await env.DB.prepare(
-        "DELETE FROM attachment_tool_receipts WHERE workspace_id = ? AND tool_invocation_id = ?",
-      ).bind(input.workspaceId, input.invocationId).run();
+      await deleteExactAttachmentToolReceipts(env.DB, input);
       throw new Error("attachment_receipt_version_changed");
     }
   }
   const at = Date.now();
-  await env.DB.batch(dependencies.map((dependency) => env.DB.prepare(
+  const results = await env.DB.batch(dependencies.map((dependency) => env.DB.prepare(
     `INSERT INTO attachment_tool_receipts
        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-     VALUES (?, ?, ?, ?, ?)
+     SELECT ?1, ?2, ?3, ?4, ?5
+      WHERE EXISTS (
+        SELECT 1 FROM tool_invocations invocation
+         WHERE invocation.id = ?3 AND invocation.workspace_id = ?1
+           AND invocation.status = 'completed' AND invocation.output_ref = ?6
+      )
      ON CONFLICT(resource_id, tool_invocation_id) DO UPDATE SET
        derivative_sha256 = excluded.derivative_sha256`,
   ).bind(
@@ -196,7 +211,27 @@ async function registerObjectAttachmentToolReceipt(
     input.invocationId,
     dependency.derivativeSha256,
     at,
+    input.expectedOutputRef,
   )));
+  if (results.some((result) => (result.meta.changes ?? 0) === 0)) {
+    await deleteExactAttachmentToolReceipts(env.DB, input);
+    throw new Error("attachment_receipt_version_changed");
+  }
+}
+
+async function deleteExactAttachmentToolReceipts(
+  database: D1Database,
+  input: { workspaceId: string; invocationId: string; expectedOutputRef: string },
+): Promise<void> {
+  await database.prepare(
+    `DELETE FROM attachment_tool_receipts
+      WHERE workspace_id = ?1 AND tool_invocation_id = ?2
+        AND EXISTS (
+          SELECT 1 FROM tool_invocations invocation
+           WHERE invocation.id = ?2 AND invocation.workspace_id = ?1
+             AND invocation.status = 'completed' AND invocation.output_ref = ?3
+        )`,
+  ).bind(input.workspaceId, input.invocationId, input.expectedOutputRef).run();
 }
 
 async function validateObjectAttachmentToolReceiptReplay(
@@ -297,4 +332,7 @@ function attachmentReceiptDependencies(canonicalToolName: string, output: unknow
   return [];
 }
 
-export const __attachmentToolReceiptTesting = { attachmentReceiptDependencies };
+export const __attachmentToolReceiptTesting = {
+  attachmentReceiptDependencies,
+  registerObjectAttachmentToolReceipt,
+};

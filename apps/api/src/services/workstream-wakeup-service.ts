@@ -61,20 +61,23 @@ export interface PendingWakeup {
 /**
  * A deterministic rejection the model can act on.
  *
- * These never throw: the harness treats a throw as transient and may retry it,
- * and no retry fixes a bad instant or an exhausted cap. The caller renders
- * `code` and `hint` into the tool's `output`, which is the half the model
- * actually reads.
+ * These use the harness's classified tool-failure path. A stable code keeps a
+ * deterministic refusal definitive while `details.reason` carries the shortest
+ * safe correction into the model-visible failed result.
  */
 export class WakeupInputError extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly hint: string,
+    available?: string[],
   ) {
     super(message);
     this.name = "WakeupInputError";
+    this.details = { reason: hint, ...(available ? { available } : {}) };
   }
+
+  readonly details: { reason: string; available?: string[] };
 }
 
 /** Canonicalize an IANA zone, rejecting anything `Intl` will not accept. */

@@ -47,6 +47,14 @@ export const AVALON_SKILLS_PLUGIN_ID = "avalon.skills";
  */
 export const DEFAULT_MAX_RESOURCE_BYTES = 64 * 1024;
 
+function skillToolFailure(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): Error & { code: string; details?: Record<string, unknown> } {
+  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
+}
+
 export const AVALON_SKILL_TOOL_DEFINITIONS = [
   {
     name: "load_skill",
@@ -201,10 +209,11 @@ export async function createSkillRuntime(input: {
   // No `available` list: the catalog is already in the system prompt, so
   // echoing every name on each miss grows tool output with the library for no
   // information the model does not have. Matches `plugin_not_available`.
-  const notFound = (name: string): HarnessToolResult => ({
-    output: { error: "skill_not_available" },
-    summary: `Skill ${name || "(unnamed)"} is not available to this run`,
-  });
+  const notFound = (name: string): Error => skillToolFailure(
+    "skill_not_available",
+    `Skill ${name || "(unnamed)"} is not available to this run. Use an exact name from the Skills catalog.`,
+    { reason: "Use an exact skill name from this run's Skills catalog." },
+  );
 
   runtime.tools = AVALON_SKILL_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
     definition,
@@ -214,7 +223,7 @@ export async function createSkillRuntime(input: {
     execute: async (raw) => {
       const name = stringArgument(raw, "name");
       const summary = byName.get(name);
-      if (!summary) return notFound(name);
+      if (!summary) throw notFound(name);
 
       if (definition.name === "load_skill") {
         const alreadyActive = activeRefs.has(summary.ref);
@@ -232,14 +241,14 @@ export async function createSkillRuntime(input: {
               : { maxBodyTokens: input.maxActiveSkillBodyTokens }),
           });
           if (!decision.admitted) {
-            return {
-              output: {
-                error: "skill_limit_reached",
+            throw skillToolFailure(
+              "skill_limit_reached",
+              `Cannot load ${summary.name}: ${decision.reason}. Continue with the skills already active or start a new run with a narrower skill set.`,
+              {
                 reason: decision.reason,
-                loaded: [...activeRefs].map(refName).sort(),
+                available: [...activeRefs].map(refName).sort(),
               },
-              summary: `Cannot load ${summary.name}: ${decision.reason}`,
-            };
+            );
           }
         }
 
@@ -274,21 +283,23 @@ export async function createSkillRuntime(input: {
       // references without ever paying for — or being seen to take on — its
       // instructions.
       if (!activeRefs.has(summary.ref)) {
-        return {
-          output: { error: "skill_not_loaded" },
-          summary: `Skill ${summary.name} must be loaded with load_skill before reading its resources`,
-        };
+        throw skillToolFailure(
+          "skill_not_loaded",
+          `Skill ${summary.name} must be loaded with load_skill before reading its resources. Load it, then retry this exact resource call.`,
+          { reason: `Call load_skill with name ${summary.name} before retrying.` },
+        );
       }
       const path = stringArgument(raw, "path");
       const resource = registered(summary)?.def.resources?.find((entry) => entry.path === path);
       if (!resource) {
-        return {
-          output: {
-            error: "resource_not_found",
+        throw skillToolFailure(
+          "resource_not_found",
+          `Skill ${summary.name} has no resource ${path || "(unnamed)"}. Retry with one of its listed resource paths.`,
+          {
+            reason: "Use a resource path returned when the skill was loaded.",
             available: (registered(summary)?.def.resources ?? []).map((entry) => entry.path),
           },
-          summary: `Skill ${summary.name} has no resource ${path || "(unnamed)"}`,
-        };
+        );
       }
       // Tier 3 is bounded too. `load_skill` is judged against a count cap and a
       // body-token budget precisely so a looping model cannot load its way into
