@@ -2,7 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
-import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
+import {
+  createConnectorMentionToken,
+  ElicitationPanel,
+  MarkdownBody,
+  MessageBlock,
+  splitStreamingMarkdown,
+  withConnectorMentionLinks,
+} from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
@@ -848,5 +855,66 @@ describe('MessageBlock tool rows', () => {
 
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByText('Searched the public web')).toBeVisible();
+  });
+});
+
+describe('splitStreamingMarkdown', () => {
+  it('cuts settled segments at blank-line boundaries and reassembles losslessly', () => {
+    const source = 'First paragraph.\n\n## A heading\n\nStill growing tail';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['First paragraph.\n\n', '## A heading\n\n']);
+    expect(tail).toBe('Still growing tail');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('never cuts inside a code fence, whatever the fence contains', () => {
+    const source = 'Intro.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nAfter the fence';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['Intro.\n\n', '```ts\nconst a = 1;\n\nconst b = 2;\n```\n\n']);
+    expect(tail).toBe('After the fence');
+  });
+
+  it('keeps an unclosed fence in the tail', () => {
+    const source = 'Intro.\n\n```ts\nconst a = 1;\n\nstill inside';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['Intro.\n\n']);
+    expect(tail).toBe('```ts\nconst a = 1;\n\nstill inside');
+  });
+
+  it('does not cut before a line that can continue the previous block', () => {
+    // A blank line does not terminate a loose list, a blockquote, or an
+    // indented continuation; cutting there would render one list as two.
+    const source = '- one\n\n- two\n\n> quoted\n\n    indented\n\nA new paragraph';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['- one\n\n- two\n\n> quoted\n\n    indented\n\n']);
+    expect(tail).toBe('A new paragraph');
+  });
+
+  it('is prefix-stable as the source grows, so settled segments stay memoisable', () => {
+    const grown = 'First paragraph.\n\n## A heading\n\nBody text continuing.\n\nEven more';
+    const before = splitStreamingMarkdown(grown.slice(0, 40)).settled;
+    const after = splitStreamingMarkdown(grown).settled;
+    expect(after.slice(0, before.length)).toEqual(before);
+  });
+});
+
+describe('MarkdownBody streaming mode', () => {
+  it('renders the same visible content streaming as settled', () => {
+    const markdown = 'A paragraph with **bold**.\n\n- first\n- second\n\n```ts\nconst a = 1;\n```\n\nA tail paragraph';
+    const settled = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const settledBody = settled.container.querySelector('.markdown-body')!;
+    // Compared block by block: react-markdown separates top-level blocks with
+    // newline text nodes and a segment boundary drops one, which is invisible
+    // in laid-out HTML — blocks are their own boxes — but changes the joined
+    // textContent. The block elements and their text must match exactly.
+    const blocks = (root: Element): { tag: string; text: string | null }[] =>
+      [...root.children].map((child) => ({ tag: child.tagName, text: child.textContent }));
+    const settledBlocks = blocks(settledBody);
+    settled.unmount();
+    const streaming = render(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    const streamingBody = streaming.container.querySelector('.markdown-body')!;
+    expect(blocks(streamingBody)).toEqual(settledBlocks);
+    // The split really happened: the body holds more than one rendered chunk.
+    expect(streamingBody.querySelectorAll('p, ul, pre').length).toBeGreaterThan(2);
   });
 });

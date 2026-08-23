@@ -78,6 +78,38 @@ async function flushPromises(): Promise<void> {
   });
 }
 
+/**
+ * Deterministic animation frames for the paced reveal. jsdom backs
+ * `requestAnimationFrame` with a real 16ms timer, which several tests here
+ * cannot use — they run under fake timers, or would wait through hundreds of
+ * frames of paced reveal to see a text assertion. The stub queues callbacks,
+ * and `flush` pumps them until the reveal loop stops re-arming, i.e. until
+ * every streaming message shows everything it has received.
+ */
+function stubAnimationFrames(): { flush: () => Promise<void> } {
+  const queue = new Map<number, FrameRequestCallback>();
+  let nextId = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+    nextId += 1;
+    queue.set(nextId, callback);
+    return nextId;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
+    queue.delete(id);
+  });
+  return {
+    async flush(): Promise<void> {
+      for (let round = 0; round < 100_000 && queue.size > 0; round += 1) {
+        const pending = [...queue.values()];
+        queue.clear();
+        await act(async () => {
+          for (const callback of pending) callback(performance.now());
+        });
+      }
+    },
+  };
+}
+
 function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocketApi {
   const unexpected = async (): Promise<never> => {
     throw new Error('Unexpected socket API call.');
@@ -1006,6 +1038,7 @@ describe('useWorkstreamSocket', () => {
 
   it('appends Bind post-tool turns and keeps tool order across REST refreshes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000021';
     const workspaceId = '00000000-0000-7000-8000-000000000002';
@@ -1119,6 +1152,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: 'Here is the result.',
     }));
+    await frames.flush();
 
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
       ?.find((message) => message.id === assistantMessageId)?.text).toBe('I will check. Here is the result.');
@@ -1210,10 +1244,150 @@ describe('useWorkstreamSocket', () => {
     expect(reconciled.find((message) => message.id === assistantMessage.id)?.text).toBe('I will check. Here is the result.');
   });
 
+  it('holds streamed text back and reveals it across animation frames', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000701';
+    const messageId = '00000000-0000-7000-8000-000000000702';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      messageId,
+      harnessRunId: '00000000-0000-7000-8000-000000000703',
+      turnId: 'turn-paced',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => socket.message({
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-08-23T12:00:00.100Z',
+      messageId,
+      turnId: 'turn-paced',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'A burst of text held back by the paced reveal.',
+    }));
+
+    // The wire frame landed, and nothing of it is visible yet: the reveal
+    // loop, not the socket event, is what grows the message.
+    const held = queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0];
+    expect(held?.streaming).toBe(true);
+    expect(held?.text).toBe('');
+    await frames.flush();
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+      .toBe('A burst of text held back by the paced reveal.');
+  });
+
+  it('reveals streamed text immediately while the document is hidden', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    stubAnimationFrames();
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000711';
+    const messageId = '00000000-0000-7000-8000-000000000712';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    try {
+      await flushPromises();
+      const socket = FakeWebSocket.instances[0]!;
+      act(() => socket.open());
+      act(() => socket.message({
+        type: 'stream_started',
+        sequence: 1,
+        occurredAt: '2026-08-23T12:00:00.000Z',
+        messageId,
+        harnessRunId: '00000000-0000-7000-8000-000000000713',
+        turnId: 'turn-hidden',
+        epoch: 0,
+        streamSeq: 0,
+        reset: false,
+      }));
+      act(() => socket.message({
+        type: 'stream_delta',
+        sequence: 2,
+        occurredAt: '2026-08-23T12:00:00.100Z',
+        messageId,
+        turnId: 'turn-hidden',
+        epoch: 0,
+        streamSeq: 1,
+        reset: false,
+        delta: 'Shown at once — no animation frames fire in a hidden window.',
+      }));
+
+      expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+        .toBe('Shown at once — no animation frames fire in a hidden window.');
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it('drops text a retry retracted from the reveal instead of animating it away', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000721';
+    const messageId = '00000000-0000-7000-8000-000000000722';
+    const cursors = new Map();
+    let transcript = applyStreamingSocketEvent([], {
+      type: 'stream_delta',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      messageId,
+      turnId: 'turn-retry',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'The first attempt, mostly unrevealed.',
+    }, workstreamId, cursors, { paced: true });
+    // Partially reveal the first attempt, then let a reset replace it.
+    cursors.get(messageId)!.revealed = 9;
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-08-23T12:00:00.500Z',
+      messageId,
+      turnId: 'turn-retry',
+      epoch: 1,
+      streamSeq: 2,
+      reset: true,
+      delta: 'A fresh attempt.',
+    }, workstreamId, cursors, { paced: true });
+
+    // The retracted text disappears at once — the reveal clamps back to the
+    // turn's start — and the replacement paces in from there.
+    expect(transcript.find((message) => message.id === messageId)?.text).toBe('');
+    expect(cursors.get(messageId)).toMatchObject({
+      receivedText: 'A fresh attempt.',
+      revealed: 0,
+    });
+  });
+
   it('retains per-epoch stream cursors across a socket reconnect', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000061';
     const messageId = '00000000-0000-7000-8000-000000000062';
@@ -1280,6 +1454,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: ' two',
     }));
+    await frames.flush();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('One two');
   });
 
@@ -2108,6 +2283,7 @@ describe('useWorkstreamSocket', () => {
 
   it('hands a running stream between foreground and background subscribers without gaps or duplicate text', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000401';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000402';
@@ -2210,6 +2386,7 @@ describe('useWorkstreamSocket', () => {
       delta: ' two',
     }));
     await flushPromises();
+    await frames.flush();
     expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two');
 
     rendered.rerender(<Tree view="returned" />);
@@ -2228,6 +2405,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: ' three',
     }));
+    await frames.flush();
     expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two three');
   });
 
@@ -2339,6 +2517,7 @@ describe('useWorkstreamSocket', () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
     const messageId = '00000000-0000-7000-8000-000000000501';
     const harnessRunId = '00000000-0000-7000-8000-000000000502';
@@ -2456,6 +2635,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: ' plus live',
     }));
+    await frames.flush();
     expect(queryClient.getQueryData<Message[]>(['messages', 'workstream-one'])?.[0]?.text)
       .toBe('Recovered partial plus live');
   });
