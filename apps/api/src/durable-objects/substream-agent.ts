@@ -115,9 +115,14 @@ import {
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import {
-  ToolReceiptOperationRequestSchema,
   type ToolReceiptOperationRequest,
+  ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
+import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
+import {
+  type BlockDashboardOperationRequest,
+  BlockDashboardOperationRequestSchema,
+} from "./workstream-block-dashboard-protocol";
 import {
   TerminalOperationRequestSchema,
   terminalOperationAffectsDirectory,
@@ -515,6 +520,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
+  private blockDashboard!: WorkstreamBlockDashboardStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -569,6 +575,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
+      this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -726,6 +733,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
+      return this.acceptBlockDashboardOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/terminal") {
       return this.acceptTerminalOperation(request);
     }
@@ -832,6 +842,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
+  }
+
+  async executeBlockDashboardOperation(
+    input: BlockDashboardOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptBlockDashboardOperation(this.rpcRequest(input)));
   }
 
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
@@ -1002,6 +1019,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
+  /**
+   * Dispatch one block-dashboard operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes,
+   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
+   * fail rather than settle another work stream's blocks. The main child holds
+   * these rows, so a non-main substream is refused here rather than answering
+   * from an empty table.
+   */
+  private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
+    const parsed = BlockDashboardOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_block_dashboard_operation" }, 400);
+    }
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return jsonResponse({ ok: false, error: "workstream_block_dashboard_identity_mismatch" }, 409);
+    }
+    const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.blockDashboard, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
   }
 
