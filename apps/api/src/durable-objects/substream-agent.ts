@@ -476,11 +476,6 @@ export type SocketReplayPlan =
  * After hibernation, clients receive an explicit resync instruction and use
  * the canonical REST surface for the current authority generation.
  */
-/** Cheap gate on re-deriving the timer index from routed SQL. */
-function touchesAgentTimers(statements: readonly { sql: string }[]): boolean {
-  return statements.some((statement) => /\bworkstream_wakeups\b/iu.test(statement.sql));
-}
-
 export function planSocketReplay(
   afterSequence: number,
   currentSequence: number,
@@ -988,9 +983,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // run's dispatch sweep, a later request, and any committed directory effect
     // are the recovery paths for re-deriving the object's next alarm.
     try {
-      // The wake-up tool inserts, cancels, and reaps `workstream_wakeups`
-      // through exactly this port, so this is where a timer becomes an alarm.
-      if (touchesAgentTimers(parsed.data.statements)) this.syncAgentTimerAlarms();
+      // Wake-ups no longer arrive here — `/internal/scheduling` re-derives the
+      // timer index off its own writes — so there is nothing to detect in this
+      // statement text. Arming still happens, because other routed writes can
+      // move an alarm this object owes.
       await this.armNextAlarm();
     } catch (error) {
       logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
@@ -1107,12 +1103,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Identity is re-checked against the object's own before anything executes:
    * a misrouted stub must fail rather than claim another work stream's wake-up.
    *
-   * An operation that can change which wake-ups are pending re-derives the
-   * timer index and arms the next alarm before answering, so a caller never has
-   * to remember to. The routed path detected the same thing by matching
-   * `workstream_wakeups` in statement text; naming the operations is what
-   * replaces that, and the arming stays here rather than moving to the callers
-   * because the index is the object's, not theirs.
+   * An operation that can change which wake-ups are pending runs through
+   * `commitRuntimeMutation`, re-derives the timer index, and arms the next
+   * alarm before answering — so a caller never has to remember to do any of it.
+   *
+   * All three used to be consequences of the routing. A wake-up write arrived
+   * as SQL, and the object matched `workstream_wakeups` in the statement text
+   * to decide both that the sidebar's next-wake-up marker had to be
+   * republished and that the alarm index had to be re-derived. Naming the
+   * operations replaces the regex; running the mutation inside
+   * `commitRuntimeMutation` is what keeps the directory effect in the same
+   * commit as the write, rather than a second write that could be lost after
+   * the first one landed.
    */
   private async acceptSchedulingOperation(request: Request): Promise<Response> {
     const parsed = SchedulingOperationRequestSchema.safeParse(
@@ -1124,8 +1126,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
     if (refusal) return refusal;
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = method.apply(this.scheduling, parsed.data.args);
-    if (mutatesWakeups(parsed.data.operation)) {
+    const mutates = mutatesWakeups(parsed.data.operation);
+    const value = mutates
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.scheduling, parsed.data.args),
+        true,
+      )
+      : method.apply(this.scheduling, parsed.data.args);
+    if (mutates) {
       this.syncAgentTimerAlarms();
       await this.armNextAlarm();
     }
@@ -2431,13 +2439,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             statements,
           }),
         );
-        // Conditional, unlike the routed port above: this executor runs for
-        // every statement a run makes, and re-deriving the alarm for a
-        // transcript write would put a `getAlarm` in the streaming path.
-        if (touchesAgentTimers(statements)) {
-          this.syncAgentTimerAlarms();
-          await this.armNextAlarm();
-        }
+        // Nothing here can move a wake-up any more: the local executor serves
+        // a run's own statements, and every wake-up write goes through
+        // `/internal/scheduling`, which re-derives the index itself. Re-deriving
+        // it for a transcript write would have put a `getAlarm` in the
+        // streaming path for no reason even when it could.
         return result.results;
       },
     );
@@ -2968,12 +2974,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * Make the `agent_timer` entries match this object's pending wake-ups.
    *
-   * Called wherever `workstream_wakeups` can have changed — the tool's own
-   * runtime SQL, the timer refresh port, and after a timer fires — because the
-   * writers reach the table through routed SQL and cannot be asked to maintain
-   * an index they do not know about. Reconciling is what makes a wake-up
-   * scheduled *before* the armed alarm pull that alarm in, and a cancelled one
-   * push it back out.
+   * Called wherever `workstream_wakeups` can have changed — every mutating
+   * scheduling operation, the timer refresh port, and after a timer fires.
+   * Reconciling rather than patching is what makes a wake-up scheduled *before*
+   * the armed alarm pull that alarm in, and a cancelled one push it back out,
+   * without either writer having to know an index exists.
    */
   private syncAgentTimerAlarms(): void {
     const pending = this.state.storage.sql.exec<{ wakeup_id: string; due_at: number }>(

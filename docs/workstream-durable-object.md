@@ -1187,6 +1187,53 @@ because the block was already settled rather than because the lease had moved �
 which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
+### 2026-08-23 — Scheduling moves onto a typed authority, four views at a time
+
+**What changed:** `WorkstreamSchedulingStorage` owns `workstream_wakeups`,
+`compaction_checkpoints`, `description_refresh_state`,
+`plugin_activation_hints` and the reads of `elicitation_requests`, reached
+through a typed port and an `/internal/scheduling` endpoint. Object schema
+migration 19 drops four `_runtime_*` views and their seven triggers, and those
+four tables leave the routing and rewrite lists. This is slice 3 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same reason slices 1 and 2 give. What is specific here is that
+almost every operation in this family is a *claim* — a wake-up, an evaluation,
+a compaction's visibility — and a claim written as routed SQL is a
+compare-and-swap spelled out in a `WHERE … version = ?` clause whose answer
+comes back as a `meta.changes` count. Each of them then needed a second
+statement to find out what had actually happened: which wake-up a replay
+resolved to, what version a claim had just written, whether zero changes meant
+a lost race or an archived work stream. The read and the write are one
+transaction now, so each of those questions is the operation's own answer.
+
+**`_runtime_elicitations` deliberately outlives this slice.** Every read of it
+is gone; its two writers are batches spanning three slices — an elicitation
+row, a transcript message, and the work stream's sequence and attention
+counters, written together because the second statement is guarded on the first
+having landed. Splitting one onto this port would put a network boundary inside
+that batch, and writing the message natively here would mean building the
+messages slice's machinery inside this one, beside the richer version
+`WorkstreamObjectProductService` already has. It goes with the messages slice.
+The PRD's slice table lists five views for slice 3; this is a deliberate
+departure from it, not an oversight.
+
+**What a future change has to respect:** the object maintains its own alarm
+index and publishes its own sidebar projection for wake-ups, and both used to
+be consequences of the routing. A wake-up write arrived as SQL, and the object
+matched `workstream_wakeups` in the statement text to decide that the
+next-wake-up marker had to be republished and that the timer index had to be
+re-derived. `mutatesWakeups` in the protocol names those operations instead,
+and the endpoint runs them inside `commitRuntimeMutation` so the projection is
+in the same commit as the row. An operation added to that storage class without
+a place in that set is a wake-up that silently stops arming — which is why the
+set is a named export next to the operation list rather than a condition inside
+the endpoint. `test-workers/scheduling-authority.test.ts` is what holds that
+down; it fails on all four counts when the set is emptied.
+
+The narrowing that is *not* here: `restUntil` returns an instant rather than an
+ISO string, because the object stores instants. The retired read compared
+ISO-8601 lexically, which is sound for that format and is why it worked.
 
 ### 2026-08-23 — Three block-dashboard answers the compatibility layer could not give
 

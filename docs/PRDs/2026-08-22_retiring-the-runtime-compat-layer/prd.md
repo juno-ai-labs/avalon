@@ -415,8 +415,15 @@ at all.** Here, five of seven did not.
 
 ### Slices
 
-**Slice 1 has landed.** The other fourteen are plans. Fifteen in all, covering
-all 81 routed tables. Statement counts are distinct SQL
+**Slices 1 and 2 have landed, and slice 3 all but one view.** The other twelve
+are plans. Fifteen in all, covering all 81 routed tables.
+
+Slice 3 keeps `_runtime_elicitations` and hands it to slice 4. Every read of it
+is converted; its two writers are batches spanning elicitations, messages and
+identity, and the messages slice is where the machinery they depend on gets
+built. That is the first place this table's slice ordering has bent, and it
+bent the way the cross-slice note below predicts: the statement decided the
+ownership. Statement counts are distinct SQL
 literals in `apps/api/src` naming at least one of the slice's tables, counted
 once per slice they touch, and they include dead legacy arms — separating those
 reliably needs the per-file read that is the slice's own first step, so the
