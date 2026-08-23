@@ -2,7 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
-import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
+import {
+  createConnectorMentionToken,
+  ElicitationPanel,
+  MarkdownBody,
+  MessageBlock,
+  splitStreamingMarkdown,
+  withConnectorMentionLinks,
+} from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
@@ -848,5 +855,124 @@ describe('MessageBlock tool rows', () => {
 
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByText('Searched the public web')).toBeVisible();
+  });
+});
+
+describe('splitStreamingMarkdown', () => {
+  it('cuts settled segments at blank-line boundaries and reassembles losslessly', () => {
+    // The cut before the final line is deferred until that line completes —
+    // an arriving line's classification can change as it grows — so the last
+    // settled block travels with the tail until a newline lands after it.
+    const source = 'First paragraph.\n\n## A heading\n\nStill growing tail';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['First paragraph.\n\n']);
+    expect(tail).toBe('## A heading\n\nStill growing tail');
+    expect(settled.join('') + tail).toBe(source);
+    const grown = splitStreamingMarkdown(`${source}\nmore\n`);
+    expect(grown.settled).toEqual(['First paragraph.\n\n', '## A heading\n\n']);
+  });
+
+  it('never cuts inside a code fence, whatever the fence contains', () => {
+    const source = 'Intro.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nAfter the fence\n\nNext';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['Intro.\n\n', '```ts\nconst a = 1;\n\nconst b = 2;\n```\n\n']);
+    expect(tail).toBe('After the fence\n\nNext');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('keeps an unclosed fence in the tail', () => {
+    const source = 'Intro.\n\n```ts\nconst a = 1;\n\nstill inside';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['Intro.\n\n']);
+    expect(tail).toBe('```ts\nconst a = 1;\n\nstill inside');
+  });
+
+  it('does not cut before a blockquote or indented continuation across a blank line', () => {
+    const source = 'Start.\n\n> quoted\n\n  continued at item depth\n\nA new paragraph\n\nNext';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['Start.\n\n> quoted\n\n  continued at item depth\n\n']);
+    expect(tail).toBe('A new paragraph\n\nNext');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('settles a loose list item by item', () => {
+    // A blank line does not end a list, but the next same-marker item is a
+    // boundary the previous item cannot extend across. Without these cuts a
+    // list-dominant reply produces no settled segments at all and re-parses
+    // whole on every commit.
+    const source = 'The plan:\n\n- one\n\n- two\n\n- three\n\nAfter\n\nNext';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['The plan:\n\n', '- one\n\n', '- two\n\n', '- three\n\n']);
+    expect(tail).toBe('After\n\nNext');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('settles a tight list item by item', () => {
+    const source = '1. first\n2. second\n3. third\n4. fourth\n';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['1. first\n', '2. second\n', '3. third\n']);
+    expect(tail).toBe('4. fourth\n');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('keeps nested items and continuation paragraphs with their parent item', () => {
+    const source = '- parent\n  - child\n\n  continuation of parent\n- sibling\nend\n';
+    const { settled, tail } = splitStreamingMarkdown(source);
+    expect(settled).toEqual(['- parent\n  - child\n\n  continuation of parent\n']);
+    expect(tail).toBe('- sibling\nend\n');
+    expect(settled.join('') + tail).toBe(source);
+  });
+
+  it('is prefix-stable as the source grows, marker-by-marker arrival included', () => {
+    // A bare `1` is a paragraph until the `.` lands and makes it a list item.
+    // Cuts are decided only at complete lines, so the classification flip
+    // cannot un-settle anything: every earlier split is a prefix of every
+    // later one, character by character.
+    const grown = 'A paragraph.\n\nAnother one.\n\n1. item\n\n2. item two\n\nDone.\n';
+    for (let end = 1; end < grown.length; end += 1) {
+      const before = splitStreamingMarkdown(grown.slice(0, end)).settled;
+      const after = splitStreamingMarkdown(grown.slice(0, end + 1)).settled;
+      expect(after.slice(0, before.length)).toEqual(before);
+    }
+  });
+});
+
+describe('MarkdownBody streaming mode', () => {
+  it('renders the same visible content streaming as settled', () => {
+    const markdown = 'A paragraph with **bold**.\n\n```ts\nconst a = 1;\n```\n\nA middle paragraph.\n\nA tail paragraph';
+    const settled = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const settledBody = settled.container.querySelector('.markdown-body')!;
+    // Compared block by block: react-markdown separates top-level blocks with
+    // newline text nodes and a segment boundary drops one, which is invisible
+    // in laid-out HTML — blocks are their own boxes — but changes the joined
+    // textContent. The block elements and their text must match exactly.
+    const blocks = (root: Element): { tag: string; text: string | null }[] =>
+      [...root.children].map((child) => ({ tag: child.tagName, text: child.textContent }));
+    const settledBlocks = blocks(settledBody);
+    settled.unmount();
+    const streaming = render(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    const streamingBody = streaming.container.querySelector('.markdown-body')!;
+    expect(blocks(streamingBody)).toEqual(settledBlocks);
+    // The split really happened: the body holds more than one rendered chunk.
+    expect(streamingBody.querySelectorAll('p, pre').length).toBeGreaterThan(2);
+  });
+
+  it('streams a list as per-item lists carrying the same items, and heals when settled', () => {
+    // The documented approximation: while streaming, each settled list item is
+    // its own single-item list (ordered numbering survives via `start`); the
+    // settled render joins them back into one list.
+    const markdown = 'The plan:\n\n1. first\n\n2. second\n\n3. third\n\nAfter.\n';
+    const streaming = render(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    const streamingBody = streaming.container.querySelector('.markdown-body')!;
+    const streamingItems = [...streamingBody.querySelectorAll('li')].map((item) => item.textContent?.trim());
+    expect(streamingItems).toEqual(['first', 'second', 'third']);
+    expect(streamingBody.querySelectorAll('ol').length).toBeGreaterThan(1);
+    expect([...streamingBody.querySelectorAll('ol')].at(-1)?.getAttribute('start')).toBe('3');
+    streaming.unmount();
+    const settledView = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const settledBody = settledView.container.querySelector('.markdown-body')!;
+    expect([...settledBody.querySelectorAll('li')].map((item) => item.textContent?.trim()))
+      .toEqual(['first', 'second', 'third']);
+    expect(settledBody.querySelectorAll('ol')).toHaveLength(1);
   });
 });
