@@ -30,10 +30,6 @@ const TABLE_REWRITES = [
   ["harness_run_plugin_activations", "_runtime_run_plugin_activations"],
   ["harness_run_lifecycle_events", "_runtime_run_lifecycle_events"],
   ["workstream_resource_inventory_revisions", "_runtime_resource_revisions"],
-  ["workstream_description_refreshes", "_runtime_description_refreshes"],
-  ["workstream_plugin_activation_hints", "_runtime_plugin_hints"],
-  ["workstream_context_compactions", "_runtime_compactions"],
-  ["workstream_wakeups", "_runtime_wakeups"],
   ["harness_run_scopes", "_runtime_run_scopes"],
   ["message_attachments", "_runtime_message_attachments"],
   ["message_mentions", "_runtime_message_mentions"],
@@ -137,8 +133,13 @@ export async function executeWorkstreamRuntimeSql(
     throw new Error("workstream_runtime_authority_fenced");
   }
 
+  // `workstream_wakeups` is deliberately not in this pattern any more. Wake-ups
+  // reach the object through `/internal/scheduling`, which runs its mutating
+  // operations inside `commitRuntimeMutation` itself, so a wake-up's directory
+  // effect is published where the wake-up is written. Leaving the name here
+  // would be a rule for statements that can no longer arrive.
   const affectsDirectory = request.statements.some((statement) =>
-    /\b(?:workstreams|messages|workstream_wakeups|workstream_resources|workstream_participants)\b/iu
+    /\b(?:workstreams|messages|workstream_resources|workstream_participants)\b/iu
       .test(statement.sql));
   const committed = await product.commitRuntimeMutation(
     (sql) => {

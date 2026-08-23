@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 19;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 20;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1329,7 +1329,51 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       ...participantCompatTriggersResettingFirstOpened(),
     ],
   },
+  {
+    version: 20,
+    description: "retire the wake-up, compaction, description-refresh and plugin-hint views",
+    statements: schedulingAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires four of the scheduling slice's five compatibility views.
+ *
+ * `_runtime_elicitations` is deliberately not among them, and its two triggers
+ * stay with it. Every *read* of that view is gone, but its two writers are
+ * batches spanning the messages and identity slices — an elicitation row, a
+ * transcript message, and the work stream's counters, written together because
+ * the second statement is guarded on the first having landed. It goes when the
+ * messages slice converts what it depends on. Dropping it here would leave
+ * those batches with nothing to write through.
+ *
+ * The other four views and their seven triggers are objects over tables this
+ * schema already declares, so nothing is adopted — the same shape as the
+ * block-dashboard promotion, and the same assertion, for the same reason
+ * migration 17 asserts its own: a reshaped compat schema should fail the build
+ * rather than produce a migration that quietly patches nothing.
+ */
+function schedulingAuthorityPromotion(): string[] {
+  const names = /^_runtime_(?:wakeups|compactions|description_refreshes|plugin_hints)/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 11) {
+    throw new Error(`expected eleven scheduling compat objects, found ${compatObjects.length}`);
+  }
+  // A name is enough even where the object's body is not the file's:
+  // `_runtime_description_refreshes_insert` was rebuilt by a later migration
+  // and carries a patched body, but it is the same trigger, and `DROP` names
+  // it rather than matching it.
+  return [
+    // Triggers first, for the reason the block-dashboard promotion gives.
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Retires the three `_runtime_block_dashboard_*` views and their triggers.
