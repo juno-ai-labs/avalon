@@ -8,11 +8,11 @@ are shown verbatim, and a reader has no way to tell them from something Avalon
 meant to write.
 
 This module is the repair. It is one pure function pair in `@avalon/contracts`,
-called by every surface that shows a model's words, that maps the closed set of
-TeX commands appearing in work prose onto the Unicode characters the model meant
-and leaves everything else exactly as written. [The prompt half](#the-other-half)
-tells models not to produce it in the first place; this half is what happens when
-they do anyway.
+called by the surfaces listed below on the way to a reader, that maps the closed
+set of TeX commands appearing in work prose onto the Unicode characters the
+model meant and leaves everything else exactly as written. [The prompt
+half](#the-other-half) tells models not to produce it in the first place; this
+half is what happens when they do anyway.
 
 Read this before adding a surface that displays model-written text, before
 widening what counts as math, and before moving where either function is called.
@@ -29,21 +29,39 @@ The call sites, each on the path from stored text to a reader:
 
 | Surface | Call site | Entry point |
 | --- | --- | --- |
-| Every Markdown surface in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
-| The digest email, HTML and plain-text alternative | `services/digest-email-content.ts` | `normalizeModelMarkdown` |
-| An elicitation's question | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`) | `normalizeModelText` |
+| Markdown surfaces in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
+| The digest email's HTML | `services/digest-email-content.ts` (`digestMarkdownToHtml`) | `normalizeModelMarkdown` |
+| The digest email's plain-text alternative | `services/digest-email-content.ts` (`digestMarkdownToText`) | `normalizeModelText` |
+| An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
+| A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 | A generated work-stream title | `services/workstream-naming-service.ts` (`normalizeGeneratedTitle`) | `normalizeModelText` |
 | A generated work-stream description | `services/workstream-description-service.ts` (`judgeDescriptionProposal`) | `normalizeModelText` |
+| A message export's file name | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 
-Slack is deliberately absent: its answers are posted as Markdown for Slack itself
-to render, and [`slack-integration.md`](slack-integration.md) owns that.
+`MarkdownBody` repairs by default and skips the repair when its caller marks
+the text `verbatim` — a person's own message bubble and the attachment
+lightbox's document preview do, because what a member typed and the bytes of a
+file they attached are not a model's words to fix.
+
+Slack is absent: its delivery paths post Markdown for Slack itself to render,
+and Slack renders no TeX either, so a model's `$\rightarrow$` still reaches a
+channel verbatim — see [failure modes](#failure-modes-and-limits) for why the
+gap stands.
 
 ## How it works
 
 `normalizeModelMarkdown` splits its input into code and not-code, rewrites only
 the not-code, and reassembles. Within a run of prose it does two passes: the
 delimited one, which unwraps `$…$`, `$$…$$`, `\(…\)` and `\[…\]`, and the bare
-one, which catches a command a model wrote with no delimiters at all.
+one, which catches a command a model wrote with no delimiters at all. The bare
+pass takes only a command standing as its own token — beginning after a space,
+a bracket, or an orphaned `$`, and ending before space, closing punctuation,
+or the end — because without that boundary `C:\to\dist` is a path with an
+arrow in it and `\in-flight` a hyphenation with a set operator, and two call
+sites store what this returns. The `\(…\)` and `\[…\]` forms additionally
+demand a real `\command` in the body, not merely a punctuation escape: the
+escaping step below writes `\[` and `\]` itself, and reading that back as
+display math on a second pass would eat the brackets.
 
 An unwrapped body is rendered by `texToPlainText`: transparent wrappers such as
 `\text{…}` and `\operatorname{…}` lose their braces, known commands become their
@@ -108,9 +126,11 @@ dependency, and it is cheap to reverse if that ever stops being true.
   exceptions: a title and a description are short labels generated once, they
   carry no offsets, and every one of their many readers would otherwise have to
   repeat the repair.
-- **Both functions are idempotent.** Their output contains no TeX, so a surface
-  that normalizes twice is not a bug. This matters because the digest email
-  normalizes for HTML and again for the plain-text alternative.
+- **Both functions are idempotent.** Their output contains no TeX the passes
+  would touch again — the bracket forms refuse their own escaped output — so a
+  string repaired once is not corrupted by a surface that repairs it again. A
+  stored title is normalized at the write and may reach a display-time call
+  site later; that path is why this is an invariant rather than a nicety.
 - **The command table is a closed list.** A command outside it is shown as a
   word rather than guessed at. A wrong symbol reads as fact; a visible `ohm`
   reads as a gap, and only one of those gets reported.
@@ -123,7 +143,15 @@ It does not parse Markdown, style anything, or decide where text appears.
 - How that Markdown becomes DOM in the desktop client is
   [`markdown-rendering.md`](markdown-rendering.md).
 - How it becomes an email is [`digests.md`](digests.md).
-- How it reaches Slack is [`slack-integration.md`](slack-integration.md).
+- How it reaches Slack is [`slack-integration.md`](slack-integration.md). No
+  Slack path calls this module today; the gap and its reason are recorded
+  under [failure modes](#failure-modes-and-limits) so neither document assumes
+  the other owns the repair.
+- The automation compiler's drafts are stored and re-rendered into future run
+  prompts, but they are not repaired at the write: the overview screen shows
+  them through `MarkdownBody`, which repairs at display, and a stored copy a
+  model reads back is the prompt half's job to prevent. A future change that
+  wants write-time repair there is changing that decision, not filling a gap.
 - The prompt section it pairs with is `RESPONSE_FORMATTING_POLICY`, which lives
   beside the harness prompts; [`writing-prompts.md`](writing-prompts.md) is the
   house guide those prompts are written against.
@@ -135,10 +163,15 @@ emits is trusted either — each surface escapes for its own output, and
 
 ### The other half
 
-`RESPONSE_FORMATTING_POLICY` is a section in the work-stream system prompt, the
-digest brief, and both meeting prompts. It states that surfaces render
-GitHub-flavoured Markdown, that TeX and math delimiters are never to be written,
-and that a backslash or dollar sign belongs in backticks.
+`RESPONSE_FORMATTING_POLICY` is a section in the work-stream system prompt —
+which every work-stream run carries, digest runs included — and in both meeting
+prompts. It states that written answers are GitHub-flavoured Markdown while an
+elicitation's question is a plain-text label, that TeX and math delimiters are
+never to be written, that a literal backslash belongs only in code formatting,
+and that a dollar sign in ordinary prose is plain text. It is deliberately not
+repeated in the digest brief: a second copy at the user-message layer competed
+with the brief's own output shape, and `prompts.test.ts` pins the TeX line so a
+tidy-up cannot silently delete it.
 
 A prompt is guidance, not a guarantee, which is why the repair exists at all. But
 it is the only half that also fixes the copy of the text that is *stored* —
@@ -153,16 +186,48 @@ halves are kept.
   fraction to become; `\frac` is not in the table, so it reads `frac a b`. Real
   mathematics is not something this module makes look good, and a model that
   needs to show one should use a fenced block.
+- **Money and TeX in one sentence leaves stray delimiters.** The inline pass
+  pairs the first two `$` it sees, so `Costs $50 and moves $\rightarrow$ done`
+  becomes `Costs $50 and moves $→$ done` — the price ate the real span's
+  opening delimiter, and the bare pass repaired what was left inside the
+  orphaned pair. Pinned in the tests as a known artifact; it is the documented
+  cost of the money rule, seen from its other side.
 - **A `$` opening one line and closing the next is not a span.** The inline
   pattern refuses a newline, so a price at the end of a line cannot pair with one
-  on the next.
+  on the next. The explicit `\(…\)`/`\[…\]` delimiters have no such guard.
 - **An unterminated fence swallows the rest of the text.** Everything after it is
   treated as code and left alone, which is what the Markdown parser downstream
   does too.
-- **A connector label containing TeX would be rewritten.** Normalization runs
-  over `MarkdownBody`'s output, links included. Channel and connector names do
-  not contain backslashes in practice, and the alternative — a parser that knows
-  which parts of the string are link syntax — is a second Markdown parser.
+- **An indented code block is not recognised.** The code splitter knows fences
+  and inline spans; four-space-indented code is prose to it, and TeX inside one
+  is rewritten before the downstream parser renders it as code. Telling a
+  four-space code block from a deeply nested list item needs the container
+  context only a real Markdown parser has, which this module deliberately is
+  not.
+- **A connector label containing TeX would be rewritten, and a mention inside a
+  math span is flattened.** Normalization runs over `MarkdownBody`'s output,
+  links included; a `$…$` span with a backslash command that also encloses a
+  mention link unwraps the whole body, so the reader sees the escaped raw
+  destination instead of a chip. It cannot become a live link — the escaping
+  guarantees that — but it is loud. The alternative, a parser that knows which
+  parts of the string are link syntax, is a second Markdown parser.
+- **A streamed span flickers once.** While `$\rightarrow` has no closing
+  delimiter it shows as written; the close arrives and the next render repairs
+  it. An inline code span being typed reverses once the closing backtick
+  lands — repaired, then shown as the code it turned out to be. Both are
+  transient and strictly better than the raw TeX main showed forever.
+- **Slack still shows the TeX.** No Slack delivery path calls this module: the
+  non-streaming paths render through Slack's `markdown` block, whose handling
+  of manufactured escapes has not been exercised against a live workspace, and
+  the streaming path appends chunks, where a span can split across a chunk
+  boundary and a per-chunk repair would tear it. Fixing it means one call site
+  in `slackMarkdownMessages` once the escape behaviour is verified live, plus a
+  decision about the streamed path.
+- **A title generated before this shipped keeps its TeX.** The two stored
+  surfaces repair at the write, with no backfill; an old sidebar row sits
+  unrepaired above a transcript that now renders correctly. Regenerating the
+  title is the remedy, and a backfill was judged not worth a migration for a
+  cosmetic defect that ages out.
 
 ## Testing
 
@@ -183,27 +248,41 @@ escaping rule is visible as a difference rather than stated only in prose.
 
 ## Changelog
 
-### 2026-08-22 — Created, because TeX was reaching readers on every surface
+### 2026-08-23 — Created, because TeX was reaching readers
 
 **What changed:** `normalizeModelMarkdown` and `normalizeModelText` in
-`@avalon/contracts/model-markdown`, called from `MarkdownBody`, the digest email
-renderer, the elicitation panel, and the two API services that generate a title
-and a description. `RESPONSE_FORMATTING_POLICY` was added to the work-stream
-system prompt, the digest brief, and both meeting prompts.
+`@avalon/contracts/model-markdown`, called from `MarkdownBody` (with a
+`verbatim` opt-out for the human bubble and the attachment preview), the digest
+email renderer on both its HTML and plain-text halves, the elicitation panel's
+question, options and answered label, tool-card summaries, the export file
+name, and the two API services that generate a title and a description.
+`RESPONSE_FORMATTING_POLICY` was added to the work-stream system prompt and
+both meeting prompts.
 
 **Why:** `$\rightarrow$` was being shown to people in work-stream turns. No
 surface has ever rendered TeX, and several routed models emit it for symbols, so
 this was not a bug in one renderer — it was a gap between what models write and
 what every surface can display. Fixing it inside `MarkdownBody` alone would have
-left the email and Slack, which is how the same repair ends up written three
-times and drifting; a shared function in `contracts` is the only place all three
-already depend on.
+left the email and the label surfaces showing the same artifacts, which is how
+the same repair ends up written several times and drifting; a shared function
+in `contracts` is the one shared package all the consumers already depend on.
 
 The rule that a span is math only if it contains a backslash was the decision
 that took the most argument, and the reasoning is above under [what counts as
 math](#what-counts-as-math). KaTeX was considered and rejected for the reasons in
 the section below it. Both are recorded because both will look like obvious
 improvements to someone who has not hit the currency case.
+
+Review hardening in the same pull request: the bare pass gained its
+standalone-token boundary after a run-verified review showed `C:\to\dist` and
+`\in-flight` being rewritten — sharper on the two surfaces that store the
+result; the `\(…\)`/`\[…\]` forms now demand a real command so the module's own
+escaped output is not unwrapped a second time; `\lt`, `\gt` and the long
+double-arrows joined the table; and brace pairs became separators so `\frac{a}{b}`
+reads `frac a b` rather than `fracab`. Slack was in the original branch as a
+`markdown_text` delivery commit and was dropped when main's #241 landed the
+same rendering repair more thoroughly; the TeX gap it leaves is recorded under
+failure modes rather than fixed blind against an unverifiable Slack behaviour.
 
 **Consequences:** A surface that shows model text now has to pick an entry point,
 and picking the wrong one fails visibly — a backslash in a title, or an
@@ -212,3 +291,5 @@ offsets is real and silent if broken; it is stated as an invariant and the
 comment at the call site points here. Widening `looksLikeMath` is the edit most
 likely to be attempted next, and the tests are arranged so that doing it
 carelessly breaks the money and environment-variable cases first.
+
+Shipped in #257.
