@@ -152,7 +152,10 @@ import {
   type WorkspaceConnectorEventSettleRequest,
 } from "./workspace-connector-event-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
-import { WORKSPACE_DOMAIN_SCHEMA_STATEMENTS } from "./workspace-domain-schema";
+import {
+  SLACK_REACTION_COLUMN_STATEMENTS,
+  WORKSPACE_DOMAIN_SCHEMA_STATEMENTS,
+} from "./workspace-domain-schema";
 import {
   WorkspaceActivityEventCursorRequestSchema,
   WorkspaceActivityEventInputSchema,
@@ -725,6 +728,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, {
   version: 8,
+  description: "where Avalon's Slack status reaction sits, and which one it is",
+  statements: [
+    // The reaction on the message that started a run is the only status a
+    // member sees without opening the thread. It used to be added once and
+    // removed by nothing, so a finished run and a failed one looked identical
+    // at the message that asked for them. Giving it a lifecycle means a later
+    // invocation — delivery, which owns the terminal transition — has to know
+    // what Avalon last put there and on which message.
+    //
+    // The timestamp is the *triggering* message, not the thread root, and the
+    // two differ whenever a member replies inside an existing Avalon thread.
+    // Reacting to the root would move the status off the message they just
+    // sent and onto one they may have stopped looking at hours ago.
+    ...SLACK_REACTION_COLUMN_STATEMENTS,
+  ],
+}, {
+  version: 9,
   description: "admit a second person-notification kind alongside the mention",
   statements: [
     // `notification_kind` was pinned to a single literal, so being added to a

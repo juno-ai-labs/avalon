@@ -1171,7 +1171,7 @@ viewer projection it always wrote is still first; behind it come a
 `workstream_notification_intents` row under `notification_kind =
 'participant_added'` and is delivered by the same Slack-then-email pair a
 mention uses. Two schemas widened a CHECK to admit the kind — WorkspaceDO
-version 8 rebuilds `workstream_notification_intents`, WorkstreamDO version 3
+version 9 rebuilds `workstream_notification_intents`, WorkstreamDO version 3
 rebuilds its `durable_outbox` — and `enqueueImmutable` now recomputes the
 projection dependency for both person notifications rather than only for
 mentions. Adding somebody who is already an active participant, or adding
