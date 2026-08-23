@@ -709,8 +709,10 @@ existing limit bounds historical catch-up.
 run cannot execute again and its receipt stays visibly open until recovery.
 The next direct retry or bounded sweep replays the idempotent settlement, then
 marks it complete. Three regressions inject the failure after stopped, root,
-and child terminalization; removing either retry path makes the corresponding
-receipt remain `executing`.
+and child terminalization, while a fourth proves the BlockDashboard-only sweep
+can repair its own stale root without gaining automation authority. Removing
+either retry path or the block-origin allowance makes the corresponding
+regression fail.
 
 ### 2026-08-22 — Tool receipts leave the compatibility layer
 

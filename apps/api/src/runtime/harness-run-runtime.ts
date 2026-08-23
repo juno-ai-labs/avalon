@@ -1963,6 +1963,10 @@ function receiptRepairFailure(row: TerminalizedReceiptRepair): {
   const child = row.parentToolCallId !== null;
   return {
     phase: stopped ? "cancelled" : "failed",
+    // A stopped root keeps the pre-existing member-safe receipt contract:
+    // the detailed stop reason belongs to the terminal run, while a tool that
+    // never returned gets the generic cancellation fallback. Child reaping
+    // preserves its own persisted child error when one exists.
     errorJson: stopped
       ? child
         ? row.errorJson ?? JSON.stringify({ code: "run_cancelled", message: "The child run was cancelled" })
@@ -2331,6 +2335,11 @@ export async function reapStaleHarnessRuns(
          ON terminal.harness_run_id = run.id AND terminal.event_key = 'terminal'
       WHERE run.status IN ('failed', 'stopped') AND run.terminalized_at IS NOT NULL
         AND run.attempt_id IS NOT NULL
+        -- These are exactly the terminal-first paths that attempt residual
+        -- settlement today: member-stopped roots, reaped children, and
+        -- stale-lease roots. Direct completed, needs-input, and failed root
+        -- terminalization does not start this protocol. If that changes, its
+        -- first-pass call and this retry predicate must change together.
         AND (
           run.status = 'stopped'
           OR run.parent_tool_call_id IS NOT NULL
