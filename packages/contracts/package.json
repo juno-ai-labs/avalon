@@ -11,7 +11,8 @@
     "./telemetry": "./src/telemetry.ts",
     "./workstream-links": "./src/workstream-links.ts",
     "./url-schemas": "./src/url-schemas.ts",
-    "./text": "./src/text.ts"
+    "./text": "./src/text.ts",
+    "./model-markdown": "./src/model-markdown.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
