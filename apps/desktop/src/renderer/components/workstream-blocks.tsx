@@ -325,17 +325,53 @@ const REMARK_PLUGINS = [remarkGfm];
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
 
+/** A blank line: the classic boundary between markdown blocks. */
+const BLANK_LINE = /^\s*$/u;
+/** A code-fence opener; group 1 is the fence run, whose char and length the closer must match. */
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/u;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/u;
+/**
+ * A top-level list-item line. Indent is capped at one space — CommonMark
+ * allows three, but a nested item sits at two or more and must never be cut
+ * away from its parent, so the extra two columns of top-level tolerance are
+ * given up for that safety. Group 2 is the marker; its last character
+ * (`-`/`*`/`+`/`.`/`)`) identifies the list a same-marker item continues.
+ */
+const TOP_LEVEL_LIST_ITEM = /^ {0,1}([-*+]|\d{1,9}([.)]))(\s|$)/u;
+/**
+ * A line that can continue the block before it across a blank line — a list
+ * item (any marker, deeper indents included), an indented continuation (two
+ * columns is enough to continue a list item's paragraph, so the guard starts
+ * there rather than at code-block depth), or a blockquote line. Cutting
+ * before one of these would tear a construct apart; not cutting only means
+ * the tail stays larger.
+ */
+const CONTINUES_ACROSS_BLANK = /^( {0,3}([-*+]|\d{1,9}[.)])(\s|$)| {2,}|\t| {0,3}>)/u;
+
 /**
  * Where a streaming markdown source can be cut so everything before the cut is
- * finished. A cut lands at the start of a non-blank line that follows a blank
- * line, is outside any code fence, and does not begin a construct that can
- * continue what came before it — a list item, a blockquote line, or an
- * indented continuation, any of which a blank line does not necessarily
- * terminate. Splitting inside those would render a loose list as two lists
- * mid-stream; not splitting only means the tail stays larger.
+ * finished. Cuts are decided only at complete lines — the still-arriving final
+ * line decides nothing, because its classification can change as it grows (a
+ * bare `1` is a paragraph until the `.` lands and makes it a list item) — and
+ * land, outside any code fence, at:
+ *
+ * - the start of a non-blank line that follows a blank line and does not
+ *   continue the previous block (`CONTINUES_ACROSS_BLANK`);
+ * - the start of a top-level list item that follows an item of the same
+ *   marker, blank line between or not. A blank line genuinely does not end a
+ *   list, but the next same-marker item is a boundary the previous item
+ *   cannot extend across — and without this cut a list-dominant reply would
+ *   produce no settled segments at all and re-parse whole on every commit.
+ *
+ * Splitting a list per item is an approximation the settled re-render heals:
+ * each item renders as its own single-item list while the message streams
+ * (ordered numbering survives via the `start` attribute; a loose item renders
+ * tight until the turn completes). The alternative was the whole list staying
+ * in the tail, which is the O(reply) re-parse this function exists to remove.
  *
  * `settled.join('') + tail === source`, and for an append-only source each
- * settled segment is final: later text can only add segments or grow the tail,
+ * settled segment is final — deciding only at complete lines is what makes
+ * that unconditional — so later text can only add segments or grow the tail,
  * which is what lets a segment's rendering be memoised while the message
  * streams. What segmentation cannot preserve — a reference link or a footnote
  * whose definition arrives in a later segment — renders literally until the
@@ -347,28 +383,45 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
   let offset = 0;
   let previousBlank = false;
   let fence: { marker: string; length: number } | null = null;
-  for (const line of source.split('\n')) {
-    const blank = /^\s*$/u.test(line);
+  /**
+   * The marker character of the top-level list the current segment run is in
+   * (`-`, `*`, `+`, `.`, `)`), or null outside one. Blank lines keep it (a
+   * loose list continues across them); a cut to a non-list block clears it.
+   */
+  let listMarker: string | null = null;
+  const lines = source.split('\n');
+  const cut = (): void => {
+    settled.push(source.slice(segmentStart, offset));
+    segmentStart = offset;
+  };
+  // `< length - 1`, never the last element: only a line followed by a newline
+  // is complete, and only complete lines decide anything.
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const line = lines[index]!;
+    const blank = BLANK_LINE.test(line);
     if (fence === null) {
-      const opens = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
+      const opens = FENCE_OPEN.exec(line);
+      const item = TOP_LEVEL_LIST_ITEM.exec(line);
       if (opens?.[1]) {
-        if (previousBlank && offset > segmentStart) {
-          settled.push(source.slice(segmentStart, offset));
-          segmentStart = offset;
-        }
+        if (previousBlank && offset > segmentStart) cut();
         fence = { marker: opens[1][0]!, length: opens[1].length };
-      } else if (!blank && previousBlank && offset > segmentStart) {
-        const continuesPrevious = /^( {0,3}([-*+]|\d{1,9}[.)])(\s|$)| {4}|\t| {0,3}>)/u.test(line);
-        if (!continuesPrevious) {
-          settled.push(source.slice(segmentStart, offset));
-          segmentStart = offset;
+        listMarker = null;
+      } else if (!blank && item) {
+        const marker = item[2] ?? item[1]!;
+        if (offset > segmentStart && (
+          marker === listMarker
+          || (listMarker === null && previousBlank)
+        )) cut();
+        listMarker = marker;
+      } else if (!blank) {
+        if (previousBlank && offset > segmentStart && !CONTINUES_ACROSS_BLANK.test(line)) {
+          cut();
+          listMarker = null;
         }
       }
     } else {
-      const closes = /^ {0,3}(`{3,}|~{3,})\s*$/u.exec(line);
-      if (closes?.[1] && closes[1][0] === fence.marker && closes[1].length >= fence.length) {
-        fence = null;
-      }
+      const closes = FENCE_CLOSE.exec(line)?.[1];
+      if (closes && closes[0] === fence.marker && closes.length >= fence.length) fence = null;
     }
     previousBlank = blank && fence === null;
     offset += line.length + 1;
