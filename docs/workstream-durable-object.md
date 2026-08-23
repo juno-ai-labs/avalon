@@ -1304,6 +1304,7 @@ because the block was already settled rather than because the lease had moved �
 which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
+
 ### 2026-08-23 — The transcript gets a typed authority, and the compat layer's ordering turns out to be wrong
 
 **What changed:** `WorkstreamMessageStorage` owns `parts`, `part_mentions` and
@@ -1322,6 +1323,16 @@ routed transcript write was a *batch*: the trigger moved one set of counters and
 the caller's own second statement moved the other, and the two were one fact
 only because the router happened to send them together. An append is one
 operation now.
+
+The inline tool card is the same shape one step further on. Its write took the
+work stream's next sequence number in an upsert, then advanced the counter in a
+*second* statement guarded on the inserted row having actually taken it — which
+is how a refresh of a settled card avoided consuming a transcript position. That
+guard is a read of what the first statement did, expressed as a `WHERE` clause
+because a batch cannot ask. `upsertToolMessage` reads the row first and decides
+from it, inside one transaction; and it advances `next_sequence_number` without
+`next_attention_ordinal`, because a tool card is machinery a member did not do
+and the retired insert trigger, not any caller, drew that line.
 
 **The finding that matters more than the conversion: this slice cannot drop its
 views, and neither can slice 3.** Three transcript writes are batches that span

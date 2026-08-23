@@ -7298,59 +7298,32 @@ function summarize(value: unknown, maxLength: number): string {
  * messages. The invocation UUID is also the message UUID, which makes every
  * lifecycle update idempotent without adding another cross-table identifier.
  *
- * The guarded sequence increment is important: completion and replay updates
- * refresh the existing block without consuming a new transcript position.
+ * This was a two-statement `DB.batch`: an upsert that took the work stream's
+ * next sequence number, and a follow-up increment guarded on the inserted row
+ * having actually taken it, so a refresh did not advance the transcript. The
+ * two were one fact split across a batch, which is exactly what a batch cannot
+ * make atomic. The object does both inside one `transactionSync`, and decides
+ * from the row it just read rather than from a guard on a second statement.
  */
 async function persistToolTranscriptMessage(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId">,
   invocation: ToolInvocation,
 ): Promise<void> {
-  const createdAt = invocation.startedAt ?? invocation.completedAt ?? nowIso();
-  const editedAt = invocation.status === "pending" || invocation.status === "started"
-    ? null
-    : invocation.completedAt ?? nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-        text_content, structured_content_json, sequence_number, created_at, edited_at)
-       SELECT ?, ?, ?, w.id, 'agent', 'tool', '', ?, w.next_sequence_number, ?, ?
-       FROM workstreams w
-       WHERE w.id = ? AND w.workspace_id = ?
-       ON CONFLICT(id) DO UPDATE SET
-         structured_content_json = excluded.structured_content_json,
-         edited_at = excluded.edited_at
-       WHERE messages.workspace_id = excluded.workspace_id
-         AND messages.workstream_id = excluded.workstream_id
-         AND messages.message_type = 'tool'`,
-    ).bind(
-      invocation.id,
-      `tool:${invocation.id}`,
-      input.workspaceId,
-      JSON.stringify({ invocation }),
-      createdAt,
-      editedAt,
-      input.workstreamId,
-      input.workspaceId,
-    ),
-    env.DB.prepare(
-      `UPDATE workstreams
-       SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND next_sequence_number = (
-           SELECT sequence_number FROM messages
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND message_type = 'tool'
-         )`,
-    ).bind(
-      nowIso(),
-      input.workstreamId,
-      input.workspaceId,
-      invocation.id,
-      input.workspaceId,
-      input.workstreamId,
-    ),
-  ]);
+  // The wire carries ISO-8601 and the object stores unix milliseconds; the
+  // retired view converted between them in SQL, so the conversion moves here.
+  const settled = invocation.status !== "pending" && invocation.status !== "started";
+  const asMillis = (value: string | null): number => (
+    value === null ? Date.now() : Date.parse(value)
+  );
+  await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+    .upsertToolMessage({
+      messageId: invocation.id,
+      clientMessageId: `tool:${invocation.id}`,
+      structuredContentJson: JSON.stringify({ invocation }),
+      createdAt: asMillis(invocation.startedAt ?? invocation.completedAt),
+      editedAt: settled ? asMillis(invocation.completedAt) : null,
+    });
 }
 
 /**
