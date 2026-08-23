@@ -289,7 +289,7 @@ describe("closing a block whose run was reaped", () => {
     ]);
   });
 
-  it("closes nothing when the run was terminalized at a different instant", () => {
+  it("still closes the block when the sweep's instant is stale, because the run is over", () => {
     const { storage, sql } = open();
     storage.admitDispatch(dispatch());
     sql.exec(
@@ -298,14 +298,62 @@ describe("closing a block whose run was reaped", () => {
       RUN,
     );
 
-    // A sweep holding a stale instant lost the race. Closing the block anyway
-    // would settle a run that has since been taken over by the terminalization
-    // that actually landed.
+    // The named write does not match — this sweep holds a stale instant and did
+    // not perform the terminalization it is claiming. It used to stop there.
+    //
+    // The repair pass closes the block anyway, and that is the point: a
+    // terminalized run's block must not stay open no matter which sweep
+    // notices, because nothing else will ever look at it again. The instant
+    // recorded is the run's own `terminalized_at`, not this caller's, so the
+    // block still reports when its run actually ended rather than when the
+    // repair happened.
     expect(storage.abandonBlockRun({
       harnessRunId: RUN, terminalizedAt: NOW - 1, errorJson: '{"code":"stale_run_reaped"}',
-    })).toBe(0);
-    expect(sql.exec(`SELECT status FROM block_dashboard_block_runs`).toArray())
-      .toEqual([{ status: "queued" }]);
+    })).toBe(1);
+    expect(sql.exec(`SELECT status, completed_at FROM block_dashboard_block_runs`).toArray())
+      .toEqual([{ status: "failed", completed_at: NOW }]);
+  });
+
+  it("repairs a block orphaned by a failed reap, on the next reap of the work stream", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+    storage.admitDispatch(dispatch({
+      configurationVersionId: "configuration-2",
+      versionNumber: 2,
+      blockRunId: "block-run-2",
+      harnessRunId: "00000000-0000-7000-8000-0000000000b2",
+    }));
+    // The first run was terminalized in the regional database but its block was
+    // never closed — the RPC that would have closed it failed. No later sweep
+    // finds it: the selector is `status = 'running' AND terminalized_at IS
+    // NULL`, which a terminalized run no longer matches.
+    sql.exec(
+      `UPDATE runs SET status = 'failed', terminalized_at = ? WHERE run_id = ?`,
+      NOW - 60_000,
+      RUN,
+    );
+    // Then a *different* run in the same work stream is reaped.
+    sql.exec(
+      `UPDATE runs SET status = 'failed', terminalized_at = ? WHERE run_id = ?`,
+      NOW,
+      "00000000-0000-7000-8000-0000000000b2",
+    );
+
+    expect(storage.abandonBlockRun({
+      harnessRunId: "00000000-0000-7000-8000-0000000000b2",
+      terminalizedAt: NOW,
+      errorJson: '{"code":"stale_run_reaped"}',
+    })).toBe(2);
+
+    // Both closed: the one being reaped, and the orphan. The orphan reports the
+    // instant its own run ended, not the instant the repair happened.
+    expect(sql.exec(
+      `SELECT block_run_id, status, completed_at FROM block_dashboard_block_runs
+        ORDER BY block_run_id`,
+    ).toArray()).toEqual([
+      { block_run_id: "block-run-1", status: "failed", completed_at: NOW - 60_000 },
+      { block_run_id: "block-run-2", status: "failed", completed_at: NOW },
+    ]);
   });
 
   it("closes nothing while the run is still live", () => {
