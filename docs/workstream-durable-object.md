@@ -1218,6 +1218,22 @@ messages slice's machinery inside this one, beside the richer version
 The PRD's slice table lists five views for slice 3; this is a deliberate
 departure from it, not an oversight.
 
+**The alarm path was the one wake-up writer that skipped all of it.** Review
+caught this after the slice was pushed. `runScheduledAlarm` built its port with
+the in-isolate storage seam, on the stated grounds that an object dispatching an
+RPC to itself is a round trip to its own SQLite — which is not true here:
+`this.env` is rebound through `withDurableObjectSelf` in the constructor, so the
+stub resolves to this instance and the endpoint runs in this isolate anyway.
+Taking the seam skipped `commitRuntimeMutation`, so an alarm-fired claim did not
+republish the sidebar's next-wake-up marker, and the marker went on advertising
+a wake-up that had already fired until some later write moved it. The launched
+path hid it — the transcript notice republishes a moment later — but the two
+paths that return without appending do not.
+
+The port is built without the seam now, and the endpoint's arming is wrapped in
+the same catch-and-log its two siblings use: the operation is already durable,
+so a failed `setAlarm` must not tell a caller its committed write failed.
+
 **What a future change has to respect:** the object maintains its own alarm
 index and publishes its own sidebar projection for wake-ups, and both used to
 be consequences of the routing. A wake-up write arrived as SQL, and the object

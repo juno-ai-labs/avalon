@@ -120,6 +120,38 @@ describe("scheduling authority on real workerd", () => {
     });
   });
 
+  it("republishes the sidebar projection when a wake-up is claimed", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+    });
+    await scheduling(stub, "scheduleWakeup", wakeup());
+    const before = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ next_version: number }>(
+        `SELECT next_version FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().next_version);
+
+    const claimed = await scheduling(stub, "claimDueWakeup", {
+      wakeupId: "00000000-0000-7000-8000-00000000wk01",
+      expectedVersion: 1,
+      now: Date.now(),
+    });
+
+    // The sidebar's next-wake-up marker is derived from `status = 'pending'`,
+    // so a claim invalidates it: the wake-up it advertises has just fired.
+    // Every wake-up write has to reach this endpoint for that republish to
+    // happen — including the object's own alarm, which is the one writer that
+    // could have taken the in-isolate seam and skipped it.
+    expect(claimed.value).toBe(true);
+    const after = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ next_version: number }>(
+        `SELECT next_version FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().next_version);
+    expect(after).toBeGreaterThan(before);
+  });
+
   it("takes the alarm entry back out when the wake-up is cancelled", async () => {
     const stub = agent();
     await boot(stub);

@@ -1073,32 +1073,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /**
    * Dispatch one scheduling operation against this object's own storage.
-   */
-  private async acceptSchedulingOperation(request: Request): Promise<Response> {
-    const parsed = SchedulingOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
-    }
-    const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
-    if (refusal) return refusal;
-    const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = method.apply(this.scheduling, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
-  }
-
-  /**
-   * Dispatch one block-dashboard operation against this object's own storage.
-   *
-   * Identity is re-checked against the object's own before anything executes,
-   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
-   * fail rather than settle another work stream's blocks. The main child holds
-   * these rows, so a non-main substream is refused here rather than answering
-   * from an empty table.
-   */
-  /**
-   * Dispatch one scheduling operation against this object's own storage.
    *
    * Identity is re-checked against the object's own before anything executes:
    * a misrouted stub must fail rather than claim another work stream's wake-up.
@@ -1135,11 +1109,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : method.apply(this.scheduling, parsed.data.args);
     if (mutates) {
       this.syncAgentTimerAlarms();
-      await this.armNextAlarm();
+      // Arming is best-effort, as it is in `acceptRuntimeSql` and
+      // `runTerminalOperation`, and for the reason those two give: the
+      // operation is already durable, so raising here would tell a caller its
+      // committed write failed. The wake-up tool's own rollback would then
+      // delete a row that was legitimately cancelled. The run's dispatch sweep,
+      // any later request and the committed directory effect all re-derive the
+      // alarm.
+      try {
+        await this.armNextAlarm();
+      } catch (error) {
+        logError(this.env, "workstream_scheduling_alarm_schedule_failed", {
+          workspace_id: parsed.data.workspaceId,
+          workstream_id: parsed.data.workstreamId,
+          operation: parsed.data.operation,
+          code: "workstream_scheduling_alarm_failed_after_commit",
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return jsonResponse({ ok: true, value: value ?? null });
   }
 
+  /**
+   * Dispatch one block-dashboard operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes,
+   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
+   * fail rather than settle another work stream's blocks. The main child holds
+   * these rows, so a non-main substream is refused here rather than answering
+   * from an empty table.
+   */
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
     const parsed = BlockDashboardOperationRequestSchema.safeParse(
       await request.json().catch(() => null),
@@ -2937,12 +2937,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * asked for. Throwing puts this timer — and only this timer — behind the
    * shared retry gate.
    *
-   * The reload reads this object's own storage rather than routing a statement
-   * out to the compatibility view and back to itself. The port it hands
-   * `fireWorkstreamWakeup` is built over the same storage instance, so the
-   * claim runs in this isolate too: an object dispatching an RPC to itself
-   * would be a round trip to its own SQLite through the network stack that
-   * exists to reach *other* objects.
+   * The port is built without the in-isolate storage seam, so the claim goes
+   * through `/internal/scheduling` like every other wake-up write. That is not
+   * a round trip: `this.env` was rebound through `withDurableObjectSelf` in the
+   * constructor, so the stub resolves to this instance and the endpoint runs
+   * here. Taking the seam instead would skip the endpoint — and with it the
+   * commit that republishes the sidebar's next-wake-up marker, which after a
+   * claim still advertises a wake-up that has already fired.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
@@ -2959,7 +2960,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.env,
       identity.workspaceId,
       identity.workstreamId,
-      this.scheduling,
     );
     const wakeup = await loadWorkstreamWakeup(
       scheduling,

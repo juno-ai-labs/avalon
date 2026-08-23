@@ -94,14 +94,21 @@ export class WorkstreamSchedulingStorage {
     ).one().pending;
   }
 
-  /** The pending wake-ups, soonest first. */
+  /**
+   * The pending wake-ups, soonest first.
+   *
+   * The tiebreak matters because two other readers order the same rows:
+   * `syncAgentTimerAlarms` and the sidebar's next-wake-up marker both use
+   * `due_at, wakeup_id`. Two wake-ups due at the same instant would otherwise
+   * lead this list and that marker differently.
+   */
   pendingWakeups(input: { limit: number }): WakeupRow[] {
     return this.sql.exec<WakeupRow>(
       `SELECT wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
               status, idempotency_key, version, created_at
          FROM workstream_wakeups
         WHERE status = 'pending'
-        ORDER BY due_at ASC
+        ORDER BY due_at ASC, wakeup_id ASC
         LIMIT ?`,
       input.limit,
     ).toArray();
