@@ -1079,9 +1079,20 @@ routed them to the object; the dev seed was the only bare-named writer.
 
 **Consequences:** The cross-authority guard now also rejects a regional
 mutation that mentions `tool_effects` in a subquery, which is the correct
-refusal — the table is the object's. A future adopted-from-compat table that a
-routed statement can name *alone* needs its entry here in the same change that
-teaches a caller the new name; the routing test pins this one.
+refusal — the table is the object's. The rule this pins is broader than one
+table: *any object-owned table a routed statement may name needs its entry in
+`LOCAL_TABLES`, whether or not today's statements happen to name it alone* —
+the telemetry readers route correctly only because they incidentally join
+`harness_runs`, and an edit that drops that join re-creates this defect
+silently. `runs` and `run_steering` are the precedent: object-native names
+with no rewrite, listed for the same reason. The entry is also the missing
+half of a decision the in-flight compat-retirement PRD
+(`docs/PRDs/2026-08-22_retiring-the-runtime-compat-layer/`) already made —
+slice 1i retargeted the seed at the real table and named the seed route as a
+remaining user; the entry leaves this list when that PRD's slice 6 converts
+the last routed users, not before. The routing test pins the bare INSERT and
+each table the dev seed writes.
+
 ### 2026-08-23 — The product API learned who a connector principal is
 
 **What changed:** `ProductAuthSchema` accepts an optional
