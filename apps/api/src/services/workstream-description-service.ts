@@ -27,6 +27,7 @@
  * The window, the throttle, and the guards live here; the judgment lives in
  * `renderWorkstreamDescriptionMessages`. See `docs/workstream-descriptions.md`.
  */
+import { normalizeModelText } from "@avalon/contracts/model-markdown";
 import {
   MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
   renderWorkstreamDescriptionMessages,
@@ -562,7 +563,9 @@ export function judgeDescriptionProposal(
   if (proposal.decision === "keep") return { status: "kept" };
   if (proposal.confidence < DESCRIPTION_REWRITE_MINIMUM_CONFIDENCE) return { status: "kept" };
 
-  const description = (proposal.description ?? "").trim();
+  // Repaired before it is judged, so the length and genericness rules below
+  // measure the sentence a reader will see rather than the TeX around it.
+  const description = normalizeModelText((proposal.description ?? "").trim());
   if (description.length === 0) return { status: "rejected", code: "empty_description" };
   if (description.length > MAXIMUM_DESCRIPTION_CHARACTERS) {
     return { status: "rejected", code: "description_too_long" };
