@@ -179,6 +179,12 @@ This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes exactly one thing: `MarkdownBody`, taking a markdown
 string and an optional `mentions` array.
 
+It does not own the repair applied to that string before it is parsed, either.
+`MarkdownBody` calls `normalizeModelMarkdown` on its children so a model's TeX
+becomes the characters it stood for;
+[`model-text-normalization.md`](model-text-normalization.md) owns what that maps
+and why it refuses to touch a price.
+
 It does not own the markdown itself. Where a briefing's text comes from is
 [`meeting-notes.md`](meeting-notes.md); a HyperSight block's is
 [`agent-harness.md`](agent-harness.md); an automation overview's is
@@ -268,6 +274,44 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-23 — The renderer repairs a model's TeX, and stops emitting a dead mention link
+
+**What changed:** `MarkdownBody` passes its children through
+`normalizeModelMarkdown` before `react-markdown` sees them, so `$\rightarrow$`
+renders as `→` — unless the caller marks the text `verbatim`, which the human
+message bubble and the attachment lightbox do, because a member's own words and
+an attached file's bytes are not a model's to fix. And every `person:` href now
+survives `urlTransform` so the `a` component can decide it: a real id resolves
+to a chip, anything else renders as `span.mention-text-fallback`.
+
+**Why:** Several of the models Avalon routes to write TeX when they want a
+symbol, and this renderer has never rendered any — so the delimiters and the
+command name were shown to people verbatim, in the surface they read most. The
+repair is shared rather than local because the digest email had the identical
+gap, and separate copies of it would drift the way the three renderers this
+module replaced did. [`model-text-normalization.md`](model-text-normalization.md)
+owns the mapping and, more importantly, the rule deciding what is math.
+
+The mention fix came out of auditing the same path. `defaultUrlTransform`
+empties a scheme it does not recognise instead of rejecting it, so a malformed
+`person:` link became `<a href="" target="_blank">` — a chip-shaped thing that
+opens a blank window. The first attempt guarded inside the `a` component,
+which is unreachable: react-markdown rewrites hrefs during its tree visit,
+*before* components render, so the guard saw `''` and the dead anchor still
+shipped. Review caught it by rendering; the fix is in `urlTransform`, the only
+place the scheme still exists — mirroring how `connector:` already passes
+through whole for the component to refuse.
+
+**Consequences:** Normalization runs *after* `withConnectorMentionLinks`, and the
+order is load-bearing: connector mentions carry offsets measured against the
+stored text, and normalizing first shifts a slice off its `@` and silently
+drops the chip. The call site says so and points at the module document.
+Nothing here rewrites what is stored — a turn still exports and re-reads as the
+model wrote it, and the Copy button deliberately copies the stored bytes while
+the export file name takes the repaired first line.
+
+Shipped in #257.
 
 ### 2026-08-23 — A streaming body re-parses its tail, not its length
 

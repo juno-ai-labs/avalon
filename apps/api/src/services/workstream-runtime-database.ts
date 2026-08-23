@@ -78,6 +78,13 @@ const LOCAL_TABLES = [
   "block_dashboard_user_preferences",
   "workstream_resources",
   "block_dashboard_block_runs",
+  // The object's own receipt table, not a legacy name: when migration 17
+  // retired `tool_invocations` from this list, the dev seed moved to writing
+  // `tool_effects` directly — and a statement naming only that table fell
+  // through to regional D1, which has not held product tables since 0090.
+  // Production readers reach it by also naming `harness_runs`; the entry is
+  // what routes a statement that names it alone.
+  "tool_effects",
 ] as const;
 
 const LOCAL_TABLE_PATTERNS = LOCAL_TABLES.map((table) =>

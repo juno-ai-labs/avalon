@@ -1,3 +1,5 @@
+import { normalizeModelMarkdown, normalizeModelText } from "@avalon/contracts/model-markdown";
+
 import { escapeHtml } from "./resend";
 
 /**
@@ -76,7 +78,11 @@ function indentWidth(value: string): number {
 }
 
 export function markdownToEmailHtml(markdown: string): string {
-  return blocksFromMarkdown(markdown).map(renderBlock).join("\n");
+  // Every body this renders today is a model's words — a digest, an automation
+  // result — so the TeX repair applies unconditionally. An email that one day
+  // carries a person's words verbatim needs an opt-out here first, the way
+  // `MarkdownBody` grew one for the human bubble.
+  return blocksFromMarkdown(normalizeModelMarkdown(markdown)).map(renderBlock).join("\n");
 }
 
 /**
@@ -89,6 +95,10 @@ export function markdownToEmailHtml(markdown: string): string {
  * link's target in parentheses — is kept.
  */
 export function markdownToEmailText(markdown: string): string {
+  // The plain-text entry point, deliberately: nothing below parses Markdown,
+  // so an escape manufactured by `normalizeModelMarkdown` would reach the
+  // reader as a literal backslash.
+  markdown = normalizeModelText(markdown);
   const lines: string[] = [];
   let fenced = false;
   for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
@@ -130,7 +140,7 @@ export function markdownToEmailText(markdown: string): string {
  * anything.
  */
 export function markdownToEmailPreheader(markdown: string, limit = 160): string {
-  const plain = markdown
+  const plain = normalizeModelText(markdown)
     .replace(/\r\n/gu, "\n")
     .replace(/^\s{0,3}(?:```|~~~).*$/gmu, " ")
     .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gmu, " ")
@@ -354,12 +364,29 @@ function renderInline(value: string): string {
   // The placeholder is the one construct here that model text could forge, so
   // the character it is built from never survives the input.
   let html = escapeHtml(value.split(CODE_PLACEHOLDER).join(""));
+  const codeSpans: string[] = [];
+  // A Markdown escape means the literal character, and the passes below are
+  // this surface's whole parser — `normalizeModelMarkdown` escapes what it
+  // unwraps on the contract that the parser downstream eats the backslash, and
+  // a model's own `\*` means an asterisk, not emphasis. Each escape is parked
+  // behind a placeholder *before* the link pass, or `\[a\](…)` still reads as
+  // a link; a code span's contents are matched here only to be stepped over,
+  // because a backslash inside backticks — a regex's `\.` — is code, not an
+  // escape. The character may already sit in the text as its HTML entity,
+  // which is parked whole for the same reason.
+  html = html.replace(
+    /(`[^`\n]+`)|\\(&(?:amp|lt|gt|quot|#39);|[!-/:-@[-`{-~])/gu,
+    (match, code: string | undefined, literal: string | undefined) => {
+      if (code !== undefined || literal === undefined) return match;
+      codeSpans.push(literal);
+      return `${CODE_PLACEHOLDER}${codeSpans.length - 1}${CODE_PLACEHOLDER}`;
+    },
+  );
   html = html.replace(
     /\[([^\][]+)\]\((https?:\/\/[^\s)]+)\)/gu,
     (_match, label: string, href: string) =>
       `<a href="${encodeLinkTarget(href)}" style="color:${COLOR.brand};text-decoration:none;border-bottom:1px solid rgba(206,220,0,.35)">${label}</a>`,
   );
-  const codeSpans: string[] = [];
   html = html.replace(/`([^`\n]+)`/gu, (_match, code: string) => {
     codeSpans.push(`<code style="${CODE_STYLE}">${code}</code>`);
     return `${CODE_PLACEHOLDER}${codeSpans.length - 1}${CODE_PLACEHOLDER}`;

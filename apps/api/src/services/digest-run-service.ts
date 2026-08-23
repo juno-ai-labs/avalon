@@ -433,9 +433,13 @@ async function appendDigestBriefMessage(
  *
  * The output contract is Markdown rather than a structured schema, because the
  * run is the ordinary agent loop and its product is a message. The instructions
- * name the small subset the email renderer styles richly — `##` sections,
- * bullets, links, bold, blockquote — and anything outside it degrades to
- * readable text rather than breaking the layout.
+ * name the shape a digest reads best in — `##` sections and one bullet per
+ * development — and the email renderer covers the full common set (lists,
+ * tables, fenced code, links) should the model reach past it. The general
+ * formatting rules are not restated here: a digest run is an ordinary
+ * work-stream run, and its system prompt already carries
+ * `RESPONSE_FORMATTING_POLICY`; a second copy in the brief once competed with
+ * the shape above and invited tables where a bullet was asked for.
  */
 export function renderDigestBrief(
   schedule: Pick<DigestScheduleRow, "user_name" | "workspace_name" | "timezone">,

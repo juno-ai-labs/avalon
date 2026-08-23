@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
+import { normalizeModelMarkdown, normalizeModelText } from '@avalon/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -454,7 +455,7 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
  */
 const NO_MENTIONS: MessageMention[] = [];
 
-export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = false, telemetry }: {
+export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = false, telemetry, verbatim = false }: {
   children: string;
   mentions?: MessageMention[];
   /**
@@ -465,10 +466,21 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
    */
   streaming?: boolean;
   telemetry?: MessageCopyTelemetry;
+  /**
+   * The text is a person's or a file's, shown as written: the model-text
+   * repair is a repair of what a *model* wrote, and applying it to a member's
+   * own message or to the bytes of an attached document silently rewrites
+   * something the app has no business rewriting.
+   */
+  verbatim?: boolean;
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
-  const markdown = withConnectorMentionLinks(children, mentions, token);
+  // Mentions first, normalization second, and the order is load-bearing: the
+  // connector offsets are measured against the stored text, so anything that
+  // changes its length has to run after they have been resolved into links.
+  const linked = withConnectorMentionLinks(children, mentions, token);
+  const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
   // Stable across commits that change nothing they depend on, for two reasons:
@@ -485,6 +497,14 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
           ));
           if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
           return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
+        }
+        // A `person:` target that is not an id is text a model wrote. It
+        // reaches here intact because `urlTransform` below passes the
+        // whole scheme through — `defaultUrlTransform` would empty it
+        // instead, and an anchor with nothing behind it reads as a mention
+        // that opens a blank window.
+        if (href !== undefined && /^person:/iu.test(href)) {
+          return <span className="mention-text-fallback">{linkChildren}</span>;
         }
         if (isConnectorHref(href)) {
           const connectorType = connectorTypeFromHref(href, token);
@@ -513,8 +533,12 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
     } satisfies MarkdownComponents,
     urlTransform: ((url, key, node) => (
       // Both schemes reach the `a` component intact so it can decide there;
-      // neither is ever rendered as a navigable link.
-      key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || isConnectorHref(url))
+      // neither is ever rendered as a navigable link. The whole scheme
+      // passes, not only a well-formed id: `defaultUrlTransform` empties
+      // what it rejects, and an emptied href would reach the component as
+      // '' — indistinguishable from a link with no target, and too late
+      // for the fallback branch to know it was a mention.
+      key === 'href' && node.tagName === 'a' && (/^person:/iu.test(url) || isConnectorHref(url))
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
@@ -591,7 +615,10 @@ function AssistantMessageActions({ mentions, telemetry, text }: {
     try {
       await saveMessageExport({
         content: <MarkdownBody mentions={mentions}>{text}</MarkdownBody>,
-        fileName: messageExportFileName(text, messageExportDate(new Date())),
+        // The file name slugs the first line the way the card *shows* it — a
+        // saved image named `…-backlog-rightarrow-done` outlives the render
+        // that repaired the text it pictures. Copy stays the stored bytes.
+        fileName: messageExportFileName(normalizeModelText(text), messageExportDate(new Date())),
         format,
       });
     } catch (error) {
@@ -688,7 +715,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
           : <span className="tool-icon"><TerminalSquare aria-hidden="true" size={14} /></span>}
         <span className="tool-summary">
           <strong>{tool.name}</strong>
-          <small>{tool.summary ?? (tool.status === 'started' ? 'Running…' : tool.status)}</small>
+          <small>{tool.summary !== undefined ? normalizeModelText(tool.summary) : tool.status === 'started' ? 'Running…' : tool.status}</small>
         </span>
         <span className="tool-state">
           {tool.status === 'started' && <LoaderCircle aria-hidden="true" className="spin" size={13} />}
@@ -703,7 +730,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         {tool.input !== undefined && <div><h4>Input</h4><pre>{safeJson(tool.input)}</pre></div>}
         {tool.output !== undefined && <div><h4>Result</h4><pre>{safeJson(tool.output)}</pre></div>}
         {tool.input === undefined && tool.output === undefined && tool.summary && (
-          <div><h4>Activity</h4><p>{tool.summary}</p></div>
+          <div><h4>Activity</h4><p>{normalizeModelText(tool.summary)}</p></div>
         )}
         {tool.status === 'ambiguous' && <p className="tool-warning">Avalon could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>
@@ -832,7 +859,9 @@ function elicitationAnswerLabel(elicitation: ElicitationData): string {
   if (answer == null) return 'Skipped';
   const values = Array.isArray(answer) ? answer : [String(answer)];
   const labels = values.map((value) => elicitation.options?.find((option) => option.value === value)?.label ?? value);
-  return labels.join(', ');
+  // The labels come from the same model call as the question, so they take the
+  // same plain-text repair the question does.
+  return normalizeModelText(labels.join(', '));
 }
 
 export function ElicitationPanel({
@@ -948,14 +977,17 @@ export function ElicitationPanel({
   };
 
   const options = elicitation.options ?? [];
-  const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(elicitation.prompt)
-    ? `${elicitation.prompt} Pick everything that applies.`
-    : elicitation.prompt;
+  // The question is a label, not a body: it is shown as plain text, so it takes
+  // the plain-text repair rather than being sent through `MarkdownBody`.
+  const prompt = normalizeModelText(elicitation.prompt);
+  const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(prompt)
+    ? `${prompt} Pick everything that applies.`
+    : prompt;
   if (collapsed) {
     return (
       <button className="elicitation-collapsed-bar" onClick={() => setCollapsed(false)} type="button">
         <span>Avalon needs input</span>
-        <strong>{elicitation.prompt}</strong>
+        <strong>{prompt}</strong>
         <ChevronDown aria-hidden="true" size={16} />
       </button>
     );
@@ -1012,7 +1044,7 @@ export function ElicitationPanel({
                 type={isMulti ? 'checkbox' : 'radio'}
                 value={option.value}
               />
-              <span className="elicitation-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+              <span className="elicitation-option-copy"><strong>{normalizeModelText(option.label)}</strong>{option.description && <small>{normalizeModelText(option.description)}</small>}</span>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
               ) : (
@@ -1176,6 +1208,7 @@ export function MessageBlock({
                   <MarkdownBody
                     mentions={message.mentions}
                     telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                    verbatim
                   >{message.text}</MarkdownBody>
                 </div>
               ) : null}

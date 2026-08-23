@@ -321,6 +321,23 @@ Four log events are emitted:
 
 ## Changelog
 
+### 2026-08-23 — A proposed description is repaired before it is judged
+
+**What changed:** `judgeDescriptionProposal` runs the proposal through
+`normalizeModelText` before the length, genericness and divergence rules see it.
+
+**Why:** A description is shown as plain text in the sidebar and the header, so a
+model writing `$\rightarrow$` in one puts TeX where nothing will ever render it.
+Repairing before the rules rather than after means every bound is measured
+against the sentence a reader gets: the delimiters and command name would
+otherwise count toward the character ceiling, and the normalized comparison used
+to detect a restyling would differ from the stored text for no real reason.
+
+**Consequences:** The plain-text entry point is the correct one here and the
+Markdown one would be a bug — it escapes what it unwraps, which on this surface
+is a backslash a reader sees. [`model-text-normalization.md`](model-text-normalization.md)
+states that rule.
+
 ### 2026-08-17 — Description refresh shares the WorkstreamDO transaction
 
 **What changed:** The description and `description_refresh_state` are now

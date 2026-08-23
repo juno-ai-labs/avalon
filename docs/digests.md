@@ -622,6 +622,39 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-23 — Every email repairs a model's TeX, and consumes the escapes that repair writes
+
+**What changed:** `email-markdown.ts` normalizes on all three of its outputs —
+`markdownToEmailHtml` through `normalizeModelMarkdown`, the plain-text
+alternative and the preheader through `normalizeModelText` — so `$\rightarrow$`
+reaches an inbox as `→` in the digest and in an automation's result alike. The
+inline pass parks Markdown escapes behind the same placeholder the code spans
+use, before the link pass runs, and restores them as their characters at the
+end.
+
+**Why:** the branch that built the TeX repair originally carried its own
+enriched digest renderer — tables, task marks, per-width nesting — and that
+work was superseded mid-flight when the shared renderer landed and the digest
+moved onto it; the enrichment was dropped with its tests rather than fought
+over, since the shared renderer's leaner scope is a recorded decision. What
+could not be dropped is the repair itself, and its contract: the normalizer
+escapes what it unwraps on the promise that the parser downstream eats the
+backslash. This renderer is that parser, so without the escape pass a repaired
+`$\text{a\_b}$` reached readers as `a\_b` — the artifact class the repair
+exists to remove. The escapes are parked *before* the link pass, not unescaped
+after it, because `\[a\](https://…)` read through its escapes is a link with a
+target its label promised was plain text; and a backslash inside backticks — a
+regex's `\.` — is stepped over, because there it is code. Both directions are
+pinned by tests that fail without the pass.
+
+**Consequences:** a future email that carries a *person's* words verbatim needs
+an opt-out at the entry points first, the way `MarkdownBody` grew one — every
+body rendered today is a model's. The plain-text alternative deliberately uses
+the entry point that manufactures no escapes; swapping the two entry points is
+the failure the normalizer's module document names as its first invariant.
+
+Shipped in #257.
+
 ### 2026-08-22 — Being added to a work stream is an event, and a notification
 
 **What changed:** `addParticipant` writes a `workstream_participant_added`
