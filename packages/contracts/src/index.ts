@@ -943,6 +943,15 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+/**
+ * Where the person asked for the result to go, as the compiler understood it.
+ *
+ * A *request*, not a destination: the destinations are chosen on the create
+ * screen and frozen on the automation. This exists so that choice starts from
+ * what was actually asked for rather than from a regex over the draft's prose —
+ * the compiler is the one thing in the system that already parsed the sentence.
+ */
+export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -951,6 +960,8 @@ export const AutomationDraftSchema = z.object({
   triggers: z.array(TriggerDefinitionSchema).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
+  /** Defaulted, so a draft saved before this field existed still parses. */
+  requestedDelivery: z.array(AutomationRequestedDeliverySchema).max(2).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),

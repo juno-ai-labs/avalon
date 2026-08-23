@@ -27,6 +27,7 @@ function createInput(
       triggers: [trigger],
       requiredCapabilities: [],
       expectedOutputs: [],
+      requestedDelivery: [],
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],

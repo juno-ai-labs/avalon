@@ -983,8 +983,10 @@ export class AvalonApi {
   }
 
   async updateAutomation(id: string, input: {
-    instructions: string;
+    instructions?: string;
     activitySourcePluginIds?: Record<string, string>;
+    /** Absent leaves destinations alone; present replaces the whole set. */
+    deliveryTargets?: Array<{ type: 'email' } | { type: 'slack_agent_dm'; connectionId: string }>;
   }): Promise<AutomationDetail> {
     const updated = await this.request(`/automations/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -1844,22 +1846,13 @@ export class AvalonApi {
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
-              requiresSlackDelivery: raw.expectedOutputs.some((output) => /\bslack\b/iu.test(output)),
-              // Avalon sends the result to the destinations frozen here, and the
-              // compiler no longer writes a provider send into the instructions
-              // for one. So a draft that promises an emailed result and reaches
-              // this screen with the box unticked delivers nothing at all —
-              // which is why the promise has to be read off the draft rather
-              // than waited for from the reader.
-              //
-              // It matches delivery phrasing, never the bare noun: the
-              // compiler's own example automation is a briefing *about* email
-              // ("a ranked list of your most important emails"), and a false
-              // positive here freezes an address onto an automation that cannot
-              // be edited afterwards. A missed nudge costs a tick; a wrong one
-              // cannot be taken back.
-              requiresEmailDelivery: raw.expectedOutputs.some((output) =>
-                /\be-?mail(?:ed|s)?\s+(?:it|me|them|to\b)|\bemail\s+(?:me|you)\b|\b(?:by|via|over)\s+e-?mail\b|\bin\s+an?\s+e-?mail\b/iu.test(output)),
+              // What the compiler understood the person to ask for, not what a
+              // regex could find in its prose. The prose version pre-ticked a
+              // destination for "a ranked list of your most important emails" —
+              // a briefing *about* email — and a destination frozen by mistake
+              // could not be changed afterwards.
+              requiresSlackDelivery: raw.requestedDelivery.includes("slack_agent_dm"),
+              requiresEmailDelivery: raw.requestedDelivery.includes("email"),
             },
           }
         : {}),

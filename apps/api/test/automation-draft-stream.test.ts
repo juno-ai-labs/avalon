@@ -15,6 +15,7 @@ const draft = {
   triggers: [{ type: "interval" as const, intervalSeconds: 86_400, summary: "Every 24 hours" }],
   requiredCapabilities: [],
   expectedOutputs: ["New post summary"],
+  requestedDelivery: [],
   defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],

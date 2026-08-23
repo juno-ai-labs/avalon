@@ -132,7 +132,9 @@ the row is the tombstone.
 ### Outbound automation results
 
 The addresses above are inbound. Separately, a personal automation may copy each
-run's result outward. Every run always lands in its own Avalon work stream — that
+run's result outward, and may change that afterwards from the automation itself:
+`PATCH /automations/:id` takes the whole destination set, and only the owner's own
+request is accepted. Every run always lands in its own Avalon work stream — that
 is the canonical record and is not a destination the creator can turn off. On top
 of it the creator may freeze email to their own account address and one
 connector-provided personal surface, chosen once on the create screen and stored in
@@ -328,8 +330,11 @@ sunbird, terrapin, waxbill
 - **The result email carries a canonical HTTPS link, never `avalon://`.** Mail
   clients do not linkify a custom scheme, and most readers of a briefing are on a
   phone with no desktop app — see [`workstream-links.md`](workstream-links.md).
-- **The outbound email destination is the literal address frozen when the automation
-  was saved**, so a later account change cannot silently redirect results.
+- **The outbound email destination is the literal address frozen when the target
+  was created**, so a later account change cannot silently redirect results. The
+  *set* of destinations is not frozen — an owner may turn one on or off from the
+  automation — but a destination that survives an edit keeps its row, and with it
+  the per-run fence that stops a workflow retry mailing the same result twice.
 - **Every run lands in its own Avalon work stream**, and that destination cannot be
   turned off — the copies are additions to the canonical record, never replacements.
 
@@ -378,6 +383,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
 | `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Avalon still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
+| `apps/api/test/automation-delivery-target-edit.test.ts` | Turning a destination off, keeping a surviving row's per-run fence, and leaving delivery alone when an edit does not mention it. |
 | `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
@@ -406,6 +412,34 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-23 — The destination is the compiler's answer, and it can be changed
+
+**What changed:** A draft carries `requestedDelivery` — the destinations the
+compiler understood the person to ask for — and the create screen pre-selects
+from that rather than from a regex over the draft's prose. Destinations are also
+no longer frozen for the life of the automation: `PATCH /automations/:id` accepts
+a whole set, and the automation's own screen shows them with a toggle each.
+
+**Why:** Two halves of the same mistake. The compiler already parsed the sentence,
+so inferring intent again from its output was guessing at something already
+known — and the guess pre-ticked a destination for "a ranked list of your most
+important emails", a briefing *about* email. And a wrong tick could not be undone:
+the only way to stop the mail was to delete the automation and build it again,
+which made the guess expensive in exactly the case it was most likely wrong.
+
+**Considered and rejected:** Keeping the prose heuristic and tightening the
+pattern, which is what the previous change did — it narrows the false positives
+without removing the class. Also rejected: replacing every target row on an edit,
+which is simpler than reconciling but clears `last_delivered_workstream_id`, so an
+edit between a run finishing and its delivery settling would re-send the result.
+
+**Consequences:** `requestedDelivery` is a *request*, never authority: the
+destinations that actually deliver are the rows on the automation, and a draft
+that asks for a destination still delivers nowhere until somebody accepts it. The
+`update` path's owner check is defence behind the visibility fence rather than the
+thing doing the work — a personal automation is not visible to anybody else — and
+a change that widens automation visibility must keep it.
 
 ### 2026-08-22 — One result, rendered, from the notification sender
 

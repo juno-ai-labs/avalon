@@ -955,6 +955,11 @@ const automationDraftSubmissionJsonSchema = {
       }
     },
     expectedOutputs: { type: "array", items: { type: "string" } },
+    requestedDelivery: {
+      type: "array",
+      description: "Where the person asked for the result to be sent, if they said: \"email\" for their own email address, \"slack_agent_dm\" for their Avalon Slack DM. Use [] when they asked for neither. Avalon does the sending; this only records what was asked for.",
+      items: { type: "string", enum: ["email", "slack_agent_dm"] }
+    },
     defaultBehavior: {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."
@@ -1016,6 +1021,7 @@ const automationDraftSubmissionJsonSchema = {
     "instructions",
     "triggers",
     "expectedOutputs",
+    "requestedDelivery",
     "defaultBehavior",
     "recommendedPlugins",
     "memoryTables",
@@ -1970,6 +1976,13 @@ function normalizeAutomationDraft(
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
+    // A destination named twice is one destination, and one the schema does not
+    // know is dropped rather than failing the whole submission — the draft is
+    // still usable, the create screen just does not pre-tick that box.
+    requestedDelivery: Array.isArray(draft.requestedDelivery)
+      ? [...new Set(draft.requestedDelivery.filter((entry) =>
+        entry === "email" || entry === "slack_agent_dm"))]
+      : [],
     ready,
     followUpQuestion: null,
     elicitation: null,
