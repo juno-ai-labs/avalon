@@ -840,6 +840,7 @@ describe("Terminal authority on real workerd", () => {
         expireDueAt: 4_000_000,
         now: 1_000,
       });
+      await terminal(stub, "setFinalDiffResourceId", "pre-acceptance-retirement-diff", 1_001);
       await terminal(stub, "insertTask", {
         taskId: TASK_A,
         runId: RUN_A,
@@ -927,6 +928,7 @@ describe("Terminal authority on real workerd", () => {
         sandboxId: null,
         lifecycleState: "starting",
         operationRunId: RUN_B,
+        finalDiffResourceId: null,
       });
     });
 
@@ -948,6 +950,7 @@ describe("Terminal authority on real workerd", () => {
         expireDueAt: 4_000_000,
         now: 1_000,
       });
+      await terminal(stub, "setFinalDiffResourceId", "lifecycle-retirement-diff", 1_001);
       await terminal(stub, "insertTask", {
         taskId: TASK_A,
         runId: RUN_A,
@@ -1017,6 +1020,7 @@ describe("Terminal authority on real workerd", () => {
         sandboxId: null,
         lifecycleState: "starting",
         operationRunId: RUN_A,
+        finalDiffResourceId: null,
       });
     });
 
@@ -1518,11 +1522,11 @@ describe("Terminal authority on real workerd", () => {
         now: 2_000,
       });
 
-      await terminal(stub, "settleLifecycleTransition", {
+      expect(await terminal(stub, "settleLifecycleTransition", {
         lifecycleState: "expired",
         claimId: "claim-expire",
         now: 3_000,
-      });
+      })).toMatchObject({ value: true });
 
       // Past expiry there is nothing left to stop, archive, or reattach to, so
       // every deadline and the provider id go together.
@@ -1534,6 +1538,79 @@ describe("Terminal authority on real workerd", () => {
         expireDueAt: null,
         operationRunId: null,
         operationLeaseExpiresAt: null,
+        lifecycleClaimId: null,
+      });
+    });
+
+    it("refuses final expiry while its generation still has an unsettled task", async () => {
+      const stub = agent();
+      const effect = "00000000-0000-7000-8000-0000000000f6";
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedEffect(state, effect, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-expiry-task",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: "00000000-0000-7000-8000-0000000000a6",
+        runId: RUN_A,
+        effectIntentId: effect,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-expiry-task",
+        providerTaskName: "avalon-expiry-task",
+        commandSha256: "c".repeat(64),
+        commandDeadlineAt: 2_000,
+        startedAt: 1_500,
+        now: 1_500,
+      });
+      const before = (await terminal(stub, "sandbox")).value as { version: number };
+      await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "expiring",
+        claimId: "claim-expiry-task",
+        claimExpiresAt: 9_000_000,
+        generation: 1,
+        version: before.version,
+        now: 3_000,
+      });
+
+      expect(await terminal(stub, "settleLifecycleTransition", {
+        lifecycleState: "expired",
+        claimId: "claim-expiry-task",
+        now: 3_001,
+      })).toMatchObject({ value: false });
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({
+        lifecycleState: "expiring",
+        sandboxId: "daytona-expiry-task",
+        lifecycleClaimId: "claim-expiry-task",
+      });
+
+      expect(await terminal(stub, "cancelTaskAfterProviderCleanup", {
+        taskId: "00000000-0000-7000-8000-0000000000a6",
+        runId: RUN_A,
+        effectIntentId: effect,
+        sandboxGeneration: 1,
+        providerTaskName: "avalon-expiry-task",
+        claimId: "claim-expiry-task",
+        now: 3_002,
+      })).toMatchObject({ value: true });
+      expect(await terminal(stub, "settleLifecycleTransition", {
+        lifecycleState: "expired",
+        claimId: "claim-expiry-task",
+        now: 3_003,
+      })).toMatchObject({ value: true });
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({
+        lifecycleState: "expired",
+        sandboxId: null,
         lifecycleClaimId: null,
       });
     });
