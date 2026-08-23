@@ -8,6 +8,7 @@ import {
   UserIdSchema,
   type Region,
   type SubstreamId,
+  type UserId,
   type WorkspaceId,
   type WorkstreamId,
   WorkspaceIdSchema,
@@ -204,6 +205,12 @@ const ProductAuthSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   region: z.enum(["global", "eu"]),
   role: z.enum(["owner", "admin", "member"]),
+  // Absent: `sessionId` names a `sessions` row and is verified there.
+  // `"connector"`: a connector ingress already verified the link that binds
+  // this member on the message being delivered, `sessionId` is correlation
+  // only, and the object verifies current membership instead — see
+  // `connectorPrincipalAuth`.
+  principal: z.literal("connector").optional(),
 }).strict();
 const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("initialize"), auth: ProductAuthSchema,
@@ -1279,16 +1286,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     request: SubstreamProductRequest,
     span: FlowSpan,
   ): Promise<Response> {
-    const current = await span.step("workstream.room.session_auth", () => this.socketAuth({
-      workspaceId: request.auth.workspaceId,
-      userId: request.auth.userId,
-      sessionId: request.auth.sessionId,
-    }));
+    // Two principals, two verifications. A login session is re-verified against
+    // its `sessions` row, which is what makes a revoked or expired login stop
+    // working mid-flight. A connector principal has no `sessions` row to check
+    // — its standing authority is the connector link, which the Worker verified
+    // on the very message being delivered — so the object re-checks the D1 fact
+    // that *is* its to check: current active membership in this workspace, in
+    // this region. Before this branch existed, connector ingress synthesized a
+    // session id that no `sessions` row could ever match, and every linked
+    // member's Slack message died here as `session_revoked` (2026-08-22).
+    const connectorPrincipal = request.auth.principal === "connector";
+    const current = connectorPrincipal
+      ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
+      : await span.step("workstream.room.session_auth", () => this.socketAuth({
+        workspaceId: request.auth.workspaceId,
+        userId: request.auth.userId,
+        sessionId: request.auth.sessionId,
+      }));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
-      span.setError("session_revoked");
-      return jsonResponse({ error: "session_revoked" }, 401);
+      const refusal = connectorPrincipal ? "connector_member_revoked" : "session_revoked";
+      span.setError(refusal);
+      // The message rides to `WorkstreamObjectClient.decode`, whose fallback
+      // ("The work stream could not be loaded") misdescribes a refused send.
+      return jsonResponse({
+        error: refusal,
+        message: connectorPrincipal
+          ? "You are no longer an active member of this workspace"
+          : "Sign in again to continue",
+      }, 401);
     }
-    // Set once the object's own session query has answered, rather than taken
+    // Set once the object's own authorization query — session or connector
+    // membership — has answered, rather than taken
     // from the caller: a correlation value that arrives from outside is one the
     // object would have to decide whether to trust, for something it resolves
     // anyway. Only the workspace surrogate — see `socketAuth` for why the
@@ -2558,21 +2586,67 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!response.ok) throw new Error("workstream_local_event_publish_failed");
   }
 
+  /**
+   * Verification for a product request whose principal is a connector link
+   * rather than a login session. Only the product path uses it: a socket can
+   * never present a connector principal, because socket tickets are issued to
+   * login sessions alone.
+   *
+   * The link itself — the standing authorization that a Slack identity acts as
+   * this member — is a WorkspaceDO fact, and the Worker's ingress verifies it
+   * per delivered message (`linkedAccount`), fresher than any token this
+   * object could re-check. What remains this object's to verify is the same
+   * D1 fact every admission re-checks: that the person is an active member of
+   * this workspace, in this region, right now. That is exactly the sessions
+   * query minus the `sessions` join, so a member removed from the workspace is
+   * refused here with no new revocation machinery.
+   *
+   * `principal.sessionId` is a correlation value (`slack:{team}:{user}`), kept
+   * on the returned context for tracing; nothing looks it up. The parameter is
+   * typed off the product auth rather than a socket attachment on purpose —
+   * a socket can never present a connector principal, and the product schema
+   * is what guarantees the fields are present.
+   */
+  private async connectorPrincipalAuth(
+    principal: Pick<SubstreamProductRequest["auth"], "sessionId" | "userId" | "workspaceId">,
+  ): Promise<AuthContext | null> {
+    const role = await this.activeMembership(principal.workspaceId, principal.userId);
+    if (!role) return null;
+    return {
+      sessionId: principal.sessionId,
+      userId: principal.userId,
+      workspaceId: principal.workspaceId,
+      region: this.env.AVALON_REGION,
+      role: role.role,
+      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+    };
+  }
+
+  /**
+   * The membership fact every non-session verification shares: an active
+   * `workspace_members` row for this person, in a `workspaces` row this
+   * region owns. `connectorPrincipalAuth` and `socketAuth`'s development
+   * branch differ only in what they layer on top — auth SQL that is
+   * copy-pasted is auth SQL that drifts, so there is one copy.
+   */
+  private async activeMembership(
+    workspaceId: WorkspaceId,
+    userId: UserId,
+  ): Promise<AuthRoleRow | null> {
+    return await this.env.DB.prepare(
+      `SELECT member.role, workspace.analytics_workspace_id
+         FROM workspace_members member
+         JOIN workspaces workspace ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = ? AND member.user_id = ?
+          AND member.status = 'active' AND workspace.region = ?`,
+    ).bind(workspaceId, userId, this.env.AVALON_REGION).first<AuthRoleRow>();
+  }
+
   private async socketAuth(attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
       && this.env.AVALON_DEV_AUTH === "true"
       && attachment.sessionId === "development"
-      ? await this.env.DB.prepare(
-        `SELECT member.role
-           FROM workspace_members member
-           JOIN workspaces workspace ON workspace.id = member.workspace_id
-          WHERE member.workspace_id = ? AND member.user_id = ?
-            AND member.status = 'active' AND workspace.region = ?`,
-      ).bind(
-        attachment.workspaceId,
-        attachment.userId,
-        this.env.AVALON_REGION,
-      ).first<AuthRoleRow>()
+      ? await this.activeMembership(attachment.workspaceId, attachment.userId)
       : await this.env.DB.prepare(
         // The workspace surrogate rides this query because `workspaces` is
         // already joined — a socket that authorizes itself also learns what

@@ -78,6 +78,25 @@ function signingKey(env: Env): Uint8Array {
 }
 
 /**
+ * A socket ticket is a session credential: admission stores its `sid` on the
+ * attachment, and the access-revocation queue matches that id against real
+ * `sessions` rows to close what a logout revoked. A connector principal has
+ * no session behind its correlation id, so a ticket minted from one would be
+ * admitted for reads and then closeable by no session revocation — the
+ * documented invariant is that sockets never carry a connector principal,
+ * and this is where it is enforced rather than assumed.
+ */
+function assertSessionPrincipal(auth: AuthContext): void {
+  if (auth.principal === "connector") {
+    throw new ApiError(
+      403,
+      "connector_principal_cannot_hold_socket",
+      "This action requires a signed-in session",
+    );
+  }
+}
+
+/**
  * `ticketId` is accepted rather than only generated so the issuing route can
  * log the same id the room later reports consuming. It is the only identifier
  * shared by the two: a socket upgrade is a new connection carrying no request
@@ -91,6 +110,7 @@ export async function issueSocketTicket(
   substreamId = "0",
   ticketId: string = uuidV7(),
 ): Promise<string> {
+  assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",
@@ -114,6 +134,7 @@ export async function issueWorkspaceSocketTicket(
   env: Env,
   auth: AuthContext,
 ): Promise<string> {
+  assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workspace_socket",
@@ -190,6 +211,7 @@ export async function issueWorkstreamControlSocketTicket(
   auth: AuthContext,
   workstreamId: string,
 ): Promise<string> {
+  assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_control_socket",
@@ -214,6 +236,7 @@ export async function issueBlockDashboardBlockSocketTicket(
   workstreamId: string,
   blockId: string,
 ): Promise<string> {
+  assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "block_dashboard_block_socket",

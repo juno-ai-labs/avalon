@@ -3065,21 +3065,29 @@ export class SlackAgentService {
   }
 
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
+    let routed: SlackConnectionRow;
     try {
-      await this.connectionForTeam(teamId);
+      routed = await this.connectionForTeam(teamId);
     } catch (error) {
       if (error instanceof ApiError && error.code === "slack_installation_not_found") return null;
       throw error;
     }
+    // Bound to the routed connection, and the link's workspace to the
+    // connection's: the auth this resolves is what the work-stream object
+    // trusts as the member's identity, so which workspace it names must be
+    // asserted by the query rather than inherited from whichever link row an
+    // unordered scan happened to return.
     const row = await this.env.DB.prepare(
       `SELECT l.user_id, l.workspace_id, l.connection_id,
               cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,
               cc.granted_scopes_json, cc.status
        FROM slack_user_links l
-       JOIN connector_connections cc ON cc.id = l.connection_id
+       JOIN connector_connections cc
+         ON cc.id = l.connection_id AND cc.workspace_id = l.workspace_id
        WHERE l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
+         AND l.connection_id = ?
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status <> 'disabled'`,
-    ).bind(teamId, slackUserId).first<Record<string, unknown>>();
+    ).bind(teamId, slackUserId, routed.id).first<Record<string, unknown>>();
     if (!row) return null;
     const membership = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT role FROM workspace_members
@@ -3095,7 +3103,14 @@ export class SlackAgentService {
       granted_scopes_json: String(row.granted_scopes_json),
       status: String(row.status),
     };
-    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
+    // `principal: "connector"` is what makes this authority honest: the
+    // sessionId below is a correlation label, not a `sessions` row, and without
+    // the marker the product objects look it up there and refuse every linked
+    // member's message as `session_revoked` — which is exactly what happened to
+    // every `@Avalon` mention after the object cutover (2026-08-22). The link
+    // row and active membership verified just above are the authority; the
+    // objects re-check the membership half themselves on every request.
+    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role, principal: "connector" }, connection, slackUserId, teamId };
   }
 
   /**
@@ -4135,7 +4150,13 @@ function slackReconnectRequired(error: unknown): boolean {
   const reason = slackErrorReason(error);
   return (error instanceof ConnectorError
       && ((error.code === "unauthorized" && reason !== "token_expired") || reason === "missing_scope"))
-    || (error instanceof ApiError && error.status === 401);
+    // A 401 usually means the installation's grant is broken — but the two
+    // codes the work-stream object refuses *one member's* request with say
+    // nothing about the installation, and reading them as a grant failure
+    // marks the whole workspace's Slack connection `needs_reconnect` and
+    // pages an operator to reauthorize an installation that is healthy.
+    || (error instanceof ApiError && error.status === 401
+      && error.code !== "connector_member_revoked" && error.code !== "session_revoked");
 }
 
 function parseGrantedScopes(value: string): string[] {
@@ -4148,7 +4169,22 @@ function parseGrantedScopes(value: string): string[] {
 
 function slackIngressRetryable(error: unknown): boolean {
   if (error instanceof z.ZodError) return false;
-  if (error instanceof ApiError) return error.status === 429 || error.status >= 500;
+  // Two object-refusal codes are transient by construction and self-heal on
+  // the durable retry, which re-reads `linkedAccount` fresh:
+  // `connector_member_revoked` is reachable only as a race — a membership or
+  // role change landing between the ingress's link read and the object's
+  // re-check, since a member already removed resolves to no link and takes
+  // the workspace-principal path — and the retry either runs at the new role
+  // or answers under the workspace principal. `invalid_product_request` is
+  // the one-deploy skew window where a new Worker names a principal an old
+  // object script's strict schema refuses; the retry outlives the window.
+  // Classifying either as terminal permanently drops a member's message and
+  // pages an operator for a condition no operator can fix.
+  if (error instanceof ApiError) {
+    return error.status === 429 || error.status >= 500
+      || error.code === "connector_member_revoked"
+      || error.code === "invalid_product_request";
+  }
   if (!(error instanceof ConnectorError)) return true;
   const reason = slackErrorReason(error);
   // An access token can expire between proactive refresh and the provider
