@@ -1,6 +1,6 @@
 {
   "name": "@avalon/desktop",
-  "version": "1.140.0",
+  "version": "1.141.0",
   "private": true,
   "description": "Avalon secure Electron desktop client",
   "author": "Avalon",
