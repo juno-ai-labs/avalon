@@ -1,3 +1,4 @@
+import { normalizeModelText } from "@avalon/contracts/model-markdown";
 import {
   renderWorkstreamNameMessages,
   type WorkstreamNameContextMessage,
@@ -346,7 +347,11 @@ async function advanceTitle(env: Env, input: {
  * prohibitions to the prompt keeps the rules the model has to follow short.
  */
 export function normalizeGeneratedTitle(value: string): string | null {
-  const collapsed = value.replace(/\s+/gu, " ").trim().replace(/^#+\s*/u, "");
+  // A title is shown as plain text everywhere it appears — the sidebar, the
+  // window, the menu bar, a Slack card — so TeX in one is repaired here rather
+  // than by each of those, and the plain-text form is the right one: a Markdown
+  // escape would be a backslash a reader sees.
+  const collapsed = normalizeModelText(value).replace(/\s+/gu, " ").trim().replace(/^#+\s*/u, "");
   const unquoted = /^(["'“‘])(.+)(["'”’])$/u.exec(collapsed)?.[2] ?? collapsed;
   const trimmed = sentenceCased(unquoted.trim().replace(/[.,;:\s]+$/u, ""));
   if (trimmed.length === 0) return null;
