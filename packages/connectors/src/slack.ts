@@ -15,6 +15,11 @@ import {
   type FetchLike,
 } from "./provider-utils";
 import {
+  SLACK_DEFAULT_REACTIONS,
+  SlackEmojiNameSchema,
+  type SlackReactionSet,
+} from "./slack-reactions";
+import {
   assertPrincipalAccess,
   connectorRetryAfterMs,
   ConnectorError,
@@ -652,16 +657,31 @@ export type SlackAgentInvocation =
 
 const SlackIdSchema = z.string().min(1);
 const SlackTimestampSchema = z.string().min(1);
-export const SLACK_AGENT_ACKNOWLEDGEMENT_REACTION = "eyes" as const;
-export const SlackAgentAcknowledgementCommandSchema = z.object({
-  kind: z.literal("acknowledge"),
+/**
+ * One transition of the single reaction slot Avalon keeps on a source message.
+ *
+ * Both halves travel together because a transition is a swap: the reaction being
+ * replaced comes off and its successor goes on. `remove` names the emoji Avalon
+ * itself last placed, never whatever it finds on the message, so a member's own
+ * reaction is not collected as collateral. `fallback` is the built-in default
+ * for the state, used when Slack rejects a configured emoji as `invalid_name` —
+ * Slack has no way to check a name in advance, so the check is the use.
+ */
+export const SlackAgentReactionCommandSchema = z.object({
+  kind: z.literal("reaction"),
   channelId: SlackIdSchema,
   timestamp: SlackTimestampSchema,
-  reaction: z.literal(SLACK_AGENT_ACKNOWLEDGEMENT_REACTION),
+  add: SlackEmojiNameSchema.nullable().default(null),
+  remove: SlackEmojiNameSchema.nullable().default(null),
+  fallback: SlackEmojiNameSchema.nullable().default(null),
 }).strict();
-export type SlackAgentAcknowledgementCommand = z.infer<typeof SlackAgentAcknowledgementCommandSchema>;
-export interface SlackAgentAcknowledgementResult {
+export type SlackAgentReactionCommand = z.input<typeof SlackAgentReactionCommandSchema>;
+export interface SlackAgentReactionResult {
   success: true;
+  /** The emoji now on the message, which is the fallback if the first was refused. */
+  reaction: string | null;
+  removed: boolean;
+  /** Slack already had this reaction from Avalon: a successful idempotent retry. */
   alreadyPresent: boolean;
 }
 const SlackBlockSchema = z.record(z.string(), z.unknown());
@@ -881,7 +901,15 @@ const SlackWebApiSchemas = {
     request: z.object({
       channel: SlackIdSchema,
       timestamp: SlackTimestampSchema,
-      name: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_+-]+$/u),
+      name: SlackEmojiNameSchema,
+    }).strict(),
+    response: SlackOkSchema,
+  },
+  "reactions.remove": {
+    request: z.object({
+      channel: SlackIdSchema,
+      timestamp: SlackTimestampSchema,
+      name: SlackEmojiNameSchema,
     }).strict(),
     response: SlackOkSchema,
   },
@@ -1068,9 +1096,15 @@ export function parseSlackAgentInvocation(input: unknown): SlackAgentInvocation 
   throw new ConnectorError("provider_error", "Slack invocation kind is unsupported");
 }
 
-export function slackAgentActivationAcknowledgement(
+/**
+ * The source message an invocation's reactions belong on, if it has one.
+ *
+ * Commands and modal submissions have no unambiguous message to react to and
+ * keep their ephemeral and modal acknowledgements instead.
+ */
+export function slackAgentReactionSource(
   invocation: SlackAgentInvocation,
-): SlackAgentAcknowledgementCommand | null {
+): { channelId: string; timestamp: string } | null {
   if (invocation.kind !== "event") return null;
   const event = invocation.event;
   if (event.type !== "app_mention" && event.type !== "message") return null;
@@ -1078,12 +1112,34 @@ export function slackAgentActivationAcknowledgement(
     || typeof event.user !== "string" || !event.user
     || typeof event.channel !== "string" || !event.channel
     || typeof event.ts !== "string" || !event.ts) return null;
+  return { channelId: event.channel, timestamp: event.ts };
+}
+
+export function slackAgentActivationAcknowledgement(
+  invocation: SlackAgentInvocation,
+  reactions: SlackReactionSet = SLACK_DEFAULT_REACTIONS,
+): SlackAgentReactionCommand | null {
+  const source = slackAgentReactionSource(invocation);
+  if (!source) return null;
   return {
-    kind: "acknowledge",
-    channelId: event.channel,
-    timestamp: event.ts,
-    reaction: SLACK_AGENT_ACKNOWLEDGEMENT_REACTION,
+    kind: "reaction",
+    channelId: source.channelId,
+    timestamp: source.timestamp,
+    add: reactions.acknowledgement,
+    remove: null,
+    fallback: SLACK_DEFAULT_REACTIONS.acknowledgement,
   };
+}
+
+/** A removal Slack refuses because the reaction is already gone. */
+function isSlackReactionAbsence(error: unknown): boolean {
+  return error instanceof ConnectorError
+    && (error.message === "no_reaction" || error.message === "message_not_found");
+}
+
+/** The configured emoji, then Avalon's own if Slack has never heard of it. */
+function reactionAttempts(add: string, fallback: string | null): string[] {
+  return fallback && fallback !== add ? [add, fallback] : [add];
 }
 
 export async function verifySlackRequest(input: {
@@ -1933,20 +1989,44 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
             `The Slack connection has not granted ${SlackCapabilities.agent}`,
           );
         }
-        const acknowledgement = SlackAgentAcknowledgementCommandSchema.parse(command);
-        try {
-          await slackApi(botToken(context.connection), "reactions.add", {
-            channel: acknowledgement.channelId,
-            name: acknowledgement.reaction,
-            timestamp: acknowledgement.timestamp,
-          }, context.signal, fetcher);
-          return { success: true, alreadyPresent: false } satisfies SlackAgentAcknowledgementResult;
-        } catch (error) {
-          if (error instanceof ConnectorError && error.message === "already_reacted") {
-            return { success: true, alreadyPresent: true } satisfies SlackAgentAcknowledgementResult;
+        const transition = SlackAgentReactionCommandSchema.parse(command);
+        const token = botToken(context.connection);
+        let removed = false;
+        if (transition.remove && transition.remove !== transition.add) {
+          try {
+            await slackApi(token, "reactions.remove", {
+              channel: transition.channelId,
+              name: transition.remove,
+              timestamp: transition.timestamp,
+            }, context.signal, fetcher);
+            removed = true;
+          } catch (error) {
+            // `no_reaction` means a member already took it off, which is the
+            // state this was trying to reach. Nothing to repair, nothing to fail.
+            if (!isSlackReactionAbsence(error)) throw error;
           }
-          throw error;
         }
+        if (!transition.add) {
+          return { success: true, reaction: null, removed, alreadyPresent: false } satisfies SlackAgentReactionResult;
+        }
+        for (const name of reactionAttempts(transition.add, transition.fallback)) {
+          try {
+            await slackApi(token, "reactions.add", {
+              channel: transition.channelId,
+              name,
+              timestamp: transition.timestamp,
+            }, context.signal, fetcher);
+            return { success: true, reaction: name, removed, alreadyPresent: false } satisfies SlackAgentReactionResult;
+          } catch (error) {
+            if (error instanceof ConnectorError && error.message === "already_reacted") {
+              return { success: true, reaction: name, removed, alreadyPresent: true } satisfies SlackAgentReactionResult;
+            }
+            // A workspace that configured an emoji it does not have gets
+            // Avalon's own, once. Any other refusal is the caller's to handle.
+            if (!(error instanceof ConnectorError && error.message === "invalid_name")) throw error;
+          }
+        }
+        return { success: true, reaction: null, removed, alreadyPresent: false } satisfies SlackAgentReactionResult;
       },
     },
     async beginAuthorization(input) {

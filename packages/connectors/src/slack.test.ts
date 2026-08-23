@@ -990,6 +990,95 @@ describe("Slack connector", () => {
     })).toMatchObject({ kind: "command", command: "/avalon", text: "help" });
   });
 
+  it("swaps one reaction for the next, taking off only what Avalon put there", async () => {
+    const calls: { method: string; body: unknown }[] = [];
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push({ method: url.pathname, body: JSON.parse(String(init?.body)) });
+      return json({ ok: true });
+    });
+    const adapter = slackAdapterWith(fetcher);
+    await expect(adapter.messagingAgent!.execute({
+      kind: "reaction",
+      channelId: "C1",
+      timestamp: "123.456",
+      add: "gear",
+      remove: "brain",
+      fallback: "gear",
+    }, reactionContext())).resolves.toEqual({
+      success: true,
+      reaction: "gear",
+      removed: true,
+      alreadyPresent: false,
+    });
+    // The removal names the emoji Avalon last placed and nothing else, so a
+    // member's own reaction on the same message is never collected with it.
+    expect(calls).toEqual([
+      { method: "/api/reactions.remove", body: { channel: "C1", name: "brain", timestamp: "123.456" } },
+      { method: "/api/reactions.add", body: { channel: "C1", name: "gear", timestamp: "123.456" } },
+    ]);
+  });
+
+  it("treats a reaction a member already removed as the state it wanted", async () => {
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      return json(url.pathname.endsWith("reactions.remove") ? { ok: false, error: "no_reaction" } : { ok: true });
+    });
+    await expect(slackAdapterWith(fetcher).messagingAgent!.execute({
+      kind: "reaction",
+      channelId: "C1",
+      timestamp: "123.456",
+      add: "white_check_mark",
+      remove: "gear",
+      fallback: "white_check_mark",
+    }, reactionContext())).resolves.toEqual({
+      success: true,
+      reaction: "white_check_mark",
+      removed: false,
+      alreadyPresent: false,
+    });
+  });
+
+  it("falls back to Avalon's own emoji when a workspace configured one Slack lacks", async () => {
+    const names: string[] = [];
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (!url.pathname.endsWith("reactions.add")) return json({ ok: true });
+      const name = String((JSON.parse(String(init?.body)) as { name: string }).name);
+      names.push(name);
+      // Slack has no way to check a custom emoji exists in advance, so the
+      // refusal is the check and the fallback is the recovery.
+      return json(name === "company_ship_it" ? { ok: false, error: "invalid_name" } : { ok: true });
+    });
+    await expect(slackAdapterWith(fetcher).messagingAgent!.execute({
+      kind: "reaction",
+      channelId: "C1",
+      timestamp: "123.456",
+      add: "company_ship_it",
+      remove: null,
+      fallback: "white_check_mark",
+    }, reactionContext())).resolves.toEqual({
+      success: true,
+      reaction: "white_check_mark",
+      removed: false,
+      alreadyPresent: false,
+    });
+    expect(names).toEqual(["company_ship_it", "white_check_mark"]);
+  });
+
+  it("does not spend a call removing the reaction it is about to add", async () => {
+    const fetcher: FetchLike = vi.fn(async () => json({ ok: true }));
+    await slackAdapterWith(fetcher).messagingAgent!.execute({
+      kind: "reaction",
+      channelId: "C1",
+      timestamp: "123.456",
+      add: "gear",
+      remove: "gear",
+      fallback: "gear",
+    }, reactionContext());
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("plans and executes the shared activation acknowledgement idempotently", async () => {
     let attempts = 0;
     const fetcher: FetchLike = vi.fn(async (input, init) => {
@@ -1027,10 +1116,12 @@ describe("Slack connector", () => {
       },
     });
     expect(slackAgentActivationAcknowledgement(invocation)).toEqual({
-      kind: "acknowledge",
+      kind: "reaction",
       channelId: "C1",
       timestamp: "123.456",
-      reaction: "eyes",
+      add: "eyes",
+      remove: null,
+      fallback: "eyes",
     });
     const context = {
       connection: slackWorkspaceConnection(),
@@ -1041,12 +1132,12 @@ describe("Slack connector", () => {
       adapter.messagingAgent!,
       invocation,
       context,
-    )).resolves.toEqual({ success: true, alreadyPresent: false });
+    )).resolves.toEqual({ success: true, reaction: "eyes", removed: false, alreadyPresent: false });
     await expect(acknowledgeConnectorAgentActivation(
       adapter.messagingAgent!,
       invocation,
       context,
-    )).resolves.toEqual({ success: true, alreadyPresent: true });
+    )).resolves.toEqual({ success: true, reaction: "eyes", removed: false, alreadyPresent: true });
 
     const commandInvocation = parseSlackAgentInvocation({
       kind: "command",
@@ -1301,6 +1392,20 @@ async function slackSignature(secret: string, timestamp: string, body: string): 
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v0:${timestamp}:${body}`)));
   return `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function slackAdapterWith(fetcher: FetchLike) {
+  return createSlackConnector({
+    clientId: "client",
+    clientSecret: "secret",
+    signingSecret: "signing",
+    redirectUri: "https://api.example.com/connections/slack/callback",
+    fetch: fetcher,
+  });
+}
+
+function reactionContext() {
+  return { connection: slackWorkspaceConnection(), signal: AbortSignal.timeout(1_000) };
 }
 
 function json(value: unknown, headers: HeadersInit = {}, status = 200): Response {

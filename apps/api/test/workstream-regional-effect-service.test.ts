@@ -554,7 +554,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
       }));
       expect(applied.notificationIntentId).toBe(added.intentId);
       // The kind is what the delivery path branches on, and what the widened
-      // CHECK in schema version 8 exists to admit: before it, this insert
+      // CHECK in schema version 9 exists to admit: before it, this insert
       // failed the constraint rather than storing a row.
       expect(workspace.database.prepare(
         `SELECT notification_kind, source_message_id, state FROM workstream_notification_intents
