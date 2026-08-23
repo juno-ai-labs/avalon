@@ -8,7 +8,6 @@ import { consumeMigrationCommandQueue } from "./queues/migration-command-consume
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reconcileDigestDefaults } from "./services/digest-service";
-import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
 import {
@@ -169,8 +168,6 @@ export default {
   scheduled: withEnvContract((_controller, env, context) => {
     context.waitUntil((async () => {
       await Promise.all([
-        processDueOpportunityWindows(env),
-        processDueSuggestedWork(env),
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
         reapExpiredSessions(env),
