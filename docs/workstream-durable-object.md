@@ -1305,6 +1305,50 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — Sub-agent admission, and a cap that stopped meaning what it says
+
+**What changed:** `admitInlineChildAttempt` became `admitInlineChild` on the
+storage class — one transaction returning one of eight named outcomes, replacing
+six statements and two diagnostic reads. `heartbeatInlineChildAttempt` and
+`InlineChildRunLiveness` came with it, so no part of a sub-agent's lifecycle
+still takes a database handle.
+
+**Why:** it was the largest statement the compat layer routed and the clearest
+argument for the pattern. Three capacity subqueries lived inside an
+`INSERT … SELECT`'s `WHERE`, so a refusal arrived as zero rows and a *second*
+read — repeating all three subqueries — had to work out which policy had
+refused. The reclaim path then did the same thing again with a fourth subquery.
+Reading the policies first and writing after, inside one transaction, is both
+shorter and the only way a refusal can name itself.
+
+**A cap that has not meant what it says since the per-workspace-database
+cutover.** The routed admission counted active children with
+`active_child.workspace_id = parent.workspace_id`, which reads as a
+workspace-wide limit and is still configured as
+`HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS`. But `harness_runs` is object-local,
+so that predicate ran against `_runtime_harness_runs` — a view of *this work
+stream's* rows alone — where the comparison is true for every row it can see.
+The cap has been per-work-stream ever since, and nothing recorded that.
+`activeInlineChildren` counts what the predicate actually counted, so this
+change preserves today's behaviour rather than restoring the original intent.
+
+**What a future change has to respect:** restoring a genuinely workspace-wide
+cap is not a refactor. Nothing inside one WorkstreamDO can count another work
+stream's runs, so it would need WorkspaceDO to hold the count — a product
+decision about whether the limit is per-conversation or per-workspace, and a
+number that is the team's to set either way. Until that decision is made, the
+env var's name is the lie and the behaviour is the truth; do not "fix" the
+count to match the name without adding the cross-object query that would make
+it real.
+
+The heartbeat is `heartbeatAttempt`'s three-round-trip problem with the double
+fence on top — a guarded `UPDATE` carrying an `EXISTS` over the parent, a
+`LEFT JOIN` read to tell cancelled from lost, and a third read for the deadline
+it had just written. It now composes `inlineChildOwnership` with the write in
+one transaction, which is also why the two share a precedence rather than
+restating it.
+
+
 ### 2026-08-23 — The sub-agent's double fence, and a substream the fixture forgot
 
 **What changed:** `assertInlineChildAttemptOwned` and `recordInferenceAttempt`

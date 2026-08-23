@@ -98,6 +98,50 @@ export interface ScopeRow extends Record<string, SqlStorageValue> {
   created_at: number;
 }
 
+/**
+ * Whether a sub-agent may start, resume, replay, or must be told no.
+ *
+ * Eight states, because the routed version computed exactly these across six
+ * statements and two diagnostic reads: an `INSERT … SELECT` carrying three
+ * capacity subqueries in its `WHERE`, a lifecycle insert re-stating the fence,
+ * a read-back, a reclaim `UPDATE` with a fourth capacity subquery, and a second
+ * diagnostic read repeating all of them to work out which policy had refused.
+ * A count of changed rows cannot say "the chain budget is spent" or "someone
+ * else is already running this tool call"; these names can.
+ */
+export type InlineChildAdmissionOutcome =
+  | {
+      outcome: "claimed";
+      childRunId: string;
+      attemptId: string;
+      owner: string;
+      attemptEpoch: number;
+      leaseExpiresAt: number;
+      chainRootRunId: string;
+      chainDepth: number;
+      /** True when this resumed an existing attempt rather than starting one. */
+      reused: boolean;
+    }
+  /** Already finished. Its stored result is the tool's answer. */
+  | {
+      outcome: "replay";
+      childRunId: string;
+      childResultJson: string | null;
+      childResultHash: string | null;
+    }
+  /** A live executor holds this same tool call's child. */
+  | { outcome: "busy"; childRunId: string; leaseExpiresAt: number | null }
+  /** The same tool call was admitted for a different objective. */
+  | { outcome: "objective_mismatch"; childRunId: string }
+  | { outcome: "cancelled" }
+  | {
+      outcome: "refused";
+      reason: "depth_limit" | "chain_budget_exhausted" | "child_capacity";
+    }
+  /** The parent has no frozen scope, so there is nothing to narrow from. */
+  | { outcome: "parent_scope_missing" }
+  | { outcome: "ownership_lost" };
+
 export type HeartbeatOutcome =
   | { outcome: "renewed"; leaseExpiresAt: number }
   | { outcome: "cancelled" }
@@ -122,12 +166,17 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   error_json: string | null;
   workflow_instance_id: string | null;
   chain_root_run_id: string | null;
+  chain_depth: number;
+  delegated_task_hash: string | null;
+  child_result_json: string | null;
+  child_result_hash: string | null;
 }
 
 const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
-  completed_at, final_part_id, error_json, workflow_instance_id, chain_root_run_id`;
+  completed_at, final_part_id, error_json, workflow_instance_id, chain_root_run_id,
+  chain_depth, delegated_task_hash, child_result_json, child_result_hash`;
 
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
@@ -566,6 +615,229 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
+   * Admit, resume or refuse a sub-agent for one of the parent's tool calls.
+   *
+   * The largest statement the compat layer routed, and the clearest case for
+   * this whole conversion: the routed version put three capacity subqueries
+   * inside an `INSERT … SELECT`'s `WHERE`, so a refusal came back as zero rows
+   * and needed a second read — repeating all three subqueries — to say *which*
+   * policy had refused. Inside one transaction the policies are read first and
+   * the write follows, so each refusal names itself.
+   *
+   * The `(parent run, tool call)` pair is the idempotency key: the model
+   * retrying the same `run_subagent` call must reach the same child, which is
+   * why a replay and a busy child are outcomes rather than errors.
+   *
+   * **`activeChildren` counts this work stream's children, not the workspace's.**
+   * The routed predicate read `active_child.workspace_id = parent.workspace_id`,
+   * but it ran against `_runtime_harness_runs`, a view of this object's rows
+   * alone — so the comparison was true for every row it could see and the cap
+   * has been per-work-stream since the per-workspace-database cutover. This
+   * counts what that predicate actually counted; the name it is configured
+   * under, `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS`, still says otherwise.
+   */
+  admitInlineChild(input: {
+    parentRunId: string;
+    parentAttemptId: string;
+    parentOwner: string;
+    parentToolCallId: string;
+    childRunId: string;
+    childAttemptId: string;
+    childOwner: string;
+    objectiveHash: string;
+    leaseSeconds: number;
+    maxDepth: number;
+    maxChainRuns: number;
+    maxActiveChildren: number;
+    lifecycleEventId: string;
+    now: number;
+  }): InlineChildAdmissionOutcome {
+    return this.storage.transactionSync(() => {
+      const parent = this.run({ runId: input.parentRunId });
+      if (!parent
+        || parent.legacy_attempt_id !== input.parentAttemptId
+        || parent.lease_owner !== input.parentOwner
+        || parent.status !== "running"
+        || parent.terminalized_at !== null
+        || parent.cancellation_requested_at !== null
+        || parent.lease_expires_at === null
+        || parent.lease_expires_at <= input.now) {
+        return { outcome: "ownership_lost" as const };
+      }
+      if (!this.scope({ runId: input.parentRunId })) {
+        return { outcome: "parent_scope_missing" as const };
+      }
+
+      const existing = first(this.sql.exec<RunRow>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          WHERE parent_run_id = ? AND parent_tool_call_id = ?`,
+        input.parentRunId,
+        input.parentToolCallId,
+      ));
+      const expiresAt = input.now + input.leaseSeconds * 1_000;
+
+      if (existing) {
+        if (existing.delegated_task_hash !== input.objectiveHash) {
+          return { outcome: "objective_mismatch" as const, childRunId: existing.run_id };
+        }
+        if (existing.terminalized_at !== null || TERMINAL_RUN_STATUSES.has(existing.status)) {
+          return {
+            outcome: "replay" as const,
+            childRunId: existing.run_id,
+            childResultJson: existing.child_result_json,
+            childResultHash: existing.child_result_hash,
+          };
+        }
+        if (existing.cancellation_requested_at !== null) return { outcome: "cancelled" as const };
+        if (existing.lease_expires_at !== null && existing.lease_expires_at > input.now) {
+          return {
+            outcome: "busy" as const,
+            childRunId: existing.run_id,
+            leaseExpiresAt: existing.lease_expires_at,
+          };
+        }
+        if (existing.status !== "running"
+          || existing.legacy_attempt_id === null
+          || existing.lease_owner === null) {
+          return { outcome: "ownership_lost" as const };
+        }
+        if (this.activeInlineChildren(existing.run_id, input.now) >= input.maxActiveChildren) {
+          return { outcome: "refused" as const, reason: "child_capacity" as const };
+        }
+        // Resume the same durable attempt after its lease expires. Keeping the
+        // attempt id keeps its frozen scope and its tool receipts valid; the
+        // fresh owner is what fences the executor that lost the lease.
+        this.sql.exec(
+          `UPDATE runs
+              SET heartbeat_at = ?2, lease_expires_at = ?3, lease_owner = ?4,
+                  attempt_epoch = attempt_epoch + 1, updated_at = ?2
+            WHERE run_id = ?1`,
+          existing.run_id,
+          input.now,
+          expiresAt,
+          input.childOwner,
+        );
+        return {
+          outcome: "claimed" as const,
+          childRunId: existing.run_id,
+          attemptId: existing.legacy_attempt_id,
+          owner: input.childOwner,
+          attemptEpoch: existing.attempt_epoch + 1,
+          leaseExpiresAt: expiresAt,
+          chainRootRunId: existing.chain_root_run_id ?? existing.run_id,
+          chainDepth: Number(existing.chain_depth),
+          reused: true,
+        };
+      }
+
+      const chainRootRunId = parent.chain_root_run_id ?? parent.run_id;
+      const chainDepth = Number(parent.chain_depth) + 1;
+      if (chainDepth > input.maxDepth) {
+        return { outcome: "refused" as const, reason: "depth_limit" as const };
+      }
+      const chainRuns = Number(first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+        `SELECT COUNT(*) AS count FROM runs
+          WHERE run_id = ?1
+             OR (chain_root_run_id = ?1 AND parent_tool_call_id IS NOT NULL)`,
+        chainRootRunId,
+      ))?.count ?? 0);
+      if (chainRuns >= input.maxChainRuns) {
+        return { outcome: "refused" as const, reason: "chain_budget_exhausted" as const };
+      }
+      if (this.activeInlineChildren(null, input.now) >= input.maxActiveChildren) {
+        return { outcome: "refused" as const, reason: "child_capacity" as const };
+      }
+
+      // A delegated child owns its own substream. Sharing the parent's would
+      // violate `runs_mutating_substream_uq`, which allows one mutating run per
+      // substream — the child would be a UNIQUE failure rather than a sub-agent.
+      const substreamId = `run:${input.childRunId}`;
+      this.sql.exec(
+        `INSERT OR IGNORE INTO substreams
+           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq, depth,
+            return_mode, origin_part_id, owner_user_id, audience, tool_policy, status, created_at)
+         VALUES (?, 'agent', 'fork', '0', 0, ?, 'tool_result', NULL, NULL, 'system',
+                 'read_only', 'open', ?)`,
+        substreamId,
+        Math.min(4, chainDepth),
+        input.now,
+      );
+      this.sql.exec(
+        `INSERT INTO runs
+           (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+            next_action_cursor, input_fence_seq, revision, started_at,
+            active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+            tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+            origin, execution_principal_json, parent_run_id, parent_tool_call_id,
+            chain_root_run_id, chain_depth, legacy_attempt_id, lease_owner,
+            lease_expires_at, heartbeat_at, delegated_task_hash, inherited_scope_hash,
+            created_at, updated_at)
+         SELECT ?1, ?2, 'running', '{}', 1, 0, '', 0, 0, ?8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                'sub_agent', parent.execution_principal_json, ?3, ?4, ?5, ?6, ?7, ?9,
+                ?10, ?8, ?11, parent_scope.scope_hash, ?8, ?8
+           FROM runs parent
+           JOIN run_scopes parent_scope ON parent_scope.run_id = parent.run_id
+          WHERE parent.run_id = ?3`,
+        input.childRunId,
+        substreamId,
+        input.parentRunId,
+        input.parentToolCallId,
+        chainRootRunId,
+        chainDepth,
+        input.childAttemptId,
+        input.now,
+        input.childOwner,
+        expiresAt,
+        input.objectiveHash,
+      );
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.childRunId,
+        attemptId: input.childAttemptId,
+        eventKey: "admitted",
+        eventType: "child_admitted",
+        status: "running",
+        memberSafePayloadJson: JSON.stringify({
+          parentHarnessRunId: input.parentRunId,
+          chainDepth,
+        }),
+        now: input.now,
+      });
+      return {
+        outcome: "claimed" as const,
+        childRunId: input.childRunId,
+        attemptId: input.childAttemptId,
+        owner: input.childOwner,
+        attemptEpoch: 1,
+        leaseExpiresAt: expiresAt,
+        chainRootRunId,
+        chainDepth,
+        reused: false,
+      };
+    });
+  }
+
+  /**
+   * How many delegated children are running right now, excluding one.
+   *
+   * See `admitInlineChild`: this is the work stream's count, which is what the
+   * routed `active_child.workspace_id = parent.workspace_id` predicate actually
+   * counted once `harness_runs` became object-local.
+   */
+  private activeInlineChildren(exceptRunId: string | null, now: number): number {
+    return Number(first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM runs
+        WHERE parent_tool_call_id IS NOT NULL
+          AND (?1 IS NULL OR run_id != ?1)
+          AND status = 'running'
+          AND terminalized_at IS NULL
+          AND lease_expires_at > ?2`,
+      exceptRunId,
+      now,
+    ))?.count ?? 0);
+  }
+
+  /**
    * Whether a sub-agent's attempt may still write, fenced by its parent too.
    *
    * The routed version was a self-join on `harness_runs` with eight bound
@@ -619,6 +891,41 @@ export class WorkstreamHarnessRunStorage {
       return { outcome: "ownership_lost" };
     }
     return { outcome: "owned" };
+  }
+
+  /**
+   * Push a sub-agent's lease forward, fenced by its parent's lease too.
+   *
+   * `heartbeatAttempt`'s three-round-trip problem with the double fence on top:
+   * the routed version ran a guarded `UPDATE` whose `WHERE` carried an `EXISTS`
+   * over the parent, then — on zero changes — a `LEFT JOIN` read to tell a
+   * cancelled run from a lost lease, then a third read for the deadline it had
+   * just written itself. The fence and the write are the same transaction here,
+   * so the deadline is the one this call chose.
+   */
+  heartbeatInlineChild(input: {
+    parentRunId: string;
+    parentAttemptId: string;
+    parentOwner: string;
+    childRunId: string;
+    childAttemptId: string;
+    childOwner: string;
+    leaseSeconds: number;
+    now: number;
+  }): HeartbeatOutcome {
+    return this.storage.transactionSync(() => {
+      const owned = this.inlineChildOwnership(input);
+      if (owned.outcome !== "owned") return { outcome: owned.outcome };
+      const expiresAt = input.now + input.leaseSeconds * 1_000;
+      this.sql.exec(
+        `UPDATE runs SET heartbeat_at = ?2, lease_expires_at = ?3, updated_at = ?2
+          WHERE run_id = ?1`,
+        input.childRunId,
+        input.now,
+        expiresAt,
+      );
+      return { outcome: "renewed" as const, leaseExpiresAt: expiresAt };
+    });
   }
 
   /**
