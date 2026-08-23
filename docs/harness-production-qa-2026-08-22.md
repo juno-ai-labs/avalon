@@ -375,9 +375,9 @@ session, or Daytona reports the sandbox absent, Avalon instead confirms provider
 deletion, advances to a fresh sandbox generation, and only then admits the
 successor. An object-local cleanup token excludes competing tools and lifecycle
 work across those provider awaits. The exact token is renewed before every
-provider mutation and cannot be revived after expiry, so a degraded 20-task
-batch cannot leave an obsolete stop/delete continuation behind after a
-successor takes over. The lifecycle sweep uses the same provider-cleanup-before-
+provider mutation and cannot be revived after expiry, so a degraded cleanup
+cannot leave an obsolete stop/delete continuation behind after a successor
+takes over. The lifecycle sweep uses the same provider-cleanup-before-
 settlement order and token-fenced generation retirement for provider absence or
 a `submitting` task whose named session is missing; scheduled cleanup does not
 depend on a later human-linked run. An aborted or late provider continuation stays unsettled
@@ -410,9 +410,11 @@ be converted into operation ownership merely because its deadline passed. The
 exact token is renewed before each provider mutation, while a renewal after
 expiry fails rather than reviving obsolete authority; the degraded-cleanup race
 proves the obsolete claimant cannot stop its successor.
-Cleanup is bounded to 20 tasks per claim; both linked-operation and scheduled-
-lifecycle 21-task regressions prove residue is safely continued on the next
-attempt, including after a whole-sandbox fallback stop. Provider-404 cases prove
+Cleanup has no agent-selected item cap: every successful iteration settles one
+of the finite durable tasks already present, and handoff waits for the set to be
+empty. Both linked-operation and scheduled-lifecycle 21-task regressions prove
+all residue is settled under the exact claim, including after a whole-sandbox
+fallback stop. Provider-404 cases prove
 linked recovery and scheduled lifecycle cleanup cancel retained tasks under the
 cleanup token, retire the missing sandbox, and advance the generation before
 another operation can claim it. Removing the yielded-

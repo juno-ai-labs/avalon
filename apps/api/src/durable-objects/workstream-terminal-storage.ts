@@ -42,10 +42,13 @@ export type TerminalLifecycleState =
  * the yielded run does not resume execution or release this lease itself. A
  * yielded run's still-live Terminal task is checked separately below, because
  * `command_outcome_unknown` retains its named provider session for recovery.
- * Someone reading a name like
- * `LIVE_RUN_STATUSES` here and adding `'running'` would invert the test.
+ * Renaming this to `LIVE_RUN_STATUSES` and adding `'running'` would invert the
+ * test, which is why the constant names the values it actually contains.
  */
 const TERMINAL_YIELDED_RUN_STATUSES = "('needs_input', 'completed', 'failed', 'cancelled')";
+
+/** Existing Terminal operation-authority window, shared by cleanup claims. */
+export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
 
 export interface TerminalSandboxRecord {
   lifecycleState: TerminalLifecycleState;
