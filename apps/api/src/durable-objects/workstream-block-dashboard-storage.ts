@@ -203,6 +203,42 @@ export class WorkstreamBlockDashboardStorage {
   }
 
   /**
+   * Move a block run through its lifecycle on the dispatching agent's authority.
+   *
+   * Unfenced on the run lease, deliberately and unchanged from the statement it
+   * replaces. `BlockDashboardAgent` owns the dispatch: it is the thing that
+   * decided this block would run, and it writes `running` before an executor
+   * exists to hold a lease at all. The fenced write is `settleBlockRun`, which
+   * is the *executor's* claim on the result and must prove it is still the
+   * attempt entitled to make one.
+   *
+   * `started_at` is set once and never moved, so a retried dispatch reports when
+   * the block first began rather than when it was last touched.
+   */
+  recordBlockRunProgress(input: {
+    blockRunId: string;
+    harnessRunId: string;
+    status: BlockRunStatus;
+    errorJson: string | null;
+    now: number;
+  }): number {
+    this.sql.exec(
+      `UPDATE block_dashboard_block_runs
+          SET status = ?1, error_json = ?2,
+              started_at = CASE WHEN ?1 = 'running' THEN COALESCE(started_at, ?3) ELSE started_at END,
+              completed_at = CASE WHEN ?1 IN ('completed', 'failed', 'stopped') THEN ?3
+                                  ELSE completed_at END
+        WHERE block_run_id = ?4 AND run_id = ?5`,
+      input.status,
+      input.errorJson,
+      input.now,
+      input.blockRunId,
+      input.harnessRunId,
+    );
+    return this.#changed();
+  }
+
+  /**
    * Close a block run whose harness run was reaped for a lapsed lease.
    *
    * Deliberately unfenced on a live lease — an expired one is the sweep's whole
@@ -233,14 +269,23 @@ export class WorkstreamBlockDashboardStorage {
   }
 
   /**
-   * Admit a dispatch: the configuration version it was planned against, and the
-   * block run itself, or neither.
+   * Admit a dispatch: the configuration version, the harness run, and the block
+   * run — or none of them.
    *
-   * One operation rather than two because the run row's foreign key is the
-   * version row — a routed batch that landed the first and lost the second left
-   * a version nothing referenced, and one that lost the first could not land
-   * the second at all. `INSERT OR IGNORE` on the version because concurrent
-   * blocks of one refresh all name it.
+   * All three, in one transaction, because they are one fact. The routed
+   * version was a three-statement batch whose middle statement wrote `runs`
+   * through a *different* slice's compatibility view, and the object executed
+   * the batch atomically only as an accident of how the router happened to send
+   * it. Splitting the block rows onto this port and leaving the run row routed
+   * would have turned that accident into two round trips with a real window
+   * between them, in which a block run exists whose run does not — the row that
+   * `block_dashboard_block_runs.run_id` has a foreign key to.
+   *
+   * So the run row is written here rather than waiting for the harness-runs
+   * slice to own it. The column set is what the retired
+   * `_runtime_harness_runs_insert` trigger produced for a `scheduled` run:
+   * `admitted` status, the main substream, a `{}` budget, zeroed counters, and
+   * `started_at` defaulted to the creation instant.
    */
   admitDispatch(input: {
     configurationVersionId: string;
@@ -253,6 +298,8 @@ export class WorkstreamBlockDashboardStorage {
     prompt: string;
     triggerSequence: number;
     harnessRunId: string;
+    executionPrincipalJson: string;
+    model: string;
     createdAt: number;
   }): "admitted" | "already_admitted" {
     return this.storage.transactionSync(() => {
@@ -270,6 +317,26 @@ export class WorkstreamBlockDashboardStorage {
         input.blocksJson,
         input.createdByUserId,
         input.configurationCreatedAt,
+      );
+      // The run the block's work happens under. `INSERT OR IGNORE` for the same
+      // reason the version row takes it: a redelivered dispatch names a run that
+      // may already exist, and the block-run check above is what decides whether
+      // this is a replay.
+      this.sql.exec(
+        `INSERT OR IGNORE INTO runs
+           (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+            next_action_cursor, input_fence_seq, revision, started_at,
+            active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+            tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+            origin, execution_principal_json, chain_depth, model, created_at, updated_at)
+         VALUES (?, '0', 'admitted', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                 'block_dashboard_block', ?, 0, ?, ?, ?)`,
+        input.harnessRunId,
+        input.createdAt,
+        input.executionPrincipalJson,
+        input.model,
+        input.createdAt,
+        input.createdAt,
       );
       this.sql.exec(
         `INSERT INTO block_dashboard_block_runs

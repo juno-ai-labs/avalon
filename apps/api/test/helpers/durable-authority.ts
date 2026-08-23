@@ -3,6 +3,11 @@ import { vi } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
 import {
+  BLOCK_DASHBOARD_OPERATIONS,
+  type BlockDashboardObjectPort,
+} from "../../src/durable-objects/workstream-block-dashboard-protocol";
+import { WorkstreamBlockDashboardStorage } from "../../src/durable-objects/workstream-block-dashboard-storage";
+import {
   TOOL_RECEIPT_OPERATIONS,
   type ToolReceiptObjectPort,
 } from "../../src/durable-objects/workstream-tool-receipt-protocol";
@@ -629,6 +634,31 @@ export function testSubstreamAgentsBinding(
  * fence is exercised. What the *runtime* decides — that the operation is atomic
  * against a concurrent caller — is proved in `test-workers/` instead.
  */
+/**
+ * A block-dashboard port over a real storage instance in this isolate.
+ *
+ * The receipt port's seam, for the same reason: the Node suite runs the real
+ * schema and the real statements over `node:sqlite`, and what the runtime
+ * decides belongs in `test-workers/`.
+ */
+export function testBlockDashboardPort(database: DatabaseSync): BlockDashboardObjectPort {
+  const storage = new WorkstreamBlockDashboardStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    BLOCK_DASHBOARD_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as BlockDashboardObjectPort;
+}
+
 export function testToolReceiptPort(
   database: DatabaseSync,
   /**
