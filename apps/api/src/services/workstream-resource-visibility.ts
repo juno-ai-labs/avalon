@@ -58,6 +58,27 @@ export class WorkstreamResourceInventoryChangedError extends Error {
 }
 
 /**
+ * Resource ids resolved against the workspace in one statement.
+ *
+ * Bounds: entries in the `IN (…)` list of the resource lookup below, and so the
+ *   bound parameters of that statement — this many ids plus two.
+ * Without it: a work stream with a thousand attachments builds one statement
+ *   with a thousand placeholders, which is past what the binding accepts and
+ *   fails the whole rail rather than paging through it.
+ * Direction: upper bound. Lowering it costs round trips; raising it risks the
+ *   statement being refused outright.
+ * Trips: the loop simply runs more times. Nothing is dropped and no caller
+ *   sees a partial answer — the batches are concatenated before projection.
+ * Derive from: **not recorded.** This number predates the authority split and
+ *   came across unchanged; the obvious candidate is the binding's parameter
+ *   ceiling, but nothing in the history says so and 100 ids is 102 parameters,
+ *   which does not sit neatly under any limit named in this repository.
+ *   Whoever needs to move it should establish the ceiling first rather than
+ *   inherit this guess.
+ */
+const RESOURCE_LOOKUP_BATCH = 100;
+
+/**
  * Resolve the cross-authority resource projection without a cross-database
  * join. Work-stream membership/watch state comes from the WorkstreamDO; the
  * workspace-owned resource and note authorization come from WorkspaceDO.
@@ -85,8 +106,8 @@ async function loadVisibleRows(
     resourceIds: local.map((link) => link.resource_id),
   }));
   const resources: Array<Record<string, unknown>> = [];
-  for (let offset = 0; offset < local.length; offset += 100) {
-    const ids = local.slice(offset, offset + 100).map((link) => link.resource_id);
+  for (let offset = 0; offset < local.length; offset += RESOURCE_LOOKUP_BATCH) {
+    const ids = local.slice(offset, offset + RESOURCE_LOOKUP_BATCH).map((link) => link.resource_id);
     const placeholders = ids.map(() => "?").join(", ");
     const result = await database.prepare(
       `SELECT resource.*,
