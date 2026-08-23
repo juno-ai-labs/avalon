@@ -418,7 +418,7 @@ categories. Deterministic input-contract rejections were safe to correct, but
 they are not evidence for rollback, post-commit alarm, or stale-write guidance.
 The post-PR #251 audit also found that a transient receipt RPC after a stopped or
 reaped run had terminalized was never retried, leaving the run terminal while
-its tool card remained `admitted` or `executing`. The branch-local repair uses
+its tool card remained `admitted` or `executing`. The deployed repair uses
 an immutable settlement marker plus the existing bounded activation sweep. It
 also fails soft per warned repair row, preserves the receipt-scoped stopped
 payload, and cannot overwrite a later automation elicitation. Its stopped,
@@ -430,7 +430,9 @@ produced healthy Global Worker `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
 Worker `f3c83ce2-e854-49fc-9b05-5819dda1c984`, with no pending migration in
 either region. Deliberate durable-host response loss remains open for targeted
 production acceptance; the deployed identity and health checks do not pretend
-to reproduce that destructive fault through the UI.
+to reproduce that destructive fault through the UI. A fresh ordinary
+post-deployment Computer Use inspection was unavailable because the Mac
+relocked after deployment.
 
 ## Additional observations
 
