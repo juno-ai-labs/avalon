@@ -228,15 +228,21 @@ describe("suggested-work aggregation", () => {
       version: 1,
       displayPrompt: `Candidate ${index}`,
       admissionReasoning: "r".repeat(20_000),
-      linkedUsers: Array.from({ length: 20 }, () => ({
+      linkedUsers: Array.from({ length: 20 }, (_, linkIndex) => ({
+        user_id: `user-${linkIndex}`,
+        role: "mentioned",
+        resolution: "verified",
         reasoning: "l".repeat(1_000),
       })),
       provenance: Array.from({ length: 32 }, (_, nodeIndex) => ({
         id: `node-${nodeIndex}`,
-        node_kind: "activity",
-        source_id: `source-${nodeIndex}`,
+        kind: "activity",
         label: "p".repeat(500),
-        locator_json: JSON.stringify({ excerpt: "x".repeat(2_000) }),
+        provider: "slack",
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        canonicalUrl: null,
+        depth: 0,
+        locator: JSON.stringify({ excerpt: "x".repeat(2_000) }),
       })),
       age: { createdAt: "2026-08-07T00:00:00.000Z", updatedAt: "2026-08-07T00:00:00.000Z" },
       impressions: { count: 0, firstAt: null, lastAt: null },
@@ -399,20 +405,8 @@ describe("suggested-work aggregation", () => {
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {
     const database = migratedDatabase();
     seed(database);
-    database.prepare(`
-      INSERT INTO work_opportunities
-       (id, workspace_id, audience_scope, audience_user_id, display_prompt, execution_prompt,
-        admission_reasoning, provider_icon, source_label, source_fingerprint, version,
-        display_prompt_hash, execution_prompt_hash, status, expires_at, created_at, updated_at)
-       VALUES (?, ?, 'workspace', NULL, ?, ?, ?, 'brand-slack', 'From slack', 'source-one', 3,
-        'display-hash', 'execution-hash', 'active', '2027-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z')
-    `).run(
-      "00000000-0000-7000-8000-000000000201",
-      workspaceId,
-      "Follow up on the launch blocker",
-      "Long execution instructions that must never appear in the suggestion API.",
-      "Extensive internal admission reasoning that must never appear in the suggestion API.",
-    );
+    openWorkstreamAuthorityForTest(database);
+    const opportunityId = "00000000-0000-7000-8000-000000000201";
     const auth: AuthContext = {
       sessionId: "session",
       userId: userOne,
@@ -420,10 +414,35 @@ describe("suggested-work aggregation", () => {
       region: "global",
       role: "owner",
     };
-    const service = new WorkOpportunityService(environment(database), auth);
+    // The object is the one that holds the execution prompt and the admission
+    // reasoning, so the contract boundary worth asserting is the Worker's parse
+    // of what it hands back — here it hands back both, and neither may survive.
+    const env = createTestEnv({
+      DB: new D1Adapter(database),
+      APP_ENV: "development",
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          listOpportunities: vi.fn(async () => ({
+            items: [{
+              id: opportunityId,
+              version: 3,
+              displayPrompt: "Follow up on the launch blocker",
+              icon: "brand-slack",
+              sourceLabel: "From slack",
+              executionPrompt: "Long execution instructions that must never appear in the suggestion API.",
+              admissionReasoning: "Extensive internal admission reasoning that must never appear in the suggestion API.",
+            }],
+          })),
+          claimOpportunityStart: vi.fn(async () => ({ outcome: "stale", opportunity: null })),
+        },
+      }),
+    });
+    const service = new WorkOpportunityService(env, auth);
+
     await expect(service.list(4)).resolves.toEqual({
       items: [{
-        id: "00000000-0000-7000-8000-000000000201",
+        id: opportunityId,
         version: 3,
         displayPrompt: "Follow up on the launch blocker",
         icon: "brand-slack",
@@ -433,55 +452,10 @@ describe("suggested-work aggregation", () => {
     const publicJson = JSON.stringify(await service.list(4));
     expect(publicJson).not.toContain("Long execution instructions");
     expect(publicJson).not.toContain("Extensive internal admission reasoning");
-    await expect(service.start(
-      "00000000-0000-7000-8000-000000000201",
-      2,
-      "stale-attempt",
-    )).rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
-  });
-
-  it("debounces impression-driven ranking requests for one hour", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-10T12:00:00.000Z"));
-    const database = migratedDatabase();
-    seed(database);
-    const opportunityId = "00000000-0000-7000-8000-000000000204";
-    insertOpportunity(database, opportunityId);
-    database.prepare(`
-      INSERT INTO suggested_work_sets
-       (workspace_id, user_id, workspace_version, candidate_fingerprint,
-        opportunity_ids_json, ranking_reasoning, status, created_at, updated_at)
-      VALUES (?, ?, 1, 'fingerprint', ?, 'Initial ranking', 'ready', ?, ?)
-    `).run(
-      workspaceId,
-      userOne,
-      JSON.stringify([opportunityId]),
-      "2026-08-10T12:00:00.000Z",
-      "2026-08-10T12:00:00.000Z",
-    );
-    const service = new WorkOpportunityService(environment(database), {
-      sessionId: "session",
-      userId: userOne,
-      workspaceId,
-      region: "global",
-      role: "owner",
-    });
-
-    // Impressions are the one input that asks for a re-rank without the
-    // candidates having changed, so within the hour they must ask for nothing.
-    await service.recordImpressions([opportunityId]);
-    expect(database.prepare(
-      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ due_at: null });
-
-    vi.setSystemTime(new Date("2026-08-10T13:00:01.000Z"));
-    await service.recordImpressions([opportunityId]);
-    expect(database.prepare(
-      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ due_at: "2026-08-10T13:00:01.000Z" });
-    expect(database.prepare(
-      "SELECT impression_count FROM work_opportunity_user_states WHERE opportunity_id = ? AND user_id = ?",
-    ).get(opportunityId, userOne)).toEqual({ impression_count: 2 });
+    // A start against a version the member is no longer looking at is refused,
+    // not silently applied to whatever the suggestion has since become.
+    await expect(service.start(opportunityId, 2, "stale-attempt"))
+      .rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
   });
 
   it("rolls a partially created work stream forward instead of making the opportunity claimable again", async () => {

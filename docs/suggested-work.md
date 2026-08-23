@@ -278,19 +278,26 @@ work-stream identity anchor with no product provenance.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/work-opportunity-batching.test.ts` | The legacy debounce semantics retained by the WorkspaceDO repository. |
-| `apps/api/test/suggested-work-scheduling.test.ts` | `request_seq` claiming, the tiers, starvation promotion, the budgets, and every rule in [Failure modes and limits](#failure-modes-and-limits). |
+| `apps/api/test/work-opportunity-batching.test.ts` | Admission batching, provenance scoping, the start ledger's claim/replay/roll-forward contract, and that the renderer contract strips what the object holds. |
 | `apps/api/test/suggested-work-opening-turn.test.ts` | That the opening message is the member's own turn carrying `suggested_work_expansion`. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, and serving. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, serving, and every read-path request rule below. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/suggested-work-scheduling.test.ts`
-— the path is package-relative.
+`pnpm --filter @avalon/api exec vitest run test/work-opportunity-batching.test.ts`
+— the path is package-relative. The workerd suite takes
+`--config vitest.workers.config.ts`.
+
+**The request rules belong in the workerd suite, not a Node one.** Whether a read
+asks for a ranking is decided inside `listOpportunities`, against the object's own
+SQLite, so a Node test can only reach it through a stub that answers for it. This
+is not a style preference: the rules used to be asserted in a Node suite against a
+parallel D1 implementation that migration 0090 made unreachable, so for as long as
+that suite was green it was proving something production never ran.
 
 The trap is the clock. Every scheduling rule here is a comparison against
-`Date.now()`, and a test that does not stub it either passes by accident or fails
-on a slow machine. Stub the clock, and assert on the stored `request_seq` and
-`due_at` rather than on how long a pass took.
+`Date.now()`. Pass `now`, `scheduleAt` and `rerankBefore` explicitly and assert on
+the stored `request_seq` and `due_at`, rather than stubbing the clock and asserting
+on how long a pass took.
 
 ## WorkspaceDO data model
 
@@ -322,6 +329,36 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-22 — The read path's request rules move to the suite that runs them
+
+**What changed:** The nine `authority.phase === "durable_object_open"` gates in
+`work-opportunity-service.ts` are gone, along with the regional D1 implementation
+each one guarded — admission context, the due markers, `persistDecision`, the
+ranking candidates, the cached ranking state, the ranking round, the stored set,
+and `list`/`recordImpressions`/`dismiss`/`start`. `suggested-work-scheduling.test.ts`
+is deleted; its six behaviours are now asserted against a real WorkspaceDO in
+`test-workers/durable-object-runtime.test.ts`, together with the impression
+debounce that moved there from `work-opportunity-batching.test.ts`.
+
+**Why:** Migration 0090 closed the phase permanently, so every non-open arm had
+been unreachable since — but the tests over them had not moved, and they were the
+only tests those six rules had. A member's stored ranking being served in its
+stored order, the recency fallback, the refill on a hole, the empty-set steady
+state, the dismissal's own refill and the active-members-only due marker were all
+being proved against an implementation nothing runs.
+
+**Rejected:** Retargeting the Node suite at a stubbed `handleProductRequest`. The
+stub would have had to answer for `listOpportunities`, which is where every one of
+these rules actually lives, so the suite would have asserted its own fixture. The
+one Node assertion kept is the one that is genuinely the Worker's — that the
+renderer contract strips the execution prompt and admission reasoning the object
+hands back — and it is written with the object returning both.
+
+**What a future change has to respect:** These rules are `listOpportunities`,
+`dismissOpportunity` and `recordImpressions` in `workspace-product-storage.ts`. A
+change to when a read files a ranking request belongs in the workerd suite; a Node
+test cannot see it.
 
 ### 2026-08-19 — Provenance roots and user links import under the object's uniqueness
 
