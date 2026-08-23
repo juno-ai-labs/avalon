@@ -634,6 +634,7 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByRole('table').parentElement).toHaveClass('markdown-table-scroll');
     expect(document.querySelector('.markdown-body hr')).toBeInTheDocument();
     expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'ts');
+    expect(screen.getByText('TypeScript')).toHaveClass('markdown-code-language');
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
   });
 
@@ -671,6 +672,7 @@ describe('MessageBlock markdown', () => {
     expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'mermaid');
     expect(document.querySelector('.prism-code')).toHaveClass('language-plain');
     expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.getByText('Mermaid')).toHaveClass('markdown-code-language');
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {

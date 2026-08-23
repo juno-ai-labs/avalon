@@ -106,6 +106,42 @@ const markdownLanguageAliases: Record<string, Language> = {
   zsh: 'bash',
 };
 
+const markdownLanguageDisplayNames: Record<string, string> = {
+  bash: 'Bash',
+  c: 'C',
+  cpp: 'C++',
+  csharp: 'C#',
+  css: 'CSS',
+  diff: 'Diff',
+  dockerfile: 'Dockerfile',
+  go: 'Go',
+  graphql: 'GraphQL',
+  java: 'Java',
+  javascript: 'JavaScript',
+  json: 'JSON',
+  jsx: 'JSX',
+  kotlin: 'Kotlin',
+  markdown: 'Markdown',
+  markup: 'HTML',
+  php: 'PHP',
+  plain: 'Plain text',
+  python: 'Python',
+  ruby: 'Ruby',
+  rust: 'Rust',
+  sql: 'SQL',
+  swift: 'Swift',
+  tsx: 'TSX',
+  typescript: 'TypeScript',
+  yaml: 'YAML',
+};
+
+/** The header label: the Prism-resolved name where there is one, otherwise the fence's own word, capitalized. */
+function codeLanguageLabel(normalizedLanguage: string, requestedLanguage: string): string {
+  const known = markdownLanguageDisplayNames[requestedLanguage] ?? markdownLanguageDisplayNames[normalizedLanguage];
+  if (known) return known;
+  return normalizedLanguage.charAt(0).toUpperCase() + normalizedLanguage.slice(1);
+}
+
 interface MessageCopyTelemetry {
   messageId: string;
   workstreamId: string;
@@ -139,6 +175,12 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
 
   return (
     <div className="markdown-code-block" data-language={normalizedLanguage}>
+      <div className="markdown-code-block-header">
+        <span className="markdown-code-language">{codeLanguageLabel(normalizedLanguage, requestedLanguage)}</span>
+        <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
+          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+        </button>
+      </div>
       <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre className={className} style={style}>
@@ -155,9 +197,6 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
           </pre>
         )}
       </Highlight>
-      <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-        {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-      </button>
     </div>
   );
 }
