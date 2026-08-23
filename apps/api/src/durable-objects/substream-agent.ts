@@ -72,6 +72,7 @@ import {
 import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
+  RunOwnershipLostError,
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
@@ -305,6 +306,13 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
+export function agentRunExecutionFailureDisposition(
+  error: unknown,
+): "defer_and_stop_drain" | "fail" {
+  return error instanceof RunOwnershipLostError ? "defer_and_stop_drain" : "fail";
+}
+
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -1502,7 +1510,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     await this.agentDrain.resume(
-      () => this.drainRunQueue()
+      (ownsDrain) => this.drainRunQueue(ownsDrain)
       .catch((error: unknown) => {
         logWarn(this.env, "substream_agent_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
@@ -1516,14 +1524,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
-  private async drainRunQueue(): Promise<void> {
-    while (true) {
+  private async drainRunQueue(ownsDrain: () => boolean): Promise<void> {
+    while (ownsDrain()) {
       this.agentDrain.touch();
       // Only the alarm forwards regional effects, and this loop owns the alarm
       // until it returns. Flushing between runs keeps a queue of runs from
       // holding the parent's view of all of them; effects committed *during* a
       // single long run still wait for it to finish.
       await this.flushDueRegionalEffects();
+      // `abandonActive()` cannot cancel the promise that is inside the await.
+      // Recheck before the synchronous claim or that obsolete continuation can
+      // still lease a row beside the replacement drain.
+      if (!ownsDrain()) return;
       const now = Date.now();
       // The claim leases the row, so an invocation that dies mid-run leaves a
       // deadline behind rather than an indefinite "running" that only a live
@@ -1611,6 +1623,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           Date.now(),
         );
       } catch (error) {
+        if (agentRunExecutionFailureDisposition(error) === "defer_and_stop_drain") {
+          logWarn(this.env, "agent_run_executor_lost_ownership", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+          });
+          // The successor owns the authoritative outcome. Retrying this local
+          // dispatch lets it adopt that terminal result; marking the product
+          // failed here would be an unfenced stale-executor write.
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
+            Date.now() + 1_000,
+            "run_ownership_lost",
+            Date.now(),
+          );
+          // This drain may itself have been abandoned and replaced after its
+          // keep-alive stranded. It must not claim another row alongside the
+          // successor drain after losing the authority that fenced this one.
+          return;
+        }
         const safe = {
           code: error instanceof Error && "code" in error && typeof error.code === "string"
             ? error.code
@@ -1631,7 +1668,41 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           error_code: safe.code,
           reason: error instanceof Error ? error.message : "unknown",
         });
-        await this.product.recordWorkflowFailed(claim.id, safe).catch(() => undefined);
+        if (!ownsDrain()) {
+          logWarn(this.env, "agent_run_failure_abandoned_before_product_settlement", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+          });
+          return;
+        }
+        try {
+          // Product failure and work-stream status change are atomically
+          // conditional on this dispatch's exact token. The check above avoids
+          // a known-obsolete call; this fence closes the await/interleaving race.
+          await this.product.recordWorkflowFailed(claim.id, safe, claim.leaseToken);
+        } catch (settlementError) {
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
+            Date.now() + 1_000,
+            "run_failure_settlement_deferred",
+            Date.now(),
+          );
+          logWarn(this.env, "agent_run_failure_settlement_deferred", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+            reason: settlementError instanceof Error ? settlementError.message : "unknown",
+          });
+          return;
+        }
         settleAgentRunDispatch(
           this.state.storage.sql,
           SUBSTREAM_AGENT_RUN_DISPATCHES,
@@ -1649,7 +1720,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (this.activeRunDispatch?.leaseToken === claim.leaseToken) {
           this.activeRunDispatch = null;
         }
-        this.agentDrain.touch();
+        if (ownsDrain()) this.agentDrain.touch();
       }
     }
   }

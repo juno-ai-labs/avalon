@@ -21,6 +21,7 @@ const WORKSPACE_ID = "00000000-0000-4000-8000-000000000004";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000005";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000006");
 const HASH = "a".repeat(64);
+const OUTPUT_REF = "receipts/output.json";
 
 class SqliteStatement {
   private values: unknown[] = [];
@@ -29,6 +30,9 @@ class SqliteStatement {
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
     return createTestD1Result({ success: true, meta: { changes: Number(result.changes) } });
+  }
+  async first<T>(): Promise<T | null> {
+    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
   }
   async all<T>(): Promise<D1Result<T>> {
     return createTestD1Result({
@@ -125,6 +129,7 @@ describe("attachment tool receipts", () => {
     await registerAttachmentToolReceipt(d1, {
       workspaceId: WORKSPACE_ID,
       invocationId: INVOCATION_ID,
+      expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
     });
@@ -137,6 +142,7 @@ describe("attachment tool receipts", () => {
     await expect(registerAttachmentToolReceipt(d1, {
       workspaceId: WORKSPACE_ID,
       invocationId: INVOCATION_ID,
+      expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
     })).rejects.toThrow("attachment_receipt_version_changed");
@@ -149,6 +155,7 @@ describe("attachment tool receipts", () => {
     await registerAttachmentToolReceipt(d1, {
       workspaceId: WORKSPACE_ID,
       invocationId: INVOCATION_ID,
+      expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
     });
@@ -246,11 +253,43 @@ describe("attachment tool receipts", () => {
     await expect(registerAttachmentToolReceipt(d1, {
       workspaceId: WORKSPACE_ID,
       invocationId: INVOCATION_ID,
+      expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "view_resource",
       output,
     })).rejects.toThrow("attachment_receipt_version_changed");
     expect(database.prepare("SELECT COUNT(*) AS count FROM attachment_tool_receipts").get())
       .toEqual({ count: 0 });
+  });
+
+  it("does not attach or delete dependencies after a successor replaces the output reference", async () => {
+    for (const register of [
+      (d1: D1Database, input: Parameters<typeof registerAttachmentToolReceipt>[1]) =>
+        registerAttachmentToolReceipt(d1, input),
+      (d1: D1Database, input: Parameters<typeof registerAttachmentToolReceipt>[1]) =>
+        __attachmentToolReceiptTesting.registerObjectAttachmentToolReceipt({ DB: d1 } as never, input),
+    ]) {
+      const { database, d1 } = fixture();
+      database.prepare(
+        "UPDATE tool_invocations SET output_ref = 'receipts/successor.json' WHERE id = ?",
+      ).run(INVOCATION_ID);
+      database.prepare(
+        `INSERT INTO attachment_tool_receipts
+         (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(WORKSPACE_ID, SECOND_RESOURCE_ID, INVOCATION_ID, HASH, new Date().toISOString());
+
+      await expect(register(d1, {
+        workspaceId: WORKSPACE_ID,
+        invocationId: INVOCATION_ID,
+        expectedOutputRef: OUTPUT_REF,
+        canonicalToolName: "read_resource",
+        output: readOutput(),
+      })).rejects.toThrow("attachment_receipt_version_changed");
+      expect(database.prepare(
+        `SELECT resource_id, derivative_sha256
+           FROM attachment_tool_receipts WHERE tool_invocation_id = ?`,
+      ).all(INVOCATION_ID)).toEqual([{ resource_id: SECOND_RESOURCE_ID, derivative_sha256: HASH }]);
+    }
   });
 
   it("does not make a mixed image/metadata view result replayable", () => {

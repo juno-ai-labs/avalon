@@ -1228,7 +1228,7 @@ did not happen, and it cannot be turned on retroactively.
    `workspace_id` the next steps need:
 
    ```sql
-   SELECT id, title, workspace_id FROM workstreams WHERE id = '<uuid>';
+   SELECT id, workspace_id FROM workstreams WHERE id = '<uuid>';
    ```
 3. **List the turns.** One row per model request, with its `turn_id`, model,
    outcome, token counts, and the R2 `object_key`. A `turn_id` may repeat: each
