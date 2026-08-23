@@ -5,11 +5,13 @@
 //
 // A synthetic turn is played into the live renderer by dispatching
 // stream_started/stream_delta MessageEvents onto the substream socket, with
-// the wire cadence produced by an exact emulation of the two production
-// batchers (createTextDeltaBatcher in packages/agent-harness and
-// createSequencedStreamDeltaBatcher in apps/api/src/services/integrations.ts),
-// so injected frames have the burst shape a real turn has — and a cadence
-// experiment is a driver option rather than a server change.
+// the wire cadence produced by an exact emulation of the production batcher
+// on the work-stream socket path (createSequencedStreamDeltaBatcher in
+// apps/api/src/services/integrations.ts — the only batcher on that path;
+// createTextDeltaBatcher in packages/agent-harness batches the automation
+// compiler's narration on a different surface), so injected frames have the
+// burst shape a real turn has — and a cadence experiment is a driver option
+// rather than a server change.
 //
 // Prerequisites: `pnpm dev:api:local` running, the Electron client up under
 // Xvfb with `--remoteDebuggingPort=9222`, and the local development account
@@ -28,6 +30,8 @@
 //   maxDelayMs       emulated batcher maxDelayMs             [100]
 //   maxCharacters    emulated batcher maxCharacters          [2048]
 //   scrollAwayPx     scroll up this far before streaming     [0]
+//   corpus           'mixed' (headings/paragraphs/code/table)
+//                    or 'list' (list-dominant reply)         ["mixed"]
 //
 // Reports, for the measurement window: wire frame inter-arrival and size
 // distributions, commit rate (MutationObserver batches over the transcript),
@@ -36,13 +40,14 @@
 // coefficient of variation and the fraction of frames revealing nothing), and
 // PerformanceObserver longtask totals. Output: a JSON summary on stdout, the
 // full samples in report-<label>.json, and a screenshot shot-<label>.png,
-// both in the working directory.
+// both under .stream-measurements/ (gitignored) in the working directory.
 
 /* global window, document, location, requestAnimationFrame, MutationObserver --
    the callbacks handed to page.evaluate run in the renderer, not in Node */
 
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The sandbox image ships Playwright globally rather than in the repository
 // (docs/dev-environment.md — do not add a browser driver as a dependency).
@@ -59,8 +64,12 @@ const options = {
   maxDelayMs: 100,
   maxCharacters: 2_048,
   scrollAwayPx: 0,
+  corpus: 'mixed',
   ...(process.argv[2] ? JSON.parse(process.argv[2]) : {}),
 };
+
+const OUTPUT_DIR = '.stream-measurements';
+mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // ---------------------------------------------------------------- content ---
 
@@ -96,9 +105,18 @@ What remains is the reconnect window: a client that was away does not get the ga
 
 `;
 
+// The list-dominant shape: every candidate blank-line boundary is a list
+// line, so the splitter's per-item cuts are the only thing standing between
+// this reply and a whole-body re-parse per commit.
+const LIST_CORPUS = `Here is the plan for the migration, step by step:
+
+${Array.from({ length: 12 }, (_, index) => `- Step ${index + 1}: a full sentence describing what this step does, which system it touches, and the check that proves it landed.\n\n`).join('')}${Array.from({ length: 12 }, (_, index) => `${index + 1}. Verify item ${index + 1} against the checklist with enough words to make the parser do real work.\n`).join('')}
+`;
+
 function buildTokens(totalChars, tokenChars) {
+  const corpus = options.corpus === 'list' ? LIST_CORPUS : MARKDOWN_CORPUS;
   let text = '';
-  while (text.length < totalChars) text += MARKDOWN_CORPUS;
+  while (text.length < totalChars) text += corpus;
   text = text.slice(0, totalChars);
   const tokens = [];
   for (let index = 0; index < text.length; index += tokenChars) {
@@ -109,35 +127,23 @@ function buildTokens(totalChars, tokenChars) {
 
 // ------------------------------------------------------ batcher emulation ---
 
-// Behavioural copy of createTextDeltaBatcher feeding
-// createSequencedStreamDeltaBatcher: the flush condition is evaluated only
-// inside push, against time since the last flush — there is no timer. Token i
+// Behavioural copy of createSequencedStreamDeltaBatcher, the one batcher on
+// the work-stream socket path: the flush condition is evaluated only inside
+// push, against time since the last flush — there is no timer. Token i
 // arrives at i * interval on the simulated clock.
 function scheduleFrames(tokens, tokenIntervalMs, { maxCharacters, maxDelayMs }) {
   const frames = [];
-  const first = { pending: '', last: 0 };
-  const second = { pending: '', last: 0 };
-  const pushSecond = (delta, at) => {
-    second.pending += delta;
-    if (second.pending.length >= maxCharacters || at - second.last >= maxDelayMs) {
-      frames.push({ at, delta: second.pending });
-      second.pending = '';
-      second.last = at;
-    }
-  };
+  const batcher = { pending: '', last: 0 };
   tokens.forEach((token, index) => {
     const at = index * tokenIntervalMs;
-    first.pending += token;
-    if (first.pending.length >= maxCharacters || at - first.last >= maxDelayMs) {
-      const delta = first.pending;
-      first.pending = '';
-      first.last = at;
-      pushSecond(delta, at);
+    batcher.pending += token;
+    if (batcher.pending.length >= maxCharacters || at - batcher.last >= maxDelayMs) {
+      frames.push({ at, delta: batcher.pending });
+      batcher.pending = '';
+      batcher.last = at;
     }
   });
-  const end = tokens.length * tokenIntervalMs;
-  if (first.pending) pushSecond(first.pending, end);
-  if (second.pending) frames.push({ at: end, delta: second.pending });
+  if (batcher.pending) frames.push({ at: tokens.length * tokenIntervalMs, delta: batcher.pending });
   return frames;
 }
 
@@ -296,7 +302,7 @@ for (const entry of schedule) {
   if (result !== 'ok') throw new Error(`frame not injected: ${result}`);
 }
 const measureEnd = await page.evaluate(() => performance.now());
-await page.screenshot({ path: `shot-${options.label}.png` });
+await page.screenshot({ path: join(OUTPUT_DIR, `shot-${options.label}.png`) });
 await page.evaluate(() => window.__stopMetrics());
 const metrics = await page.evaluate(() => window.__metrics);
 
@@ -348,6 +354,6 @@ const report = {
   },
 };
 
-writeFileSync(`report-${options.label}.json`, JSON.stringify({ report, metrics }, null, 1));
+writeFileSync(join(OUTPUT_DIR, `report-${options.label}.json`), JSON.stringify({ report, metrics }, null, 1));
 console.log(JSON.stringify(report, null, 2));
 await browser.close();

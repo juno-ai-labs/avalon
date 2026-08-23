@@ -8,7 +8,7 @@ running client, 85% of painted frames revealed nothing and the rest revealed a
 everything the wire delivers is buffered per streaming message, and an
 animation-frame loop reveals a prefix of it at a rate that tracks the backlog,
 so the visible text grows a few characters per painted frame whatever the
-wire's cadence. The wire itself is untouched: the batchers, the Durable Object
+wire's cadence. The wire itself is untouched: the batcher, the Durable Object
 wake rate, the socket frame rate, and the replay window are exactly what they
 were.
 
@@ -35,16 +35,20 @@ returns the cache untouched, so the wire's cadence stops costing commits.
 
 Each frame the loop runs, every uncompleted cursor with a backlog reveals
 `revealBudget(backlog, elapsed)` more characters:
-`backlog × elapsed / STREAM_REVEAL_DRAIN_MS`, floored at one character and
-capped at the backlog. Proportionality to the backlog is the governor — a
-steady stream settles into a near-constant few characters per frame, a
-2,048-character burst or a stalled tab drains in roughly the drain window, and
-an empty buffer simply stops the loop (the caret sits, exactly as it did
-during a tool call before pacing). Proportionality to elapsed time is what
-makes sharing safe: the foreground screen and the shell's background
-subscriber for the same work stream share one cursor map, and a second loop
-ticking in the same frame sees near-zero elapsed time and reveals almost
-nothing extra.
+`backlog × elapsed / STREAM_REVEAL_DRAIN_MS`, floored at one character, capped
+at the backlog, and nudged past a surrogate pair rather than ever splitting
+one (`alignRevealBoundary` — an emoji streams in whole, not as a
+replacement-glyph frame). Because each frame's budget is a share of the
+*remaining* backlog, the backlog decays exponentially — about 6% per 60Hz
+frame, halving every ~190ms — which is the governor: a steady stream settles
+into a near-constant few characters per frame, an outsized burst (a
+2,048-character frame, a stalled tab catching up) is substantially caught up
+within half a second and within a few characters inside ~1.5s, and an empty
+buffer simply stops the loop (the caret sits, exactly as it did during a tool
+call before pacing). Proportionality to elapsed time is what makes sharing
+safe: the foreground screen and the shell's background subscriber for the
+same work stream share one cursor map, and a second loop ticking in the same
+frame sees near-zero elapsed time and reveals almost nothing extra.
 
 The loop arms itself only when a stream event leaves a backlog, re-arms only
 while one remains, and one frame is in flight per hook instance at a time. An
@@ -61,7 +65,7 @@ Four paths deliberately do not pace:
   turn's start, so retracted text vanishes instantly instead of being animated
   away, and the replacement paces in from there.
 - **Completion.** `stream_completed` carries the canonical message, which
-  replaces the row whole. The batchers flush at turn end, so the backlog at
+  replaces the row whole. The batcher flushes at turn end, so the backlog at
   that moment is ordinarily under the drain window's worth of text.
 
 ## Invariants
@@ -93,10 +97,14 @@ Four paths deliberately do not pace:
 ## Boundary
 
 This module owns *when received text becomes visible* on the work-stream
-transcript, and nothing else. It does not decide what arrives (the batchers in
-`packages/agent-harness` and `apps/api/src/services/integrations.ts` own the
-wire cadence — [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md)
-says why frames are batched at all), does not order or de-duplicate frames
+transcript, and nothing else. It does not decide what arrives —
+`createSequencedStreamDeltaBatcher` in
+`apps/api/src/services/integrations.ts` is the one batcher on the work-stream
+socket path and owns the wire cadence
+([`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) says why frames
+are batched at all; `createTextDeltaBatcher` in `packages/agent-harness`
+batches the automation compiler's narration on a different surface, with
+defaults deliberately kept in step) — does not order or de-duplicate frames
 (that stays in `applyStreamingSocketEvent`'s cursor logic), does not scroll
 (the follow in [`transcript-scrolling.md`](transcript-scrolling.md) reacts to
 the commits this produces), and does not render (the streaming markdown path
@@ -106,15 +114,17 @@ narration through a different surface and is deliberately not paced by this.
 
 ## Failure modes and limits
 
-- **`STREAM_REVEAL_DRAIN_MS` is 270ms**, and it is both the smoothing window
-  and the ceiling on how far the visible text lags the wire. It is derived,
-  not guessed: the batchers hold text up to 100ms (`maxDelayMs`, the two kept
-  in step), the measured inter-arrival p95 at the renderer was 133ms, and a
-  drain window that the gap between frames can outlast makes the reveal
-  stall-then-burst — the exact cadence this exists to remove. Twice the
-  measured p95, rounded, holds through ordinary jitter; steady-state added
-  latency is about the window. Raising `maxDelayMs` on the wire without
-  raising this proportionally brings the stall back.
+- **`STREAM_REVEAL_DRAIN_MS` is 270ms**, the smoothing window. It is derived,
+  not guessed: the work-stream batcher holds text up to 100ms (`maxDelayMs`),
+  the measured inter-arrival p95 at the renderer was 133ms, and a drain window
+  that the gap between frames can outlast makes the reveal stall-then-burst —
+  the exact cadence this exists to remove. Twice the measured p95, rounded,
+  holds through ordinary jitter. Under a steady stream the visible text lags
+  the wire by about one window's worth; after an outsized burst the lag is
+  transiently larger, because the drain is exponential (each frame reveals a
+  share of what *remains*), decaying to a few characters within ~1.5s of a
+  2,048-character frame. Raising `maxDelayMs` on the wire without raising this
+  proportionally brings the stall back.
 - **A wire stall longer than the drain window** (a tool call, a provider
   pause) drains the buffer and parks the caret. That is the same visual as
   before pacing, and it is correct: inventing a slower crawl to bridge an
@@ -144,7 +154,7 @@ narration through a different surface and is deliberately not paced by this.
   `scripts/measure-stream-smoothness.mjs`, which plays a synthetic turn into
   the live renderer over CDP (per
   [`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox))
-  through an exact emulation of both wire batchers, and reports the
+  through an exact emulation of the work-stream wire batcher, and reports the
   distributions this module is judged by.
 
 ## Performance and cost
@@ -167,9 +177,10 @@ per render — multiplies at 60 commits a second, not 8.
 **What changed:** Streamed text stopped being written to the transcript as it
 arrives. Wire frames accumulate in the stream cursor's `receivedText`, and an
 animation-frame loop reveals a prefix at `backlog × elapsed / 270ms` (floor
-one character) per frame. Hidden documents, checkpoints, retries, and
-completion reveal instantly. The wire protocol, the batchers, and their
-defaults are unchanged.
+one character, never splitting a surrogate pair) per frame. Hidden documents —
+a mount in an already-hidden window included — checkpoints, retries, and
+completion reveal instantly. The wire protocol, the batcher, and its defaults
+are unchanged.
 
 **Why:** The transcript revealed text in line-sized bursts. Measured on the
 running client with a synthetic 25 tokens/second turn (the harness in
@@ -183,7 +194,7 @@ length up to 20,000 characters.
 
 **Considered and rejected:**
 
-- *Lowering the batchers' `maxDelayMs`.* Measured: at 16ms the wire runs at
+- *Lowering the batcher's `maxDelayMs`.* Measured: at 16ms the wire runs at
   25 frames/second and zero-reveal frames only fall to 58% — a faster bursty
   wire is still bursty against a 60Hz display — while socket frames, Durable
   Object wakes, and replay rows all triple, and long replies get worse because
