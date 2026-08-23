@@ -1311,11 +1311,11 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     // harness run and the block row are one fact, and the object writes them in
     // a single transaction — so the UNIQUE-constraint rescue this needed, which
     // caught an exception and re-read to decide whether a redelivery had already
-    // landed, is now the operation's own answer. That re-read compared the
-    // block the existing row belongs to, and so does the operation: a dispatch
-    // naming an admitted run-and-block-run pair for a *different* block is
-    // refused rather than replayed.
-    const admitted = await createBlockDashboardObjectPort(
+    // landed, is now the operation's own answer. That re-read also compared
+    // `block_id`, and this does not: `blockRunId` is a fresh `uuidV7()` per
+    // dispatch, so the pair recurring under a different block needs a UUIDv7
+    // collision. There is no branch here for it, and no error code either.
+    await createBlockDashboardObjectPort(
       env,
       dispatch.workspaceId,
       dispatch.workstreamId,
@@ -1334,9 +1334,6 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       model,
       createdAt: Date.parse(dispatch.createdAt),
     });
-    if (admitted === "dispatch_conflict") {
-      throw new Error("block_dashboard_runtime_initialization_conflict");
-    }
     return input;
   }
 

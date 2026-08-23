@@ -1061,6 +1061,58 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — One object-port factory, and the fence the typed endpoints dropped
+
+**What changed:** the four typed object ports stop being four copies of one
+file. `runtime/object-port.ts` and `durable-objects/object-port-protocol.ts`
+hold the machinery; each port is now its storage class, an operation list and
+an error code. The four `*PortError` classes collapse into one `ObjectPortError`
+— none was ever caught by type. And every `/internal/*` endpoint re-checks
+`authority_mode`, which the routed path checked and these endpoints had
+silently dropped.
+
+**Why:** the normalized diff between two of the port files was twenty-four
+lines, all of them comments. That is not four things that might diverge, it is
+one thing written four times — so a fix to the pattern had to be made four
+times, and a divergence between them was invisible. Three more slices would
+have added three more copies.
+
+The authority fence is the concrete cost of that duplication.
+`executeWorkstreamRuntimeSql` refuses every statement when the object is
+`preparing` or `quarantined`; the first typed endpoint kept the identity check
+beside it and dropped this one, and the next three copied that. The wake-up
+mutations happen to keep an equivalent check through
+`commitWithRegionalEffects`; nothing else did, so compaction, plugin-hint and
+description-refresh writes were committing against an object whose writes do
+not count.
+
+**What a future change has to respect:** `objectPortRefusal` is the one place
+these two checks live. An endpoint that re-implements them inline is how the
+fence went missing the first time.
+
+**Two things deliberately *not* built, after review asked for them.** Both are
+guards for states this product cannot reach, and the reasoning is the same in
+each case as for the `waiting`/`steering` fence recorded below.
+
+`admitDispatch` does not compare `block_id`. `blockRunId` is a fresh `uuidV7()`
+per dispatch, so the pair recurring under a different block needs a UUIDv7
+collision; the branch, and the error code that fed it, are gone rather than
+written for an event that cannot happen.
+
+The object ports do not carry a substream id. Every one of them addresses the
+main child and every endpoint refuses a non-main substream, and no non-main
+substream is ever created — `workstream-object-storage.ts` inserts `'0'` and
+nothing else does. Threading an id through four ports to serve a child object
+that cannot exist would be handling for an unreachable path. The first person
+to create one revisits this and the two fences below.
+
+**One thing deliberately un-built.** `BlockWriteOutcome` went back to two
+members. A third, `already_terminal`, told a caller that a fenced write failed
+because the block was already settled rather than because the lease had moved —
+which no caller acts on: both throw, and the two error codes it added were
+caught nowhere. The distinction is real and the object can make it; it is worth
+making when something needs it.
+
 ### 2026-08-23 — Three block-dashboard answers the compatibility layer could not give
 
 **What changed:** `admitDispatch` gained a `dispatch_conflict` outcome, and the

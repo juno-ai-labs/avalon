@@ -1014,13 +1014,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!parsed.success) {
       return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
     }
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return jsonResponse({ ok: false, error: "workstream_tool_receipt_identity_mismatch" }, 409);
-    }
+    const refusal = this.objectPortRefusal(
+      parsed.data,
+      "workstream_tool_receipt_identity_mismatch",
+    );
+    if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
@@ -1035,6 +1033,38 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * these rows, so a non-main substream is refused here rather than answering
    * from an empty table.
    */
+  /**
+   * Refuse an object-port request the routed path would have refused.
+   *
+   * `executeWorkstreamRuntimeSql` checked two things before running a
+   * statement: that this object is the one addressed, and that it is still the
+   * work stream's authority. The typed endpoints kept the first and dropped the
+   * second, so a write against a `preparing` or `quarantined` object now
+   * commits where the routed statement was refused — which is the window that
+   * fence exists for. The wake-up mutations kept an equivalent check by
+   * accident, through `commitWithRegionalEffects`; nothing else did.
+   *
+   * `"0"` because every one of these ports addresses the main child: the rows
+   * they own live there, and a non-main substream would answer from an empty
+   * table rather than fail.
+   */
+  private objectPortRefusal(
+    request: { workspaceId: string; workstreamId: string },
+    identityMismatchCode: string,
+  ): Response | null {
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return jsonResponse({ ok: false, error: identityMismatchCode }, 409);
+    }
+    if (!this.objectStore.isAuthoritative()) {
+      return jsonResponse({ ok: false, error: "workstream_runtime_authority_fenced" }, 409);
+    }
+    return null;
+  }
+
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
     const parsed = BlockDashboardOperationRequestSchema.safeParse(
       await request.json().catch(() => null),
@@ -1042,13 +1072,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!parsed.success) {
       return jsonResponse({ ok: false, error: "invalid_block_dashboard_operation" }, 400);
     }
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return jsonResponse({ ok: false, error: "workstream_block_dashboard_identity_mismatch" }, 409);
-    }
+    const refusal = this.objectPortRefusal(
+      parsed.data,
+      "workstream_block_dashboard_identity_mismatch",
+    );
+    if (refusal) return refusal;
     const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.blockDashboard, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
