@@ -173,14 +173,17 @@ export function createWorkstreamAttachmentTools(
             env.DB,
             createResourceObjectPort(env, input.workspaceId, input.workstreamId),
             {
-            workspaceId: input.workspaceId,
-            workstreamId: input.workstreamId,
-            principal: input.executionPrincipal,
-            attachmentKind,
-            limit,
-            ...(state ? { expectedFingerprint: state.fingerprint } : {}),
-            after: state ? { attachedAt: state.afterAttachedAt, resourceId: state.afterResourceId } : null,
-          });
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              principal: input.executionPrincipal,
+              attachmentKind,
+              limit,
+              ...(state ? { expectedFingerprint: state.fingerprint } : {}),
+              after: state
+                ? { attachedAt: state.afterAttachedAt, resourceId: state.afterResourceId }
+                : null,
+            },
+          );
         } catch (error) {
           if (error instanceof WorkstreamResourceInventoryChangedError) {
             throw attachmentError("invalid_cursor", "The resource inventory changed; restart the list from its first page");
@@ -580,11 +583,12 @@ export async function rehydrateWorkstreamViewReceipt(
     env.DB,
     createResourceObjectPort(env, input.workspaceId, input.workstreamId),
     {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-    resourceIds: parsedInput.data.resourceIds,
-  });
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+      resourceIds: parsedInput.data.resourceIds,
+    },
+  );
   const included = parsedOutput.data.items
     .filter((item) => item.status === "included")
     .sort((left, right) => (left.visualPartIndex ?? 0) - (right.visualPartIndex ?? 0));

@@ -131,11 +131,12 @@ export async function validateAttachmentToolReceiptReplay(
     env.DB,
     createResourceObjectPort(env, input.workspaceId, input.workstreamId),
     {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.principal,
-    resourceIds: dependencies.map((dependency) => dependency.resourceId),
-  });
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.principal,
+      resourceIds: dependencies.map((dependency) => dependency.resourceId),
+    },
+  );
   const visibleIds = new Set(visible.map((resource) => resource.id));
   for (const dependency of dependencies) {
     if (!visibleIds.has(dependency.resourceId)) return "invalid";
