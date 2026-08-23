@@ -224,9 +224,10 @@ what that check looks like when it fails.
 export const MAX_PLUGIN_DOCUMENT_BYTES = Number.POSITIVE_INFINITY;
 ```
 
-- **`LIMIT UNSET` is a literal marker**, spelled exactly that way. `rg "LIMIT
-  UNSET"` is how the report at the end of the change is generated and how anyone
-  audits what is still open; a paraphrase is invisible to both.
+- **`LIMIT UNSET` is a literal marker**, spelled exactly that way. The scoped
+  `rg` in [the handover report](#the-handover-report) is how that report is
+  generated and how anyone audits what is still open; a paraphrase is invisible
+  to both.
 - **Write `Number.POSITIVE_INFINITY`, not `Infinity`.** It greps, it reads as
   deliberate rather than accidental, and it is symmetric with the negative form.
 - **The number has one definition site.** One constant, and no second literal
@@ -355,5 +356,8 @@ Never assert on the constant's literal value. A test that pins `+Infinity` fails
 the day the team sets the number, which teaches the next person to weaken the
 test rather than read it.
 
-Before calling the change done: confirm the `rg "LIMIT UNSET"` count matches the
-report exactly, then `pnpm lint`, `pnpm typecheck`, and `pnpm test`.
+Before calling the change done: confirm that
+`rg -n "LIMIT UNSET" --glob '!docs/**'` — the scoped command from
+[the handover report](#the-handover-report), counting source markers rather than
+this document's own examples — returns exactly the rows you reported, then
+`pnpm lint`, `pnpm typecheck`, and `pnpm test`.
