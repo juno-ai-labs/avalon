@@ -26,7 +26,6 @@ function resourceTelemetryConnector(value: unknown):
   return 'avalon';
 }
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
@@ -148,19 +147,14 @@ export class ResourceService {
   async list(input: ListResourcesInput) {
     const limit = Math.min(Math.max(input.limit, 1), 100);
     const cursor = input.cursor ? decodeResourceCursor(input.cursor) : null;
-    const authority = await readWorkstreamAuthorityControl(this.env);
     const query = input.query?.trim().toLowerCase();
     const filters = [
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
-      ...(authority.phase === "durable_object_open" ? [] : [INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL]),
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
       NOTE_RESOURCE_VISIBILITY_SQL,
     ];
     const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
-    if (authority.phase !== "durable_object_open") {
-      bindings.push(this.auth.userId, this.auth.userId);
-    }
     bindings.push(this.auth.userId);
 
     if (query) {
@@ -194,15 +188,11 @@ export class ResourceService {
     ).bind(...bindings, limit + 1).all<Record<string, unknown>>();
     const consumed = result.results.slice(0, limit);
     const rows: Record<string, unknown>[] = [];
-    if (authority.phase === "durable_object_open") {
-      // A page can contain one hundred resources. Keep cross-DO authorization
-      // reads serial so one REST request cannot exceed the Worker's concurrent
-      // outbound-connection allowance.
-      for (const row of consumed) {
-        if (await this.canReadInboundEmailResource(row)) rows.push(row);
-      }
-    } else {
-      rows.push(...consumed);
+    // A page can contain one hundred resources. Keep cross-DO authorization
+    // reads serial so one REST request cannot exceed the Worker's concurrent
+    // outbound-connection allowance.
+    for (const row of consumed) {
+      if (await this.canReadInboundEmailResource(row)) rows.push(row);
     }
     const hasMore = result.results.length > limit;
     const items = rows.map(toResource);
@@ -270,17 +260,11 @@ export class ResourceService {
   }
 
   async deleteDraft(id: string): Promise<void> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
     const resource = await this.env.DB.prepare(
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-         ${authority.phase === "durable_object_open"
-          ? "AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)"
-          : "AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)"}
-         ${authority.phase === "durable_object_open"
-          ? ""
-          : "AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)"}
+         AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)
        RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
@@ -602,24 +586,17 @@ export class ResourceService {
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
     const row = await this.env.DB.prepare(
-      authority.phase === "durable_object_open"
-        ? DO_RESOURCE_WITH_WATCH_STATE_SQL
-        : RESOURCE_WITH_WATCH_STATE_SQL,
-    ).bind(...(authority.phase === "durable_object_open"
-      ? [id, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId]
-      : [
-          id,
-          this.auth.workspaceId,
-          this.auth.userId,
-          this.auth.userId,
-          this.auth.userId,
-          this.auth.userId,
-          this.auth.userId,
-        ])).first<Record<string, unknown>>();
+      DO_RESOURCE_WITH_WATCH_STATE_SQL,
+    ).bind(
+      id,
+      this.auth.workspaceId,
+      this.auth.userId,
+      this.auth.userId,
+      this.auth.userId,
+    ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
-    if (authority.phase === "durable_object_open" && !await this.canReadInboundEmailResource(row)) {
+    if (!await this.canReadInboundEmailResource(row)) {
       throw new ApiError(404, "resource_not_found", "Resource not found");
     }
     return row;
