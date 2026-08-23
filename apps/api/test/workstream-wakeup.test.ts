@@ -115,6 +115,8 @@ interface Fixture {
   dispatchControl: { error: Error | null };
   /** Set to make the next timer refreshes fail as if the agent were unreachable. */
   timerControl: { error: Error | null };
+  /** Set to make transcript writes fail as if the object's message port were down. */
+  transcriptControl: { error: Error | null };
 }
 
 function fixture(): Fixture {
