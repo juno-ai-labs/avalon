@@ -1061,6 +1061,27 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The router learns `tool_effects`, the name migration 17 left it without
+
+**What changed:** `LOCAL_TABLES` in `workstream-runtime-database.ts` gains
+`tool_effects`, so a routed statement naming only that table reaches the owning
+`SubstreamAgent` instead of falling through to regional D1.
+
+**Why:** Migration 17 removed `tool_invocations` from the router and moved the
+dev seed (`/dev/seed-product`) to write `tool_effects` directly — but the new
+name was never added to the list, and a bare `INSERT INTO tool_effects` was
+classified regional. Regional D1 has held no product tables since migration
+0090, so `pnpm db:open-authority` failed on a fresh local state with
+`no such table: tool_effects`, leaving local development unseedable. Nothing
+in production hit this: the telemetry readers that touch `tool_effects` also
+name `harness_runs` or `workstreams` in the same statement, which already
+routed them to the object; the dev seed was the only bare-named writer.
+
+**Consequences:** The cross-authority guard now also rejects a regional
+mutation that mentions `tool_effects` in a subquery, which is the correct
+refusal — the table is the object's. A future adopted-from-compat table that a
+routed statement can name *alone* needs its entry here in the same change that
+teaches a caller the new name; the routing test pins this one.
 ### 2026-08-23 — The product API learned who a connector principal is
 
 **What changed:** `ProductAuthSchema` accepts an optional
