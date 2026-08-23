@@ -829,6 +829,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeToolReceiptOperation(
     input: ToolReceiptOperationRequest,
   ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
   }
 

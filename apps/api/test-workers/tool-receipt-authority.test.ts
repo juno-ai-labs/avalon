@@ -324,6 +324,11 @@ describe("tool-receipt authority on real workerd", () => {
   });
 
   it("dispatches every method the storage class exposes", async () => {
+    // `#`-private members are not properties of the prototype, so they are
+    // absent from this list by construction rather than by filtering — adding a
+    // private helper cannot make this test demand a wire operation for it.
+    // Which is the point: the list is "what the class exposes", and that is
+    // exactly what the protocol has to carry.
     const methods = Object.getOwnPropertyNames(WorkstreamToolReceiptStorage.prototype)
       .filter((name) => name !== "constructor")
       .filter((name) => typeof Object.getOwnPropertyDescriptor(
