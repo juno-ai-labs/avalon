@@ -391,6 +391,23 @@ knob.
 
 ## Changelog
 
+### 2026-08-23 — Both meeting prompts state what a written answer is made of
+
+**What changed:** `RESPONSE_FORMATTING_POLICY` is interpolated into the Control
+Tower system prompt and the final-summary prompt, as its own block before the
+OUTPUT section rather than appended to a sentence.
+
+**Why:** Both briefings render through `MarkdownBody`, which renders no TeX, and
+several routed models write `$\rightarrow$` when they mean an arrow. The
+renderer repairs it either way — [`model-text-normalization.md`](model-text-normalization.md)
+owns that — but the prompt is the half that keeps it out of the note resource the
+rest of Avalon reads back.
+
+**Consequences:** The live prompt is written for latency, and this adds under
+800 bytes to a system prompt whose cost is dominated by the transcript windows
+beside it, so the per-pass price is noise. It is placed before OUTPUT so the
+section list stays the last thing the model reads.
+
 ### 2026-08-18 — Note and resource authority moves into WorkspaceDO
 
 **What changed:** Note rows, transcript segments, linked resource metadata,

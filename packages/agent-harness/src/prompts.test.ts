@@ -102,7 +102,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "8c65d13a515af943f34b7fc81aa6aa4c781fcbb30e6528cd3fb7a4d560e6fe3e",
+        hash: "674afd83765108292a3d97cd35e823152ad573b8a30e2f9fa723b7f871b8d6cb",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -110,7 +110,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "03f68f2a1227069c472134057567cbfd0a18ccfda427dd6ee08c8676510ffe08",
+        hash: "d31e6c0ec39246f5f63fe4606e354eb37ca7c3fddae2d41f01ccd081eda41066",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -411,6 +411,17 @@ describe("prompt renderers", () => {
     const transcript = JSON.parse(rendered[1]!.content.split("\n").at(-1)!) as Array<{ text: string }>;
     expect(Array.from(transcript[0]!.text)).toHaveLength(MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS + 1);
     expect(transcript[0]!.text.endsWith("…")).toBe(true);
+  });
+
+  it("tells the model never to write TeX, in the words the repair module depends on", () => {
+    // docs/model-text-normalization.md names this rule as the prompt half of
+    // the repair pair. A golden hash reports only that a byte moved; this is
+    // what fails saying "the TeX rule is gone" when a tidy-up deletes it.
+    const prompt = renderWorkstreamSystemPrompt({ title: "T", objective: "O" });
+
+    expect(prompt).toContain("# Response formatting");
+    expect(prompt).toContain("Never write TeX or math delimiters.");
+    expect(prompt).toContain("A dollar sign in ordinary prose");
   });
 
   it("states the description loop's keep bias, generality ban, and confidence floor", () => {

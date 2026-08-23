@@ -26,6 +26,26 @@ describe("work-stream runtime database routing", () => {
     )).toBe(true);
   });
 
+  it("routes a bare tool_effects write to the owning object, where the table lives", () => {
+    // The dev seed writes the object's receipt table without naming any other
+    // table. Classified regional, the statement reaches D1, which dropped its
+    // product tables at migration 0090 — `no such table: tool_effects`.
+    expect(__workstreamRuntimeDatabaseTesting.localStatement(
+      "INSERT INTO tool_effects (effect_intent_id, run_id) VALUES (?, ?)",
+    )).toBe(true);
+  });
+
+  it("classifies every table the dev seed writes as the object's", () => {
+    // The seed route has no execution coverage, which is how a rename once
+    // stranded one of these on regional D1. Each name it inserts into must
+    // route local, or `pnpm db:open-authority` fails on a fresh state.
+    for (const table of ["workstream_participants", "harness_runs", "tool_effects", "messages"]) {
+      expect(__workstreamRuntimeDatabaseTesting.localStatement(
+        `INSERT INTO ${table} (id) VALUES (?)`,
+      ), table).toBe(true);
+    }
+  });
+
   it("leaves workspace-owned resource and identity reads for the underlying workspace router", () => {
     expect(__workstreamRuntimeDatabaseTesting.localStatement(
       "SELECT title FROM resources WHERE workspace_id = ?",
