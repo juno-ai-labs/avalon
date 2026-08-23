@@ -27,6 +27,7 @@ import {
 } from './api';
 import { elicitationMessageId } from './elicitation';
 import { startPerfTrace, type PerfTrace } from './perf-trace';
+import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import {
   createElicitationMessage,
@@ -151,13 +152,21 @@ function streamingMessageId(event: StreamingSocketEvent): string {
  * turn's prior attempt and repeated chunks must not be appended twice. Bind
  * assigns a new turn ID after tool execution; that is a continuation of the
  * same assistant message, not an implicit reset.
+ *
+ * With `paced` set, the frame's text lands in the cursor's `receivedText` and
+ * the transcript keeps showing the revealed prefix — the animation-frame loop
+ * in `streaming-reveal.ts` is what grows it. Without it (the document is
+ * hidden, or a caller predates pacing) the whole received text is revealed at
+ * once, which is the pre-pacing behavior.
  */
 export function applyStreamingSocketEvent(
   messages: Message[] | undefined,
   event: StreamingSocketEvent,
   workstreamId: string,
   cursors: Map<string, StreamCursor>,
+  options: { paced?: boolean } = {},
 ): Message[] {
+  const paced = options.paced ?? false;
   const messageId = streamingMessageId(event);
   const cursor = cursors.get(messageId);
   if (cursor) {
@@ -177,9 +186,25 @@ export function applyStreamingSocketEvent(
 
   const existing = (messages ?? []).find((message) => message.id === messageId);
   const startsNewTurn = !cursor || event.turnId !== cursor.turnId;
-  const turnStartText = startsNewTurn ? existing?.text ?? '' : cursor.turnStartText;
+  // The received whole, never the cache's revealed prefix: a turn boundary or a
+  // retry is positioned in what the wire delivered, not in what pacing has let
+  // the reader see so far. A message with no cursor yet holds canonical text,
+  // which is complete by definition.
+  const previousReceived = cursor?.receivedText ?? existing?.text ?? '';
+  const turnStartText = startsNewTurn ? previousReceived : cursor.turnStartText;
   const replacesAttempt = event.reset
     || (!startsNewTurn && event.epoch > cursor.epoch);
+  const baseText = replacesAttempt ? turnStartText : previousReceived;
+  const receivedText = event.type === 'stream_delta' ? `${baseText}${event.delta}` : baseText;
+  const previousRevealed = cursor?.revealed ?? previousReceived.length;
+  // A replaced attempt clamps the reveal to the turn's start: text the retry
+  // retracted disappears immediately rather than being animated away.
+  const revealed = paced
+    ? Math.min(
+        replacesAttempt ? Math.min(previousRevealed, turnStartText.length) : previousRevealed,
+        receivedText.length,
+      )
+    : receivedText.length;
   const seenTurnIds = new Set(cursor?.seenTurnIds);
   seenTurnIds.add(event.turnId);
   cursors.set(messageId, {
@@ -190,14 +215,18 @@ export function applyStreamingSocketEvent(
     turnStartText,
     roomSequence: event.sequence,
     completed: false,
+    receivedText,
+    revealed,
+    lastRevealAt: cursor?.lastRevealAt ?? null,
   });
+  const visibleText = receivedText.slice(0, revealed);
 
   if (event.type === 'stream_started') {
     if (existing) {
       return (messages ?? []).map((message) => message.id === messageId
         ? {
             ...message,
-            text: replacesAttempt ? turnStartText : message.text,
+            text: replacesAttempt ? visibleText : message.text,
             streaming: true,
             realtimeOrder: message.realtimeOrder
               ? { ...message.realtimeOrder, eventSequence: event.sequence }
@@ -229,7 +258,7 @@ export function applyStreamingSocketEvent(
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
-      text: event.delta,
+      text: visibleText,
       createdAt: event.occurredAt,
       streaming: true,
       realtimeOrder: {
@@ -239,10 +268,19 @@ export function applyStreamingSocketEvent(
       },
     }));
   }
+  // A paced delta that changes nothing on screen returns the array untouched,
+  // so the cache write is a no-op and the wire's cadence stops costing a
+  // commit; the reveal loop owns the visible growth. The event-sequence stamp
+  // this skips only ever ordered the streaming row against other at-anchor
+  // realtime rows, and there are none: tools sort before the anchor by
+  // placement, not by sequence.
+  if (paced && existing.streaming === true && (existing.text ?? '') === visibleText) {
+    return messages ?? [];
+  }
   return (messages ?? []).map((message) => message.id === messageId
     ? {
         ...message,
-        text: replacesAttempt ? `${turnStartText}${event.delta}` : `${message.text ?? ''}${event.delta}`,
+        text: visibleText,
         streaming: true,
         realtimeOrder: message.realtimeOrder
           ? { ...message.realtimeOrder, eventSequence: event.sequence }
@@ -274,6 +312,12 @@ export function applyActiveStreamCheckpoints(
       turnStartText: checkpoint.text.slice(0, checkpoint.turnStartOffset),
       roomSequence: checkpoint.roomSequence,
       completed: false,
+      // A checkpoint is an arrival, not a stream: someone opening a work
+      // stream mid-turn gets the accumulated text at once, and pacing begins
+      // with the first live delta after it.
+      receivedText: checkpoint.text,
+      revealed: checkpoint.text.length,
+      lastRevealAt: null,
     });
 
     const existing = nextMessages.find((message) => message.id === checkpoint.messageId);
@@ -593,6 +637,40 @@ export function useWorkstreamSocket(
     }>();
     const streamCursors = resumeState.streamCursors;
     /**
+     * The paced-reveal loop — `docs/streaming-reveal.md`. Wire frames land in
+     * the cursors' `receivedText`; this loop grows each streaming message's
+     * visible prefix once per animation frame, so the reveal runs at the
+     * display's cadence rather than the batcher's. One frame is armed at a
+     * time, and only while something is held back.
+     */
+    let revealFrame: number | null = null;
+    const scheduleReveal = (): void => {
+      if (revealFrame !== null || closedByEffect) return;
+      revealFrame = window.requestAnimationFrame(() => {
+        revealFrame = null;
+        if (closedByEffect) return;
+        const { changed, backlogRemains } = advanceStreamReveal(streamCursors, performance.now());
+        if (changed) {
+          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+            applyRevealedText(current, streamCursors));
+        }
+        if (backlogRemains) scheduleReveal();
+      });
+    };
+    /**
+     * Animation frames stop when the window is hidden, so a stream that keeps
+     * arriving would pile up behind a paused reveal. Nobody is watching a
+     * hidden window: show everything at once, which is also what new frames do
+     * while it stays hidden.
+     */
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState !== 'hidden') return;
+      if (flushStreamReveal(streamCursors)) {
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+          applyRevealedText(current, streamCursors));
+      }
+    };
+    /**
      * When this effect began dialling, so an open trace can report how long the
      * work stream was on screen before its first request left. The trace itself
      * cannot cover that: it opens inside `connect`, and everything that delays
@@ -890,7 +968,10 @@ export function useWorkstreamSocket(
             : workstream));
       } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          applyStreamingSocketEvent(current, event, workstreamId, streamCursors));
+          applyStreamingSocketEvent(current, event, workstreamId, streamCursors, {
+            paced: document.visibilityState !== 'hidden',
+          }));
+        scheduleReveal();
       } else if (event.type === 'harness_status_changed') {
         applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
         if (event.status !== 'running') setActiveCompaction(null);
@@ -1325,7 +1406,19 @@ export function useWorkstreamSocket(
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     void connect();
+    // The cursors survive this effect — they live in the resume state — so a
+    // remount can inherit a reveal already in progress. Without this the held
+    // prefix would sit until the next wire frame arrived to restart the loop —
+    // and a mount in an already-hidden window cannot wait on an animation
+    // frame at all, because none will fire until the window is shown; hidden
+    // means nobody is watching, so the inherited backlog shows at once.
+    if (document.visibilityState === 'hidden') {
+      handleVisibilityChange();
+    } else if ([...streamCursors.values()].some(
+      (cursor) => !cursor.completed && cursor.revealed < cursor.receivedText.length,
+    )) scheduleReveal();
     return () => {
       closedByEffect = true;
       openTrace?.end({ outcome: 'unmounted' });
@@ -1347,6 +1440,11 @@ export function useWorkstreamSocket(
       ));
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (revealFrame !== null) {
+        window.cancelAnimationFrame(revealFrame);
+        revealFrame = null;
+      }
       clearReconnectTimer();
       clearHeartbeat();
       clearStabilityTimer();

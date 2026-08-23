@@ -8,6 +8,20 @@ export interface StreamCursor {
   readonly turnStartText: string;
   readonly roomSequence: number;
   readonly completed: boolean;
+  /**
+   * Everything the wire has delivered for this message, including what the
+   * paced reveal has not shown yet. The transcript cache holds the revealed
+   * prefix; this is the whole. See `streaming-reveal.ts`.
+   */
+  readonly receivedText: string;
+  /**
+   * How many characters of `receivedText` are on screen. Mutable because the
+   * reveal loop advances it once per animation frame, between the immutable
+   * cursor replacements the socket events perform.
+   */
+  revealed: number;
+  /** When the reveal loop last advanced this message, for rate integration. */
+  lastRevealAt: number | null;
 }
 
 export interface WorkstreamSocketResumeState {
