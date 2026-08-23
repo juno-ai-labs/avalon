@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
+import { normalizeModelMarkdown, normalizeModelText } from '@avalon/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -468,7 +469,10 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
-  const markdown = withConnectorMentionLinks(children, mentions, token);
+  // Mentions first, normalization second, and the order is load-bearing: the
+  // connector offsets are measured against the stored text, so anything that
+  // changes its length has to run after they have been resolved into links.
+  const markdown = normalizeModelMarkdown(withConnectorMentionLinks(children, mentions, token));
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
   // Stable across commits that change nothing they depend on, for two reasons:
@@ -486,6 +490,11 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
           if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
           return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
         }
+        // A `person:` target that is not an id is text a model wrote, and
+        // `defaultUrlTransform` empties it rather than rejecting it — which
+        // renders as an anchor with nothing behind it, opening a blank
+        // window when a reader takes it for the mention it looks like.
+        if (href?.startsWith('person:')) return <span className="mention-text-fallback">{linkChildren}</span>;
         if (isConnectorHref(href)) {
           const connectorType = connectorTypeFromHref(href, token);
           const label = linkLabelText(linkChildren);
@@ -948,14 +957,17 @@ export function ElicitationPanel({
   };
 
   const options = elicitation.options ?? [];
-  const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(elicitation.prompt)
-    ? `${elicitation.prompt} Pick everything that applies.`
-    : elicitation.prompt;
+  // The question is a label, not a body: it is shown as plain text, so it takes
+  // the plain-text repair rather than being sent through `MarkdownBody`.
+  const prompt = normalizeModelText(elicitation.prompt);
+  const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(prompt)
+    ? `${prompt} Pick everything that applies.`
+    : prompt;
   if (collapsed) {
     return (
       <button className="elicitation-collapsed-bar" onClick={() => setCollapsed(false)} type="button">
         <span>Avalon needs input</span>
-        <strong>{elicitation.prompt}</strong>
+        <strong>{prompt}</strong>
         <ChevronDown aria-hidden="true" size={16} />
       </button>
     );
