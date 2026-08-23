@@ -3127,7 +3127,12 @@ export async function runWorkstreamHarness(
       },
       now: Date.parse(at),
     });
-    if (settled !== "written") throw new Error("block_dashboard_result_ownership_lost");
+    // Both non-written answers end this terminalization, but they are not the
+    // same event: a lost lease means another attempt owns the block now, while
+    // an already-terminal row means this attempt is settling twice. Naming them
+    // apart is the whole reason the operation returns three outcomes.
+    if (settled === "ownership_lost") throw new Error("block_dashboard_result_ownership_lost");
+    if (settled === "already_terminal") throw new Error("block_dashboard_result_already_settled");
     const latestConfigurationVersionId = await blocks.latestConfigurationVersionId();
     await emitProductUsageTelemetry(env, {
       workspaceId: input.workspaceId,
@@ -3204,7 +3209,10 @@ async function persistBlockDashboardBlockMarkdown(
       },
       now: Date.now(),
     });
-  if (written !== "written") throw new Error("block_dashboard_block_ownership_lost");
+  // As at the terminal write: a lost lease and a block that has already been
+  // settled are different facts, and the model is told which one it hit.
+  if (written === "ownership_lost") throw new Error("block_dashboard_block_ownership_lost");
+  if (written === "already_terminal") throw new Error("block_dashboard_block_already_settled");
 }
 
 /** What an earlier attempt of this run already submitted, if anything. */

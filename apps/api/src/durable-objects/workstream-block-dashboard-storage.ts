@@ -43,14 +43,29 @@ export interface BlockRunFence {
 }
 
 /**
- * Whether a fenced write landed.
+ * Whether a fenced write landed, and if not, which of the two reasons.
  *
  * Returned rather than thrown, as the receipt operations are, because an
  * exception crossing the RPC boundary arrives as an opaque string and the
  * caller has to tell "your lease is gone" — an ordinary end to a run — apart
  * from "the object failed".
+ *
+ * `already_terminal` is kept apart from `ownership_lost` because the two are
+ * different facts about the caller: a lost lease means another attempt speaks
+ * for this run now, while an already-terminal block means *this* attempt still
+ * holds the lease and the row it is writing has already been settled — a
+ * redelivery, not a takeover. The routed statements could not tell them apart:
+ * they restated the fence inside the `UPDATE` and read back one `meta.changes`
+ * count, so both arrived as zero. Folding them back together here would throw
+ * that distinction away again.
+ *
+ * `already_terminal` is precisely "the fence held and no open row moved". A
+ * block run that does not exist at all would report the same, and there is no
+ * fourth outcome for it because there is no path to it: `admitDispatch` writes
+ * the block row in the same transaction as the run whose lease is being
+ * checked, so a held lease implies the row.
  */
-export type BlockWriteOutcome = "written" | "ownership_lost";
+export type BlockWriteOutcome = "written" | "ownership_lost" | "already_terminal";
 
 export interface BlockRunRow extends Record<string, SqlStorageValue> {
   block_run_id: string;
@@ -84,6 +99,16 @@ export class WorkstreamBlockDashboardStorage {
    * because they had nowhere to hold the answer. Reading it here means the
    * decision and the write cannot be interleaved, so a lease that lapses
    * mid-operation is no longer a state a caller can observe.
+   *
+   * `status = 'running'` is deliberately narrower than the subquery it
+   * replaces, and is not a behaviour change today. That subquery read
+   * `_runtime_harness_runs`, whose projection mapped `waiting` and `steering`
+   * onto `running`, so it accepted a run in either. Nothing writes those two
+   * statuses — the `runs` CHECK constraint admits them and several readers
+   * tolerate them, but no code path produces one — so widening the fence here
+   * would be handling for a state the product cannot reach. Whoever adds the
+   * first writer of `waiting` or `steering` revisits this fence and the receipt
+   * storage's `#fence`, which narrowed identically and for the same reason.
    */
   #holdsLease(fence: BlockRunFence, now: number): boolean {
     return first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
@@ -165,7 +190,7 @@ export class WorkstreamBlockDashboardStorage {
         input.blockRunId,
         input.fence.harnessRunId,
       );
-      return this.#changed() ? "written" : "ownership_lost";
+      return this.#changed() ? "written" : "already_terminal";
     });
   }
 
@@ -198,7 +223,7 @@ export class WorkstreamBlockDashboardStorage {
         input.blockRunId,
         input.fence.harnessRunId,
       );
-      return this.#changed() ? "written" : "ownership_lost";
+      return this.#changed() ? "written" : "already_terminal";
     });
   }
 
@@ -326,6 +351,17 @@ export class WorkstreamBlockDashboardStorage {
    * `_runtime_harness_runs_insert` trigger produced for a `scheduled` run:
    * `admitted` status, the main substream, a `{}` budget, zeroed counters, and
    * `started_at` defaulted to the creation instant.
+   *
+   * `dispatch_conflict` is what the retired rescue answered without saying so.
+   * That rescue caught the UNIQUE violation and re-read the row by
+   * `(id, harness_run_id, workspace_id, workstream_id, block_id)` — five
+   * columns, of which `block_id` is the one that is not already the row's
+   * identity. Finding no row, it rethrew. It could not have been merged into
+   * "already admitted" then and cannot be now: `blockRunId` is a fresh
+   * `uuidV7()` at each dispatch rather than a value derived from `blockId`, so
+   * a pair naming a *different* block is a real, if remote, possibility, and
+   * admitting it would leave one block's markdown being written under another
+   * block's row. The dispatch is refused instead.
    */
   admitDispatch(input: {
     configurationVersionId: string;
@@ -341,13 +377,15 @@ export class WorkstreamBlockDashboardStorage {
     executionPrincipalJson: string;
     model: string;
     createdAt: number;
-  }): "admitted" | "already_admitted" {
+  }): "admitted" | "already_admitted" | "dispatch_conflict" {
     return this.storage.transactionSync(() => {
       const existing = this.blockRun({
         blockRunId: input.blockRunId,
         harnessRunId: input.harnessRunId,
       });
-      if (existing) return "already_admitted";
+      if (existing) {
+        return existing.block_id === input.blockId ? "already_admitted" : "dispatch_conflict";
+      }
       this.sql.exec(
         `INSERT OR IGNORE INTO block_dashboard_configuration_versions
            (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)

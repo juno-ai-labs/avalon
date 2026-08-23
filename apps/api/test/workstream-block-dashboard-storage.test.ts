@@ -133,6 +133,22 @@ describe("admitting a HyperSight dispatch", () => {
     expect(sql.exec(`SELECT COUNT(*) AS count FROM block_dashboard_block_runs`).one().count)
       .toBe(2);
   });
+
+  it("refuses a dispatch naming an admitted pair for a different block", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+
+    // `blockRunId` is a fresh uuidV7 per dispatch, not a value derived from
+    // `blockId`, so this pair can only recur for the block it was admitted
+    // under. Calling a mismatch a redelivery would let one block's markdown be
+    // written under another block's row; the retired rescue compared `block_id`
+    // for this reason and rethrew, and refusing here is that answer made
+    // explicit rather than an exception nobody could read.
+    expect(storage.admitDispatch(dispatch({ blockId: "block-9" })))
+      .toBe("dispatch_conflict");
+    expect(sql.exec(`SELECT block_id FROM block_dashboard_block_runs`).toArray())
+      .toEqual([{ block_id: "block-1" }]);
+  });
 });
 
 describe("the lease a block result is written under", () => {
@@ -207,11 +223,13 @@ describe("the lease a block result is written under", () => {
 
     // Terminal is terminal. A second settle would rewrite a result a member may
     // already have read, and the routed statement scoped itself to
-    // `('queued', 'running')` for the same reason.
+    // `('queued', 'running')` for the same reason. `already_terminal` rather
+    // than `ownership_lost`: this attempt still holds the lease, and saying it
+    // lost one would describe a takeover that did not happen.
     expect(storage.settleBlockRun({
       blockRunId: "block-run-1", status: "failed", markdown: null,
       errorJson: '{"code":"second"}', fence, now: NOW,
-    })).toBe("ownership_lost");
+    })).toBe("already_terminal");
     expect(sql.exec(`SELECT status, markdown FROM block_dashboard_block_runs`).toArray())
       .toEqual([{ status: "completed", markdown: "first" }]);
   });
@@ -230,6 +248,27 @@ describe("the lease a block result is written under", () => {
     })).toBe("ownership_lost");
     expect(sql.exec(`SELECT markdown FROM block_dashboard_block_runs`).toArray())
       .toEqual([{ markdown: "in progress" }]);
+  });
+
+  it("tells a late submission apart from a lost lease", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+    holdLease(sql);
+    storage.settleBlockRun({
+      blockRunId: "block-run-1", status: "completed", markdown: "final",
+      errorJson: null, fence, now: NOW,
+    });
+
+    // The submission tool racing its own run's terminal write: the lease is
+    // still this attempt's, so nothing was taken from it — the block is simply
+    // finished. The routed statement folded this into the same zero
+    // `meta.changes` a lost lease produced, which is what made the two
+    // indistinguishable to the caller.
+    expect(storage.submitMarkdown({
+      blockRunId: "block-run-1", markdown: "too late", fence, now: NOW,
+    })).toBe("already_terminal");
+    expect(sql.exec(`SELECT markdown FROM block_dashboard_block_runs`).toArray())
+      .toEqual([{ markdown: "final" }]);
   });
 });
 
@@ -387,6 +426,36 @@ describe("what the parent terminalization reads", () => {
 
     sql.exec(`UPDATE block_dashboard_block_runs SET markdown = 'done'`);
     expect(storage.hasPersistedResult({ harnessRunId: RUN })).toBe(true);
+  });
+
+  it("answers nothing for a run that is not a block run at all", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+    sql.exec(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+          origin, execution_principal_json, chain_depth, model, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               'member_message', '{}', 0, 'a-model', ?, ?)`,
+      "00000000-0000-7000-8000-0000000000c1",
+      NOW,
+      NOW,
+      NOW,
+    );
+
+    // The terminalization asks this of *every* run to find out whether it is a
+    // HyperSight one, so "no block" is an ordinary answer rather than a miss —
+    // it is what routes an ordinary run past the block settlement entirely.
+    // A block run of the same work stream is present throughout, so answering
+    // by run rather than by "the work stream has blocks" is what is under test.
+    expect(storage.blockRunForHarnessRun({
+      harnessRunId: "00000000-0000-7000-8000-0000000000c1",
+    })).toBeUndefined();
+    expect(storage.blockRunForHarnessRun({ harnessRunId: RUN })?.block_run_id)
+      .toBe("block-run-1");
   });
 
   it("reads the newest configuration version by number, not by insertion", () => {

@@ -1061,6 +1061,44 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — Three block-dashboard answers the compatibility layer could not give
+
+**What changed:** `admitDispatch` gained a `dispatch_conflict` outcome, and the
+two fenced writes — `submitMarkdown` and `settleBlockRun` — gained
+`already_terminal` alongside `ownership_lost`. `BlockDashboardAgent` throws
+`block_dashboard_runtime_initialization_conflict` on the first, and
+`integrations.ts` names the second apart from a lost lease at both call sites.
+
+**Why:** review of the slice found the port had quietly lost two distinctions
+the code it replaced still made. The retired UNIQUE-violation rescue re-read the
+existing row by five columns including `block_id`, and rethrew when it found
+none; the first port compared only the row's own identity, so a dispatch naming
+an admitted `(blockRunId, harnessRunId)` pair for a *different* block came back
+`already_admitted`. `blockRunId` is a fresh `uuidV7()` per dispatch rather than
+a value derived from `blockId`, so nothing upstream makes that impossible — and
+admitting it would write one block's markdown under another block's row. The
+guard that was supposed to catch it had become unreachable, which is worse than
+absent: the code asserted a case was handled while the operation could no longer
+report it.
+
+The second distinction was cheaper to lose and just as wrong. A fence that holds
+over a row that has already settled is a redelivery, not a takeover, and folding
+it into `ownership_lost` told a member's tool call that its run had been
+superseded when it had not. The routed statements genuinely could not tell the
+two apart — one `meta.changes` count, zero either way — so this is a distinction
+the object makes because it can, not one that regressed.
+
+**What a future change has to respect:** `already_terminal` also covers a block
+row that does not exist, and there is deliberately no fourth outcome for that,
+because `admitDispatch` writes the block row in the same transaction as the run
+whose lease is fenced — a held lease implies the row. If block rows ever become
+writable without their run, that reasoning goes with it. And `#holdsLease` reads
+`status = 'running'` where the retired view's projection also accepted `waiting`
+and `steering`: inert today because nothing writes those two statuses, so
+widening it would be handling for a state the product cannot reach. The first
+writer of either revisits this fence and the receipt storage's `#fence`, which
+narrowed identically.
+
 ### 2026-08-23 — The block dashboard leaves the compatibility layer
 
 **What changed:** `WorkstreamBlockDashboardStorage` owns
