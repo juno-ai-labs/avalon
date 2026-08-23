@@ -255,7 +255,7 @@ layout effect now runs at up to the display rate during a stream — its
 commit at that rate is what the streaming markdown work in
 [`markdown-rendering.md`](markdown-rendering.md) exists to make affordable.
 
-Shipped with `streaming-reveal.md`'s introduction.
+Shipped in #258.
 
 ### 2026-08-22 — The reader's scrolling, not the screen's, decides where the transcript sits
 

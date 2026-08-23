@@ -288,7 +288,7 @@ observable only as client-side jank — and
 `workstream-blocks-streaming-cost.test.tsx` pins the cost ratio so the next
 such regression fails a test instead of a reader.
 
-Shipped with `streaming-reveal.md`'s introduction.
+Shipped in #258.
 
 ### 2026-08-13 — A saved message is this renderer's DOM, rendered off-screen
 
