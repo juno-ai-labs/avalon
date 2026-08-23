@@ -1,13 +1,15 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
+import { newId } from "@avalon/db";
 
 import { sha256 } from "../../lib/crypto";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
-import type {
-  TerminalSandboxProvider,
-  TerminalSandboxSnapshot,
-  TerminalSandboxState,
+import {
+  isTerminalProviderNotFound,
+  type TerminalSandboxProvider,
+  type TerminalSandboxSnapshot,
+  type TerminalSandboxState,
 } from "./daytona-provider";
 import {
   compileTerminalNetworkPolicy,
@@ -26,6 +28,11 @@ import { TerminalToolError } from "./tools";
 const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
 const EXPIRE_DAYS = 30;
+const OPERATION_RECOVERY_TASK_BATCH = 20;
+// Each recovery mutation is one Daytona request bounded at two minutes. The
+// extra minute absorbs local settlement without making a crashed cleanup hold
+// an interactive workspace for the normal sixteen-minute operation lease.
+const OPERATION_RECOVERY_CLAIM_TTL_MS = 3 * 60_000;
 
 export interface TerminalClock {
   now(): Date;
@@ -312,12 +319,22 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    const claimed = await this.terminal(context).claimOperation({
+    const terminal = this.terminal(context);
+    const leaseExpiresAt = plusMinutes(this.clock.now(), 16);
+    let claimed = await terminal.claimOperation({
       runId: context.harnessRunId,
       generation: row.generation,
-      leaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      leaseExpiresAt,
       now,
     });
+    if (!claimed) {
+      claimed = await this.recoverYieldedOperation(
+        context,
+        row,
+        leaseExpiresAt,
+        now,
+      );
+    }
     if (!claimed) {
       throw new TerminalToolError(
         "sandbox_busy",
@@ -326,6 +343,182 @@ export class TerminalSandboxCoordinator {
       );
     }
     return claimed;
+  }
+
+  /**
+   * A yielded run never resumes its Terminal lease; `needs_input` specifically
+   * admits a new linked run. If the old generation retained a named Daytona
+   * command after losing observation, the contender must first make that
+   * provider session quiescent and fence its durable task before it may take
+   * the workspace lease. The ambiguous command is cancelled, never replayed.
+   */
+  private async recoverYieldedOperation(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<TerminalSandboxRecord | null> {
+    const sandboxId = row.sandboxId;
+    if (!sandboxId) return null;
+    const terminal = this.terminal(context);
+    const claimId = newId(now);
+    const renewClaim = async (): Promise<void> => {
+      const renewedAt = this.clock.now().getTime();
+      const renewed = await terminal.renewLifecycleClaim({
+        generation: row.generation,
+        sandboxId,
+        claimId,
+        claimExpiresAt: renewedAt + OPERATION_RECOVERY_CLAIM_TTL_MS,
+        now: renewedAt,
+      });
+      if (!renewed) throw new Error("terminal_operation_recovery_claim_lost");
+    };
+    const recoveryClaimed = await terminal.claimYieldedOperationRecovery({
+      runId: context.harnessRunId,
+      generation: row.generation,
+      sandboxId,
+      version: row.version,
+      claimId,
+      claimExpiresAt: now + OPERATION_RECOVERY_CLAIM_TTL_MS,
+      now,
+    });
+    if (!recoveryClaimed) return null;
+
+    let sandboxStopped = false;
+    let sandboxRetired = false;
+    const finishRecovery = async (): Promise<TerminalSandboxRecord | null> => {
+      const recovered = sandboxRetired
+        ? await terminal.retireYieldedOperationRecovery({
+            runId: context.harnessRunId,
+            generation: row.generation,
+            sandboxId,
+            claimId,
+            leaseExpiresAt,
+            ...deadlines(this.clock.now()),
+            now,
+          })
+        : await terminal.settleYieldedOperationRecovery({
+            runId: context.harnessRunId,
+            generation: row.generation,
+            sandboxId,
+            claimId,
+            leaseExpiresAt,
+            sandboxStopped,
+            now,
+          });
+      if (!recovered) {
+        await terminal.failLifecycleClaim({
+          lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
+          failureCode: "operation_recovery_handoff_lost",
+          claimId,
+          now,
+        });
+      }
+      return recovered;
+    };
+    try {
+      for (let index = 0; index < OPERATION_RECOVERY_TASK_BATCH; index += 1) {
+        const task = await terminal.unsettledTask(row.generation);
+        if (!task) return finishRecovery();
+
+        if (!sandboxStopped && !sandboxRetired) {
+          try {
+            if (this.provider.cleanupCommand) {
+              await renewClaim();
+              const cleanup = await this.provider.cleanupCommand(
+                sandboxId,
+                task.providerTaskName,
+              );
+              if (cleanup === "missing" && task.state === "submitting") {
+                await renewClaim();
+                await this.provider.deleteSandbox(sandboxId);
+                sandboxRetired = true;
+              }
+            } else {
+              if (task.state === "submitting") {
+                await renewClaim();
+                await this.provider.deleteSandbox(sandboxId);
+                sandboxRetired = true;
+              } else {
+                await renewClaim();
+                await this.provider.stopSandbox(sandboxId);
+                sandboxStopped = true;
+              }
+            }
+          } catch (error) {
+            if (isTerminalProviderNotFound(error)) {
+              sandboxRetired = true;
+            } else if (task.state === "submitting") {
+              try {
+                await renewClaim();
+                await this.provider.deleteSandbox(sandboxId);
+                sandboxRetired = true;
+              } catch (deleteError) {
+                if (!isTerminalProviderNotFound(deleteError)) throw error;
+                sandboxRetired = true;
+              }
+            } else {
+              try {
+                await renewClaim();
+                await this.provider.stopSandbox(sandboxId);
+                sandboxStopped = true;
+              } catch {
+                let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
+                try {
+                  observed = await this.provider.getSandbox(sandboxId);
+                } catch (observationError) {
+                  if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
+                  else throw error;
+                }
+                if (!sandboxRetired && observed?.state !== "stopped" && observed?.state !== "archived") {
+                  throw error;
+                }
+                sandboxStopped = !sandboxRetired;
+              }
+            }
+          }
+        }
+
+        const settled = await terminal.cancelTaskAfterProviderCleanup({
+          taskId: task.taskId,
+          runId: task.runId,
+          effectIntentId: task.effectIntentId,
+          sandboxGeneration: task.sandboxGeneration,
+          providerTaskName: task.providerTaskName,
+          claimId,
+          now,
+        });
+        if (!settled && await terminal.unsettledTask(row.generation)) {
+          throw new Error("terminal_task_cleanup_fence_lost");
+        }
+      }
+
+      if (await terminal.unsettledTask(row.generation)) {
+        await terminal.failLifecycleClaim({
+          lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
+          failureCode: "operation_recovery_batch_remaining",
+          claimId,
+          now,
+        });
+        return null;
+      }
+      return finishRecovery();
+    } catch {
+      let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
+      try {
+        observed = await this.provider.getSandbox(sandboxId);
+      } catch (observationError) {
+        sandboxRetired ||= isTerminalProviderNotFound(observationError);
+      }
+      sandboxStopped ||= observed?.state === "stopped" || observed?.state === "archived";
+      await terminal.failLifecycleClaim({
+        lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
+        failureCode: "operation_recovery_provider_failed",
+        claimId,
+        now,
+      });
+      return null;
+    }
   }
 
   /**
