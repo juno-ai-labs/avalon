@@ -3028,17 +3028,26 @@ export class SlackAgentService {
     teamId: string,
     slackUserId: string,
   ): Promise<boolean> {
-    const row = await this.env.DB.prepare(
-      `SELECT 1 AS linked
-         FROM slack_user_links l
-         JOIN workspace_members wm
-           ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-        WHERE l.connection_id = ? AND l.workspace_id = ?
-          AND l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
-          AND wm.status = 'active'
+    // Two reads rather than one join. `slack_user_links` is WorkspaceDO-local
+    // and `workspace_members` is regional D1, so the join this used to be was
+    // claimed by the workspace runtime router — which matches on the local
+    // table it names — and executed inside an object that has no
+    // `workspace_members`. Every call threw `no such table: workspace_members`,
+    // which the Slack ingress reported as a settlement failure and retried
+    // until its budget was exhausted. `publishHome` already splits this exact
+    // pair across the two authorities; this now reads the same way.
+    const link = await this.env.DB.prepare(
+      `SELECT user_id FROM slack_user_links
+        WHERE connection_id = ? AND workspace_id = ?
+          AND slack_team_id = ? AND slack_user_id = ? AND status = 'active'
         LIMIT 1`,
-    ).bind(connectionId, workspaceId, teamId, slackUserId).first<{ linked: number }>();
-    return row !== null;
+    ).bind(connectionId, workspaceId, teamId, slackUserId).first<{ user_id: string }>();
+    if (!link) return false;
+    const member = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT 1 AS linked FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
+    ).bind(workspaceId, link.user_id).first<{ linked: number }>();
+    return member !== null;
   }
 
   private workspaceDirectory(workspaceId: string) {

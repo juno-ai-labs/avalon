@@ -24,7 +24,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
 | `apps/api/src/services/slack-routing-service.ts` | The Global team-to-region route, and nothing else Global holds. |
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
-| `apps/api/src/services/slack-mention-service.ts` | Workspace-bot mention delivery. |
+| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Avalon tells one person about a work stream: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `screens/new-automation.tsx` | Installation administration and the automation destination. |
@@ -607,7 +607,7 @@ not own:
 | `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
 | `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
-| `apps/api/test/slack-mention-service.test.ts` | The lookup-based mention path and its email fallback. |
+| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and its email fallback. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, and the operator notice an exhausted job posts. |
@@ -763,6 +763,39 @@ the same control plane, one less indirection that could not carry the argument.
 placed nothing" and "the reaction is `eyes`" are different states, and a default
 would make every row written before this migration claim the second and then try
 to remove an emoji that was never there.
+
+### 2026-08-22 — One DM path for both things Avalon tells a person, and a link check that reaches the right database
+
+**What changed:** `slack-mention-service.ts` is `slack-notification-service.ts`.
+Its connection resolution, email lookup, DM open, chunking, retry, and
+reconnect marking are now one function behind two senders —
+`sendWorkstreamMentionSlack` and `sendWorkstreamParticipantAddedSlack` — which
+differ only in the text they render and the id their `client_msg_id` is seeded
+from. Its incomplete-delivery log is `slack_notification_delivery_incomplete`
+with `kind` and `source_id` fields, replacing
+`slack_mention_delivery_incomplete` and its `message_id`. Separately,
+`slackUserIsLinked` reads `slack_user_links` from the object and
+`workspace_members` from regional D1 as two statements instead of joining them.
+
+**Why:** the join was routed into WorkspaceDO — the workspace SQL router claims
+any statement naming a local table — and that object has no `workspace_members`.
+Every Slack run-outcome delivery therefore threw `no such table:
+workspace_members`, was reported as a settlement failure, and was retried until
+the ingress retry budget was exhausted; in one production workspace the same run
+had been failing every five minutes for ninety minutes when it was found.
+`publishHome` in the same file already split this exact pair across the two
+authorities, so the fix is the shape the file already had.
+
+The rename follows from the second sender: duplicating two hundred lines of
+credential and retry handling would have given a Slack authorization failure two
+places to be handled differently, and the file's name would have been wrong
+either way once it carried both.
+
+**Considered and rejected:** keeping `slack_mention_delivery_incomplete` for
+mentions and adding a second event name for the other kind. The comment beside
+that log already argues against exactly that: one event with the difference as a
+field, because a name interpolated from the case splits one failure across two
+values no saved view can filter as one.
 
 ### 2026-08-22 — A spent link challenge is kept a day, and an exhausted job is reported once
 

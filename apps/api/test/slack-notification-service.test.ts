@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
-import { sendWorkstreamMentionSlack } from "../src/services/slack-mention-service";
+import { sendWorkstreamMentionSlack } from "../src/services/slack-notification-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -202,7 +202,7 @@ describe("workspace Slack mention delivery", () => {
     )).resolves.toBe("partial");
 
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
-      event: "slack_mention_delivery_incomplete",
+      event: "slack_notification_delivery_incomplete",
       outcome: "partial",
       posted_chunks: 1,
     }));
@@ -232,9 +232,10 @@ describe("workspace Slack mention delivery", () => {
     await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("skipped");
 
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
-      event: "slack_mention_delivery_incomplete",
+      event: "slack_notification_delivery_incomplete",
       outcome: "skipped",
-      message_id: "message-1",
+      kind: "mention",
+      source_id: "message-1",
       recipient_user_id: recipientId,
       reason: "missing_scope",
       posted_chunks: 0,

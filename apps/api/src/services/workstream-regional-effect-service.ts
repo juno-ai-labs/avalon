@@ -7,6 +7,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   WorkstreamMentionNotificationEffectSchema,
+  WorkstreamParticipantNotificationEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
   WorkstreamRegionalEffectQueueMessageSchema,
   workstreamRegionalEffectHash,
@@ -20,7 +21,11 @@ import {
   WorkspaceRegionalEffectApplyResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
-import { sendWorkstreamMentionSlack } from "./slack-mention-service";
+import { sendWorkstreamParticipantAddedEmail } from "./participant-email-service";
+import {
+  sendWorkstreamMentionSlack,
+  sendWorkstreamParticipantAddedSlack,
+} from "./slack-notification-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
@@ -42,6 +47,7 @@ interface NotificationIntentRow {
   recipient_user_id: string;
   source_generation: number;
   required_directory_version: number;
+  notification_kind: string;
   payload_json: string;
   recipient_email: string;
   recipient_name: string;
@@ -247,7 +253,7 @@ export async function processWorkstreamNotificationIntent(
 
   const intent = await env.DB.prepare(
     `SELECT intent_id, workspace_id, workstream_id, recipient_user_id,
-            source_generation, required_directory_version, payload_json
+            source_generation, required_directory_version, notification_kind, payload_json
        FROM workstream_notification_intents
       WHERE intent_id = ? AND workspace_id = ? AND lease_id = ?`,
   ).bind(intentId, workspaceId, leaseId).first<Omit<
@@ -306,33 +312,68 @@ export async function processWorkstreamNotificationIntent(
     return "skipped";
   }
 
-  const effect = WorkstreamMentionNotificationEffectSchema.parse(JSON.parse(row.payload_json));
-  if (effect.recipientUserId === effect.authorUserId) {
+  const payload: unknown = JSON.parse(row.payload_json);
+  const participantAdded = row.notification_kind === "participant_added";
+  const effect = participantAdded
+    ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
+    : WorkstreamMentionNotificationEffectSchema.parse(payload);
+  // Nobody is told about their own doing, whichever kind this is: a person who
+  // mentions themselves, or who adds themselves on the way to making a work
+  // stream personal, already knows.
+  const originatorUserId = effect.kind === "mention_notification"
+    ? effect.authorUserId
+    : effect.actorUserId;
+  if (effect.recipientUserId === originatorUserId) {
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
     return "skipped";
   }
   try {
-    const common = {
-      messageId: effect.messageId,
+    // Both kinds try Slack first and fall back to email, because a linked
+    // member reads Slack and an unlinked one has only an inbox. The two are
+    // sequenced rather than fanned out so nobody is told twice.
+    const recipient = {
       recipientUserId: effect.recipientUserId,
       recipientEmail: row.recipient_email,
-      authorName: effect.authorNameSnapshot,
+      workspaceId: row.workspace_id,
       workspaceName: row.workspace_name,
       workstreamId: row.workstream_id,
       workstreamTitle: effect.workstreamTitleSnapshot,
-      messageText: effect.messageText,
     };
-    const slack = await sendWorkstreamMentionSlack(env, {
-      ...common,
-      workspaceId: row.workspace_id,
-    });
+    const slack = effect.kind === "participant_notification"
+      ? await sendWorkstreamParticipantAddedSlack(env, {
+        ...recipient,
+        sourceId: effect.sourceId,
+        actorName: effect.actorNameSnapshot,
+        workstreamObjective: effect.workstreamObjectiveSnapshot,
+      })
+      : await sendWorkstreamMentionSlack(env, {
+        ...recipient,
+        messageId: effect.messageId,
+        authorName: effect.authorNameSnapshot,
+        messageText: effect.messageText,
+      });
     if (slack !== "sent") {
-      await sendWorkstreamMentionEmail(env, {
-        ...common,
+      const fallback = {
+        ...recipient,
         recipientName: row.recipient_name,
         workstreamEmailAddress: viewer.emailAddress,
         region: env.AVALON_REGION,
-      });
+      };
+      if (effect.kind === "participant_notification") {
+        await sendWorkstreamParticipantAddedEmail(env, {
+          ...fallback,
+          sourceId: effect.sourceId,
+          actorName: effect.actorNameSnapshot,
+          workstreamObjective: effect.workstreamObjectiveSnapshot,
+        });
+      } else {
+        await sendWorkstreamMentionEmail(env, {
+          ...fallback,
+          messageId: effect.messageId,
+          authorName: effect.authorNameSnapshot,
+          messageText: effect.messageText,
+        });
+      }
     }
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "delivered");
     return "delivered";
@@ -348,6 +389,13 @@ export async function processWorkstreamNotificationIntent(
   }
 }
 
+/**
+ * Close one intent out, for either kind.
+ *
+ * The payload is cleared on the way: it held a message excerpt or a work
+ * stream's objective only so delivery could render it, and a settled intent is
+ * a receipt rather than a copy of what was said.
+ */
 async function settleNotificationIntent(
   env: Env,
   workspaceId: string,
