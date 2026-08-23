@@ -81,6 +81,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import {
   createBlockDashboardObjectPort,
@@ -2238,11 +2239,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }),
     });
     const attemptId = uuidV7();
-    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
-      attemptId,
-      owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
-      leaseSeconds: 300,
-    });
+    const claim = await claimHarnessAttempt(
+      createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      input,
+      {
+        attemptId,
+        owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+        leaseSeconds: 300,
+      },
+    );
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       // A lease nobody will release leaves the run "running" forever, and this

@@ -1305,6 +1305,51 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — The lease stops being a join, and the sidebar write it had lost
+
+**What changed:** the harness-run lease family moved onto the typed port.
+`claimHarnessAttempt`, `heartbeatHarnessAttempt`, the two ownership asserts and
+`CoalescedRunLiveness` no longer take a `D1Database` — they take a
+`HarnessRunObjectPort` and nothing else. `persistImmutableRunScope` and
+`persistRunPluginActivation` became `persistScope` and
+`persistPluginActivation` on the storage class, and dropped their database
+handle with it.
+
+**Why:** these were the clearest instance of the thing this whole conversion is
+about — a write whose fence *is* a join. Both scope and activation were
+`INSERT INTO … SELECT … FROM harness_runs WHERE lease_owner = ?`, so a row was
+written only if the caller still held the run; but the insert's own
+`meta.changes` could not say whether zero meant "I already wrote this" or "I no
+longer hold it", so each needed a second, diagnostic statement to find out. One
+transaction reads the fence, reads the existing row, and returns which of four
+states it is. `FencedWriteOutcome` names them once, because they mean the same
+thing for every write fenced this way.
+
+**A regression this found, and the reasoning that produced it.** The routed
+claim was a three-statement batch, and the third statement set
+`workstreams.harness_status = 'running'` — the sidebar's whole answer to
+whether a work stream is busy. `claimAttempt` did not reproduce it, and the
+comments here and in the protocol asserted that it did not need to, because the
+endpoint runs the claim inside `commitRuntimeMutation`. That was wrong:
+`commitRuntimeMutation` publishes the directory's *projection* of the work
+stream row, it does not set the row's state. Nine tests failed on it.
+`markWorkstreamRunning` makes the write, from the claimed row the transaction is
+already holding rather than from the `WHERE EXISTS` that re-derived the claim.
+
+**What a future change has to respect:** that write is a *guard*, not an
+assignment. `exact_state` distinguishes `interrupting`, `preparing_context` and
+`waiting_capacity`, all of which the retired view flattened to one `running` —
+which is why its trigger compared the projection on both sides before writing.
+Assigning `'running'` unconditionally would silently demote a work stream that
+is being stopped. A HyperSight block run never makes this write at all: those
+runs sit beside the conversation rather than holding it.
+
+**Still routed, and why.** Thirteen functions in `harness-run-runtime.ts` keep a
+`D1Database` — the inline-child family, terminalization, the reaper, and
+`persistHarnessFinalMessage`. The last one is not deferred for size: it writes a
+message, a lifecycle event and the work stream's attention counters in one
+batch, so it straddles the message authority and cannot land before slice 7.
+
 ### 2026-08-23 — One object-port factory, and the fence the typed endpoints dropped
 
 **What changed:** the four typed object ports stop being four copies of one
