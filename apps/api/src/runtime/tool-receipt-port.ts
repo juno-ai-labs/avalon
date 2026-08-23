@@ -66,6 +66,11 @@ export function createToolReceiptObjectPort(
   const call = async (operation: ToolReceiptOperation, args: unknown[]): Promise<unknown> => {
     if (localStorage) {
       const method = localStorage[operation] as (...rest: unknown[]) => unknown;
+      // `?? null` so this path answers exactly as the remote one does. JSON has
+      // no `undefined`: over RPC a method returning it arrives as an absent
+      // `value`, which the caller below reads as `null`. Dropping the coalesce
+      // here would not preserve `undefined` end to end — it would only make the
+      // Node suite disagree with production about a method that returned one.
       return method.apply(localStorage, args) ?? null;
     }
     const stub = await durableObjectStubForWorkspace(

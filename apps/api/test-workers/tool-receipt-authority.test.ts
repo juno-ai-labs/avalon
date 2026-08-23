@@ -293,6 +293,36 @@ describe("tool-receipt authority on real workerd", () => {
     });
   });
 
+  it("refuses a request carrying more arguments than an operation takes", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedLiveRun(state);
+    });
+
+    // Every method on the storage class takes exactly one options object, so a
+    // second positional argument is a malformed request rather than a call this
+    // endpoint could satisfy. Asserted through the real endpoint because the
+    // bound lives in the wire schema, and the typed port cannot produce a
+    // request that violates it.
+    const { status, body } = await post(stub, "/internal/tool-receipt", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "admit",
+      args: [admission("effect-arity", "call-arity"), { second: "argument" }],
+    });
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ error: "invalid_tool_receipt_operation" });
+    // And nothing was admitted on the way to being refused.
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM tool_effects`,
+      ).one().count).toBe(0);
+    });
+  });
+
   it("dispatches every method the storage class exposes", async () => {
     const methods = Object.getOwnPropertyNames(WorkstreamToolReceiptStorage.prototype)
       .filter((name) => name !== "constructor")
