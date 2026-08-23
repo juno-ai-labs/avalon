@@ -27,9 +27,9 @@ import {
 } from "../src/services/workstream-wakeup-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  testMessagePort,
   testSchedulingPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
@@ -182,6 +182,9 @@ function fixture(): Fixture {
   const dispatches: RecordedDispatch[] = [];
   const dispatchControl: { error: Error | null } = { error: null };
   const timerControl: { error: Error | null } = { error: null };
+  const transcriptControl: { error: Error | null } = { error: null };
+  const transcript = testMessagePort(objectStore) as unknown as
+    Record<string, (...args: unknown[]) => Promise<unknown>>;
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -199,6 +202,14 @@ function fixture(): Fixture {
           timerRefreshes.push(input.workstreamId);
           return { status: 200, bodyJson: "{}" };
         }),
+        // The transcript reaches the object through its own port now, so a test
+        // that needs the transcript write to fail injects here rather than into
+        // the runtime SQL executor.
+        executeMessageOperation: vi.fn(async (input: { operation: string; args: unknown[] }) => {
+          if (transcriptControl.error) throw transcriptControl.error;
+          const value = await transcript[input.operation]!(...input.args);
+          return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+        }),
       },
     }),
   });
@@ -211,6 +222,7 @@ function fixture(): Fixture {
     dispatches,
     dispatchControl,
     timerControl,
+    transcriptControl,
   };
 }
 
@@ -914,7 +926,7 @@ describe("firing a due wake-up", () => {
   });
 
   it("releases the claim when pre-launch preparation fails, not just the launch", async () => {
-    const { objectStore, env, dispatches } = fixture();
+    const { objectStore, env, dispatches, transcriptControl } = fixture();
     const { schedule } = wakeupTools(env);
     const scheduled = await schedule.execute(
       { prompt: "Transcript write fails", delay: "1 hour" },
@@ -926,22 +938,15 @@ describe("firing a due wake-up", () => {
     // launch. The claim is only safe to hold if every throw between them
     // releases it: once the row leaves `pending`, the scheduler's retry gate
     // cannot see it as due and the wake-up is consumed with no run. The
-    // transcript travels the runtime SQL port since the cutover, so the
-    // failure is injected there — the claim's own port batch passes through.
-    const executionEnv = withWorkstreamRuntimeDatabase(
-      env,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      "0",
-      async (statements) => {
-        if (statements.some(({ sql }) => /INSERT INTO messages/iu.test(sql))) {
-          throw new Error("runtime SQL port unavailable");
-        }
-        return executeWorkstreamObjectSql(objectStore, statements);
-      },
-    );
+    // transcript has its own port since the messages slice, so the failure is
+    // injected there — the claim's own operation passes through.
+    transcriptControl.error = new Error("transcript port unavailable");
 
-    await expect(fireWorkstreamWakeup(executionEnv, row, schedulingPort(objectStore))).rejects.toThrow("runtime SQL port unavailable");
+    await expect(fireWorkstreamWakeup(
+      executionEnvironment(env),
+      row,
+      schedulingPort(objectStore),
+    )).rejects.toThrow("transcript port unavailable");
 
     expect(dispatches).toHaveLength(0);
     const after = objectGet<{ status: string; fired_at: number | null }>(

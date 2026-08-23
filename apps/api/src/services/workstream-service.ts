@@ -1,4 +1,4 @@
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
 import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@avalon/contracts";
 import type {
@@ -40,6 +40,8 @@ import {
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { readMessage } from "../runtime/message-projection";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -451,38 +453,30 @@ function wakeupPromptPreview(prompt: string): string {
  * a person opening the work stream will have: why did this start on its own?
  */
 async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Promise<void> {
-  const messageId = newId();
   const clientMessageId = `wakeup:${row.id}`;
-  const at = nowIso();
-  const results = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-        message_type, text_content, structured_content_json, sequence_number, created_at)
-       SELECT ?, ?, ?, w.id, 'system', NULL, 'system', ?, NULL, w.next_sequence_number, ?
-       FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-    ).bind(
-      messageId,
-      clientMessageId,
-      row.workspace_id,
-      `Avalon woke this work stream up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
-      at,
-      row.workstream_id,
-      row.workspace_id,
-    ),
-    env.DB.prepare(
-      `UPDATE workstreams
-       SET next_sequence_number = next_sequence_number + 1,
-           last_activity_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
-    ).bind(at, at, row.workstream_id, row.workspace_id, messageId),
-  ]);
-  if (Number(results[0]?.meta.changes ?? 0) === 0) return;
-  const message = await createDatabase(env.DB).workstreams.getMessageByClientId(
-    row.workspace_id,
-    row.workstream_id,
+  const messages = createMessageObjectPort(env, row.workspace_id, row.workstream_id);
+  // The insert and the counter it consumed were a two-statement batch: one of
+  // them advanced `next_attention_ordinal` inside the retired view's trigger
+  // and the other advanced `next_sequence_number` here. One operation now.
+  const appended = await messages.appendMessage({
+    messageId: newId(),
+    clientMessageId,
+    authorType: "system",
+    authorUserId: null,
+    externalActorJson: null,
+    messageType: "system",
+    text: `Avalon woke this work stream up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
+    structuredContentJson: null,
+    producedByRunId: null,
+    now: Date.now(),
+  });
+  // A redelivered alarm names the wake-up it already announced. Publishing a
+  // second `message_created` for a row that was already there would put the
+  // same notice in front of a member twice.
+  if (appended.outcome === "replayed") return;
+  const message = await readMessage(
+    messages,
+    { workspaceId: row.workspace_id, workstreamId: row.workstream_id },
     clientMessageId,
   );
   if (message) {

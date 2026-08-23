@@ -26,10 +26,14 @@
  *   reach the real profile (the product service reads regional `users` one
  *   layer away), and the identity slice is where these readers start seeing it.
  *   Changing it here would put a data change inside a compatibility retirement.
- * - Attachments are read from `part_attachments.attachment_json`, the frozen
- *   descriptor the object already stores, rather than by joining `resources`.
- *   That is not a change in what a caller sees; it is the reason this slice does
- *   not have to wait for the resources one.
+ * - An attachment's resource is read from `workstream_resource_links`, the
+ *   object's own frozen descriptor. That is not a new source: the retired
+ *   reader's `JOIN resources` was rewritten onto `_runtime_resources`, a view
+ *   that `json_extract`s the same frozen copy. So this reader sees exactly what
+ *   it saw. It is worth naming because the *product* service reads the live
+ *   regional row instead, and the two have been able to disagree — a resource
+ *   renamed after it was attached renders one way in the app and another in the
+ *   harness's transcript. Reconciling them is the resources slice's job.
  *
  * Timestamps are unix milliseconds, the object's convention.
  */
@@ -65,7 +69,11 @@ export interface MessageAttachmentRow extends Record<string, SqlStorageValue> {
   part_id: string;
   resource_id: string;
   position: number;
-  attachment_json: string;
+  title: string | null;
+  mime_type: string | null;
+  content_ref: string | null;
+  metadata_json: string | null;
+  attached_at: number;
 }
 
 /** The member profile the retired `_runtime_users` view fabricated. */
@@ -170,14 +178,28 @@ export class WorkstreamMessageStorage {
     ).toArray();
   }
 
-  /** The attachments on a page of messages, with the descriptor already frozen. */
+  /**
+   * The attachments on a page of messages, with the descriptor the object froze.
+   *
+   * The join the retired reader wrote as `JOIN resources` — which was rewritten
+   * onto a view that `json_extract`ed these same columns out of
+   * `workstream_resource_links.resource_json`. An attachment whose link has
+   * since been removed produced no row through that join, and produces none
+   * here.
+   */
   attachmentsFor(input: { messageIds: readonly string[] }): MessageAttachmentRow[] {
     if (input.messageIds.length === 0) return [];
     return this.sql.exec<MessageAttachmentRow>(
-      `SELECT part_id, resource_id, position, attachment_json
-         FROM part_attachments
-        WHERE part_id IN (${input.messageIds.map(() => "?").join(", ")})
-        ORDER BY part_id, position`,
+      `SELECT attachment.part_id, attachment.resource_id, attachment.position,
+              json_extract(link.resource_json, '$.title') AS title,
+              json_extract(link.resource_json, '$.mimeType') AS mime_type,
+              json_extract(link.resource_json, '$.contentRef') AS content_ref,
+              json_extract(link.resource_json, '$.metadata') AS metadata_json,
+              link.attached_at
+         FROM part_attachments attachment
+         JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
+        WHERE attachment.part_id IN (${input.messageIds.map(() => "?").join(", ")})
+        ORDER BY attachment.part_id, attachment.position`,
       ...input.messageIds,
     ).toArray();
   }
