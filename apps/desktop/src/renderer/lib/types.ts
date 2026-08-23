@@ -550,6 +550,7 @@ export interface AutomationDraftSummary {
   triggerSummary: string;
   capabilities: string[];
   requiresSlackDelivery: boolean;
+  requiresEmailDelivery: boolean;
 }
 
 export interface AutomationDraftResponse {

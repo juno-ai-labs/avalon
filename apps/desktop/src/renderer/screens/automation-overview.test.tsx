@@ -18,7 +18,9 @@ const api = vi.hoisted(() => ({
 }));
 const copyText = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
+vi.mock('../lib/app-session', () => ({
+  useAppSession: () => ({ api, session: { user: { email: 'owner@example.com' } } }),
+}));
 vi.mock('../components/inspector-rail', () => ({ InspectorRail: () => null }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText }),
@@ -190,6 +192,131 @@ describe('Automation template updates', () => {
       nextVersionId,
       { github_source: 'plugin_github_workspace' },
     ));
+  });
+
+  it('turns a delivery destination off from the automation itself', async () => {
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'owner@example.com', status: 'active' }],
+    });
+    api.updateAutomation.mockResolvedValue({ ...detail, deliveryTargets: [] });
+    renderScreen();
+
+    const email = await screen.findByRole('checkbox', { name: /owner@example.com/ });
+    expect(email).toBeChecked();
+    fireEvent.click(email);
+
+    // The only way to stop these emails used to be deleting the automation.
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, { deliveryTargets: [] }));
+  });
+
+  it('adds a destination without dropping the one already chosen', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      },
+    ]);
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'owner@example.com', status: 'active' }],
+    });
+    api.updateAutomation.mockResolvedValue(detail);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Slack DM · Acme/ }));
+
+    // The API replaces the whole set, so a payload carrying only the box that
+    // moved would silently turn the email off.
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, {
+      deliveryTargets: [{ type: 'email' }, { type: 'slack_agent_dm', connectionId: 'connection-slack' }],
+    }));
+  });
+
+  it('still offers a destination whose connection is gone, so it can be turned off', async () => {
+    // Unlinking or disabling a connection retains the delivery-target row. Built
+    // from the live connection list alone the row vanished from the screen while
+    // still delivering, and — because every payload this screen sends carries
+    // the whole set — it was replayed into each one and rejected, so no
+    // destination could be changed at all until the automation was deleted.
+    api.getConnections.mockResolvedValue([]);
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [
+        { type: 'email', connectionId: null, displayName: 'owner@example.com', status: 'active' },
+        { type: 'slack_agent_dm', connectionId: 'connection-slack', displayName: 'Slack DM · Acme', status: 'active' },
+      ],
+    });
+    api.updateAutomation.mockResolvedValue(detail);
+    renderScreen();
+
+    const orphan = await screen.findByRole('checkbox', { name: /Slack DM · Acme/ });
+    expect(orphan).toBeChecked();
+    expect(screen.getByText('Disconnected — turn off to stop trying')).toBeInTheDocument();
+
+    fireEvent.click(orphan);
+
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, {
+      deliveryTargets: [{ type: 'email' }],
+    }));
+  });
+
+  it('replaces a same-kind destination rather than composing a set the API refuses', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      },
+      {
+        id: 'connection-slack-2',
+        modelPluginId: 'plugin_slack_personal',
+        connectorType: 'slack',
+        displayName: 'Side project',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      },
+    ]);
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [{ type: 'slack_agent_dm', connectionId: 'connection-slack', displayName: 'Slack DM · Acme', status: 'active' }],
+    });
+    api.updateAutomation.mockResolvedValue(detail);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Slack DM · Side project/ }));
+
+    // The table holds one row per kind, so two installations offering the same
+    // surface are one destination. Appending the second composed a set the API
+    // rejects, and the reader got an unexplained failure for a plain click.
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, {
+      deliveryTargets: [{ type: 'slack_agent_dm', connectionId: 'connection-slack-2' }],
+    }));
+  });
+
+  it('says when a destination stopped delivering', async () => {
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'owner@example.com', status: 'needs_input' }],
+    });
+    renderScreen();
+
+    // A frozen address that starts bouncing is marked needs_input and stops
+    // delivering; without this the automation looks like it is still emailing.
+    expect(await screen.findByText('Last delivery failed')).toBeInTheDocument();
   });
 
   it('shows the permanent email trigger and copies it from an icon button', async () => {

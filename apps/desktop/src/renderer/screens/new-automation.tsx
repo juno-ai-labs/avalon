@@ -49,6 +49,7 @@ import type {
   AutomationActivitySource,
   AutomationDraftQuestion,
   AutomationDraftResponse,
+  AutomationDraftSummary,
   AutomationScope,
   Message,
   MessageAttachment,
@@ -417,6 +418,22 @@ function DeliveryChoice({
   );
 }
 
+/**
+ * What the draft itself said about where the result goes.
+ *
+ * Avalon sends the result to the destinations chosen here and the run sends
+ * nothing, so a draft that promises to email or message somebody and lands on a
+ * screen with no destination ticked is an automation that quietly delivers
+ * nowhere. The sentence names what was asked for; the boxes below are what
+ * actually decides it.
+ */
+function deliveryNudge(summary: AutomationDraftSummary): string {
+  if (summary.requiresEmailDelivery && summary.requiresSlackDelivery) return 'This draft mentions email and Slack delivery. ';
+  if (summary.requiresEmailDelivery) return 'This draft mentions email delivery. ';
+  if (summary.requiresSlackDelivery) return 'This draft mentions Slack delivery. ';
+  return '';
+}
+
 function DraftSummary({
   draft,
   creating,
@@ -490,7 +507,7 @@ function DraftSummary({
       />
       <section className="automation-plugin-defaults automation-delivery-target" aria-label="Deliver results">
         <header>
-          <div><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Every destination is frozen when this automation is saved.</small></div>
+          <div><strong>Deliver results</strong><small>{deliveryNudge(summary)}You can change these later from the automation.</small></div>
         </header>
         <ul>
           <DeliveryChoice
@@ -812,10 +829,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   }, [draft?.draftId, draft?.summary?.scope]);
 
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
+  // The email box starts ticked when the draft's own outputs promise an emailed
+  // result. Avalon is the only sender now — the run is forbidden to mail the
+  // result itself — so leaving it off by default turns "email me every morning"
+  // into an automation that emails nobody, on the path where the reader agrees
+  // with everything on screen and presses Create.
+  const draftAsksForEmail = draft?.summary?.requiresEmailDelivery ?? false;
   useEffect(() => {
     setDeliveryConnectionId('');
-    setEmailDelivery(false);
-  }, [deliveryDraftKey]);
+    setEmailDelivery(draftAsksForEmail);
+  }, [deliveryDraftKey, draftAsksForEmail]);
 
   useEffect(() => {
     if (scope !== 'you') setEmailDelivery(false);

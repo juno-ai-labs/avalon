@@ -71,7 +71,7 @@ After admission Avalon validates the execution principal and persists an immutab
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, and subscription overrides. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Avalon will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
@@ -87,9 +87,11 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
+An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
+
 ### Automation compilation
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants.
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
@@ -680,6 +682,38 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-23 — The compiler reports the destinations it was asked for, and its ceiling stays at 10,000
+
+**What changed:** `requestedDelivery` became a required field of the
+submit-draft tool schema, closed to `email` and `slack_agent_dm`, normalized to
+a sorted de-duplicated list with unknown members dropped. The delivery rule in
+the compiler policy was scoped to the owner and given an answer for its two
+ambiguous readings. A stack-ranked-briefing recipe was deleted from that policy,
+and the prompt's byte ceiling — briefly raised to 10,500 — is back at 10,000.
+
+**Why:** The create screen was deciding whether to pre-tick email by pattern-
+matching the draft's prose, and the compiler had already parsed that sentence.
+The guess was wrong in the expensive direction — the compiler's own worked
+example is a briefing about an inbox — and, until the same change made
+destinations editable, wrong permanently. Sorting is not cosmetic: the
+normalized draft is re-rendered into the compiler's own cached prefix on every
+later turn, so the model's word order would otherwise cost a cache hit per turn.
+
+**Considered and rejected:** Leaving the ceiling at 10,500. The comment written
+to justify that raise named the sentence that should move out first, and
+deleting the sentence it named came in at 9,946 — under the original bound with
+room to spare. Raising a defensive limit around something already identified as
+removable is backwards, and `docs/writing-prompts.md` asks for the removal
+first. The recipe was one workflow's output shape sitting in standing policy
+charged to every compile.
+
+**Consequences:** An email-briefing automation drafted from now on gets no
+built-in formatting recipe; if that guidance is wanted back it belongs in a
+skill, which needs the compiler given a skill surface first — `compileAutomation`
+does not pass `skills` to `runHarness` today. Anything reading `requestedDelivery`
+must keep treating it as a *request*: it is model output, it selects among
+Avalon's own fixed channels, and it never carries an address.
+
 ### 2026-08-23 — Terminal receipt reconciliation survives a transient object failure
 
 **What changed:** Stopped terminalization, stale-root reaping, and stale-child
@@ -865,6 +899,36 @@ stale executor cannot mutate attachment replay dependencies before its completio
 is accepted or race that dependency past a successor's preliminary replan check.
 New inference callers must add their source to the typed union and the D1 check
 in the same change.
+
+### 2026-08-22 — A run is told what Avalon will deliver for it
+
+**What changed:** The automation prompt context carries the active destinations
+Avalon delivers the run's result to, and the standing behavior policy forbids
+sending a copy of that result to one of them. The compiler policy says the same
+from the other side: a destination is described, never instructed as a provider
+send.
+
+**Why:** Platform policy outranks saved automation configuration, and the
+automations that already exist have "send me the briefing by email" written into
+their instructions. Fixing only the compiler would leave every one of them
+sending a second copy until its author rewrote it.
+
+**Considered and rejected:** Listing every frozen target regardless of status. A
+disabled or failed target delivers nothing, so naming it would stop a run doing
+the sending its task actually needs. Also rejected: leaving the rule in the
+always-on policy string, which spends its bytes on every interactive run and
+gives a run asked to "email this to Bob" a rule whose subject its context does
+not carry.
+
+**Consequences:** A new delivery channel has to be added to `resultDelivery` or
+its runs will send a second copy, and the section renders only for a run with a
+non-empty list — a caller that populates the field must populate it truthfully.
+The rule is enforced by policy, not by a guard: the mechanism, if the destination
+set ever includes somebody other than the owner, is a `beforeToolCall` predicate
+over a frozen destination list, the same shape that already makes child runs
+read-only. `WORKSTREAM_PROMPT_VERSION` was deliberately not bumped, because it is
+inside the canonical run-scope hash and bumping it fails every in-flight run's
+resumed attempt across a deploy.
 
 ### 2026-08-22 — Tools receive the receipt identity their effects are keyed to
 

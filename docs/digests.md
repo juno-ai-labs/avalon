@@ -20,6 +20,8 @@ mention, or changing what a connector can deliver to a person.
 | Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
+| Markdown → email HTML | `apps/api/src/services/email-markdown.ts`, shared with automation results |
+| Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs`; the automation result's equivalent is `scripts/preview-automation-email.mjs` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
@@ -389,7 +391,7 @@ is never a delivery-state projection or fallback.
 
 #### The email
 
-`digest-email-content.ts` renders the run's Markdown to email-safe HTML.
+`digest-email-content.ts` wraps the run's Markdown, rendered to email-safe HTML by the shared `email-markdown.ts`, in the digest's own shell.
 
 It is dark, and deliberately only dark: the email is a copy of an Avalon surface
 and the app has one appearance. Every colour is the app's own token from
@@ -427,10 +429,13 @@ grid, nothing a 2007 renderer has to guess at.
 
 A general Markdown library is the wrong tool here: clients ignore most of what
 one emits, and rendering raw HTML would mean rendering model output into an
-email. The renderer covers the subset a digest uses — `##` sections with a
-brand rule, `###` subheads, bullets, links, bold, inline code, blockquote — and
-escapes everything before a single tag is added, so an `href` can only ever be
-one it built itself. Unknown syntax degrades to visible text.
+email. The renderer covers `#` document titles, `##` sections with a brand
+rule, `###` subheads, bullets one level deep, numbered lists, links, bold,
+`*` or `_` emphasis, inline code, and blockquote, and escapes everything before
+a single tag is added, so an `href` can only ever be one it built itself — with
+`*`, `_` and backticks encoded inside it, so the emphasis passes that follow
+cannot match within the attribute. A table or a fenced block is kept verbatim in
+a `<pre>`; other unknown syntax degrades to visible text.
 
 The brief names exactly that subset, so what the model writes and what the
 template styles are the same list. Each source group carries its canonical link,
@@ -585,9 +590,13 @@ entry point, and nothing else resolves audience correctly.
   transcript survives or not. If the volume ever stops being worth it, a bounded
   maintenance Workflow driven by the workspace scheduler is the shape it should
   take, and the cascade already takes the transcript's dependent rows.
-- **The email is dark only**, by design, and renders a Markdown subset — `##`
-  sections, `###` subheads, bullets, links, bold, inline code, blockquote. Unknown
-  syntax degrades to visible text rather than being passed through as HTML.
+- **The email is dark only** — not because the app has one appearance, which it
+  does not, but because a mail client cannot report the reader's chosen theme, so
+  it renders in the shipped default. It renders a Markdown subset: titles,
+  sections, subheads, bullets one level deep, numbered lists, links, bold,
+  emphasis, inline code, blockquote, and tables or fenced blocks kept verbatim in
+  a `<pre>`. Other unknown syntax degrades to visible text rather than being
+  passed through as HTML.
 
 ## Testing
 
@@ -595,7 +604,8 @@ entry point, and nothing else resolves audience correctly.
 | --- | --- |
 | `apps/api/test/activity-event-projection.test.ts` | Projection from `activities`, audience resolution, target rows, and the cursor. |
 | `apps/api/test/digest-run-context.test.ts` | That the brief reaches the model through the run's trigger context **and** that the transcript row stays invisible to it. The two halves are pinned together deliberately, because a digest run that reaches the model without its window does not report that it cannot see one — it writes that nothing happened, and that shipped. |
-| `apps/api/test/digest-email-content.test.ts` | The Markdown subset, escaping, and the structure. |
+| `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
+| `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, and the preview line. |
 | `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, and the reconciler's two passes. |
 | `apps/api/test/digest-run.test.ts` | The frozen window, the claim, the empty settle, and the release on a pre-launch throw. |
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
@@ -638,6 +648,29 @@ should still see it in the digest that covers that day. Also rejected: an event
 per participation change, including removals. Being removed is not something
 Avalon should announce to the person it happened to, and nobody asked for the
 audit trail.
+
+### 2026-08-22 — The Markdown renderer moves out of the digest
+
+**What changed:** The Markdown-to-email-HTML renderer and the shared palette now
+live in `email-markdown.ts`. `digest-email-content.ts` keeps the digest's own
+shell and calls it. The renderer also gained one level of list nesting and
+`*asterisk*` emphasis, both of which it previously passed through as
+punctuation.
+
+**Why:** The automation result email needed the same rendering — it was escaping
+Markdown into HTML and mailing `##` and `**` to readers — and a second copy of a
+security-sensitive renderer is a second place for an escaping rule to be missed.
+
+**Considered and rejected:** Importing `digestMarkdownToHtml` from the digest
+module. It works, and it makes every later reader of the automation email believe
+the digest owns rules that are common to both.
+
+**Consequences:** The renderer is shared, so a change to it changes the
+automation result email too, and both emails' tests have to be read before one
+is edited. The digest's own From address moved with it: with
+`RESEND_NOTIFICATION_FROM_EMAIL` now configured, a digest arrives from
+`notifications@with-avalon.com` rather than the invitations address it had been
+falling back to.
 
 ### 2026-08-20 — The email preview stops querying retired D1 product tables
 
