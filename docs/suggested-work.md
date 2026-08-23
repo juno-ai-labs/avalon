@@ -281,6 +281,7 @@ work-stream identity anchor with no product provenance.
 | `apps/api/test/work-opportunity-batching.test.ts` | Admission batching, provenance scoping, the start ledger's claim/replay/roll-forward contract, and that the renderer contract strips what the object holds. |
 | `apps/api/test/suggested-work-opening-turn.test.ts` | That the opening message is the member's own turn carrying `suggested_work_expansion`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, serving, and every read-path request rule below. |
+| `apps/api/test-workers/opportunity-ranking.test.ts` | The ranking pipeline the object owns: who is a candidate, the cached state, the stored result, the recorded round, the lease settlement's `request_seq` guard, and the claim ledger's completion fence. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/work-opportunity-batching.test.ts`
@@ -329,6 +330,25 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-23 — The ranking pipeline is asserted against the object that runs it
+
+**What changed:** `test-workers/opportunity-ranking.test.ts`, fourteen specs
+over `opportunityRankingCandidates`, `opportunityRankingState`,
+`storeOpportunityRanking`, `recordOpportunityRankingRound`,
+`settleOpportunityRanking` and `completeOpportunityStart`.
+
+**Why:** the entry below deleted these operations' regional D1 arms, which left
+their Worker-side callers reaching the object through Node stubs. A stub answers
+whatever it was told to, so from that point nothing asserted what the object
+decides — who is a candidate, whose dismissal counts, or whether a ranking
+request that arrives mid-pass survives the settle.
+
+**What a future change has to respect:** `settleRanking`'s
+`CASE WHEN request_seq = ?` is not an optimisation. It is what keeps a member's
+request from being cleared by the pass that did not answer it, and clearing it
+unconditionally is one half of the standoff `docs/potential-bugs.md` describes.
+The test that pins it is "leaves a request that arrived while it was ranking".
 
 ### 2026-08-22 — The read path's request rules move to the suite that runs them
 
