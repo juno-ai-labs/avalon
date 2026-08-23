@@ -17,6 +17,63 @@ import { WorkstreamObjectClient } from "../services/workstream-object-client";
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
 /**
+ * Seed tool receipts into `tool_effects` directly.
+ *
+ * The fixture is written in the vocabulary a reader of this repository knows —
+ * `harness_run_id`, `input_hash`, ISO-8601 timestamps — and it stays that way,
+ * because a checked-in seed is meant to be read. What used to translate it was
+ * the `_runtime_tool_invocations` insert trigger, which also *invented* the
+ * columns the old vocabulary never carried. Doing that here rather than in SQL
+ * is the point of the change: every fabricated value is now visible at the one
+ * place that fabricates it.
+ *
+ * `tool_position` is the row's index rather than a count of what is already
+ * there. The trigger used `COUNT(*)`, which stops being injective the moment a
+ * receipt is deleted — the defect object schema migration 16 repaired.
+ */
+async function insertToolReceipts(
+  database: D1Database,
+  receipts: z.infer<typeof row>[],
+  copied: Record<string, number>,
+): Promise<void> {
+  for (const [position, receipt] of receipts.entries()) {
+    const id = String(receipt.id);
+    const plan = typeof receipt.execution_plan_json === "string" ? receipt.execution_plan_json : null;
+    const at = (value: unknown): number | null =>
+      typeof value === "string" ? Date.parse(value) : null;
+    await database.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
+          mode, request_hash, authority_revision, status, tool_call_id, connection_id,
+          input_json, output_ref, output_summary, execution_plan_json, started_at, settled_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      id,
+      String(receipt.harness_run_id),
+      position,
+      `runtime:${id}`,
+      String(receipt.tool_name),
+      plan?.includes('"mode":"write"') ? "write" : "read",
+      String(receipt.input_hash ?? "seed"),
+      // The object's own statuses. The retired view spelled the first two
+      // `pending` and `started`, and the fixture still does.
+      receipt.status === "pending" ? "admitted"
+        : receipt.status === "started" ? "executing"
+          : String(receipt.status),
+      String(receipt.tool_call_id),
+      receipt.connection_id ?? null,
+      typeof receipt.input_json === "string" ? receipt.input_json : "{}",
+      receipt.output_ref ?? null,
+      receipt.output_summary ?? null,
+      plan,
+      at(receipt.started_at),
+      at(receipt.completed_at),
+    ).run();
+  }
+  copied.tool_effects = receipts.length;
+}
+
+/**
  * The only tables this route will write, per authority. The fixture file is
  * checked in, but the route is an HTTP surface even dev-gated, so what it can
  * touch is enumerated here rather than taken from the request.
@@ -162,7 +219,7 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     const scope = { workspace_id: workspaceId, workstream_id: workstream.id };
     await insert("workstream_participants", workstream.participants, { workstream_id: workstream.id });
     await insert("harness_runs", workstream.harnessRuns, scope);
-    await insert("tool_invocations", workstream.toolInvocations, scope);
+    await insertToolReceipts(routed.DB, workstream.toolInvocations, copied);
     await insert("messages", workstream.messages, scope);
 
     if (workstream.resourceIds.length > 0) {

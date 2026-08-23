@@ -7,9 +7,8 @@ import { ApiError } from "../lib/api-error";
 import { publishWorkstreamEvent } from "./integrations";
 import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
-import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
@@ -454,7 +453,6 @@ export class ResendRegionalEmailService {
       targetType,
       workstreamId: parsed.workstreamId!,
     };
-    const authority = await readWorkstreamAuthorityControl(this.env);
     const executionEnv = await workstreamExecutionEnvironment(
       this.env,
       input.workspaceId,
@@ -477,9 +475,7 @@ export class ResendRegionalEmailService {
     // Before the cutover it must stay in regional D1, because the legacy
     // settle path below fences the lease inside one D1 batch with the message
     // insert — a claim and its settle may never live in different stores.
-    const receiptsDb = authority.phase === "durable_object_open"
-      ? this.env.DB
-      : workspaceRegionalDatabase(this.env);
+    const receiptsDb = this.env.DB;
     const leaseToken = newId();
     const leaseExpiresAt = this.leaseExpiration();
     const claimed = await receiptsDb.prepare(
@@ -583,29 +579,15 @@ export class ResendRegionalEmailService {
         attachmentCount: safeEmail.attachments.length,
         truncated: safeEmail.truncated,
       };
-      if (authority.phase === "durable_object_open") {
-        await attachWorkstreamRuntimeResource(this.env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          resourceId,
-          attachedByUserId: null,
-          relationshipType: "inbound_email",
-        });
-      }
-      // The legacy branch settles the receipt lease inside the same D1 batch
-      // as the message insert. Its statements must come from the regional
-      // database directly: the wrapped environment now classifies the receipt
-      // table as object-local and would reject the batch as cross-authority.
-      const batchDb = authority.phase === "durable_object_open"
-        ? executionEnv.DB
-        : workspaceRegionalDatabase(this.env);
+      await attachWorkstreamRuntimeResource(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        resourceId,
+        attachedByUserId: null,
+        relationshipType: "inbound_email",
+      });
+      const batchDb = executionEnv.DB;
       const localStatements = [
-        ...(authority.phase === "durable_object_open" ? [] : [batchDb.prepare(
-          `INSERT INTO workstream_resources
-           (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-           VALUES (?, ?, NULL, 0, 'inbound_email', ?)
-           ON CONFLICT(workstream_id, resource_id) DO NOTHING`,
-        ).bind(input.workstreamId, resourceId, createdAt)]),
         batchDb.prepare(
           `INSERT OR IGNORE INTO messages
            (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
@@ -627,23 +609,13 @@ export class ResendRegionalEmailService {
                last_activity_at = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ?`,
         ).bind(sequence.sequence_number, createdAt, createdAt, input.workstreamId, input.workspaceId),
-        ...(authority.phase === "durable_object_open" ? [] : [batchDb.prepare(
-          `UPDATE workstream_email_receipts
-           SET payload_ref = ?, processed_at = ?, error_json = NULL,
-               lease_token = NULL, lease_expires_at = NULL
-           WHERE resend_email_id = ? AND workstream_id = ? AND lease_token = ?`,
-        ).bind(payloadRef, createdAt, input.resendEmailId, input.workstreamId, leaseToken)]),
       ];
       const batch = await batchDb.batch(localStatements);
       if (batch.some((result) => !result.success)) {
         throw new ApiError(500, "email_persistence_failed", "The inbound email could not be persisted");
       }
-      if (authority.phase === "durable_object_open") {
-        await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
-      } else if (changes(batch[3]!) === 0) {
-        throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-      }
-      const messageResult = batch[authority.phase === "durable_object_open" ? 0 : 1]!;
+      await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
+      const messageResult = batch[0]!;
       if (changes(messageResult) === 0) {
         const canonical = await executionEnv.DB.prepare(
           `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ? LIMIT 1`,

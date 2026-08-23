@@ -385,6 +385,24 @@ a failing target a free immediate attempt.
 
 ## Changelog
 
+### 2026-08-22 — The automation firing path reads only the object
+
+**What changed:** `runAutomationSchedule` in
+`services/workspace-schedule-execution.ts` no longer reads
+`workstream_authority_control`. The planned work stream comes from
+`directory.plannedWorkstream` unconditionally, and the losing-claim cleanup that
+deleted a regional `workstreams` row is gone with the branch that reached it.
+
+**Why:** Migration 0090 closed the phase permanently, so both arms had been
+unreachable since — including that cleanup, whose whole subject was a regional
+row the object no longer keeps. The read itself was one D1 round trip per firing
+on a path that fires once per due schedule.
+
+**What a future change has to respect:** a concurrent scheduler losing the
+unique run claim is now settled entirely by the object — nothing regional is
+left behind to compensate for, and re-adding a compensating delete here would
+be deleting a row the authority does not own.
+
 ### 2026-08-22 — An entry that runs and comes back due at the same instant is a failed attempt
 
 **What changed:** After the re-derive in `alarm()`, the base compares every

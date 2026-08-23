@@ -100,7 +100,14 @@ Required in spirit whenever the change touches renderer isolation, connector
 credential scope, session or ticket handling, webhook signature verification,
 untrusted model or provider payloads, or secrets placement. See docs/security.md.
 
+Also required when the change added a defensive limit and left it open: one row
+per limit, so the team can set the numbers. `rg "LIMIT UNSET"` finds them all.
+See docs/adding-security-defensive-and-other-limits.md.
+
 - <the trust surface this opens or closes>
+- <`CONSTANT` in `path` — bounds <what>; open at <value>; trips <how>; derive
+  from <the arithmetic, with its divisors shown>; safe to ship open because
+  <reason>>
 
 ## Provider configuration
 
@@ -119,6 +126,7 @@ why the change was made. See docs/module-documents.md.
 ## Reviewer notes
 
 - <merge hazards, deferred work, known-failing checks>
+- <each limit left open above, named again here as deferred work>
 
 ## Validation
 

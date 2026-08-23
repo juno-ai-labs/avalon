@@ -4,13 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __testing } from "../src/queues/activity-consumer";
-import {
-  latestActivityEventCursor,
-  listActivityEventsForUser,
-  reapExpiredActivityEvents,
-} from "../src/services/activity-event-service";
+import type { ActivityEventInput } from "../src/services/activity-event-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const { projectActivityEvent } = __testing;
 
@@ -29,12 +26,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function envFor(database: DatabaseSync): Env {
+/**
+ * Capture what the projection decides, at the boundary where it decides it.
+ *
+ * These tests used to write through `recordActivityEventOrThrow`'s D1 arm and
+ * read the rows back. That arm is gone — the authority is open everywhere, so
+ * the open branch was the only live one and it delegates to WorkspaceDO. What
+ * `projectActivityEvent` is actually responsible for is the *input* it hands
+ * that object: who the audience is, whether anyone should be told, and how the
+ * actor and link resolve. Asserting on that is a closer test of this code than
+ * reading rows back was, and it does not depend on the object's read filter.
+ *
+ * What the read-back also covered — the object's audience filtering and its
+ * dedupe on `dedupeKey` — is WorkspaceDO's behavior and belongs on real
+ * workerd. That gap is recorded in `docs/potential-bugs.md`.
+ */
+function envFor(database: DatabaseSync): { env: Env; recorded: ActivityEventInput[] } {
+  const recorded: ActivityEventInput[] = [];
   // The Slack credentials are what put Slack in this env's connector registry,
   // and the registry is what answers whether an event type is digestible.
   // Without them every projection here would be withheld for the uninteresting
   // reason that the connector is unregistered in this region.
-  return createTestEnv({
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -42,7 +55,23 @@ function envFor(database: DatabaseSync): Env {
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        recordActivityEvent: (input: ActivityEventInput) => {
+          recorded.push(input);
+          return input.eventId ?? `event-${recorded.length}`;
+        },
+      },
+    }),
   });
+  return { env, recorded };
+}
+
+/** Whether the projection decided this person is in the audience. */
+function audienceIncludes(input: ActivityEventInput | undefined, userId: string): boolean {
+  if (!input) return false;
+  if (input.audience.kind === "workspace") return true;
+  return input.audience.kind === "user" && input.audience.userId === userId;
 }
 
 function seededDatabase(): DatabaseSync {
@@ -91,34 +120,17 @@ function activity(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof projectActivityEvent>[1];
 }
 
-/** Everything this person may see, digestible or not — an audience question. */
-async function readFor(env: Env, userId: string) {
-  const through = await latestActivityEventCursor(env, WORKSPACE);
-  return await listActivityEventsForUser(env, {
-    workspaceId: WORKSPACE, userId, through, digestibleOnly: false, limit: 50,
-  });
-}
-
-/** Only what a connector confirmed is worth telling this person about. */
-async function digestReadFor(env: Env, userId: string) {
-  const through = await latestActivityEventCursor(env, WORKSPACE);
-  return await listActivityEventsForUser(env, {
-    workspaceId: WORKSPACE, userId, through, digestibleOnly: true, limit: 50,
-  });
-}
-
 describe("projecting connector activity into the activity log", () => {
   it("shares a public workspace activity with every member", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity());
 
-    expect(await readFor(env, MEMBER_A)).toHaveLength(1);
-    expect(await readFor(env, MEMBER_B)).toHaveLength(1);
+    expect(recorded[0]?.audience).toEqual({ kind: "workspace" });
   });
 
   it("keeps a restricted workspace activity to the people it names", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     // A Slack private channel or DM arrives on the workspace-wide installation
     // but is readable only by its participants, so `connection_scope` alone is
@@ -127,67 +139,65 @@ describe("projecting connector activity into the activity log", () => {
       visibility_json: JSON.stringify({ workspaceAutomationAllowed: false, allowedUserIds: [MEMBER_B] }),
     }));
 
-    expect(await readFor(env, MEMBER_A)).toEqual([]);
-    expect(await readFor(env, MEMBER_B)).toHaveLength(1);
+    expect(audienceIncludes(recorded[0], MEMBER_A)).toBe(false);
+    expect(audienceIncludes(recorded[0], MEMBER_B)).toBe(true);
   });
 
   it("records nothing at all when an activity names nobody", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity({
       visibility_json: JSON.stringify({ workspaceAutomationAllowed: false }),
     }));
 
-    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 0 });
+    expect(recorded).toEqual([]);
   });
 
   it("keeps a personal connection's activity to its owner", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity({
       connection_scope: "personal",
       connection_owner_user_id: MEMBER_A,
     }));
 
-    expect(await readFor(env, MEMBER_A)).toHaveLength(1);
-    expect(await readFor(env, MEMBER_B)).toEqual([]);
+    expect(recorded[0]?.audience).toEqual({ kind: "user", userId: MEMBER_A });
   });
 
   it("carries the provider's actor name and link rather than falling back", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity());
 
-    const [event] = await readFor(env, MEMBER_A);
-    expect(event?.actor_label).toBe("Dana Okafor");
-    expect(event?.canonical_url).toBe("https://slack.example/archives/C1/p1");
+    expect(recorded[0]?.actorLabel).toBe("Dana Okafor");
+    expect(recorded[0]?.canonicalUrl).toBe("https://slack.example/archives/C1/p1");
   });
 
   it("falls back to the provider name when the actor is unknown", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity({ actor_json: "{}", metadata_json: "{}" }));
 
-    const [event] = await readFor(env, MEMBER_A);
-    expect(event?.actor_label).toBe("slack");
-    expect(event?.canonical_url).toBeNull();
+    expect(recorded[0]?.actorLabel).toBe("slack");
+    expect(recorded[0]?.canonicalUrl).toBeNull();
   });
 
-  it("writes one row for a re-processed activity", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+  it("gives a re-processed activity the same dedupe key both times", async () => {
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity());
     await projectActivityEvent(env, activity());
 
-    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
+    // Collapsing the two is WorkspaceDO's `ON CONFLICT`; what this side owes is
+    // a key that is stable across re-processing, which is what makes that work.
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0]?.dedupeKey).toBe(recorded[1]?.dedupeKey);
   });
 });
 
 describe("deciding what a digest may read back", () => {
   it("carries the connector manifest's answer onto the event", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     await projectActivityEvent(env, activity());
     await projectActivityEvent(env, activity({
@@ -199,13 +209,14 @@ describe("deciding what a digest may read back", () => {
 
     // Both happened and both are readable; only the one Slack declared
     // digestible is something to interrupt somebody with.
-    expect(await readFor(env, MEMBER_A)).toHaveLength(2);
-    expect((await digestReadFor(env, MEMBER_A)).map((event) => event.event_type))
-      .toEqual(["connector.slack.slack.message.posted"]);
+    expect(recorded.map((event) => [event.eventType, event.digestible])).toEqual([
+      ["connector.slack.slack.message.posted", true],
+      ["connector.slack.slack.reaction.added", false],
+    ]);
   });
 
   it("withholds an activity whose polling stream withheld itself", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     // Stamped by the poll host when a stream declares itself non-digestible.
     // The event type still says digestible; a stream may only ever subtract.
@@ -213,12 +224,12 @@ describe("deciding what a digest may read back", () => {
       metadata_json: JSON.stringify({ _streamNotDigestible: true }),
     }));
 
-    expect(await readFor(env, MEMBER_A)).toHaveLength(1);
-    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.digestible).toBe(false);
   });
 
   it("says so when the registry itself could not be built", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
     // One malformed credential fails every adapter, so this withholds every
     // connector's activity region-wide rather than one connector's. Silent, it
     // is indistinguishable from a quiet week: every digest would settle empty
@@ -229,7 +240,7 @@ describe("deciding what a digest may read back", () => {
 
     await projectActivityEvent(env, activity());
 
-    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
+    expect(recorded[0]?.digestible).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.objectContaining({
       event: "connector_registry_unavailable_for_digestibility",
       connector_type: "slack",
@@ -237,18 +248,18 @@ describe("deciding what a digest may read back", () => {
   });
 
   it("stays quiet about a connector this region simply does not register", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await projectActivityEvent(env, activity({ connector_type: "unregistered_provider" }));
 
     // Expected, and withholding is the whole point of failing closed.
-    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
+    expect(recorded[0]?.digestible).toBe(false);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it("withholds an event type no registered connector declares", async () => {
-    const env = envFor(seededDatabase());
+    const { env, recorded } = envFor(seededDatabase());
 
     // A connector unregistered in this region, or an event type dropped from a
     // manifest, is nobody confirming anything. It still reaches the log.
@@ -259,62 +270,13 @@ describe("deciding what a digest may read back", () => {
       event_type: "slack.invented.event",
     }));
 
-    expect(await readFor(env, MEMBER_A)).toHaveLength(2);
-    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
+    expect(recorded).toHaveLength(2);
+    expect(recorded.map((event) => event.digestible)).toEqual([false, false]);
   });
 });
 
-describe("activity log retention", () => {
-  function writeEvent(database: DatabaseSync, id: string, createdAt: string): void {
-    database.exec(`
-      INSERT INTO activity_events
-        (id, workspace_id, event_type, subject_type, actor_type, actor_label, title,
-         audience_kind, occurred_at, created_at, source_kind, dedupe_key)
-      VALUES ('${id}', '${WORKSPACE}', 'workstream.message.posted', 'message', 'user', 'A', 'Posted',
-              'workspace', '${createdAt}', '${createdAt}', 'workstream', 'dedupe-${id}');
-      INSERT INTO activity_event_targets (event_id, workspace_id, user_id, relation, created_at)
-      VALUES ('${id}', '${WORKSPACE}', '${MEMBER_A}', 'mentioned', '${createdAt}');
-    `);
-  }
-
-  function daysAgo(days: number): string {
-    return new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString();
-  }
-
-  it("drops events past the window and takes their targets with them", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(120));
-    writeEvent(database, "00000000-0000-7000-8000-0000000000e2", daysAgo(1));
-
-    expect(await reapExpiredActivityEvents(env)).toBe(1);
-
-    expect(database.prepare("SELECT id FROM activity_events").all())
-      .toEqual([{ id: "00000000-0000-7000-8000-0000000000e2" }]);
-    expect(database.prepare("SELECT event_id FROM activity_event_targets").all())
-      .toEqual([{ event_id: "00000000-0000-7000-8000-0000000000e2" }]);
-  });
-
-  // Reaping must not move a cursor: an expired sequence sits below every live
-  // one, so a window that has lost its rows reads as empty rather than as new.
-  it("leaves the cursor where it was", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(120));
-    writeEvent(database, "00000000-0000-7000-8000-0000000000e2", daysAgo(1));
-    const before = await latestActivityEventCursor(env, WORKSPACE);
-
-    await reapExpiredActivityEvents(env);
-
-    expect(await latestActivityEventCursor(env, WORKSPACE)).toBe(before);
-  });
-
-  it("does nothing when everything is still inside the window", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(89));
-
-    expect(await reapExpiredActivityEvents(env)).toBe(0);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
-  });
-});
+// The "activity log retention" suite is gone with the reaper it covered.
+// `reapExpiredActivityEvents` scanned D1's `activity_events`, returned 0
+// immediately once the authority was open, and named a table migration 0090
+// dropped — so it did nothing in any supported deployment. Retention for the
+// object-owned log belongs to WorkspaceDO, which owns those rows now.

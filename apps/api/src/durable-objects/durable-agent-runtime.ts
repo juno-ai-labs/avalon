@@ -78,11 +78,21 @@ export class DurableAgentDrain {
     return true;
   }
 
-  resume(operation: () => Promise<void>, settled: () => void | Promise<void>): Promise<void> {
+  /**
+   * Starts one drain and gives it an identity-fenced liveness predicate.
+   * `abandonActive()` cannot cancel an already-resolving promise, so every
+   * dispatch loop must stop before its next claim once this predicate is false.
+   */
+  resume(
+    operation: (ownsDrain: () => boolean) => Promise<void>,
+    settled: () => void | Promise<void>,
+  ): Promise<void> {
     if (this.activeDrain) return this.activeDrain;
     const startedAt = Date.now();
+    const identity: { drain: Promise<void> | null } = { drain: null };
+    const ownsDrain = () => this.activeDrain === identity.drain;
     const drain = Promise.resolve()
-      .then(operation)
+      .then(() => operation(ownsDrain))
       .finally(async () => {
         if (this.activeDrain === drain) {
           this.activeDrain = null;
@@ -91,6 +101,7 @@ export class DurableAgentDrain {
         }
         await settled();
       });
+    identity.drain = drain;
     this.activeDrain = drain;
     this.activeSinceAt = startedAt;
     this.lastProgressAt = startedAt;

@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 15;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 17;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1295,6 +1295,16 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         WHERE status = 'pending'`,
     ],
   },
+  {
+    version: 16,
+    description: "allocate tool_position from a high-water mark so a deleted receipt cannot wedge a run",
+    statements: rebuiltToolInvocationsInsertTriggerForPositionAllocation(),
+  },
+  {
+    version: 17,
+    description: "adopt the tool-receipt objects the compat schema owns, then retire its receipt views",
+    statements: toolReceiptAuthorityPromotion(),
+  },
 ];
 
 /**
@@ -1746,6 +1756,111 @@ function roundedCompatTriggerRebuilds(): string[] {
         statement.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"),
       ];
     });
+}
+
+/**
+ * Allocates `tool_effects.tool_position` from the run's high-water mark rather
+ * than its row count.
+ *
+ * The insert trigger wrote `(SELECT COUNT(*) FROM tool_effects WHERE run_id =
+ * ...)`, and the table's uniqueness is `UNIQUE (run_id, attempt_epoch,
+ * tool_position)`. A count allocates injectively only while nothing is ever
+ * removed — but `attachment-tool-receipts.ts` deletes receipts from two paths,
+ * and `_runtime_tool_invocations_delete` turns each into a
+ * `DELETE FROM tool_effects`. One hole in a run's positions and the next
+ * admission computes a number another row already holds; `INSERT OR IGNORE`
+ * drops it, and `persistToolExecutionPlan` — reading zero changes as "someone
+ * else already wrote my receipt" — looks up `(harness_run_id, tool_call_id)`,
+ * finds nothing because its row was never written, and throws
+ * `RunOwnershipLostError`. The run ends on a lease failure that never happened.
+ *
+ * The caller's conflict target is real: `INSERT OR IGNORE` resolves against
+ * three constraints, and the compat schema's own `tool_effects_run_call_uq`
+ * (`workstream-runtime-compat-schema.ts`) is what makes the routed
+ * `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` mean what it says
+ * after the router strips the clause. It is simply not the constraint that
+ * fires here — a collided *position* carries a new `tool_call_id`, so the call
+ * key is untouched and the caller's fallback lookup is querying for a row that
+ * the ignored insert never created.
+ *
+ * `MAX(tool_position) + 1` stays injective across deletes. It is scoped to the
+ * run rather than to `(run_id, attempt_epoch)` so that positions keep advancing
+ * across attempts exactly as the count did: narrowing the scope would restart
+ * numbering at a new epoch, which is defensible but is a behavior change this
+ * repair has no reason to make.
+ *
+ * Derived from the compat source with v3's rounding reapplied, because that
+ * migration rebuilt every epoch-converting trigger and this text must continue
+ * from it — starting at v1's would silently reinstate the truncation it fixed.
+ */
+function rebuiltToolInvocationsInsertTriggerForPositionAllocation(): string[] {
+  const source = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_tool_invocations_insert"));
+  if (!source) throw new Error("tool invocations insert trigger not found in compat schema");
+  const rounded = source.replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER");
+  const anchor = "(SELECT COUNT(*) FROM tool_effects WHERE run_id = NEW.harness_run_id),";
+  if (!rounded.includes(anchor)) {
+    throw new Error("tool invocations insert trigger position allocation shape changed");
+  }
+  const patched = rounded.replace(
+    anchor,
+    "(SELECT COALESCE(MAX(tool_position) + 1, 0) FROM tool_effects WHERE run_id = NEW.harness_run_id),",
+  );
+  return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_insert", patched];
+}
+
+/**
+ * Retires `_runtime_tool_invocations` and `_runtime_tool_checkpoints`, and — the
+ * part that is not a deletion — adopts the two objects the compatibility schema
+ * owns that are not compatibility objects at all.
+ *
+ * `attachment_tool_receipts` is a real `STRICT` table holding live product data:
+ * the resource version each replayable attachment read depended on. It has no
+ * view and no trigger. It is here only because this is where it was written,
+ * and dropping the compat schema on the strength of the file's name would lose
+ * rows. `tool_effects_run_call_uq` is a unique index on real columns of a real
+ * table, and it is what makes the routed
+ * `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` mean what it says once
+ * the SQL router strips that clause — the replay dedup for every tool receipt.
+ * Both are recreated here under the object's own schema before anything is
+ * dropped, so a fresh object and a migrated one agree.
+ *
+ * Both are `IF NOT EXISTS`, because every object that has ever run v1 already
+ * has them. This migration is what makes them the object's rather than the
+ * compat layer's, so that the eventual deletion of
+ * `WORKSTREAM_RUNTIME_COMPAT_SCHEMA` cannot take them along.
+ *
+ * The drops are derived by matching the v1 source rather than written out, and
+ * the derivation throws when it matches nothing: a renamed view has to fail the
+ * build rather than produce a migration that silently drops nothing. Triggers
+ * before views, because dropping a view out from under its own INSTEAD OF
+ * trigger is legal and leaves the trigger orphaned in `sqlite_schema`.
+ */
+function toolReceiptAuthorityPromotion(): string[] {
+  const names = /^_runtime_tool_(?:invocations|checkpoints)/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 6) {
+    throw new Error(`expected six tool-receipt compat objects, found ${compatObjects.length}`);
+  }
+
+  const adopt = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.filter((statement) =>
+    statement.includes("CREATE TABLE IF NOT EXISTS attachment_tool_receipts")
+    || statement.includes("attachment_tool_receipts_invocation_idx")
+    || statement.includes("tool_effects_run_call_uq"));
+  if (adopt.length !== 3) {
+    throw new Error(`expected three adopted tool-receipt objects, found ${adopt.length}`);
+  }
+
+  return [
+    ...adopt,
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
 }
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */

@@ -11,11 +11,6 @@ import {
   rebuildDigestSchedulesForTimezone,
   reconcileDigestDefaults,
 } from "../src/services/digest-service";
-import {
-  latestActivityEventCursor,
-  listActivityEventsForUser,
-  recordActivityEventOrThrow,
-} from "../src/services/activity-event-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
@@ -264,159 +259,14 @@ describe("digest schedule", () => {
   });
 });
 
-describe("activity event visibility", () => {
-  async function record(env: Env, overrides: Partial<Parameters<typeof recordActivityEventOrThrow>[1]>) {
-    return await recordActivityEventOrThrow(env, {
-      workspaceId: WORKSPACE,
-      eventType: "workstream.message.posted",
-      subjectType: "workstream",
-      subjectId: WORKSTREAM,
-      actorType: "user",
-      actorUserId: OTHER,
-      actorLabel: "Other",
-      title: "Launch",
-      audience: { kind: "workstream", workstreamId: WORKSTREAM },
-      digestible: true,
-      occurredAt: "2026-01-02T09:00:00.000Z",
-      sourceKind: "message",
-      dedupeKey: `event-${Math.random()}`,
-      ...overrides,
-    });
-  }
-
-  it("keeps a work-stream event from anyone who is not a participant", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    await record(env, { dedupeKey: "message:1" });
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    const forOwner = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    });
-    expect(forOwner).toEqual([]);
-
-    database.exec(`
-      INSERT INTO workstream_participants
-        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-      VALUES ('${WORKSTREAM}', '${OWNER}', '${OTHER}', 'explicit', '2026-01-01');
-    `);
-    const afterJoining = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    });
-    // Audience is a rule, not a frozen recipient list, so joining a work stream
-    // brings its history with it.
-    expect(afterJoining).toHaveLength(1);
-  });
-
-  it("keeps a personal connector event to its own owner", async () => {
-    const env = envFor(seededDatabase());
-    await record(env, {
-      dedupeKey: "activity:1",
-      audience: { kind: "user", userId: OTHER },
-      subjectType: "pull_request",
-    });
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    })).toEqual([]);
-    expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OTHER, through, digestibleOnly: false, limit: 50,
-    })).toHaveLength(1);
-  });
-
-  it("marks the reader when they are a named target", async () => {
-    const env = envFor(seededDatabase());
-    await record(env, {
-      dedupeKey: "message:2",
-      audience: { kind: "workspace" },
-      targets: [{ userId: OWNER, relation: "mentioned" }],
-    });
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    const [event] = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    });
-    expect(event?.is_target).toBe(1);
-    expect(event?.target_relations).toBe("mentioned");
-  });
-
-  it("writes one row for a replayed producer", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-
-    const first = await record(env, { dedupeKey: "message:3", audience: { kind: "workspace" } });
-    const second = await record(env, { dedupeKey: "message:3", audience: { kind: "workspace" } });
-
-    expect(second).toBe(first);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
-  });
-
-  it("excludes everything a cursor has already covered, even within one millisecond", async () => {
-    const env = envFor(seededDatabase());
-    // Written back to back, so both rows share a `created_at` to the millisecond.
-    // Only a strictly monotonic sequence separates them; a timestamp cursor
-    // would drop the second one permanently.
-    const firstId = await record(env, { dedupeKey: "message:4", audience: { kind: "workspace" } });
-    const firstCursor = await latestActivityEventCursor(env, WORKSPACE);
-    await record(env, { dedupeKey: "message:5", audience: { kind: "workspace" } });
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    const remaining = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, from: firstCursor, through, digestibleOnly: false, limit: 50,
-    });
-
-    expect(remaining.map((event) => event.id)).not.toContain(firstId);
-    expect(remaining).toHaveLength(1);
-  });
-
-  it("hides a system work stream's events from everyone, including its own participant", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    // A digest's hidden work stream holds a brief assembled from one person's
-    // private activity. Its own participant must not read it back as activity,
-    // and nobody else may reach it at all.
-    database.exec(`
-      UPDATE workstreams SET system_kind = 'digest' WHERE id = '${WORKSTREAM}';
-      INSERT INTO workstream_participants
-        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-      VALUES ('${WORKSTREAM}', '${OWNER}', '${OWNER}', 'creator', '2026-01-01');
-    `);
-    await recordActivityEventOrThrow(env, {
-      workspaceId: WORKSPACE,
-      eventType: "workstream.message.posted",
-      subjectType: "workstream",
-      subjectId: WORKSTREAM,
-      actorType: "system",
-      actorLabel: "Avalon",
-      title: "Digest",
-      audience: { kind: "workstream", workstreamId: WORKSTREAM },
-      // Digestible on its face, so the exclusion below is proved by the system
-      // work stream itself rather than by this event being uninteresting.
-      digestible: true,
-      occurredAt: "2026-01-02T09:00:00.000Z",
-      sourceKind: "message",
-      dedupeKey: "digest-brief:1",
-    });
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    })).toEqual([]);
-  });
-
-  it("stops the log the moment a membership stops being active", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    await record(env, { dedupeKey: "message:6", audience: { kind: "workspace" } });
-    database.exec(`UPDATE workspace_members SET status = 'suspended' WHERE user_id = '${OWNER}'`);
-
-    const through = await latestActivityEventCursor(env, WORKSPACE);
-    expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
-    })).toEqual([]);
-  });
-});
+// The "activity event visibility" suite is gone with the implementation it
+// covered. It exercised `recordActivityEventOrThrow`'s and
+// `listActivityEventsForUser`'s D1 arms — a parallel implementation of what
+// WorkspaceDO does, selected only when the authority was not open, which is no
+// deployment. The object's own audience filter, target marking and dedupe were
+// never what these assertions ran against, so this is a pre-existing gap now
+// made visible rather than a coverage loss. It is recorded in
+// `docs/potential-bugs.md` with the `test-workers/` suite that would close it.
 
 describe("digests are on by default", () => {
   it("gives every active member a weekday digest delivered to their address", async () => {

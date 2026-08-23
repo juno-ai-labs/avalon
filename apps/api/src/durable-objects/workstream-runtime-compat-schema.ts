@@ -1,7 +1,32 @@
 /**
- * D1-shaped SQL views used only by the generic Workflow runtime during the
- * authority cutover. Every trigger writes a normalized WorkstreamDO table;
- * these statements deliberately create no compatibility data tables.
+ * D1-shaped SQL views used by the generic Workflow runtime during the authority
+ * cutover, and — read this before deleting anything here — three objects that
+ * are not compatibility artifacts at all.
+ *
+ * Most of this array is views and `INSTEAD OF` triggers over normalized
+ * WorkstreamDO tables, and all of that goes when the layer is retired. Three
+ * statements do not:
+ *
+ * - `attachment_tool_receipts` and its index are a real `STRICT` data table
+ *   holding live product data — the resource version each replayable attachment
+ *   read depends on. It has no view, no trigger, and no compat vocabulary; it is
+ *   here only because this is where it was written. Dropping it loses rows.
+ * - `tool_effects_run_call_uq` is a unique index on real columns of a real
+ *   table. It is what makes the routed `ON CONFLICT(harness_run_id,
+ *   tool_call_id) DO NOTHING` mean what it says after `workstream-runtime-sql`
+ *   strips the clause, so it is the replay dedup for every tool receipt.
+ *   Dropping it changes nothing observable and then silently admits two receipts
+ *   for one call.
+ *
+ * `_runtime_statement_changes` is the genuine counterexample: a data table that
+ * really is compat machinery, and really does go.
+ *
+ * An earlier version of this comment claimed these statements "deliberately
+ * create no compatibility data tables". That is the sentence a drop migration
+ * would be written against, and it is false three lines below its own text. The
+ * rule it should have carried: **derive a drop set from what each object is,
+ * never from the file it lives in.** Retiring the views means first moving the
+ * two keeps into `workstream-object-schema.ts`.
  */
 export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS attachment_tool_receipts (

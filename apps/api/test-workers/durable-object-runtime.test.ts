@@ -213,6 +213,7 @@ type TestableBlockDashboardAgent = {
   persistAndSettle(
     dispatch: BlockDashboardBlockDispatch,
     outcome: { run: BlockDashboardBlockRun },
+    leaseToken: string,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }>;
 };
 
@@ -1585,9 +1586,38 @@ describe("Durable Objects in the Workers runtime", () => {
         markdown: checkpointText + continuedText,
         completedAt: "2026-08-17T20:00:03.000Z",
       };
-      await (instance as unknown as TestableBlockDashboardAgent).persistAndSettle(dispatch, {
+      state.storage.sql.exec(
+        `UPDATE agent_run_dispatches
+            SET state = 'running', lease_token = 'successor-terminal-owner',
+                lease_expires_at = ?
+          WHERE block_run_id = ?`,
+        Date.now() + 60_000,
+        queued.id,
+      );
+      const testable = instance as unknown as TestableBlockDashboardAgent;
+      await expect(testable.persistAndSettle(dispatch, {
         run: completed,
+      }, "obsolete-terminal-owner")).rejects.toMatchObject({
+        code: "block_dashboard_dispatch_ownership_lost",
       });
+      expect(state.storage.sql.exec<{
+        lease_token: string | null;
+        terminal_outcome_json: string | null;
+      }>(
+        `SELECT lease_token, terminal_outcome_json FROM agent_run_dispatches
+          WHERE block_run_id = ?`,
+        queued.id,
+      ).one()).toEqual({
+        lease_token: "successor-terminal-owner",
+        terminal_outcome_json: null,
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
+      ).one().count).toBe(1);
+
+      await testable.persistAndSettle(dispatch, {
+        run: completed,
+      }, "successor-terminal-owner");
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
       ).one().count).toBe(0);
@@ -2639,6 +2669,118 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  /**
+   * The candidate query's own filters.
+   *
+   * Contextual routing's Node suite used to assert these against a parallel D1
+   * query that migration 0090 made unreachable. They are subqueries inside
+   * `routingCandidates` now — a Node stub could only reproduce them, so they
+   * are asserted here against the object that runs them.
+   */
+  it("filters routing candidates by the dismissal run, its producer, its window and what is already routed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const NOW = Date.parse("2026-08-18T20:00:00.000Z");
+    const daysAgo = (days: number) => new Date(NOW - days * 86_400_000).toISOString();
+    const streams = [
+      WORKSTREAM_ID,
+      "00000000-0000-7000-8000-0000000005a1",
+      "00000000-0000-7000-8000-0000000005a2",
+      "00000000-0000-7000-8000-0000000005a3",
+      "00000000-0000-7000-8000-0000000005a4",
+    ];
+    let envelope = 0;
+    for (const [index, workstreamId] of streams.entries()) {
+      await stub.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope({
+          kind: "directory_common",
+          title: `Candidate ${index}`,
+          description: "Eligible for contextual routing",
+          preview: "",
+          scope: "workspace",
+          state: "idle",
+          systemKind: null,
+          // Descending, so the assertions below can name the order.
+          lastActivityAt: daysAgo(index),
+          completedAt: null,
+          archivedAt: null,
+          originType: "ad_hoc",
+          createdByUserId: USER_ID,
+          latestAttentionOrdinal: 0,
+          unreadTrackingStartOrdinal: 0,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: daysAgo(index),
+          resourceLinks: [],
+        }, `00000000-0000-7000-8000-00000000f${String(envelope += 1).padStart(3, "0")}`, 1, asWorkstreamId(workstreamId))],
+      });
+    }
+    const feedback = (
+      workstreamId: string,
+      actionId: string,
+      status: "accepted" | "dismissed",
+      resolvedAt: string,
+      source: "contextual_routing" | "suggested_work" = "contextual_routing",
+    ) => runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_workstream_suggestion_feedback
+           (workstream_id, action_id, activity_id, source, status, resolved_at,
+            resolved_by_user_id, authority_generation, waterline, source_event_id, projected_at)
+         VALUES (?, ?, '00000000-0000-7000-8000-0000000004ff', ?, ?, ?, ?, 1, 1, ?, ?)`,
+        workstreamId,
+        actionId,
+        source,
+        status,
+        Date.parse(resolvedAt),
+        USER_ID,
+        actionId,
+        NOW,
+      );
+    });
+    const candidates = (excluded: string[] = []) => stub.routingCandidates({
+      workspaceId: WORKSPACE_ID,
+      restrictedUserIds: null,
+      excludedWorkstreamIds: excluded,
+      feedbackSince: daysAgo(30),
+      dismissalLimit: 3,
+      limit: 12,
+    }).then((result) => result.items.map((item) => item.workstreamId));
+
+    // Three dismissals inside the window take a work stream out of the pool.
+    for (const [index, day] of [1, 2, 3].entries()) {
+      await feedback(streams[1]!, `run-${index}`, "dismissed", daysAgo(day));
+    }
+    await expect(candidates()).resolves.not.toContain(streams[1]);
+
+    // A single acceptance after them clears the run.
+    await feedback(streams[1]!, "run-cleared", "accepted", daysAgo(0));
+    await expect(candidates()).resolves.toContain(streams[1]);
+
+    // Another producer's dismissals do not count: a work stream must not lose
+    // its place here over three dismissals of suggested-work's cards.
+    for (const [index, day] of [1, 2, 3].entries()) {
+      await feedback(streams[2]!, `other-${index}`, "dismissed", daysAgo(day), "suggested_work");
+    }
+    await expect(candidates()).resolves.toContain(streams[2]);
+
+    // Dismissals older than the window are forgotten. Nobody has offered this
+    // work stream a suggestion in over a month, so it has had no chance to earn
+    // the acceptance that would otherwise clear its run.
+    for (const [index, day] of [40, 45, 50].entries()) {
+      await feedback(streams[3]!, `stale-${index}`, "dismissed", daysAgo(day));
+    }
+    await expect(candidates()).resolves.toContain(streams[3]);
+
+    // The already-routed exclusion runs inside the query, not after the LIMIT:
+    // a work stream a watch already delivered this activity to must not consume
+    // one of the twelve slots.
+    await expect(candidates([streams[0]!])).resolves.toEqual(
+      streams.slice(1),
+    );
+  });
   it("owns per-user pin ordering in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -3067,6 +3209,242 @@ describe("Durable Objects in the Workers runtime", () => {
         windowId,
       ).one()).toEqual({ status: "completed" });
     });
+  });
+
+  /**
+   * The read path's request rules, against the object that owns them.
+   *
+   * These were asserted in the Node suite against a parallel D1 implementation
+   * that migration 0090 made unreachable, so what they proved was never what
+   * production ran. `persistOpportunity` needs an ingested connector event
+   * behind it and none of these rules turn on provenance — they turn on the
+   * stored ranking, the opportunity's status and the member's own state — so
+   * the fixtures below write the object's tables directly, the way the batch
+   * window fixture above does.
+   */
+  async function seedOpportunity(
+    stub: DurableObjectStub<WorkspaceDO>,
+    id: string,
+    options: { updatedAt: string; status?: "active" | "started" } = {
+      updatedAt: "2026-08-10T12:00:00.000Z",
+    },
+  ): Promise<void> {
+    const at = Date.parse(options.updatedAt);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO work_opportunities
+           (opportunity_id, audience_scope, audience_user_id, display_prompt, execution_prompt,
+            admission_reasoning, provider_icon, source_label, source_fingerprint, version,
+            display_prompt_hash, execution_prompt_hash, status, created_workstream_id,
+            created_message_id, started_by_user_id, start_idempotency_key, expires_at,
+            created_at, updated_at, started_at)
+         VALUES (?, 'workspace', NULL, 'Handle the blocker', 'Investigate the blocker.',
+            'Urgent and actionable.', 'plug', 'Connected activity', ?, 1, ?, ?, ?, NULL,
+            NULL, NULL, NULL, ?, ?, ?, NULL)`,
+        id,
+        id.replaceAll("-", "").padEnd(64, "f"),
+        "b".repeat(64),
+        "c".repeat(64),
+        options.status ?? "active",
+        Date.parse("2027-08-07T00:00:00.000Z"),
+        at,
+        at,
+      );
+    });
+  }
+
+  async function seedRankingSet(
+    stub: DurableObjectStub<WorkspaceDO>,
+    ids: string[],
+    fingerprint = "fingerprint",
+  ): Promise<void> {
+    const at = Date.parse("2026-08-10T12:00:00.000Z");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO suggested_work_sets
+           (user_id, candidate_fingerprint, opportunity_ids_json, ranking_reasoning, model,
+            status, due_at, request_seq, lease_id, lease_expires_at, last_ranked_at,
+            created_at, updated_at)
+         VALUES (?, ?, ?, 'Ranked', NULL, 'ready', NULL, 0, NULL, NULL, NULL, ?, ?)`,
+        USER_ID,
+        fingerprint,
+        JSON.stringify(ids),
+        at,
+        at,
+      );
+    });
+  }
+
+  async function storedDueAt(stub: DurableObjectStub<WorkspaceDO>): Promise<number | null> {
+    return runInDurableObject(stub, (_instance, state) => (
+      state.storage.sql.exec<{ due_at: number | null }>(
+        "SELECT due_at FROM suggested_work_sets WHERE user_id = ?",
+        USER_ID,
+      ).toArray()[0]?.due_at ?? null
+    ));
+  }
+
+  async function openWorkspaceStub() {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    return stub;
+  }
+
+  const READ = {
+    workspaceId: WORKSPACE_ID,
+    userId: USER_ID,
+    now: "2026-08-10T12:00:00.000Z",
+    limit: 4,
+    scheduleAt: "2026-08-10T12:02:00.000Z",
+  } as const;
+
+  it("serves a member's stored ranking in its stored order and asks for nothing", async () => {
+    const stub = await openWorkspaceStub();
+    const first = "00000000-0000-7000-8000-000000000201";
+    const second = "00000000-0000-7000-8000-000000000202";
+    // Seeded against recency order: the point of the read path is that it
+    // returns the ranking, not the newest thing.
+    await seedOpportunity(stub, first, { updatedAt: "2026-08-09T00:00:00.000Z" });
+    await seedOpportunity(stub, second, { updatedAt: "2026-08-10T00:00:00.000Z" });
+    await seedRankingSet(stub, [first, second]);
+
+    const page = await stub.listOpportunities(READ);
+
+    expect(page.items.map((item) => item.id)).toEqual([first, second]);
+    // Nothing was asked for: the set is current and no ranking is outstanding.
+    await expect(storedDueAt(stub)).resolves.toBeNull();
+  });
+
+  it("falls back to recency and asks for a ranking when a member has nothing stored", async () => {
+    const stub = await openWorkspaceStub();
+    const older = "00000000-0000-7000-8000-000000000205";
+    const newer = "00000000-0000-7000-8000-000000000206";
+    await seedOpportunity(stub, older, { updatedAt: "2026-08-08T00:00:00.000Z" });
+    await seedOpportunity(stub, newer, { updatedAt: "2026-08-09T00:00:00.000Z" });
+
+    const page = await stub.listOpportunities(READ);
+
+    // Something, rather than the blank section a member used to get.
+    expect(page.items.map((item) => item.id)).toEqual([newer, older]);
+    await expect(storedDueAt(stub)).resolves.toBe(Date.parse(READ.scheduleAt));
+  });
+
+  it("asks for a refill when a ranked suggestion is no longer showable", async () => {
+    const stub = await openWorkspaceStub();
+    const kept = "00000000-0000-7000-8000-00000000020d";
+    const started = "00000000-0000-7000-8000-00000000020e";
+    await seedOpportunity(stub, kept);
+    // Started rather than dismissed: dismissing asks for its own refill, and
+    // this is the hole nothing on the write path would have noticed.
+    await seedOpportunity(stub, started, {
+      updatedAt: "2026-08-10T12:00:00.000Z",
+      status: "started",
+    });
+    await seedRankingSet(stub, [kept, started]);
+
+    const page = await stub.listOpportunities(READ);
+
+    expect(page.items.map((item) => item.id)).toEqual([kept]);
+    await expect(storedDueAt(stub)).resolves.toBe(Date.parse(READ.scheduleAt));
+  });
+
+  it("treats an empty ranking with no candidates as a steady state, not a gap", async () => {
+    const stub = await openWorkspaceStub();
+    await seedRankingSet(stub, []);
+
+    await stub.listOpportunities(READ);
+    await stub.listOpportunities(READ);
+
+    // An empty set is this member's steady state, not a gap to be filled.
+    // Asking on every read cost a write per request and an alarm claim per pass.
+    await expect(storedDueAt(stub)).resolves.toBeNull();
+  });
+
+  it("drops a dismissed suggestion from a member's set and asks for a replacement", async () => {
+    const stub = await openWorkspaceStub();
+    const kept = "00000000-0000-7000-8000-000000000203";
+    const dismissed = "00000000-0000-7000-8000-000000000204";
+    await seedOpportunity(stub, kept);
+    await seedOpportunity(stub, dismissed);
+    await seedRankingSet(stub, [kept, dismissed]);
+
+    await expect(stub.dismissOpportunity({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityId: dismissed,
+      now: READ.now,
+    })).resolves.toBe(true);
+
+    // Read before the list: dismissing leaves a hole the member can see, so the
+    // request is filed by the dismissal itself rather than waiting for the next
+    // read to notice the gap — which is what the refill test above covers.
+    await expect(storedDueAt(stub)).resolves.not.toBeNull();
+    const page = await stub.listOpportunities(READ);
+    expect(page.items.map((item) => item.id)).toEqual([kept]);
+  });
+
+  it("debounces impression-driven ranking requests for one hour", async () => {
+    const stub = await openWorkspaceStub();
+    const opportunityId = "00000000-0000-7000-8000-000000000204";
+    await seedOpportunity(stub, opportunityId);
+    await seedRankingSet(stub, [opportunityId]);
+
+    // Impressions are the one input that asks for a re-rank without the
+    // candidates having changed, so within the hour they must ask for nothing.
+    await stub.recordOpportunityImpressions({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityIds: [opportunityId],
+      now: READ.now,
+      rerankBefore: "2026-08-10T11:00:00.000Z",
+    });
+    await expect(storedDueAt(stub)).resolves.toBeNull();
+
+    await stub.recordOpportunityImpressions({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityIds: [opportunityId],
+      now: "2026-08-10T13:00:01.000Z",
+      rerankBefore: "2026-08-10T12:00:01.000Z",
+    });
+
+    await expect(storedDueAt(stub)).resolves.not.toBeNull();
+    await expect(runInDurableObject(stub, (_instance, state) => (
+      state.storage.sql.exec<{ impression_count: number; candidate_fingerprint: string }>(
+        `SELECT state.impression_count, sets.candidate_fingerprint
+           FROM work_opportunity_user_states state
+           JOIN suggested_work_sets sets ON sets.user_id = state.user_id
+          WHERE state.opportunity_id = ? AND state.user_id = ?`,
+        opportunityId,
+        USER_ID,
+      ).one()
+    ))).resolves.toEqual({
+      impression_count: 2,
+      // Blanked deliberately. Asking for a ranking is not enough on its own —
+      // the alarm skips a run whose candidates hash to what is already stored,
+      // and by definition that is every run this asks for.
+      candidate_fingerprint: "",
+    });
+  });
+
+  it("marks every active member's ranking due, and only the active ones", async () => {
+    const stub = await openWorkspaceStub();
+    const suspended = "00000000-0000-7000-8000-0000000002ff";
+    await env.DB.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role, last_seen_at)
+       VALUES (?, ?, 'suspended', 'member', NULL)`,
+    ).bind(WORKSPACE_ID, suspended).run();
+
+    await stub.markWorkspaceOpportunityRankingDue(WORKSPACE_ID, 0);
+
+    await expect(runInDurableObject(stub, (_instance, state) => (
+      state.storage.sql.exec<{ user_id: string }>(
+        "SELECT user_id FROM suggested_work_sets ORDER BY user_id",
+      ).toArray().map((row) => row.user_id)
+    ))).resolves.toEqual([USER_ID]);
   });
 
   it("holds product alarm work while a maintenance campaign owns the tables", async () => {
