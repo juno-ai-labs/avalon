@@ -1056,6 +1056,31 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The receipt RPC waits on initialization like its five siblings
+
+**What changed:** `executeToolReceiptOperation` now awaits `this.initialized`
+before dispatching, which every other RPC entry point on `SubstreamAgent`
+already did.
+
+**Why:** two independent reviews flagged it as the one bare method. The stronger
+argument is that the class already documents the invariant it broke — the
+comment on `objectStore`, `terminal` and `toolReceipts` says every handler
+"waits on `initialized` first" as the reason those fields can be `!`-asserted.
+One method not doing so made that sentence false, and the fields it reads are
+assigned inside the `blockConcurrencyWhile` callback.
+
+In practice workerd queues external requests behind that callback, so this is
+unlikely to have been reachable — but an in-isolate self-call reaches the method
+through a stub returned by `durableObjectSelf`, and that path does not
+necessarily queue the same way. No test asserts the difference, because an
+honest one would need `blockConcurrencyWhile` not to queue; the value here is
+the restored invariant, not an observable change.
+
+**What a future change has to respect:** nothing inside the boot callback may
+reach a receipt operation, or this await deadlocks. It does not today — the
+callback constructs stores, waits for readiness, settles identity and releases
+dispatch leases, and touches no receipts.
+
 ### 2026-08-23 — The receipt wire's argument cap becomes a named bound
 
 **What changed:** `args: z.array(z.unknown()).max(4)` on

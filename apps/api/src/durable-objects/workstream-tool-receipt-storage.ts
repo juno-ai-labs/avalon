@@ -504,7 +504,17 @@ export class WorkstreamToolReceiptStorage {
     return !this.#hasDependents(existing.effect_intent_id, input.fence.runId, input.toolCallId);
   }
 
-  /** A child run or an attachment receipt built on this result. */
+  /**
+   * A child run or an attachment receipt built on this result.
+   *
+   * Deliberately unlike `attachmentDependencies`, which additionally joins on
+   * `tool_effects.status = 'completed'`. That method answers "what may this
+   * replay claim to have read", so an in-flight receipt has nothing to offer.
+   * This one answers "may this result be taken away", and a dependency written
+   * against a receipt that has since moved is exactly the case that must still
+   * refuse — scoping it to completed receipts would let a rebind proceed while
+   * something was mid-way through depending on the result it clears.
+   */
   #hasDependents(effectIntentId: string, runId: string, toolCallId: string): boolean {
     return first(this.sql.exec<{ dependent: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS dependent
