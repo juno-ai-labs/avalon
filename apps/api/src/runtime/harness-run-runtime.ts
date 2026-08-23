@@ -1182,9 +1182,10 @@ export async function assertHarnessAttemptOwned(
 }
 
 /**
- * A live lease owner may close an already-started tool after a member stop.
- * Cancellation blocks new work, but it cannot strand the child receipt that
- * the same attempt must settle before terminalizing its parent.
+ * A live lease owner may close an already-started tool after cancellation was
+ * requested. This predicate deliberately omits the ordinary cancellation-null
+ * fence: cancellation blocks new work, but it cannot strand the child receipt
+ * that the same attempt must settle before terminalizing its parent.
  */
 export async function assertHarnessToolSettlementOwned(
   db: D1Database,
