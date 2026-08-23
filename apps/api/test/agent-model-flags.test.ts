@@ -16,8 +16,15 @@ import {
 import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
 import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 /**
  * Lets one case serve attributes the real loader would never produce — a key
@@ -68,8 +75,8 @@ function serving(value: unknown, variant = "current"): DetailsStub {
   return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
 }
 
-const SEEDED_WORKSPACE_ID = "ws-1";
-const SEEDED_WORKSTREAM_ID = "wst-1";
+const SEEDED_WORKSPACE_ID = "00000000-0000-4000-8000-000000000051";
+const SEEDED_WORKSTREAM_ID = "00000000-0000-4000-8000-000000000052";
 
 /**
  * A workspace, its owner, and one work stream — enough for every attribute the
@@ -95,23 +102,44 @@ function seededEnv(env: Env): Env {
       `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
        VALUES (?1, 'Dogfood', 'dogfood', 'global', ?2, ?3, ?3)`,
     )
-    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
+    .run(SEEDED_WORKSPACE_ID, "00000000-0000-4000-8000-000000000011", at);
   database
     .prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
        VALUES (?1, ?2, 'owner', 'active', ?3)`,
     )
-    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
-  database
-    .prepare(
-      `INSERT INTO workstreams (
-         id, workspace_id, title, objective, origin_type, created_by_user_id,
-         automation_subscription_id, automation_run_id, planned_for, harness_status,
-         next_sequence_number, last_activity_at, created_at, updated_at, archived_at
-       ) VALUES (?1, ?2, 'Ship it', '', 'ad_hoc', ?3, NULL, NULL, NULL, 'idle', 1, ?4, ?4, ?4, NULL)`,
-    )
-    .run("wst-1", "ws-1", "00000000-0000-4000-8000-000000000011", at);
-  return { ...env, DB: sqliteD1(database) };
+    .run(SEEDED_WORKSPACE_ID, "00000000-0000-4000-8000-000000000011", at);
+  // The work stream is its object's, not the region's: a targeting attribute
+  // about it is read through `workstreamExecutionEnvironment`, which routes at
+  // the object. Seeded regionally, the read finds nothing and the resolver
+  // reports a suppressed subject rather than the facts this file is about.
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, {
+    workspaceId: SEEDED_WORKSPACE_ID,
+    workstreamId: SEEDED_WORKSTREAM_ID,
+  });
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO workstreams (
+       id, workspace_id, title, objective, origin_type, created_by_user_id,
+       automation_subscription_id, automation_run_id, planned_for, harness_status,
+       last_activity_at, created_at, updated_at, archived_at, scope
+     ) VALUES (?, ?, 'Ship it', '', 'ad_hoc', ?, NULL, NULL, NULL, 'idle', ?, ?, ?, NULL, 'workspace')`,
+    SEEDED_WORKSTREAM_ID,
+    SEEDED_WORKSPACE_ID,
+    "00000000-0000-4000-8000-000000000011",
+    at,
+    at,
+    at,
+  );
+  return createTestEnv({
+    ...env,
+    DB: sqliteD1(database),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+      objectStores: new Map([[SEEDED_WORKSTREAM_ID, objectStore]]),
+    }),
+  });
 }
 
 /**
@@ -124,7 +152,10 @@ function seededEnv(env: Env): Env {
  */
 async function envWithOverride(env: Env, modelOverride: string | null): Promise<Env> {
   const seeded = seededEnv(env);
-  await seeded.DB
+  // Through the runtime port, for the reason the doc comment gives: the pin is
+  // the work stream object's column now, so a write that went regional would be
+  // answered by a table the resolver no longer reads.
+  await withWorkstreamRuntimeDatabase(seeded, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID).DB
     .prepare("UPDATE workstreams SET model_override = ? WHERE id = ? AND workspace_id = ?")
     .bind(modelOverride, SEEDED_WORKSTREAM_ID, SEEDED_WORKSPACE_ID)
     .run();
@@ -180,8 +211,8 @@ describe("agent model flags", () => {
     const env = envWithFlags(getObjectDetails);
 
     await resolveAgentModelRouting(env, "automation_compiler", {
-      workspaceId: "ws-1",
-      workstreamId: "wst-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
+      workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "usr-1",
     });
 
@@ -192,8 +223,8 @@ describe("agent model flags", () => {
         agent: "automation_compiler",
         region: "global",
         appEnv: "production",
-        workspaceId: "ws-1",
-        workstreamId: "wst-1",
+        workspaceId: SEEDED_WORKSPACE_ID,
+        workstreamId: SEEDED_WORKSTREAM_ID,
         userId: "usr-1",
       },
     );
@@ -211,8 +242,8 @@ describe("agent model flags", () => {
     const env = seededEnv(envWithFlags(getObjectDetails));
 
     await resolveAgentModelRouting(env, "workstream", {
-      workspaceId: "ws-1",
-      workstreamId: "wst-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
+      workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "00000000-0000-4000-8000-000000000011",
     });
 
@@ -220,8 +251,8 @@ describe("agent model flags", () => {
       agent: "workstream",
       region: "global",
       appEnv: "production",
-      workspaceId: "ws-1",
-      workstreamId: "wst-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
+      workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "00000000-0000-4000-8000-000000000011",
       workspaceSlug: "dogfood",
       workspaceMemberCount: 1,
@@ -247,16 +278,16 @@ describe("agent model flags", () => {
     const env = seededEnv(envWithFlags(getObjectDetails));
 
     await resolveNewWorkstreamModelRouting(env, {
-      workspaceId: "ws-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
       workstreamId: "wst-preparing",
     });
 
-    expect(servedAttributes.subjects).toEqual([{ workspaceId: "ws-1" }]);
+    expect(servedAttributes.subjects).toEqual([{ workspaceId: SEEDED_WORKSPACE_ID }]);
     expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
       agent: "workstream",
       region: "global",
       appEnv: "production",
-      workspaceId: "ws-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
       workstreamId: "wst-preparing",
       workspaceSlug: "dogfood",
       workspaceMemberCount: 1,
@@ -286,8 +317,8 @@ describe("agent model flags", () => {
     };
 
     await resolveAgentModelRouting(envWithFlags(getObjectDetails), "workstream", {
-      workspaceId: "ws-1",
-      workstreamId: "wst-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
+      workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "usr-1",
     });
 
@@ -295,8 +326,8 @@ describe("agent model flags", () => {
       agent: "workstream",
       region: "global",
       appEnv: "production",
-      workspaceId: "ws-1",
-      workstreamId: "wst-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
+      workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "usr-1",
     });
   });
@@ -313,7 +344,7 @@ describe("agent model flags", () => {
       LOG_LEVEL: "debug",
     }));
 
-    await resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" });
+    await resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID });
 
     const resolved = debugged.find((entry) => entry.includes("agent_model_flag_resolved"));
     const attributes = (JSON.parse(resolved ?? "{}") as { attributes?: string }).attributes ?? "";
@@ -332,7 +363,7 @@ describe("agent model flags", () => {
       fallbackModels: ["x-ai/grok-4.3"],
     }));
 
-    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" })).resolves.toEqual({
+    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID })).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
     });
@@ -398,7 +429,7 @@ describe("agent model flags", () => {
       errorMessage: `flag ${flagKey} does not exist`,
     })), LOG_LEVEL: "warn" });
 
-    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" })).resolves.toEqual(
+    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID })).resolves.toEqual(
       defaultAgentModelRouting(baseEnv, "workstream"),
     );
     expect(warnings.join()).toContain("agent_model_flag_unresolved");
@@ -445,12 +476,12 @@ describe("agent model flags", () => {
     const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] }));
 
     await expect(scheduledWorkstreamModel(env, {
-      workspaceId: "ws-1",
+      workspaceId: SEEDED_WORKSPACE_ID,
       workstreamId: "wst-scheduled",
     })).resolves.toBe(
       "anthropic/claude-opus-4.6",
     );
-    expect(servedAttributes.subjects).toEqual([{ workspaceId: "ws-1" }]);
+    expect(servedAttributes.subjects).toEqual([{ workspaceId: SEEDED_WORKSPACE_ID }]);
   });
 
   it("admits only the model ids a creator may choose from", () => {
@@ -470,7 +501,12 @@ describe("agent model flags", () => {
     }));
     const env = await envWithOverride(flagged, "deepseek/deepseek-v4-pro");
 
-    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+    // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
+    // reads `env.DB`, and the pin lives in the work stream's own object.
+    await expect(resolveWorkstreamModelRouting(
+      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
+    ))
       .resolves.toEqual({ model: "deepseek/deepseek-v4-pro", fallbackModels: [] });
   });
 
@@ -481,7 +517,12 @@ describe("agent model flags", () => {
     }));
     const env = await envWithOverride(flagged, null);
 
-    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+    // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
+    // reads `env.DB`, and the pin lives in the work stream's own object.
+    await expect(resolveWorkstreamModelRouting(
+      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
+    ))
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
   });
 
@@ -491,7 +532,12 @@ describe("agent model flags", () => {
     const flagged = envWithFlags(serving({ model: "x-ai/grok-4.5", fallbackModels: [] }));
     const env = await envWithOverride(flagged, "anthropic/claude-opus-4.6");
 
-    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+    // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
+    // reads `env.DB`, and the pin lives in the work stream's own object.
+    await expect(resolveWorkstreamModelRouting(
+      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
+    ))
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: [] });
   });
 });

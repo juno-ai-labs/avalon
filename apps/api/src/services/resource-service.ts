@@ -481,26 +481,26 @@ export class ResourceService {
     const attachmentStatement = executionEnv.DB.prepare(
       "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
     ).bind(workstreamId, id);
-    if (executionEnv === this.env) {
-      await this.env.DB.batch([watchStatement, attachmentStatement]);
-    } else {
-      await attachmentStatement.run();
+    // Two authorities, so no single batch spans them: the attachment is the
+    // work stream object's and the watch row is regional. The attachment is
+    // written first and compensated back if the regional write fails, because
+    // an attachment claiming a watch nothing polls is the recoverable half.
+    await attachmentStatement.run();
+    try {
+      await watchStatement.run();
+    } catch (error) {
       try {
-        await watchStatement.run();
-      } catch (error) {
-        try {
-          await executionEnv.DB.prepare(
-            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
-          ).bind(attached.watch_enabled, workstreamId, id).run();
-        } catch (compensationError) {
-          throw new AggregateError(
-            [error, compensationError],
-            "resource_watch_compensation_failed",
-            { cause: compensationError },
-          );
-        }
-        throw error;
+        await executionEnv.DB.prepare(
+          "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+        ).bind(attached.watch_enabled, workstreamId, id).run();
+      } catch (compensationError) {
+        throw new AggregateError(
+          [error, compensationError],
+          "resource_watch_compensation_failed",
+          { cause: compensationError },
+        );
       }
+      throw error;
     }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
@@ -544,26 +544,26 @@ export class ResourceService {
     const attachmentStatement = executionEnv.DB.prepare(
       "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
     ).bind(workstreamId, id);
-    if (executionEnv === this.env) {
-      await this.env.DB.batch([watchStatement, attachmentStatement]);
-    } else {
-      await attachmentStatement.run();
+    // Two authorities, so no single batch spans them: the attachment is the
+    // work stream object's and the watch row is regional. The attachment is
+    // written first and compensated back if the regional write fails, because
+    // an attachment claiming a watch nothing polls is the recoverable half.
+    await attachmentStatement.run();
+    try {
+      await watchStatement.run();
+    } catch (error) {
       try {
-        await watchStatement.run();
-      } catch (error) {
-        try {
-          await executionEnv.DB.prepare(
-            "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
-          ).bind(attached.watch_enabled, workstreamId, id).run();
-        } catch (compensationError) {
-          throw new AggregateError(
-            [error, compensationError],
-            "resource_unwatch_compensation_failed",
-            { cause: compensationError },
-          );
-        }
-        throw error;
+        await executionEnv.DB.prepare(
+          "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
+        ).bind(attached.watch_enabled, workstreamId, id).run();
+      } catch (compensationError) {
+        throw new AggregateError(
+          [error, compensationError],
+          "resource_unwatch_compensation_failed",
+          { cause: compensationError },
+        );
       }
+      throw error;
     }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {

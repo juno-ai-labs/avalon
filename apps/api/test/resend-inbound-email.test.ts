@@ -9,7 +9,7 @@ import {
   type ResendRegionalEmailInput,
 } from "../src/services/resend-inbound-email-service";
 import { __resendRouteTesting, resendInboundRoutes } from "../src/routes/resend";
-import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -112,6 +112,13 @@ class FakeDatabase {
   readonly resources: StoredResource[] = [];
   readonly messages: StoredMessage[] = [];
   readonly attachments: Array<{ workstreamId: string; resourceId: string }> = [];
+
+  recordAttachment(workstreamId: string, resourceId: string): void {
+    if (this.attachments.some((value) => (
+      value.workstreamId === workstreamId && value.resourceId === resourceId
+    ))) return;
+    this.attachments.push({ workstreamId, resourceId });
+  }
   automationEmailBudgetAvailable = true;
   nextSequence = 1;
   workstreamLastActivityAt: string | null = null;
@@ -338,17 +345,6 @@ class FakeDatabase {
       const resource = this.resources.find((candidate) => candidate.id === values[5] && candidate.workspaceId === values[6]);
       if (resource) resource.contentRef = String(values[1]);
       return result(resource ? 1 : 0);
-    }
-    // `INSERT OR IGNORE` as well as plain `INSERT`: the attachment used to be a
-    // statement in this service's own batch and is now `attachWorkstreamRuntimeResource`,
-    // which writes the same columns in the same order through the runtime port.
-    if (sql.includes("INTO workstream_resources")) {
-      const workstreamId = String(values[0]);
-      const resourceId = String(values[1]);
-      if (!this.attachments.some((value) => value.workstreamId === workstreamId && value.resourceId === resourceId)) {
-        this.attachments.push({ workstreamId, resourceId });
-      }
-      return result(1);
     }
     if (sql.includes("INSERT OR IGNORE INTO messages")) {
       if (this.messages.some((candidate) =>
@@ -861,6 +857,46 @@ function environment(
   return createTestEnv({
     DB: database,
     PAYLOADS: bucket,
+    // Attaching the inbound email's resource is the work stream object's write
+    // now, not a statement in this service's own batch. The stub records what
+    // the port sends so the assertions below stay on the attachment rather than
+    // on which database happened to receive it.
+    SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      idFromName: () => createTestDurableObjectId("substream"),
+      get: () => createTestDurableObjectInstance({
+        attachRuntimeResource: async (input: { workstreamId: string; resourceId: string }) => {
+          database.recordAttachment(input.workstreamId, input.resourceId);
+          return { status: 200, bodyJson: "{}" };
+        },
+        // The routed half of the same move: statements the rewriter classifies
+        // as the work stream's own no longer reach `env.DB` directly. Running
+        // them back through the fake keeps every assertion in this file on what
+        // the service wrote, not on which side of the port carried it.
+        executeRuntimeSql: async (input: {
+          statements: Array<{ sql: string; params: unknown[] }>;
+        }) => ({
+          status: 200,
+          bodyJson: JSON.stringify({
+            results: await Promise.all(input.statements.map(async ({ sql, params }) => {
+              const statement = database.prepare(sql).bind(...params);
+              // A `RETURNING` update answers with a row, like a select: the
+              // sequence claim is one, and the fake handles it in `first`.
+              if (/^\s*SELECT/iu.test(sql) || /\bRETURNING\b/iu.test(sql)) {
+                const row = await statement.first<Record<string, string | number | null>>();
+                return {
+                  columns: row ? Object.keys(row) : [],
+                  rows: row ? [row] : [],
+                  changes: row ? 1 : 0,
+                };
+              }
+              const executed = await statement.run();
+              return { columns: [], rows: [], changes: Number(executed.meta.changes ?? 0) };
+            })),
+          }),
+        }),
+      }),
+      jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
+    }),
     AVALON_REGION: region,
     APP_ENV: "test",
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,

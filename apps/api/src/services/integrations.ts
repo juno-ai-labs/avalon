@@ -220,7 +220,7 @@ import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { TerminalPortFactory } from "./terminal/object-port";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
-import { readWorkstreamAuthorityControl, requireOpenWorkstreamAuthority } from "./workstream-authority";
+import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -4263,55 +4263,31 @@ interface ConnectorTriggerContext {
   metadata: Record<string, unknown>;
 }
 
-/** Read automation trigger evidence from its live authority on both sides of cutover. */
+/** Read automation trigger evidence from the workspace object that owns it. */
 async function loadConnectorTriggerContext(
   env: Env,
   workspaceId: string,
   eventId: string,
 ): Promise<ConnectorTriggerContext | null> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-    );
-    const event = WorkspaceConnectorEventSchema.nullable().parse(
-      await workspace.connectorEvent({ workspaceId, eventId }),
-    );
-    if (!event) return null;
-    return {
-      provider: event.activity.provider,
-      eventType: event.activity.eventType,
-      occurredAt: event.activity.occurredAt,
-      title: event.activity.title,
-      summary: event.activity.summary,
-      textSnippet: event.activity.textSnippet,
-      metadata: event.activity.metadata,
-    };
-  }
-  const row = await env.DB.prepare(
-    `SELECT provider, event_type, occurred_at, title, summary, text_snippet, metadata_json
-       FROM activities WHERE id = ? AND workspace_id = ?`,
-  ).bind(eventId, workspaceId).first<{
-    provider: string;
-    event_type: string;
-    occurred_at: string;
-    title: string;
-    summary: string;
-    text_snippet: string;
-    metadata_json: string;
-  }>();
-  return row ? {
-    provider: row.provider,
-    eventType: row.event_type,
-    occurredAt: row.occurred_at,
-    title: row.title,
-    summary: row.summary,
-    textSnippet: row.text_snippet,
-    metadata: parseJson(row.metadata_json, {}),
-  } : null;
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+  const event = WorkspaceConnectorEventSchema.nullable().parse(
+    await workspace.connectorEvent({ workspaceId, eventId }),
+  );
+  if (!event) return null;
+  return {
+    provider: event.activity.provider,
+    eventType: event.activity.eventType,
+    occurredAt: event.activity.occurredAt,
+    title: event.activity.title,
+    summary: event.activity.summary,
+    textSnippet: event.activity.textSnippet,
+    metadata: event.activity.metadata,
+  };
 }
 
 async function loadRunPromptContext(
@@ -7124,9 +7100,7 @@ export async function hydrateConnectorActivitySource(
     resourceType: string;
   },
 ): Promise<unknown | null> {
-  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") {
-    env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  }
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections
      WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,

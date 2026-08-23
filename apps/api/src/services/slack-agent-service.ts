@@ -37,8 +37,6 @@ import {
   SLACK_UNFURL_MAX_LINKS,
   TERMINAL_UNFURL_REASONS,
   workstreamUnfurlCardHash,
-  WORKSTREAM_UNFURL_COLUMNS,
-  WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
   workstreamUnfurlBlocks,
   workstreamUnfurlSummary,
@@ -75,7 +73,6 @@ import {
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
 import { withAuthorizedConnection } from "./connector-connection-access";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
@@ -2774,9 +2771,12 @@ export class SlackAgentService {
       // still see it; `avalon_connect` mints one against the click instead.
       blocks = unlinkedHome();
     } else {
-      const authority = await readWorkstreamAuthorityControl(this.env);
-      const tasksPromise = authority.phase === "durable_object_open"
-        ? this.workspaceDirectory(connection.workspace_id).then((workspace) => (
+      // `includeSystem: false` keeps machinery out — a digest run's transcript,
+      // say. The owner participates in it, so a plain participant read would
+      // list it here, and Slack has no equivalent of the desktop's Debug
+      // enabled to hide it.
+      const tasksPromise = this.workspaceDirectory(connection.workspace_id)
+        .then((workspace) => (
           workspace.recentWorkstreamDirectory({
             workspaceId: connection.workspace_id,
             userId: link.user_id,
@@ -2795,18 +2795,7 @@ export class SlackAgentService {
             return priority(left.harness_status) - priority(right.harness_status)
               || String(right.last_activity_at).localeCompare(String(left.last_activity_at));
           }).slice(0, 6),
-        }))
-        : this.env.DB.prepare(
-          // `system_kind` is machinery — a digest run's transcript, say. The
-          // owner participates in it, so the join alone would list it here, and
-          // Slack has no equivalent of the desktop's Debug enabled to hide it.
-          `SELECT w.id, w.title, w.harness_status FROM workstreams w
-           JOIN workstream_participants p ON p.workstream_id = w.id
-           WHERE w.workspace_id = ? AND p.user_id = ? AND p.removed_at IS NULL
-             AND w.archived_at IS NULL AND w.system_kind IS NULL
-           ORDER BY CASE w.harness_status WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
-             w.last_activity_at DESC LIMIT 6`,
-        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>();
+        }));
       const [tasks, automations, personalSlack] = await Promise.all([
         tasksPromise,
         this.env.DB.prepare(
@@ -2959,30 +2948,21 @@ export class SlackAgentService {
     // not a matter of taste: a link to another Avalon workspace's work stream
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    const rows = authority.phase === "durable_object_open"
-      ? await this.workspaceDirectory(workspaceId).then((workspace) => (
-        workspace.lookupWorkstreamDirectory({ workspaceId, workstreamIds })
-      )).then((result) => ({ results: result.items
-        .filter((item) => item.archivedAt === null)
-        .map((item) => ({
-          id: item.workstreamId,
-          title: item.title,
-          harness_status: directoryHarnessStatus(item.state),
-          last_activity_at: item.lastActivityAt,
-          origin_type: item.originType,
-          automation_name: item.originLabel,
-        })) }))
-      : await this.env.DB.prepare(
-      // Archiving retires a work stream from view, including App Home's own
-      // task list, so an archived one falls through to the anonymous card
-      // rather than keeping its title alive in Slack.
-      `SELECT w.id, ${WORKSTREAM_UNFURL_COLUMNS}
-         FROM workstreams w
-         ${WORKSTREAM_UNFURL_JOINS}
-        WHERE w.workspace_id = ? AND w.archived_at IS NULL
-          AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
-      ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
+    // Archiving retires a work stream from view, including App Home's own task
+    // list, so an archived one falls through to the anonymous card rather than
+    // keeping its title alive in Slack.
+    const rows = await this.workspaceDirectory(workspaceId).then((workspace) => (
+      workspace.lookupWorkstreamDirectory({ workspaceId, workstreamIds })
+    )).then((result) => ({ results: result.items
+      .filter((item) => item.archivedAt === null)
+      .map((item) => ({
+        id: item.workstreamId,
+        title: item.title,
+        harness_status: directoryHarnessStatus(item.state),
+        last_activity_at: item.lastActivityAt,
+        origin_type: item.originType,
+        automation_name: item.originLabel,
+      })) }));
     return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }
 
