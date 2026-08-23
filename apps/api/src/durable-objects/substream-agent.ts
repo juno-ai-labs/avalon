@@ -127,6 +127,7 @@ import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-st
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
   type SchedulingOperationRequest,
+  mutatesWakeups,
   SchedulingOperationRequestSchema,
 } from "./workstream-scheduling-protocol";
 import {
@@ -1100,6 +1101,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * these rows, so a non-main substream is refused here rather than answering
    * from an empty table.
    */
+  /**
+   * Dispatch one scheduling operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes:
+   * a misrouted stub must fail rather than claim another work stream's wake-up.
+   *
+   * An operation that can change which wake-ups are pending re-derives the
+   * timer index and arms the next alarm before answering, so a caller never has
+   * to remember to. The routed path detected the same thing by matching
+   * `workstream_wakeups` in statement text; naming the operations is what
+   * replaces that, and the arming stays here rather than moving to the callers
+   * because the index is the object's, not theirs.
+   */
+  private async acceptSchedulingOperation(request: Request): Promise<Response> {
+    const parsed = SchedulingOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.scheduling, parsed.data.args);
+    if (mutatesWakeups(parsed.data.operation)) {
+      this.syncAgentTimerAlarms();
+      await this.armNextAlarm();
+    }
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
     const parsed = BlockDashboardOperationRequestSchema.safeParse(
       await request.json().catch(() => null),
