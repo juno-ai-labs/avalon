@@ -1756,6 +1756,132 @@ describe("durable harness attempt runtime", () => {
     ]);
   });
 
+  it("atomically refuses a read rebind when dependent state appears after its preliminary check", async () => {
+    for (const dependentKind of ["attachment", "child"] as const) {
+      const sqlite = fixture();
+      openDatabases.push(sqlite.database);
+      const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+        attemptId: `attempt-replan-${dependentKind}-race`,
+        owner: `owner-replan-${dependentKind}-race`,
+      });
+      if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+      const toolCallId = `${RUN_ONE}:turn:1:tool:0`;
+      const readPlan = {
+        pluginId: "avalon:workstream",
+        canonicalToolName: "view_resource",
+        capability: "workstream.resources.view",
+        connectionId: null,
+        mode: "read" as const,
+        idempotency: "safe",
+        toolSurfaceHash: "workstream-surface-v1",
+      };
+      await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+        invocationId: "invocation-replan-race",
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId,
+        toolName: "view_resource",
+        inputHash: "resource-before-race",
+        input: { resourceId: "resource-before-race" },
+        plan: readPlan,
+        mode: "read",
+      });
+      await completeToolInvocation(sqlite.binding, claim.lease, {
+        harnessRunId: RUN_ONE,
+        invocationId: "invocation-replan-race",
+        checkpointIndex: 1,
+        outputRef: "payloads/runtime/resource-before-race.json",
+        outputSummary: "Viewed the original resource",
+      });
+
+      // persistToolExecutionPlan first attempts its ordinary insert batch. The
+      // second batch is the settled-read rebind, reached only after the
+      // preliminary dependent-state SELECT returned empty. Insert the
+      // dependency immediately before that batch to prove the CAS repeats the
+      // predicate instead of relying on the stale read.
+      let batchCalls = 0;
+      const racedBinding = new Proxy(sqlite.binding, {
+        get(target, property) {
+          if (property === "batch") {
+            return async (statements: D1PreparedStatement[]) => {
+              batchCalls += 1;
+              if (batchCalls === 2) {
+                if (dependentKind === "attachment") {
+                  sqlite.object.prepare(
+                    `INSERT INTO attachment_tool_receipts
+                     (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+                     VALUES (?, ?, ?, ?, ?)`,
+                  ).run(
+                    WORKSPACE_ID,
+                    "resource-raced",
+                    "invocation-replan-race",
+                    "sha-raced",
+                    Date.now(),
+                  );
+                } else {
+                  sqlite.object.prepare(
+                    `INSERT INTO harness_runs
+                     (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+                      created_at, parent_harness_run_id, parent_tool_call_id,
+                      chain_root_harness_run_id, chain_depth, delegated_task_hash)
+                     VALUES (?, ?, ?, 'inline_child', ?, 'completed', ?, ?, ?, ?, 1, ?)`,
+                  ).run(
+                    "00000000-0000-4000-8000-0000000000c2",
+                    WORKSPACE_ID,
+                    WORKSTREAM_ID,
+                    JSON.stringify({ type: "user", userId: "00000000-0000-4000-8000-000000000009" }),
+                    new Date().toISOString(),
+                    RUN_ONE,
+                    toolCallId,
+                    RUN_ONE,
+                    "raced-objective",
+                  );
+                }
+              }
+              return target.batch(statements);
+            };
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+
+      expect(await persistToolExecutionPlan(racedBinding, claim.lease, {
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId,
+        toolName: "view_resource",
+        inputHash: "resource-after-race",
+        input: { resourceId: "resource-after-race" },
+        plan: readPlan,
+        mode: "read",
+      })).toMatchObject({
+        state: "ambiguous_external_write",
+        invocationId: "invocation-replan-race",
+      });
+      expect(batchCalls).toBe(2);
+      expect(sqlite.object.prepare(
+        `SELECT status, input_hash, output_ref FROM tool_invocations
+          WHERE id = 'invocation-replan-race'`,
+      ).get()).toEqual({
+        status: "completed",
+        input_hash: "resource-before-race",
+        output_ref: "payloads/runtime/resource-before-race.json",
+      });
+      expect(sqlite.object.prepare(
+        `SELECT phase FROM tool_invocation_checkpoints
+          WHERE tool_invocation_id = 'invocation-replan-race'
+          ORDER BY checkpoint_index`,
+      ).all()).toEqual([
+        { phase: "execution_planned" },
+        { phase: "result_persisted" },
+      ]);
+    }
+  });
+
   it("does not publish an R2 result reference when its lease is lost after upload", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -1848,6 +1974,134 @@ describe("durable harness attempt runtime", () => {
       outputSummary: "Issue AVA-3",
     })).rejects.toMatchObject({ code: "run_ownership_lost" });
     expect(uploaded).toBe(false);
+  });
+
+  it("persists a returned tool result after a member stop while the attempt still owns settlement", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-completion-after-cancel",
+      owner: "owner-completion-after-cancel",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-completion-after-cancel",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-completion-after-cancel",
+      toolName: "linear_issue_get",
+      inputHash: "completion-after-cancel-input",
+      input: { issueId: "AVA-4" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
+              cancellation_reason = 'member_stop'
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+    let uploaded = false;
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      DB: sqlite.binding,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        put: async () => {
+          uploaded = true;
+          return {} as R2Object;
+        },
+      }),
+    });
+
+    await expect(__integrationTesting.settleRootHarnessToolCompletion(env, input(RUN_ONE), claim.lease, {
+      invocationId: "invocation-completion-after-cancel",
+      toolCallId: "call-completion-after-cancel",
+      canonicalToolName: "get_issue",
+      attachmentOutput: { issue: { id: "AVA-4" } },
+      durableOutput: { issue: { id: "AVA-4" } },
+      outputSummary: "Issue AVA-4",
+    })).resolves.toContain("/tool-results/");
+    expect(uploaded).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, output_summary FROM tool_invocations WHERE id = ?",
+    ).get("invocation-completion-after-cancel")).toEqual({
+      status: "completed",
+      output_summary: "Issue AVA-4",
+    });
+  });
+
+  it("checks the root completion lease before registering an attachment dependency", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-attachment",
+      owner: "owner-stale-attachment",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stale-attachment",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-attachment",
+      toolName: "workstream_read_resource",
+      inputHash: "stale-attachment-input",
+      input: { resourceId: "00000000-0000-4000-8000-000000000099" },
+      plan: { operation: "resource.read", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET attempt_id = 'attempt-stale-attachment-successor',
+              lease_owner = 'owner-stale-attachment-successor',
+              lease_expires_at = '2099-01-01T00:00:00.000Z'
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+    let uploaded = false;
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      DB: sqlite.binding,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        put: async () => {
+          uploaded = true;
+          return {} as R2Object;
+        },
+      }),
+    });
+    const attachmentOutput = {
+      resourceId: "00000000-0000-4000-8000-000000000099",
+      title: "Stale",
+      sourceMimeType: "text/plain",
+      modelMimeType: "text/plain",
+      version: { sha256: "a".repeat(64), extractorVersion: "attachment-text-v2" },
+      range: { start: 0, end: 5 },
+      totalCharacters: 5,
+      charactersBefore: 0,
+      charactersReturned: 5,
+      charactersAfter: 0,
+      text: "stale",
+      previousCursor: null,
+      nextCursor: null,
+    };
+
+    await expect(__integrationTesting.settleRootHarnessToolCompletion(
+      env,
+      input(RUN_ONE),
+      claim.lease,
+      {
+        invocationId: "invocation-stale-attachment",
+        toolCallId: "call-stale-attachment",
+        canonicalToolName: "read_resource",
+        attachmentOutput,
+        durableOutput: attachmentOutput,
+        outputSummary: "Read stale resource",
+      },
+    )).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(uploaded).toBe(false);
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM attachment_tool_receipts WHERE tool_invocation_id = ?",
+    ).get("invocation-stale-attachment")).toEqual({ count: 0 });
   });
 
   it("rechecks every failure and ambiguity fence at the atomic D1 mutation", async () => {
@@ -1957,7 +2211,7 @@ describe("durable harness attempt runtime", () => {
     }
   });
 
-  it("observes cancellation and still permits the owning attempt to terminalize as stopped", async () => {
+  it("settles completed and failed tools before the owning attempt terminalizes as stopped", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
@@ -1965,6 +2219,47 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-cancelled",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-cancelled-write",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-cancelled-write",
+      toolName: "terminal_run_command",
+      inputHash: "cancelled-write-input",
+      input: { command: "sleep 60" },
+      plan: {
+        pluginId: "avalon:terminal",
+        canonicalToolName: "run_command",
+        capability: "terminal.command.run",
+        connectionId: null,
+        mode: "write",
+        idempotency: "record_before_execute",
+        toolSurfaceHash: "terminal-surface-v1",
+      },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-cancelled-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-cancelled-read",
+      toolName: "linear_issue_get",
+      inputHash: "cancelled-read-input",
+      input: { issueId: "AVA-1" },
+      plan: {
+        pluginId: "connection:linear",
+        canonicalToolName: "get_issue",
+        capability: "linear.issue.read",
+        connectionId: "linear",
+        mode: "read",
+        idempotency: "safe",
+        toolSurfaceHash: "linear-surface-v1",
+      },
+      mode: "read",
+    });
 
     sqlite.object.prepare(
       `UPDATE harness_runs
@@ -1975,6 +2270,30 @@ describe("durable harness attempt runtime", () => {
 
     await expect(heartbeatHarnessAttempt(sqlite.binding, RUN_ONE, claim.lease))
       .rejects.toMatchObject({ code: "run_cancelled" });
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+      memberSafePayload: { code: "run_cancelled" },
+    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-cancelled-read",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/cancelled-read.json",
+      outputSummary: "Issue AVA-1",
+      allowCancellationRequested: true,
+    })).toBe("persisted");
+    expect(await __integrationTesting.settleRootHarnessToolFailure(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-cancelled-write",
+      status: "ambiguous",
+      phase: "ambiguous_external_write",
+      error: {
+        code: "ambiguous_external_write",
+        message: "The stopped command may have reached the provider",
+      },
+      memberSafePayload: { code: "ambiguous_external_write" },
+    })).toBe("persisted");
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
@@ -1993,11 +2312,84 @@ describe("durable harness attempt runtime", () => {
       "SELECT harness_status FROM workstreams WHERE id = ?",
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
     expect(sqlite.object.prepare(
+      "SELECT id, status, output_ref, error_json FROM tool_invocations WHERE harness_run_id = ? ORDER BY id",
+    ).all(RUN_ONE)).toEqual([
+      {
+        id: "invocation-cancelled-read",
+        status: "completed",
+        output_ref: "payloads/runtime/cancelled-read.json",
+        error_json: null,
+      },
+      {
+        id: "invocation-cancelled-write",
+        status: "ambiguous",
+        output_ref: null,
+        error_json: '{"code":"ambiguous_external_write","message":"The stopped command may have reached the provider"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
       "SELECT status, member_safe_payload_json FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({
       status: "stopped",
       member_safe_payload_json: '{"code":"run_cancelled"}',
     });
+  });
+
+  it("refuses to stop around an unsettled receipt after a successor claims an expired run", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const expired = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-expired",
+      owner: "owner-stop-expired",
+    });
+    if (expired.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, expired.lease, {
+      invocationId: "invocation-expired-attempt",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-expired-attempt",
+      toolName: "terminal_run_command",
+      inputHash: "expired-attempt-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    const successor = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-successor",
+      owner: "owner-stop-successor",
+    });
+    if (successor.state !== "claimed") throw new Error("expected successor attempt");
+    // The post-cutover compatibility view derives the displayed attempt from
+    // the owning run, so the effect is rebound to the successor even though the
+    // unsettled tool_effect row itself survived the claim.
+    expect(sqlite.object.prepare(
+      "SELECT attempt_id, status FROM tool_invocations WHERE id = ?",
+    ).get("invocation-expired-attempt")).toEqual({
+      attempt_id: successor.lease.attemptId,
+      status: "started",
+    });
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
+              cancellation_reason = 'member_stop'
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), successor.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+      memberSafePayload: { code: "run_cancelled" },
+    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "running", terminalized_at: null });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
+    ).get(RUN_ONE)).toEqual({ count: 0 });
   });
 
   it("fences every durable write from an executor after its lease ownership is replaced", async () => {

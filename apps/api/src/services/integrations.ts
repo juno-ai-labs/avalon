@@ -185,6 +185,7 @@ import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
   assertHarnessAttemptOwned,
+  assertHarnessToolSettlementOwned,
   CoalescedRunLiveness,
   completeToolInvocation,
   finalizeToolInvocationFailure,
@@ -201,6 +202,7 @@ import {
   type AttemptLease,
   type HarnessRunCoordinates,
   type InlineChildResult,
+  type ToolInvocationFailure,
 } from "../runtime/harness-run-runtime";
 import {
   createMemoryTools,
@@ -541,7 +543,7 @@ class AttachmentGroundingGuard {
     if (!isAttachmentContentCapability(event.policy.capability)) return;
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
-    if (!access && event.phase === "validation") return;
+    if (event.phase === "validation") return;
     const resourceIds = access?.resourceIds.length
       ? access.resourceIds
       : structuredAttachmentFailureResourceIds(event);
@@ -2927,16 +2929,12 @@ export async function runWorkstreamHarness(
           if (transientSlackSearch) suppressInferencePayloadLogging = true;
           const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
-          await registerAttachmentToolReceipt(env, {
-            workspaceId: input.workspaceId,
-            invocationId: plannedInvocation.id,
-            canonicalToolName: receiptPolicy.definition.name,
-            output: event.result.output,
-          });
-          await persistSuccessfulToolResult(env, input, liveness.lease, {
+          await settleRootHarnessToolCompletion(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
             toolCallId: event.toolCallId,
-            output: durableToolReplayOutput(
+            canonicalToolName: receiptPolicy.definition.name,
+            attachmentOutput: event.result.output,
+            durableOutput: durableToolReplayOutput(
               receiptPolicy.definition.capability,
               event.result.output,
               event.result.summary,
@@ -3008,7 +3006,7 @@ export async function runWorkstreamHarness(
             invocationId = plannedInvocation.id;
           }
           if (!planAlreadyAmbiguous) {
-            await finalizeToolInvocationFailure(env.DB, liveness.lease, {
+            await settleRootHarnessToolFailure(env.DB, liveness.lease, {
               harnessRunId: input.harnessRunId,
               invocationId,
               status: ambiguous ? "ambiguous" : "failed",
@@ -4003,13 +4001,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   event.toolCallId,
                 );
                 if (!invocation) throw new Error("tool_execution_plan_missing");
-                await registerAttachmentToolReceipt(options.env, {
-                  workspaceId: childInput.workspaceId,
-                  invocationId: invocation.id,
-                  canonicalToolName: receiptPolicy.definition.name,
-                  output: event.result.output,
-                });
-                await persistSuccessfulToolResult(options.env, childInput, childLiveness.lease, {
+                const outputRef = await persistSuccessfulToolResult(options.env, childInput, childLiveness.lease, {
                   invocationId: invocation.id,
                   toolCallId: event.toolCallId,
                   output: durableToolReplayOutput(
@@ -4020,6 +4012,16 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   outputSummary: event.result.summary,
                   memberSafePayload: { toolName: event.toolName },
                 }, assertChildOwned);
+                // The completed receipt is the authority for this replay
+                // dependency. Registering it first would let a stale child
+                // mutate shared dependency state before its completion fence.
+                await registerAttachmentToolReceipt(options.env, {
+                  workspaceId: childInput.workspaceId,
+                  invocationId: invocation.id,
+                  expectedOutputRef: outputRef,
+                  canonicalToolName: receiptPolicy.definition.name,
+                  output: event.result.output,
+                });
                 await assertChildOwned();
                 await emitAgentToolTerminalTelemetry(options.env, {
                   workspaceId: childInput.workspaceId,
@@ -4551,6 +4553,7 @@ async function persistSuccessfulToolResult(
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
     allowAmbiguousReconciliation?: boolean;
+    allowCancellationRequested?: boolean;
   },
   ownershipGuard?: () => Promise<void>,
 ): Promise<string> {
@@ -4578,7 +4581,14 @@ async function persistSuccessfulToolResult(
   // during the upload is caught by completeToolInvocation's atomic D1 fence;
   // the attempt/content-addressed object can then remain as a harmless orphan.
   await ownershipGuard?.();
-  await assertHarnessAttemptOwned(env.DB, input.harnessRunId, lease);
+  const assertSettlementOwned = async (): Promise<void> => {
+    if (result.allowCancellationRequested) {
+      await assertHarnessToolSettlementOwned(env.DB, input.harnessRunId, lease);
+    } else {
+      await assertHarnessAttemptOwned(env.DB, input.harnessRunId, lease);
+    }
+  };
+  await assertSettlementOwned();
   await env.PAYLOADS.put(outputRef, replayPayload, putOptions);
   await ownershipGuard?.();
   await completeToolInvocation(env.DB, lease, {
@@ -4596,9 +4606,69 @@ async function persistSuccessfulToolResult(
     ...(result.allowAmbiguousReconciliation
       ? { allowAmbiguousReconciliation: true }
       : {}),
+    ...(result.allowCancellationRequested
+      ? { allowCancellationRequested: true }
+      : {}),
   });
   await ownershipGuard?.();
   return outputRef;
+}
+
+async function settleRootHarnessToolCompletion(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  lease: AttemptLease,
+  result: {
+    invocationId: string;
+    toolCallId: string;
+    canonicalToolName: string;
+    attachmentOutput: unknown;
+    durableOutput: unknown;
+    outputSummary: string;
+    providerOperationId?: string;
+    memberSafePayload?: Record<string, unknown>;
+  },
+): Promise<string> {
+  const outputRef = await persistSuccessfulToolResult(env, input, lease, {
+    invocationId: result.invocationId,
+    toolCallId: result.toolCallId,
+    output: result.durableOutput,
+    outputSummary: result.outputSummary,
+    ...(result.providerOperationId
+      ? { providerOperationId: result.providerOperationId }
+      : {}),
+    ...(result.memberSafePayload
+      ? { memberSafePayload: result.memberSafePayload }
+      : {}),
+    // A terminal event closes work that already started. The runtime still
+    // requires this exact live attempt and rejects parent terminalization while
+    // any receipt from any attempt remains pending or started.
+    allowCancellationRequested: true,
+  });
+  // The invocation completion is the authority for this dependency. If the
+  // Worker disappears between these writes, replay finds no dependency,
+  // invalidates the receipt, and executes again instead of trusting the JSON.
+  await registerAttachmentToolReceipt(env, {
+    workspaceId: input.workspaceId,
+    invocationId: result.invocationId,
+    expectedOutputRef: outputRef,
+    canonicalToolName: result.canonicalToolName,
+    output: result.attachmentOutput,
+  });
+  return outputRef;
+}
+
+async function settleRootHarnessToolFailure(
+  database: D1Database,
+  lease: AttemptLease,
+  input: Omit<ToolInvocationFailure, "allowCancellationRequested">,
+): Promise<"persisted" | "already_persisted"> {
+  return finalizeToolInvocationFailure(database, lease, {
+    ...input,
+    // The same event-call-site invariant as successful completion: no new work
+    // is admitted, but the exact live owner may close what Bind already ran.
+    allowCancellationRequested: true,
+  });
 }
 
 class ToolReplayReadTimeoutError extends Error {
@@ -6439,10 +6509,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           });
         } catch (error) {
           if (!(error instanceof WakeupInputError)) throw error;
-          return {
-            output: { error: error.code, reason: error.message, hint: error.hint },
-            summary: `Could not schedule a wake-up: ${error.message}`,
-          };
+          throw error;
         }
 
         // A replay resolves to the wake-up the first attempt persisted. Check it
@@ -6490,15 +6557,17 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           input.workstreamId,
         );
         if (pending >= MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM) {
-          return {
-            output: {
-              error: "wakeup_limit_reached",
-              reason: `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}`,
-              hint: "Cancel a pending wake-up with workstream_cancel_wakeup before scheduling another.",
-              pending: await listPendingWorkstreamWakeups(env, input.workspaceId, input.workstreamId),
-            },
-            summary: `Cannot schedule a wake-up: ${pending} are already pending`,
-          };
+          const pendingWakeups = await listPendingWorkstreamWakeups(
+            env,
+            input.workspaceId,
+            input.workstreamId,
+          );
+          throw new WakeupInputError(
+            "wakeup_limit_reached",
+            `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
+            "Call workstream_list_wakeups, then cancel one pending wake-up before retrying.",
+            pendingWakeups.map((wakeup) => wakeup.wakeupId),
+          );
         }
 
         const { wakeupId } = await createWorkstreamWakeup(env, {
@@ -6602,26 +6671,25 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           wakeupId: args.wakeupId,
         });
         if (outcome === "not_found") {
-          return {
-            output: {
-              error: "wakeup_not_found",
-              reason: "No wake-up with that ID belongs to this work stream",
-              hint: "Call workstream_list_wakeups for the pending wake-up IDs.",
-              pending: await listPendingWorkstreamWakeups(env, input.workspaceId, input.workstreamId),
-            },
-            summary: "Could not cancel a wake-up: no such wake-up in this work stream",
-          };
+          const pending = await listPendingWorkstreamWakeups(
+            env,
+            input.workspaceId,
+            input.workstreamId,
+          );
+          throw new WakeupInputError(
+            "wakeup_not_found",
+            "No pending wake-up with that ID is available in this work stream. Call workstream_list_wakeups and retry with one of its IDs.",
+            "Call workstream_list_wakeups and use one of the pending wake-up IDs.",
+            pending.map((wakeup) => wakeup.wakeupId),
+          );
         }
         if (outcome === "not_pending") {
           const row = await loadWorkstreamWakeup(env, input.workspaceId, args.wakeupId);
-          return {
-            output: {
-              error: "wakeup_not_pending",
-              reason: `That wake-up is already ${row?.status ?? "resolved"}`,
-              hint: "Only a pending wake-up can be cancelled. Call workstream_list_wakeups for the ones that still are.",
-            },
-            summary: "Could not cancel a wake-up: it is no longer pending",
-          };
+          throw new WakeupInputError(
+            "wakeup_not_pending",
+            `That wake-up is already ${row?.status ?? "resolved"}. Only a pending wake-up can be cancelled.`,
+            "Call workstream_list_wakeups and use one of the IDs that is still pending.",
+          );
         }
         await refreshAgentTimerAlarm(
           env,
@@ -7412,6 +7480,8 @@ export const __integrationTesting = {
   loadAuthorizedAttachmentReplay,
   toolReplayOutputKey,
   persistSuccessfulToolResult,
+  settleRootHarnessToolCompletion,
+  settleRootHarnessToolFailure,
   persistToolTranscriptMessage,
   persistPolledActivity,
   withAuthorizedConnection,

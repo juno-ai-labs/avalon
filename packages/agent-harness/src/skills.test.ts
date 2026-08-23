@@ -6,6 +6,7 @@ import {
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   WRITING_AN_EMAIL_SKILL,
   runHarness,
+  type HarnessEvent,
   type HarnessPlugin,
   type HarnessSkill,
 } from "./index";
@@ -164,15 +165,25 @@ describe("skills in a run", () => {
       textResponse("could not"),
     ];
     const observed: unknown[] = [];
+    const events: HarnessEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       observed.push(JSON.parse(String(init?.body)));
       return responses.shift()!;
     }) as typeof fetch;
     await expect(
-      runHarness({ ...runInput(fetcher), skills: [triage] }),
+      runHarness({
+        ...runInput(fetcher),
+        skills: [triage],
+        onEvent: (event) => { events.push(event); },
+      }),
     ).resolves.toMatchObject({ status: "completed" });
     const toolMessage = messagesOf(observed[1]).find((message) => message.role === "tool");
     expect(String(toolMessage?.content)).toContain("skill_not_available");
+    expect(String(toolMessage?.content)).toContain('"success":false');
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      data: { code: "skill_not_available" },
+    });
+    expect(events.some((event) => event.type === "tool_completed")).toBe(false);
     expect(systemPrompt(observed[1] as Record<string, unknown>)).not.toContain("# Active Skill Instructions");
   });
 

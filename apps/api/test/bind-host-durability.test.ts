@@ -3,6 +3,33 @@ import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 
 describe("Bind host durability boundaries", () => {
+  it("does not treat rejected attachment arguments as an unresolved content access", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-invalid-arguments",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      input: {},
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-invalid-arguments",
+      toolName: "workstream_read_resource",
+      pluginId: "avalon_core",
+      policy,
+      error: "resourceId or cursor is required",
+      phase: "validation",
+      outcome: "definitive_failure",
+    } as never);
+
+    expect(guard.nudge()).toBeNull();
+    expect(guard.boundary()).toBeNull();
+    expect(guard.diagnostic()).toEqual({ count: 0, errorCodes: [], toolNames: [] });
+  });
+
   it("replaces unverified attachment claims with a content-free provenance boundary", () => {
     const guard = new __integrationTesting.AttachmentGroundingGuard();
     const policy = { capability: "workstream.resources.read" };

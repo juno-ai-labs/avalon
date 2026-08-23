@@ -154,6 +154,8 @@ export interface ToolInvocationFailure {
   phase: string;
   error: { code: string; message: string; data?: StructuredFailureDetail };
   memberSafePayload?: Record<string, unknown>;
+  /** The lease owner may close this terminal event even when a member stop is already durable. */
+  allowCancellationRequested?: boolean;
 }
 
 export class RunOwnershipLostError extends Error {
@@ -1179,6 +1181,25 @@ export async function assertHarnessAttemptOwned(
   if (row.status !== "running") throw new RunOwnershipLostError();
 }
 
+/**
+ * A live lease owner may close an already-started tool after a member stop.
+ * Cancellation blocks new work, but it cannot strand the child receipt that
+ * the same attempt must settle before terminalizing its parent.
+ */
+export async function assertHarnessToolSettlementOwned(
+  db: D1Database,
+  runId: string,
+  lease: AttemptLease,
+): Promise<void> {
+  const row = await db.prepare(
+    `SELECT status FROM harness_runs
+      WHERE id = ?1 AND attempt_id = ?2 AND lease_owner = ?3
+        AND terminalized_at IS NULL
+        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+  ).bind(runId, lease.attemptId, lease.owner).first<{ status: string }>();
+  if (row?.status !== "running") throw new RunOwnershipLostError();
+}
+
 export async function assertInlineChildAttemptOwned(
   db: D1Database,
   parentInput: HarnessRunCoordinates,
@@ -1538,6 +1559,15 @@ async function replanCompletedReadReceipt(
           AND hr.attempt_id = ?3 AND hr.lease_owner = ?6 AND hr.status = 'running'
           AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
           AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          AND NOT EXISTS (
+            SELECT 1 FROM harness_runs child
+             WHERE child.parent_harness_run_id = ti.harness_run_id
+               AND child.parent_tool_call_id = ?7
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM attachment_tool_receipts receipt
+             WHERE receipt.tool_invocation_id = ti.id
+          )
        ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
     ).bind(
       checkpointId,
@@ -1546,6 +1576,7 @@ async function replanCompletedReadReceipt(
       bind.now,
       stableJson({ toolName: plan.toolName }),
       lease.owner,
+      plan.toolCallId,
     ),
     db.prepare(
       `UPDATE tool_invocations
@@ -1564,6 +1595,15 @@ async function replanCompletedReadReceipt(
           AND EXISTS (
             SELECT 1 FROM tool_invocation_checkpoints
              WHERE id = ?11 AND tool_invocation_id = ?9 AND attempt_id = ?10
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM harness_runs child
+             WHERE child.parent_harness_run_id = ?12
+               AND child.parent_tool_call_id = ?13
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM attachment_tool_receipts receipt
+             WHERE receipt.tool_invocation_id = ?9
           )`,
     ).bind(
       plan.toolName,
@@ -1578,6 +1618,7 @@ async function replanCompletedReadReceipt(
       lease.attemptId,
       checkpointId,
       plan.harnessRunId,
+      plan.toolCallId,
     ),
   ]);
   if (d1Changes(results[1]) > 0) {
@@ -1814,9 +1855,18 @@ export async function completeToolInvocation(
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
     allowAmbiguousReconciliation?: boolean;
+    /** Close an already-started receipt even when the parent has a member stop request. */
+    allowCancellationRequested?: boolean;
   },
 ): Promise<"persisted" | "already_persisted"> {
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+  const assertSettlementOwned = async (): Promise<void> => {
+    if (input.allowCancellationRequested) {
+      await assertHarnessToolSettlementOwned(db, input.harnessRunId, lease);
+    } else {
+      await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+    }
+  };
+  await assertSettlementOwned();
   const now = new Date().toISOString();
   const checkpointId = uuidV7();
   const index = Math.max(1, Math.trunc(input.checkpointIndex));
@@ -1833,7 +1883,8 @@ export async function completeToolInvocation(
         WHERE ti.id = ?2 AND ti.harness_run_id = ?3 AND ti.attempt_id = ?4
           AND (ti.status IN ('pending', 'started') OR (?9 = 1 AND ti.status = 'ambiguous'))
           AND hr.attempt_id = ?4 AND hr.lease_owner = ?8 AND hr.status = 'running'
-          AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
+          AND (?10 = 1 OR hr.cancellation_requested_at IS NULL)
+          AND hr.terminalized_at IS NULL
           AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
     ).bind(
@@ -1846,6 +1897,7 @@ export async function completeToolInvocation(
       now,
       lease.owner,
       input.allowAmbiguousReconciliation ? 1 : 0,
+      input.allowCancellationRequested ? 1 : 0,
     ),
     db.prepare(
       // The index comes from the checkpoint that was just written, not from the
@@ -1865,7 +1917,7 @@ export async function completeToolInvocation(
           AND EXISTS (
             SELECT 1 FROM harness_runs
              WHERE id = ?7 AND attempt_id = ?8 AND lease_owner = ?9
-               AND status = 'running' AND cancellation_requested_at IS NULL
+               AND status = 'running' AND (?12 = 1 OR cancellation_requested_at IS NULL)
                AND terminalized_at IS NULL
                AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           )
@@ -1886,6 +1938,7 @@ export async function completeToolInvocation(
       lease.owner,
       checkpointId,
       input.allowAmbiguousReconciliation ? 1 : 0,
+      input.allowCancellationRequested ? 1 : 0,
     ),
   ]);
   if (d1Changes(results[1]) > 0) return "persisted";
@@ -1895,9 +1948,16 @@ export async function completeToolInvocation(
        JOIN harness_runs hr ON hr.id = ti.harness_run_id
       WHERE ti.id = ?1 AND ti.harness_run_id = ?2 AND ti.attempt_id = ?3
         AND hr.attempt_id = ?3 AND hr.lease_owner = ?4 AND hr.status = 'running'
-        AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
+        AND (?5 = 1 OR hr.cancellation_requested_at IS NULL)
+        AND hr.terminalized_at IS NULL
         AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(input.invocationId, input.harnessRunId, lease.attemptId, lease.owner)
+  ).bind(
+    input.invocationId,
+    input.harnessRunId,
+    lease.attemptId,
+    lease.owner,
+    input.allowCancellationRequested ? 1 : 0,
+  )
     .first<{
       status: string;
       output_ref: string | null;
@@ -1912,7 +1972,7 @@ export async function completeToolInvocation(
   ) {
     return "already_persisted";
   }
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+  await assertSettlementOwned();
   throw new RunOwnershipLostError();
 }
 
@@ -1926,7 +1986,14 @@ export async function finalizeToolInvocationFailure(
   lease: AttemptLease,
   input: ToolInvocationFailure,
 ): Promise<"persisted" | "already_persisted"> {
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+  const assertSettlementOwned = async (): Promise<void> => {
+    if (!input.allowCancellationRequested) {
+      await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+      return;
+    }
+    await assertHarnessToolSettlementOwned(db, input.harnessRunId, lease);
+  };
+  await assertSettlementOwned();
   const now = new Date().toISOString();
   const checkpointId = uuidV7();
   const phase = input.phase.slice(0, 120);
@@ -1951,7 +2018,8 @@ export async function finalizeToolInvocationFailure(
         WHERE ti.id = ?2 AND ti.harness_run_id = ?3 AND ti.attempt_id = ?4
           AND ti.status IN ${mutableStatuses}
           AND hr.attempt_id = ?4 AND hr.lease_owner = ?8 AND hr.status = 'running'
-          AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
+          AND (?9 = 1 OR hr.cancellation_requested_at IS NULL)
+          AND hr.terminalized_at IS NULL
           AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
     ).bind(
@@ -1963,6 +2031,7 @@ export async function finalizeToolInvocationFailure(
       stableJson(input.memberSafePayload ?? { code }),
       now,
       lease.owner,
+      input.allowCancellationRequested ? 1 : 0,
     ),
     db.prepare(
       `UPDATE tool_invocations
@@ -1976,7 +2045,7 @@ export async function finalizeToolInvocationFailure(
           AND EXISTS (
             SELECT 1 FROM harness_runs
              WHERE id = ?5 AND attempt_id = ?6 AND lease_owner = ?7
-               AND status = 'running' AND cancellation_requested_at IS NULL
+               AND status = 'running' AND (?9 = 1 OR cancellation_requested_at IS NULL)
                AND terminalized_at IS NULL
                AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           )
@@ -1993,6 +2062,7 @@ export async function finalizeToolInvocationFailure(
       lease.attemptId,
       lease.owner,
       checkpointId,
+      input.allowCancellationRequested ? 1 : 0,
     ),
   ]);
   if (d1Changes(results[1]) > 0) return "persisted";
@@ -2003,14 +2073,21 @@ export async function finalizeToolInvocationFailure(
        JOIN harness_runs hr ON hr.id = ti.harness_run_id
       WHERE ti.id = ?1 AND ti.harness_run_id = ?2 AND ti.attempt_id = ?3
         AND hr.attempt_id = ?3 AND hr.lease_owner = ?4 AND hr.status = 'running'
-        AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
+        AND (?5 = 1 OR hr.cancellation_requested_at IS NULL)
+        AND hr.terminalized_at IS NULL
         AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(input.invocationId, input.harnessRunId, lease.attemptId, lease.owner)
+  ).bind(
+    input.invocationId,
+    input.harnessRunId,
+    lease.attemptId,
+    lease.owner,
+    input.allowCancellationRequested ? 1 : 0,
+  )
     .first<{ status: string; error_json: string | null }>();
   if (existing?.status === input.status && existing.error_json === errorJson) {
     return "already_persisted";
   }
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+  await assertSettlementOwned();
   throw new RunOwnershipLostError();
 }
 
@@ -2402,6 +2479,11 @@ export async function terminalizeHarnessAttempt(
           AND parent_tool_call_id IS NULL
           AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
           AND (?7 = 'stopped' OR cancellation_requested_at IS NULL)
+          AND (?7 != 'stopped' OR NOT EXISTS (
+            SELECT 1 FROM tool_invocations unsettled
+             WHERE unsettled.harness_run_id = ?1
+               AND unsettled.status IN ('pending', 'started')
+          ))
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
     ).bind(
@@ -2425,6 +2507,11 @@ export async function terminalizeHarnessAttempt(
           AND parent_tool_call_id IS NULL
           AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
           AND (?6 = 'stopped' OR cancellation_requested_at IS NULL)
+          AND (?6 != 'stopped' OR NOT EXISTS (
+            SELECT 1 FROM tool_invocations unsettled
+             WHERE unsettled.harness_run_id = ?1
+               AND unsettled.status IN ('pending', 'started')
+          ))
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
     ).bind(
       input.harnessRunId,
