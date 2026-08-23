@@ -47,6 +47,7 @@ function seedRun(
     startedAt?: number;
     parentRunId?: string;
     parentToolCallId?: string;
+    chainRootRunId?: string;
   } = {},
 ): void {
   // A delegated sub-agent gets its own substream, which is why a running child
@@ -68,8 +69,8 @@ function seedRun(
         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
         origin, execution_principal_json, chain_depth, parent_run_id,
-        parent_tool_call_id, created_at, updated_at)
-     VALUES (?, ?, ?, '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, '{}', 0, ?, ?, 1, 1)`,
+        parent_tool_call_id, chain_root_run_id, created_at, updated_at)
+     VALUES (?, ?, ?, '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, '{}', 0, ?, ?, ?, 1, 1)`,
     runId,
     substreamId,
     overrides.status ?? "admitted",
@@ -77,6 +78,7 @@ function seedRun(
     overrides.origin ?? "member_message",
     overrides.parentRunId ?? null,
     overrides.parentToolCallId ?? null,
+    overrides.chainRootRunId ?? null,
   );
 }
 
@@ -556,5 +558,194 @@ describe("the inline child's double fence", () => {
     // sub-agent from a chained run that merely records its parent. Only the
     // former may be fenced by someone else's lease.
     expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "ownership_lost" });
+  });
+});
+
+describe("settling a sub-agent", () => {
+  const CHILD = "00000000-0000-7000-8000-0000000000a4";
+
+  const settlement = {
+    parentRunId: RUN,
+    parentAttemptId: "attempt-1",
+    parentOwner: "owner-1",
+    childRunId: CHILD,
+    childAttemptId: "attempt-child",
+    childOwner: "owner-child",
+    status: "completed",
+    model: "a-model",
+    usageJson: '{"inputTokens":1}',
+    errorJson: null,
+    childResultJson: '{"status":"completed"}',
+    childResultHash: "result-hash-1",
+    memberSafePayloadJson: "{}",
+    lifecycleEventId: "event-terminal",
+    now: NOW,
+  };
+
+  function delegated() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    seedRun(opened.sql, CHILD, { parentRunId: RUN, parentToolCallId: "call-1" });
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-parent",
+    });
+    opened.sql.exec(
+      `UPDATE runs SET status = 'running', legacy_attempt_id = ?, lease_owner = ?,
+              lease_expires_at = ? WHERE run_id = ?`,
+      "attempt-child",
+      "owner-child",
+      NOW + 60_000,
+      CHILD,
+    );
+    return opened;
+  }
+
+  it("stores the result and releases the child's lease", () => {
+    const { storage, sql } = delegated();
+
+    expect(storage.terminalizeInlineChild(settlement)).toEqual({ outcome: "terminalized" });
+    expect(sql.exec(
+      `SELECT status, terminalized_at, child_result_hash, lease_owner, lease_expires_at, model
+         FROM runs WHERE run_id = ?`,
+      CHILD,
+    ).one()).toMatchObject({
+      status: "completed",
+      terminalized_at: NOW,
+      child_result_hash: "result-hash-1",
+      lease_owner: null,
+      lease_expires_at: null,
+      model: "a-model",
+    });
+    // The lifecycle event and the settlement are one transaction. The routed
+    // version wrote them as a batch whose second statement asked, through an
+    // `EXISTS` on the first's row, whether the first had landed.
+    expect(storage.lifecycleEvent({ runId: CHILD, eventKey: "terminal" }))
+      .toMatchObject({ event_type: "terminal", status: "completed" });
+  });
+
+  it("refuses a child whose parent's lease was taken by someone else", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET lease_owner = 'someone-else' WHERE run_id = ?`, RUN);
+
+    // The settlement is the parent's read of its sub-agent's answer. A parent
+    // that has lost its own attempt is no longer the one waiting for it, and
+    // letting the settlement through would hand a result to an executor that
+    // has been fenced out.
+    expect(storage.terminalizeInlineChild(settlement)).toEqual({ outcome: "ownership_lost" });
+    expect(sql.exec(`SELECT terminalized_at FROM runs WHERE run_id = ?`, CHILD).one())
+      .toMatchObject({ terminalized_at: null });
+  });
+
+  it("lets a stopped child settle through a requested cancellation", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, CHILD);
+
+    // A stop is exactly when a live owner must still be able to settle: the
+    // parent is waiting on this child's result, and refusing the write because
+    // the child was asked to stop leaves it waiting forever.
+    expect(storage.terminalizeInlineChild({ ...settlement, status: "cancelled" }))
+      .toEqual({ outcome: "terminalized" });
+  });
+
+  it("still refuses an ordinary settlement once cancellation was requested", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, CHILD);
+
+    // The exemption above is only for the stop itself. A child that was asked
+    // to stop must not report success as though nothing had happened.
+    expect(storage.terminalizeInlineChild(settlement)).toEqual({ outcome: "ownership_lost" });
+  });
+
+  it("replays an identical settlement instead of writing twice", () => {
+    const { storage } = delegated();
+    storage.terminalizeInlineChild(settlement);
+
+    expect(storage.terminalizeInlineChild({ ...settlement, lifecycleEventId: "event-2" }))
+      .toEqual({ outcome: "already_terminal" });
+  });
+
+  it("refuses a settlement that disagrees with the stored result", () => {
+    const { storage } = delegated();
+    storage.terminalizeInlineChild(settlement);
+
+    // A second settlement carrying a different result is not a replay: the
+    // stored answer is what the parent already read, and it is immutable.
+    expect(storage.terminalizeInlineChild({
+      ...settlement, childResultHash: "result-hash-2", lifecycleEventId: "event-2",
+    })).toEqual({ outcome: "ownership_lost" });
+  });
+});
+
+describe("sweeping a run's descendants", () => {
+  const CHILD = "00000000-0000-7000-8000-0000000000a5";
+  const GRANDCHILD = "00000000-0000-7000-8000-0000000000a6";
+
+  function chain() {
+    const opened = open();
+    seedRun(opened.sql, RUN, { status: "running" });
+    seedRun(opened.sql, CHILD, {
+      status: "running", parentRunId: RUN, parentToolCallId: "call-1", chainRootRunId: RUN,
+    });
+    // A grandchild's parent is the child, not the root. Only `chain_root_run_id`
+    // connects it to the run being stopped.
+    seedRun(opened.sql, GRANDCHILD, {
+      status: "running", parentRunId: CHILD, parentToolCallId: "call-2", chainRootRunId: RUN,
+    });
+    return opened;
+  }
+
+  it("reaches a grandchild through the chain root, not just the parent link", () => {
+    const { storage, sql } = chain();
+
+    expect(storage.cancelDescendants({ rootRunId: RUN, reason: "parent_cancelled", now: NOW }))
+      .toEqual({ cancelled: 2 });
+    expect(sql.exec(
+      `SELECT run_id FROM runs WHERE cancellation_requested_at IS NOT NULL ORDER BY run_id`,
+    ).toArray()).toEqual([{ run_id: CHILD }, { run_id: GRANDCHILD }]);
+  });
+
+  it("keeps the first cancellation's reason when a later sweep passes over", () => {
+    const { storage, sql } = chain();
+    sql.exec(
+      `UPDATE runs SET cancellation_requested_at = ?, cancellation_reason = 'member_stop'
+        WHERE run_id = ?`,
+      NOW - 5_000,
+      CHILD,
+    );
+
+    storage.cancelDescendants({ rootRunId: RUN, reason: "parent_cancelled", now: NOW });
+
+    // A member stopped this one, and then its parent's terminalization swept
+    // over it. The reason a person will be shown is the member's, not the
+    // sweep's — which is what the two `COALESCE`s are for.
+    expect(sql.exec(
+      `SELECT cancellation_reason, cancellation_requested_at FROM runs WHERE run_id = ?`,
+      CHILD,
+    ).one()).toMatchObject({
+      cancellation_reason: "member_stop",
+      cancellation_requested_at: NOW - 5_000,
+    });
+  });
+
+  it("leaves a run that already finished alone", () => {
+    const { storage, sql } = chain();
+    sql.exec(
+      `UPDATE runs SET status = 'completed', terminalized_at = ? WHERE run_id = ?`,
+      NOW - 1_000,
+      GRANDCHILD,
+    );
+
+    expect(storage.cancelDescendants({ rootRunId: RUN, reason: "parent_cancelled", now: NOW }))
+      .toEqual({ cancelled: 1 });
+  });
+
+  it("does not sweep a root run that merely records this one as its chain root", () => {
+    const { storage, sql } = chain();
+    sql.exec(`UPDATE runs SET parent_tool_call_id = NULL WHERE run_id = ?`, GRANDCHILD);
+
+    // `parent_tool_call_id IS NOT NULL` again: a chained run that is not a
+    // delegated sub-agent has its own lifecycle and is not the parent's to stop.
+    expect(storage.cancelDescendants({ rootRunId: RUN, reason: "parent_cancelled", now: NOW }))
+      .toEqual({ cancelled: 1 });
   });
 });

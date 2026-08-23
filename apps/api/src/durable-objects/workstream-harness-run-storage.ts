@@ -62,8 +62,19 @@ export type ClaimOutcome =
   | { outcome: "busy"; activeLeaseExpiresAt: number | null }
   | { outcome: "not_found" };
 
-/** The statuses a run does not come back from, in the object's vocabulary. */
-const TERMINAL_RUN_STATUSES = new Set(["completed", "needs_input", "failed", "cancelled"]);
+/**
+ * The statuses a run does not come back from, in the object's vocabulary.
+ *
+ * Exported because the runtime has its own set spelled in the *published*
+ * vocabulary, where this `cancelled` is `stopped`. A caller reading a `RunRow`
+ * is reading the object's words and must compare against these.
+ */
+export const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "needs_input",
+  "failed",
+  "cancelled",
+]);
 
 /**
  * What a write fenced by the attempt's lease did.
@@ -168,6 +179,7 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   chain_root_run_id: string | null;
   chain_depth: number;
   delegated_task_hash: string | null;
+  inherited_scope_hash: string | null;
   child_result_json: string | null;
   child_result_hash: string | null;
 }
@@ -176,7 +188,8 @@ const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
   completed_at, final_part_id, error_json, workflow_instance_id, chain_root_run_id,
-  chain_depth, delegated_task_hash, child_result_json, child_result_hash`;
+  chain_depth, delegated_task_hash, inherited_scope_hash, child_result_json,
+  child_result_hash`;
 
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
@@ -614,6 +627,19 @@ export class WorkstreamHarnessRunStorage {
     );
   }
 
+  /** The sub-agent admitted for one of a parent's tool calls, or nothing. */
+  inlineChildByToolCall(input: {
+    parentRunId: string;
+    parentToolCallId: string;
+  }): RunRow | undefined {
+    return first(this.sql.exec<RunRow>(
+      `SELECT ${RUN_COLUMNS} FROM runs
+        WHERE parent_run_id = ? AND parent_tool_call_id = ?`,
+      input.parentRunId,
+      input.parentToolCallId,
+    ));
+  }
+
   /**
    * Admit, resume or refuse a sub-agent for one of the parent's tool calls.
    *
@@ -668,12 +694,7 @@ export class WorkstreamHarnessRunStorage {
         return { outcome: "parent_scope_missing" as const };
       }
 
-      const existing = first(this.sql.exec<RunRow>(
-        `SELECT ${RUN_COLUMNS} FROM runs
-          WHERE parent_run_id = ? AND parent_tool_call_id = ?`,
-        input.parentRunId,
-        input.parentToolCallId,
-      ));
+      const existing = this.inlineChildByToolCall(input);
       const expiresAt = input.now + input.leaseSeconds * 1_000;
 
       if (existing) {
@@ -891,6 +912,130 @@ export class WorkstreamHarnessRunStorage {
       return { outcome: "ownership_lost" };
     }
     return { outcome: "owned" };
+  }
+
+  /**
+   * Ask every live descendant of a run to stop, and say how many were asked.
+   *
+   * `COALESCE` on both columns keeps the *first* cancellation's reason: a run
+   * stopped by a member and then swept again by its parent's terminalization
+   * should still say the member stopped it. The count is the one place a
+   * changes count is the honest answer, because "how many descendants were
+   * still live" is exactly the question.
+   */
+  cancelDescendants(input: {
+    rootRunId: string;
+    reason: string;
+    now: number;
+  }): { cancelled: number } {
+    return this.storage.transactionSync(() => {
+      const cursor = this.sql.exec(
+        `UPDATE runs
+            SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?2),
+                cancellation_reason = COALESCE(cancellation_reason, ?3),
+                updated_at = ?2
+          WHERE (chain_root_run_id = ?1 OR parent_run_id = ?1)
+            AND parent_tool_call_id IS NOT NULL
+            AND status IN ('admitted', 'running')
+            AND terminalized_at IS NULL`,
+        input.rootRunId,
+        input.now,
+        input.reason,
+      );
+      return { cancelled: cursor.rowsWritten };
+    });
+  }
+
+  /**
+   * Settle a sub-agent, storing the result its parent will read back.
+   *
+   * The routed version was two statements where the second was guarded on the
+   * first: the `UPDATE`'s `WHERE` carried `EXISTS (SELECT 1 FROM
+   * harness_run_lifecycle_events WHERE lifecycle.id = ?1 …)` purely to ask
+   * whether the batch's *own* first statement had landed. That is a
+   * transaction spelled as a correlated subquery; here it is a transaction.
+   *
+   * `status === "cancelled"` relaxes the cancellation fence on both sides, and
+   * deliberately: a stop is exactly the case where a live owner must still be
+   * allowed to settle, or the parent waits forever on a child that will never
+   * write its result. It is the same exemption `assertHarnessToolSettlementOwned`
+   * makes for a tool call that had already started.
+   */
+  terminalizeInlineChild(input: {
+    parentRunId: string;
+    parentAttemptId: string;
+    parentOwner: string;
+    childRunId: string;
+    childAttemptId: string;
+    childOwner: string;
+    status: string;
+    model: string | null;
+    usageJson: string | null;
+    errorJson: string | null;
+    childResultJson: string;
+    childResultHash: string;
+    memberSafePayloadJson: string;
+    lifecycleEventId: string;
+    now: number;
+  }): { outcome: "terminalized" | "already_terminal" | "ownership_lost" } {
+    return this.storage.transactionSync(() => {
+      const child = this.run({ runId: input.childRunId });
+      const parent = this.run({ runId: input.parentRunId });
+      const stopping = input.status === "cancelled";
+      if (child
+        && child.legacy_attempt_id === input.childAttemptId
+        && child.terminalized_at !== null
+        && child.status === input.status
+        && child.child_result_hash === input.childResultHash) {
+        return { outcome: "already_terminal" as const };
+      }
+      if (!child
+        || !parent
+        || child.parent_run_id !== input.parentRunId
+        || child.parent_tool_call_id === null
+        || child.legacy_attempt_id !== input.childAttemptId
+        || child.lease_owner !== input.childOwner
+        || child.terminalized_at !== null
+        || (!stopping && child.cancellation_requested_at !== null)
+        || child.lease_expires_at === null
+        || child.lease_expires_at <= input.now
+        || parent.legacy_attempt_id !== input.parentAttemptId
+        || parent.lease_owner !== input.parentOwner
+        || parent.status !== "running"
+        || parent.terminalized_at !== null
+        || (!stopping && parent.cancellation_requested_at !== null)
+        || parent.lease_expires_at === null
+        || parent.lease_expires_at <= input.now) {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.childRunId,
+        attemptId: input.childAttemptId,
+        eventKey: "terminal",
+        eventType: "terminal",
+        status: input.status,
+        memberSafePayloadJson: input.memberSafePayloadJson,
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE runs
+            SET status = ?2, completed_at = ?3, terminalized_at = ?3,
+                model = COALESCE(?4, model), usage_json = COALESCE(?5, usage_json),
+                error_json = ?6, child_result_json = ?7, child_result_hash = ?8,
+                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?3
+          WHERE run_id = ?1`,
+        input.childRunId,
+        input.status,
+        input.now,
+        input.model,
+        input.usageJson,
+        input.errorJson,
+        input.childResultJson,
+        input.childResultHash,
+      );
+      return { outcome: "terminalized" as const };
+    });
   }
 
   /**
