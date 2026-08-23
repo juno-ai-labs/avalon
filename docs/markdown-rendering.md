@@ -43,10 +43,21 @@ overrides sit on top of the default element mapping.
 `MarkdownCode` decides inline from block itself rather than trusting the tag: a
 fence carries a `language-*` class, and an indented block ends in a newline.
 Inline code becomes `code.markdown-inline-code`; a block becomes
-`MarkdownCodeBlock`, which highlights through `prism-react-renderer` and adds a
-copy button backed by `desktopBridge().copyText`. An unrecognised language falls
-back to `plain` after one pass through `markdownLanguageAliases`, so a fence
-labelled with something Prism has never heard of still renders as code.
+`MarkdownCodeBlock`, which highlights through `prism-react-renderer`. An
+unrecognised language falls back to `plain` after one pass through
+`markdownLanguageAliases`, so a fence labelled with something Prism has never
+heard of still renders as code.
+
+`MarkdownCodeBlock` renders a `.markdown-code-block-header` bar above the
+highlighted `pre`: the fence's language on the left as `.markdown-code-language`,
+and the copy button — backed by `desktopBridge().copyText` — on the right. The
+label is looked up by `codeLanguageLabel` against the Prism-resolved name first
+and the fence's own word second, so `mermaid` reads as "Mermaid" even though it
+highlights as `plain`. The header sits outside the `pre` deliberately: the code
+itself scrolls horizontally in `.markdown-code-block pre`, and a button living
+inside that scroll region is only as reachable as whatever the reader has
+scrolled to. A fixed header keeps the copy control in the same place regardless
+of scroll position.
 
 Because `MarkdownCodeBlock` emits its own `pre`, the `pre` override is a
 pass-through fragment. Without it every block would be wrapped in a second one.
@@ -274,6 +285,47 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-23 — A code block gets a header bar instead of a floating button
+
+**What changed:** `MarkdownCodeBlock` now renders a `.markdown-code-block-header`
+row above the highlighted code — the fence's language on the left, the copy
+button on the right — instead of overlaying the button on top of the `pre` at
+`position: absolute`. The exported message card's stylesheet moved its
+`display: none` for the button from `.markdown-code-block > button` to
+`.markdown-code-block-header button` to match, and now also declares
+`.markdown-code-block-header { display: block; }` so the card keeps the
+label-above-code layout its `.markdown-code-language` rule already assumed.
+
+**Why:** The floating button sat at a fixed offset from the block's own edge,
+not the visible edge of whatever the reader had scrolled the code to. On a
+block with a long line, that put the button over the code's own text, legible
+only after scrolling horizontally past the text into the empty space beyond it
+— the opposite of discoverable. A header outside the scrolling `pre` is
+reachable at a fixed position regardless of scroll offset, and it also gave the
+block a place to put the language, which nothing had shown before.
+
+**Consequences:** `codeLanguageLabel` adds a second lookup beyond
+`markdownLanguageAliases`: a display name a reader recognises ("TypeScript",
+"HTML") rather than the fence's own shorthand or Prism's internal name. A
+language neither table knows is title-cased from the fence word, the same
+fallback `markdownLanguageAliases` already uses for highlighting. The
+`data-language` attribute on `.markdown-code-block` is unchanged — it stays the
+fence's raw lowercased word — so nothing reading that attribute needed to
+change.
+
+A fence that names no language gets no header label at all, rather than the
+"Plain text" every one of `data-language`'s internal defaults would otherwise
+surface — review caught that an unlabelled fence, the most common kind in a
+transcript, was rendering a caption ("PLAIN TEXT", uppercased by the header's
+own styling) nobody wrote and nothing asked for. `MarkdownCodeBlock` now reads
+whether a language was actually named off the raw prop, before it is defaulted
+to `'plain'` for highlighting and for `data-language` — those two stay
+unaffected, since the default is applied after the label decision rather than
+instead of it. The exported card's `.markdown-code-language` rule also picked
+up `display: block`: it is a `<span>`, and the `margin-bottom` the rule already
+declared is a no-op on an inline box, so the label sat flush against the code
+with none of the gap the layout was written to have.
 
 ### 2026-08-23 — The renderer repairs a model's TeX, and stops emitting a dead mention link
 

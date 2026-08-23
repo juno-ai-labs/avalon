@@ -106,6 +106,48 @@ const markdownLanguageAliases: Record<string, Language> = {
   zsh: 'bash',
 };
 
+const markdownLanguageDisplayNames: Record<string, string> = {
+  bash: 'Bash',
+  c: 'C',
+  cpp: 'C++',
+  csharp: 'C#',
+  css: 'CSS',
+  diff: 'Diff',
+  dockerfile: 'Dockerfile',
+  go: 'Go',
+  graphql: 'GraphQL',
+  java: 'Java',
+  javascript: 'JavaScript',
+  json: 'JSON',
+  jsx: 'JSX',
+  kotlin: 'Kotlin',
+  less: 'Less',
+  markdown: 'Markdown',
+  markup: 'HTML',
+  objectivec: 'Objective-C',
+  php: 'PHP',
+  plain: 'Plain text',
+  python: 'Python',
+  ruby: 'Ruby',
+  rust: 'Rust',
+  sass: 'Sass',
+  scss: 'SCSS',
+  sql: 'SQL',
+  svg: 'SVG',
+  swift: 'Swift',
+  tsx: 'TSX',
+  typescript: 'TypeScript',
+  xml: 'XML',
+  yaml: 'YAML',
+};
+
+/** The header label: the Prism-resolved name where there is one, otherwise the fence's own word, capitalized. */
+function codeLanguageLabel(normalizedLanguage: string, requestedLanguage: string): string {
+  const known = markdownLanguageDisplayNames[requestedLanguage] ?? markdownLanguageDisplayNames[normalizedLanguage];
+  if (known) return known;
+  return normalizedLanguage.charAt(0).toUpperCase() + normalizedLanguage.slice(1);
+}
+
 interface MessageCopyTelemetry {
   messageId: string;
   workstreamId: string;
@@ -117,11 +159,16 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
-  const normalizedLanguage = language.trim().toLowerCase() || 'plain';
+  const rawLanguage = language.trim().toLowerCase();
+  const normalizedLanguage = rawLanguage || 'plain';
   const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
   const highlightedLanguage: Language = Prism.languages[requestedLanguage]
     ? requestedLanguage
     : 'plain';
+  // A fence that named no language gets no header label — "Plain text" would
+  // otherwise caption the most common fence in a transcript with a word nobody
+  // wrote. An explicit ```text or ```plain fence still gets one.
+  const languageLabel = rawLanguage ? codeLanguageLabel(normalizedLanguage, requestedLanguage) : '';
 
   const copy = async (): Promise<void> => {
     try {
@@ -139,6 +186,12 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
 
   return (
     <div className="markdown-code-block" data-language={normalizedLanguage}>
+      <div className="markdown-code-block-header">
+        <span className="markdown-code-language">{languageLabel}</span>
+        <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
+          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+        </button>
+      </div>
       <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre className={className} style={style}>
@@ -155,9 +208,6 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
           </pre>
         )}
       </Highlight>
-      <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-        {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-      </button>
     </div>
   );
 }
@@ -174,7 +224,7 @@ function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'
   return (
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
-      language={languageMatch?.[1]?.toLowerCase() ?? 'plain'}
+      language={languageMatch?.[1]?.toLowerCase() ?? ''}
       telemetry={telemetry}
     />
   );
