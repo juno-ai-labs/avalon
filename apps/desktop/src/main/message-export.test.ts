@@ -200,7 +200,7 @@ describe('the exported document', () => {
   it('hides the code block copy button, which is a control rather than content', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 
-    expect(html).toContain('.markdown-code-block > button { display: none; }');
+    expect(html).toContain('.markdown-code-block-header button { display: none; }');
   });
 
   it('splashes two different messages differently and the same message the same way', () => {

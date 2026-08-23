@@ -321,8 +321,9 @@ ${syntax}
     padding: 1px 5px;
   }
   .markdown-code-block { background: #1b1c18; border-radius: 12px; margin: 16px 0; padding: 14px 16px; }
+  .markdown-code-block-header { display: block; }
   /* The copy button is a control, and a picture of a control is a lie. */
-  .markdown-code-block > button { display: none; }
+  .markdown-code-block-header button { display: none; }
   .markdown-code-language { color: #85867c; font-size: 10px; letter-spacing: 0.08em; margin-bottom: 6px; text-transform: uppercase; }
   .markdown-code-block pre {
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
