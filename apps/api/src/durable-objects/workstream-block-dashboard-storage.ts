@@ -255,17 +255,57 @@ export class WorkstreamBlockDashboardStorage {
         input.harnessRunId,
         input.terminalizedAt,
       ));
-      if (!terminal) return 0;
-      this.sql.exec(
-        `UPDATE block_dashboard_block_runs
-            SET status = 'failed', completed_at = ?, error_json = ?
-          WHERE run_id = ? AND status IN ('queued', 'running')`,
-        input.terminalizedAt,
-        input.errorJson,
-        input.harnessRunId,
-      );
-      return this.#changed() ? 1 : 0;
+      if (terminal) {
+        this.sql.exec(
+          `UPDATE block_dashboard_block_runs
+              SET status = 'failed', completed_at = ?, error_json = ?
+            WHERE run_id = ? AND status IN ('queued', 'running')`,
+          input.terminalizedAt,
+          input.errorJson,
+          input.harnessRunId,
+        );
+      }
+      const closed = terminal ? this.#changed() : 0;
+      return closed + this.#closeOrphanedBlockRuns(input.errorJson);
     });
+  }
+
+  /**
+   * Close any block whose run is already terminal but which never settled.
+   *
+   * The repair for a partial failure the caller cannot avoid. Terminalizing the
+   * run is a write to the regional database and closing its block is a write to
+   * this object; no transaction spans them, so an RPC that fails in between
+   * leaves a terminal run with an open block — and the sweep that would notice
+   * selects `status = 'running' AND terminalized_at IS NULL`, which a
+   * terminalized run no longer matches. Left alone that block spins forever in
+   * front of a member.
+   *
+   * It is repairable here and nowhere else, because `runs` and
+   * `block_dashboard_block_runs` are tables of the *same* object: the
+   * inconsistency that needed two stores to create needs only one to see. Every
+   * later `abandonBlockRun` on this work stream sweeps it, so the failure heals
+   * on the next reap rather than persisting.
+   *
+   * `completed_at` comes from the run's own `terminalized_at` rather than from
+   * the repairing caller's clock, so a block closed late still reports when its
+   * run actually ended.
+   */
+  #closeOrphanedBlockRuns(errorJson: string): number {
+    this.sql.exec(
+      `UPDATE block_dashboard_block_runs
+          SET status = 'failed',
+              completed_at = (SELECT terminalized_at FROM runs WHERE runs.run_id = block_dashboard_block_runs.run_id),
+              error_json = ?
+        WHERE status IN ('queued', 'running')
+          AND EXISTS (
+            SELECT 1 FROM runs
+             WHERE runs.run_id = block_dashboard_block_runs.run_id
+               AND runs.terminalized_at IS NOT NULL
+          )`,
+      errorJson,
+    );
+    return this.#changed();
   }
 
   /**
