@@ -415,15 +415,30 @@ at all.** Here, five of seven did not.
 
 ### Slices
 
-**Slices 1 and 2 have landed, and slice 3 all but one view.** The other twelve
-are plans. Fifteen in all, covering all 81 routed tables.
+**Slices 1 and 2 have landed. Slice 3 converted its callers and dropped four of
+its five views; slice 4 converted its callers and dropped none.** The other
+eleven are plans. Fifteen in all, covering all 81 routed tables.
 
-Slice 3 keeps `_runtime_elicitations` and hands it to slice 4. Every read of it
-is converted; its two writers are batches spanning elicitations, messages and
-identity, and the messages slice is where the machinery they depend on gets
-built. That is the first place this table's slice ordering has bent, and it
-bent the way the cross-slice note below predicts: the statement decided the
-ownership. Statement counts are distinct SQL
+**The work-stream side's slice order does not survive contact with its own
+batches.** Slice 3 kept `_runtime_elicitations` and handed it to slice 4; slice
+4 then found it could not take it, and could not drop its own three views
+either. Three transcript writes are batches spanning three slices at once — an
+elicitation and its message and the work stream's counters; a harness run's
+final message, its lifecycle event and the work stream; a work stream's
+creation, its opening message and its attachments — and each one's later
+statements are guarded on its earlier ones having landed. Splitting any of them
+across a port boundary puts a network hop inside a guarantee.
+
+So `_runtime_messages`, `_runtime_message_attachments`,
+`_runtime_message_mentions` and `_runtime_elicitations` retire together with
+identity and harness runs, and slices 4, 6 and 7 are one ordering problem
+rather than three. The conversions still land in slice order and each is
+independently useful — slice 4 converts every transcript reader and deletes
+five repository functions — but the *views* come down at the end.
+
+This is what the cross-slice note below predicts, at a scale the statement
+counts did not show: the statement decides the ownership, and the biggest
+batches decide the order. Statement counts are distinct SQL
 literals in `apps/api/src` naming at least one of the slice's tables, counted
 once per slice they touch, and they include dead legacy arms — separating those
 reliably needs the per-file read that is the slice's own first step, so the
