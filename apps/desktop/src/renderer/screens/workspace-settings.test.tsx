@@ -142,6 +142,17 @@ function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connect
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // `clearAllMocks` wipes recorded calls but leaves a queued
+    // `mockResolvedValueOnce` in place, and a queued value outranks the
+    // persistent one the next test sets. Two tests below queue `once` attempts
+    // for this mock and drain them by letting the component poll — a count that
+    // depends on how many times an effect re-runs, which no test controls. An
+    // undrained value is then served to whichever test runs next, so the test
+    // that sets up a `pending` attempt sees a settled one instead and never
+    // renders `Waiting…`. Resetting this one mock drains its queue; the others
+    // keep `clearAllMocks` semantics, which the second suite in this file
+    // depends on.
+    api.getConnectorOAuthAttempt.mockReset();
     applicationSettingsListeners.clear();
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}

@@ -4,7 +4,6 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { publishWorkstreamEvent } from "./integrations";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface PrivacyTransitionRow extends Record<string, unknown> {
@@ -42,65 +41,42 @@ export async function processPendingNotePrivacyNotifications(
 }
 
 async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  let affectedRows: AffectedWorkstreamRow[];
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      transition.workspace_id,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(transition.workspace_id)),
-    );
-    const access = await workspace.resourceAccess({
-      workspaceId: transition.workspace_id,
-      resourceId: transition.resource_id,
-      userId: transition.actor_user_id,
-    });
-    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
-      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
-    )))];
-    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
-    if (subscriptionIds.length > 0) {
-      const placeholders = subscriptionIds.map(() => "?").join(",");
-      const rows = await env.DB.prepare(
-        `SELECT id, scope, owner_user_id FROM automation_subscriptions
-          WHERE workspace_id = ? AND id IN (${placeholders})`,
-      ).bind(transition.workspace_id, ...subscriptionIds).all<{
-        id: string;
-        scope: string;
-        owner_user_id: string | null;
-      }>();
-      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
-    }
-    affectedRows = access.items.filter((item) => {
-      if (!item.automationSubscriptionId) {
-        return item.createdByUserId === null || item.createdByUserId !== transition.actor_user_id;
-      }
-      const subscription = subscriptions.get(item.automationSubscriptionId);
-      return subscription?.scope === "workspace"
-        || subscription?.owner_user_id === null
-        || subscription?.owner_user_id !== transition.actor_user_id;
-    }).map((item) => ({ id: item.workstreamId }));
-  } else {
-    const affected = await env.DB.prepare(`SELECT DISTINCT w.id
-     FROM workstream_resources wr
-     JOIN workstreams w ON w.id = wr.workstream_id AND w.workspace_id = ?
-     LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-     WHERE wr.resource_id = ?
-       AND (
-         (s.id IS NOT NULL AND (s.scope = 'workspace' OR s.owner_user_id IS NULL OR s.owner_user_id != ?))
-         OR
-         (s.id IS NULL AND (w.created_by_user_id IS NULL OR w.created_by_user_id != ?))
-       )
-     ORDER BY w.id ASC`)
-    .bind(
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
     transition.workspace_id,
-    transition.resource_id,
-    transition.actor_user_id,
-    transition.actor_user_id,
-    ).all<AffectedWorkstreamRow>();
-    affectedRows = affected.results;
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(transition.workspace_id)),
+  );
+  const access = await workspace.resourceAccess({
+    workspaceId: transition.workspace_id,
+    resourceId: transition.resource_id,
+    userId: transition.actor_user_id,
+  });
+  const subscriptionIds = [...new Set(access.items.flatMap((item) => (
+    item.automationSubscriptionId ? [item.automationSubscriptionId] : []
+  )))];
+  const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
+  if (subscriptionIds.length > 0) {
+    const placeholders = subscriptionIds.map(() => "?").join(",");
+    const rows = await env.DB.prepare(
+      `SELECT id, scope, owner_user_id FROM automation_subscriptions
+        WHERE workspace_id = ? AND id IN (${placeholders})`,
+    ).bind(transition.workspace_id, ...subscriptionIds).all<{
+      id: string;
+      scope: string;
+      owner_user_id: string | null;
+    }>();
+    for (const row of rows.results ?? []) subscriptions.set(row.id, row);
   }
+  const affectedRows: AffectedWorkstreamRow[] = access.items.filter((item) => {
+    if (!item.automationSubscriptionId) {
+      return item.createdByUserId === null || item.createdByUserId !== transition.actor_user_id;
+    }
+    const subscription = subscriptions.get(item.automationSubscriptionId);
+    return subscription?.scope === "workspace"
+      || subscription?.owner_user_id === null
+      || subscription?.owner_user_id !== transition.actor_user_id;
+  }).map((item) => ({ id: item.workstreamId }));
 
   const clientMessageId = `note-privacy:${transition.id}`;
   const text = `${transition.note_title} is now private and no longer accessible`;

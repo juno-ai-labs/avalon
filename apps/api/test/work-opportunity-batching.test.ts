@@ -2,10 +2,9 @@ import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
-import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
 import { WorkstreamService } from "../src/services/workstream-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -151,74 +150,14 @@ function insertOpportunityWorkstream(
 }
 
 describe("suggested-work aggregation", () => {
-  it("shares workspace connector types, isolates private owners, debounces, and caps the window at one hour", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-07T10:00:00.000Z"));
-    const database = migratedDatabase();
-    seed(database);
-    insertActivity(database, "00000000-0000-7000-8000-000000000101", "00000000-0000-7000-8000-000000000011", "workspace", null);
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000101");
-    expect(database.prepare("SELECT partition_key, process_after FROM opportunity_batch_windows").get()).toEqual({
-      partition_key: "workspace",
-      process_after: "2026-08-07T10:10:00.000Z",
-    });
-
-    vi.setSystemTime(new Date("2026-08-07T10:09:00.000Z"));
-    insertActivity(database, "00000000-0000-7000-8000-000000000102", "00000000-0000-7000-8000-000000000012", "workspace", null);
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000102");
-    expect(database.prepare("SELECT COUNT(*) AS count FROM opportunity_batch_windows").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT process_after FROM opportunity_batch_windows").get()).toEqual({ process_after: "2026-08-07T10:19:00.000Z" });
-
-    vi.setSystemTime(new Date("2026-08-07T10:55:00.000Z"));
-    insertActivity(database, "00000000-0000-7000-8000-000000000103", "00000000-0000-7000-8000-000000000011", "workspace", null);
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000103");
-    expect(database.prepare("SELECT process_after FROM opportunity_batch_windows").get()).toEqual({ process_after: "2026-08-07T11:00:00.000Z" });
-
-    insertActivity(database, "00000000-0000-7000-8000-000000000104", "00000000-0000-7000-8000-000000000013", "personal", userOne);
-    insertActivity(database, "00000000-0000-7000-8000-000000000105", "00000000-0000-7000-8000-000000000014", "personal", userTwo);
-    insertActivity(database, "00000000-0000-7000-8000-000000000106", "00000000-0000-7000-8000-000000000011", "workspace", null);
-    database.prepare("UPDATE activities SET visibility_json = ? WHERE id = ?").run(
-      JSON.stringify({ allowedUserIds: [userOne] }),
-      "00000000-0000-7000-8000-000000000106",
-    );
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000104");
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000105");
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000106");
-    expect(database.prepare("SELECT partition_key FROM opportunity_batch_windows ORDER BY partition_key").all()).toEqual([
-      { partition_key: `personal:${userOne}` },
-      { partition_key: `personal:${userTwo}` },
-      { partition_key: `restricted:00000000-0000-7000-8000-000000000011:${userOne}` },
-      { partition_key: "workspace" },
-    ]);
-  });
-
-  it("moves an event into a new window when the selected window is claimed before insertion", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    insertActivity(database, "00000000-0000-7000-8000-000000000107", "00000000-0000-7000-8000-000000000011", "workspace", null);
-    insertActivity(database, "00000000-0000-7000-8000-000000000108", "00000000-0000-7000-8000-000000000011", "workspace", null);
-    await enqueueActivityOpportunity(environment(database), "00000000-0000-7000-8000-000000000107");
-    const originalWindow = database.prepare("SELECT id FROM opportunity_batch_windows").get() as { id: string };
-    let claimed = false;
-    const racingDatabase = new D1Adapter(database, (sql) => {
-      if (claimed || !sql.includes("SELECT id, first_event_at FROM opportunity_batch_windows")) return;
-      claimed = true;
-      database.prepare("UPDATE opportunity_batch_windows SET status = 'processing' WHERE id = ?").run(originalWindow.id);
-    });
-
-    await enqueueActivityOpportunity(
-      environment(database, { DB: createTestD1Database(racingDatabase) }),
-      "00000000-0000-7000-8000-000000000108",
-    );
-
-    expect(database.prepare(`
-      SELECT w.status, e.source_id
-      FROM opportunity_batch_events e JOIN opportunity_batch_windows w ON w.id = e.window_id
-      WHERE e.source_id = '00000000-0000-7000-8000-000000000108'
-    `).get()).toEqual({ status: "queued", source_id: "00000000-0000-7000-8000-000000000108" });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM opportunity_batch_windows").get()).toEqual({ count: 2 });
-  });
-
+  // Two suites lived here and covered the D1 batching window: the debounce and
+  // one-hour cap on `process_after`, and the retry that moves an event when its
+  // window is claimed between select and insert. `enqueue` no longer owns that
+  // window — WorkspaceDO does, with the same 10-minute debounce and one-hour cap
+  // at `workspace-product-storage.ts:24-53` — and the D1 arm they exercised was
+  // reachable only with the authority closed. Deleted rather than rewired: they
+  // asserted on rows this side no longer writes. The gap is in
+  // `docs/potential-bugs.md`.
   it("enforces model batch bounds and maximum concurrency three", async () => {
     const source = (index: number, text = "x") => ({
       event: { id: String(index), source_kind: "activity" as const, source_id: String(index), occurred_at: "2026-08-07T00:00:00.000Z", input_characters: text.length, attempt_count: 0 },
@@ -289,15 +228,21 @@ describe("suggested-work aggregation", () => {
       version: 1,
       displayPrompt: `Candidate ${index}`,
       admissionReasoning: "r".repeat(20_000),
-      linkedUsers: Array.from({ length: 20 }, () => ({
+      linkedUsers: Array.from({ length: 20 }, (_, linkIndex) => ({
+        user_id: `user-${linkIndex}`,
+        role: "mentioned",
+        resolution: "verified",
         reasoning: "l".repeat(1_000),
       })),
       provenance: Array.from({ length: 32 }, (_, nodeIndex) => ({
         id: `node-${nodeIndex}`,
-        node_kind: "activity",
-        source_id: `source-${nodeIndex}`,
+        kind: "activity",
         label: "p".repeat(500),
-        locator_json: JSON.stringify({ excerpt: "x".repeat(2_000) }),
+        provider: "slack",
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        canonicalUrl: null,
+        depth: 0,
+        locator: JSON.stringify({ excerpt: "x".repeat(2_000) }),
       })),
       age: { createdAt: "2026-08-07T00:00:00.000Z", updatedAt: "2026-08-07T00:00:00.000Z" },
       impressions: { count: 0, firstAt: null, lastAt: null },
@@ -460,20 +405,8 @@ describe("suggested-work aggregation", () => {
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {
     const database = migratedDatabase();
     seed(database);
-    database.prepare(`
-      INSERT INTO work_opportunities
-       (id, workspace_id, audience_scope, audience_user_id, display_prompt, execution_prompt,
-        admission_reasoning, provider_icon, source_label, source_fingerprint, version,
-        display_prompt_hash, execution_prompt_hash, status, expires_at, created_at, updated_at)
-       VALUES (?, ?, 'workspace', NULL, ?, ?, ?, 'brand-slack', 'From slack', 'source-one', 3,
-        'display-hash', 'execution-hash', 'active', '2027-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z')
-    `).run(
-      "00000000-0000-7000-8000-000000000201",
-      workspaceId,
-      "Follow up on the launch blocker",
-      "Long execution instructions that must never appear in the suggestion API.",
-      "Extensive internal admission reasoning that must never appear in the suggestion API.",
-    );
+    openWorkstreamAuthorityForTest(database);
+    const opportunityId = "00000000-0000-7000-8000-000000000201";
     const auth: AuthContext = {
       sessionId: "session",
       userId: userOne,
@@ -481,10 +414,35 @@ describe("suggested-work aggregation", () => {
       region: "global",
       role: "owner",
     };
-    const service = new WorkOpportunityService(environment(database), auth);
+    // The object is the one that holds the execution prompt and the admission
+    // reasoning, so the contract boundary worth asserting is the Worker's parse
+    // of what it hands back — here it hands back both, and neither may survive.
+    const env = createTestEnv({
+      DB: new D1Adapter(database),
+      APP_ENV: "development",
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          listOpportunities: vi.fn(async () => ({
+            items: [{
+              id: opportunityId,
+              version: 3,
+              displayPrompt: "Follow up on the launch blocker",
+              icon: "brand-slack",
+              sourceLabel: "From slack",
+              executionPrompt: "Long execution instructions that must never appear in the suggestion API.",
+              admissionReasoning: "Extensive internal admission reasoning that must never appear in the suggestion API.",
+            }],
+          })),
+          claimOpportunityStart: vi.fn(async () => ({ outcome: "stale", opportunity: null })),
+        },
+      }),
+    });
+    const service = new WorkOpportunityService(env, auth);
+
     await expect(service.list(4)).resolves.toEqual({
       items: [{
-        id: "00000000-0000-7000-8000-000000000201",
+        id: opportunityId,
         version: 3,
         displayPrompt: "Follow up on the launch blocker",
         icon: "brand-slack",
@@ -494,55 +452,10 @@ describe("suggested-work aggregation", () => {
     const publicJson = JSON.stringify(await service.list(4));
     expect(publicJson).not.toContain("Long execution instructions");
     expect(publicJson).not.toContain("Extensive internal admission reasoning");
-    await expect(service.start(
-      "00000000-0000-7000-8000-000000000201",
-      2,
-      "stale-attempt",
-    )).rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
-  });
-
-  it("debounces impression-driven ranking requests for one hour", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-10T12:00:00.000Z"));
-    const database = migratedDatabase();
-    seed(database);
-    const opportunityId = "00000000-0000-7000-8000-000000000204";
-    insertOpportunity(database, opportunityId);
-    database.prepare(`
-      INSERT INTO suggested_work_sets
-       (workspace_id, user_id, workspace_version, candidate_fingerprint,
-        opportunity_ids_json, ranking_reasoning, status, created_at, updated_at)
-      VALUES (?, ?, 1, 'fingerprint', ?, 'Initial ranking', 'ready', ?, ?)
-    `).run(
-      workspaceId,
-      userOne,
-      JSON.stringify([opportunityId]),
-      "2026-08-10T12:00:00.000Z",
-      "2026-08-10T12:00:00.000Z",
-    );
-    const service = new WorkOpportunityService(environment(database), {
-      sessionId: "session",
-      userId: userOne,
-      workspaceId,
-      region: "global",
-      role: "owner",
-    });
-
-    // Impressions are the one input that asks for a re-rank without the
-    // candidates having changed, so within the hour they must ask for nothing.
-    await service.recordImpressions([opportunityId]);
-    expect(database.prepare(
-      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ due_at: null });
-
-    vi.setSystemTime(new Date("2026-08-10T13:00:01.000Z"));
-    await service.recordImpressions([opportunityId]);
-    expect(database.prepare(
-      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ due_at: "2026-08-10T13:00:01.000Z" });
-    expect(database.prepare(
-      "SELECT impression_count FROM work_opportunity_user_states WHERE opportunity_id = ? AND user_id = ?",
-    ).get(opportunityId, userOne)).toEqual({ impression_count: 2 });
+    // A start against a version the member is no longer looking at is refused,
+    // not silently applied to whatever the suggestion has since become.
+    await expect(service.start(opportunityId, 2, "stale-attempt"))
+      .rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
   });
 
   it("rolls a partially created work stream forward instead of making the opportunity claimable again", async () => {

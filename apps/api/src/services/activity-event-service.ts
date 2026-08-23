@@ -1,12 +1,10 @@
 import type { WorkspaceId } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
 
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceActivityEventListResultSchema } from "../durable-objects/workspace-activity-event-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * The first-party activity log: what happened in Avalon, for whoever should
@@ -135,76 +133,13 @@ export async function recordActivityEventOrThrow(
   env: Env,
   input: ActivityEventInput,
 ): Promise<string> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      input.workspaceId,
-      workspaceDOName(env.AVALON_REGION, input.workspaceId),
-    );
-    return workspace.recordActivityEvent(input);
-  }
-  const at = nowIso();
-  const proposedId = input.eventId ?? newId();
-  const audienceUserId = input.audience.kind === "user" ? input.audience.userId : null;
-  const audienceWorkstreamId = input.audience.kind === "workstream" ? input.audience.workstreamId : null;
-
-  const inserted = await env.DB.prepare(
-    `INSERT INTO activity_events
-       (id, workspace_id, event_type, subject_type, subject_id, subject_sequence_number,
-        actor_type, actor_user_id, actor_label, title, body, canonical_url,
-        audience_kind, audience_user_id, audience_workstream_id,
-        occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json,
-        digestible)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT DO NOTHING
-     RETURNING id`,
-  ).bind(
-    proposedId,
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
     input.workspaceId,
-    input.eventType,
-    input.subjectType,
-    input.subjectId,
-    input.subjectSequenceNumber ?? null,
-    input.actorType,
-    input.actorUserId ?? null,
-    input.actorLabel,
-    input.title,
-    input.body ?? "",
-    input.canonicalUrl ?? null,
-    input.audience.kind,
-    audienceUserId,
-    audienceWorkstreamId,
-    input.occurredAt,
-    at,
-    input.sourceKind,
-    input.sourceId ?? null,
-    input.dedupeKey,
-    JSON.stringify(input.metadata ?? {}),
-    input.digestible ? 1 : 0,
-  ).first<{ id: string }>();
-
-  // A conflict means an earlier attempt already wrote this event, and its id is
-  // the canonical one. The targets are still written: the event row and its
-  // targets are two statements, so an attempt that died between them would
-  // otherwise leave the event permanently untargeted, and nothing would ever
-  // fix it because every later attempt would take this same branch.
-  // `INSERT OR IGNORE` below makes rewriting them free.
-  const eventId = inserted?.id ?? (await env.DB.prepare(
-    "SELECT id FROM activity_events WHERE workspace_id = ? AND dedupe_key = ?",
-  ).bind(input.workspaceId, input.dedupeKey).first<{ id: string }>())?.id;
-  if (!eventId) throw new Error("Activity event could not be resolved after insert");
-
-  const targets = input.targets ?? [];
-  if (targets.length > 0) {
-    await env.DB.batch(targets.map((target) => env.DB.prepare(
-      `INSERT OR IGNORE INTO activity_event_targets
-         (event_id, workspace_id, user_id, relation, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).bind(eventId, input.workspaceId, target.userId, target.relation, at)));
-  }
-  return eventId;
+    workspaceDOName(env.AVALON_REGION, input.workspaceId),
+  );
+  return workspace.recordActivityEvent(input);
 }
 
 /**
@@ -253,140 +188,40 @@ export async function listActivityEventsForUser(
   },
 ): Promise<ActivityEventRow[]> {
   const from = input.from ?? null;
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      input.workspaceId,
-      workspaceDOName(env.AVALON_REGION, input.workspaceId),
-    );
-    const result = WorkspaceActivityEventListResultSchema.parse(await workspace.listActivityEvents({
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      from,
-      through: input.through,
-      notBefore: input.notBefore ?? null,
-      digestibleOnly: input.digestibleOnly,
-      limit: input.limit,
-    }));
-    return result.items.map((item) => ({
-      log_sequence: item.sequence,
-      id: item.id,
-      event_type: item.eventType,
-      subject_type: item.subjectType,
-      subject_id: item.subjectId,
-      subject_sequence_number: item.subjectSequenceNumber,
-      actor_type: item.actorType,
-      actor_user_id: item.actorUserId,
-      actor_label: item.actorLabel,
-      title: item.title,
-      body: item.body,
-      canonical_url: item.canonicalUrl,
-      occurred_at: item.occurredAt,
-      created_at: item.createdAt,
-      metadata_json: JSON.stringify(item.metadata),
-      is_target: item.isTarget ? 1 : 0,
-      target_relations: item.targetRelations.length > 0 ? item.targetRelations.join(",") : null,
-    }));
-  }
-  const visibleWorkstreamIds = (await env.DB.prepare(
-    `SELECT participant.workstream_id
-       FROM workstream_participants participant
-       JOIN workstreams workstream ON workstream.id = participant.workstream_id
-      WHERE workstream.workspace_id = ? AND participant.user_id = ?
-        AND participant.removed_at IS NULL AND workstream.system_kind IS NULL`,
-  ).bind(input.workspaceId, input.userId).all<{ workstream_id: string }>()).results
-    .map((row) => row.workstream_id);
-  const result = await env.DB.prepare(
-    `SELECT e.log_sequence, e.id, e.event_type, e.subject_type, e.subject_id, e.subject_sequence_number,
-            e.actor_type, e.actor_user_id, e.actor_label, e.title, e.body, e.canonical_url,
-            e.occurred_at, e.created_at, e.metadata_json,
-            CASE WHEN t.user_id IS NULL THEN 0 ELSE 1 END AS is_target,
-            t.relations AS target_relations
-       FROM activity_events e
-       LEFT JOIN (
-         SELECT event_id, user_id, group_concat(relation) AS relations
-           FROM activity_event_targets
-          WHERE workspace_id = ?1 AND user_id = ?2
-          GROUP BY event_id, user_id
-       ) t ON t.event_id = e.id
-      WHERE e.workspace_id = ?1
-        AND (?3 IS NULL OR e.log_sequence > ?3)
-        AND e.log_sequence <= ?4
-        AND (?5 IS NULL OR e.created_at >= ?5)
-        AND (?7 = 0 OR e.digestible = 1)
-        AND (
-          e.audience_kind = 'workspace'
-          OR (e.audience_kind = 'user' AND e.audience_user_id = ?2)
-          OR (e.audience_kind = 'workstream' AND e.audience_workstream_id IN (
-            SELECT value FROM json_each(?8)
-          ))
-        )
-        -- The reader must still be a member. A revoked membership stops the log
-        -- at once rather than at the next configuration change.
-        AND EXISTS (
-          SELECT 1 FROM workspace_members m
-           WHERE m.workspace_id = ?1 AND m.user_id = ?2 AND m.status = 'active'
-        )
-      ORDER BY e.log_sequence ASC
-      LIMIT ?6`,
-  ).bind(
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
     input.workspaceId,
-    input.userId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId),
+  );
+  const result = WorkspaceActivityEventListResultSchema.parse(await workspace.listActivityEvents({
+    workspaceId: input.workspaceId,
+    userId: input.userId,
     from,
-    input.through,
-    input.notBefore ?? null,
-    input.limit,
-    input.digestibleOnly ? 1 : 0,
-    JSON.stringify(visibleWorkstreamIds),
-  ).all<ActivityEventRow>();
-  return result.results ?? [];
-}
-
-/**
- * How long an event stays readable. Ninety days is far longer than anything
- * reads: a digest's first run looks back 72 hours and every run after that
- * starts from its own cursor, so the window only has to survive a schedule
- * being paused and resumed. It is a retention decision rather than a technical
- * one — the log is append-only and would otherwise grow with the workspace
- * forever.
- */
-const ACTIVITY_EVENT_RETENTION_DAYS = 90;
-const ACTIVITY_EVENT_REAP_BATCH = 500;
-const ACTIVITY_EVENT_REAP_MAX_BATCHES = 10;
-
-/**
- * Drops events past the retention window, oldest first.
- *
- * Deleting a row does not disturb a cursor: cursors are `log_sequence` values,
- * an expired one is below every live cursor, and a window that no longer
- * contains its rows simply reads as empty. `activity_event_targets` follows
- * through its cascade.
- *
- * Insertion order and insertion time agree, so the batch scans from the bottom
- * of the primary key and stops at the first row young enough to keep. The batch
- * cap bounds one tick's work; whatever is left waits for the next.
- */
-export async function reapExpiredActivityEvents(env: Env): Promise<number> {
-  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") return 0;
-  const cutoff = new Date(Date.now() - ACTIVITY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1_000).toISOString();
-  let reaped = 0;
-  for (let batch = 0; batch < ACTIVITY_EVENT_REAP_MAX_BATCHES; batch += 1) {
-    const result = await env.DB.prepare(
-      `DELETE FROM activity_events
-        WHERE log_sequence IN (
-          SELECT log_sequence FROM activity_events
-           WHERE created_at < ?
-           ORDER BY log_sequence ASC
-           LIMIT ?
-        )`,
-    ).bind(cutoff, ACTIVITY_EVENT_REAP_BATCH).run();
-    const changes = result.meta?.changes ?? 0;
-    reaped += changes;
-    if (changes < ACTIVITY_EVENT_REAP_BATCH) break;
-  }
-  return reaped;
+    through: input.through,
+    notBefore: input.notBefore ?? null,
+    digestibleOnly: input.digestibleOnly,
+    limit: input.limit,
+  }));
+  return result.items.map((item) => ({
+    log_sequence: item.sequence,
+    id: item.id,
+    event_type: item.eventType,
+    subject_type: item.subjectType,
+    subject_id: item.subjectId,
+    subject_sequence_number: item.subjectSequenceNumber,
+    actor_type: item.actorType,
+    actor_user_id: item.actorUserId,
+    actor_label: item.actorLabel,
+    title: item.title,
+    body: item.body,
+    canonical_url: item.canonicalUrl,
+    occurred_at: item.occurredAt,
+    created_at: item.createdAt,
+    metadata_json: JSON.stringify(item.metadata),
+    is_target: item.isTarget ? 1 : 0,
+    target_relations: item.targetRelations.length > 0 ? item.targetRelations.join(",") : null,
+  }));
 }
 
 /** The newest event in a workspace, which is what a run freezes as its window's top. */
@@ -394,20 +229,11 @@ export async function latestActivityEventCursor(
   env: Env,
   workspaceId: WorkspaceId,
 ): Promise<ActivityEventCursor> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-    );
-    return workspace.latestActivityEventCursor({ workspaceId });
-  }
-  const row = await env.DB.prepare(
-    "SELECT MAX(log_sequence) AS log_sequence FROM activity_events WHERE workspace_id = ?",
-  ).bind(workspaceId).first<{ log_sequence: number | null }>();
-  // An empty workspace still yields a well-formed window: it ends at 0 and
-  // contains nothing, so the cursor advances and the next digest starts here.
-  return Number(row?.log_sequence ?? 0);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
+  return workspace.latestActivityEventCursor({ workspaceId });
 }

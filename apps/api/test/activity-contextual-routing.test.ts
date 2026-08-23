@@ -25,7 +25,6 @@ const STREAM_HISTORY = "00000000-0000-7000-8000-00000000000c";
 
 const NEWS = "github.pull_request.review_requested";
 const MACHINERY = "github.check_run.completed";
-const OTHER_NEWS = "github.issue_comment.created";
 
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -43,22 +42,120 @@ function daysAgo(days: number): string {
 }
 
 /** A namespace that accepts every room event, so the insert path is the test. */
-function roomNamespace(): DurableObjectNamespace {
+/**
+ * The work-stream agent, recording the cards admission decides to offer.
+ *
+ * `createActivitySuggestion` wrote them straight into D1 when the authority was
+ * closed; that arm is deleted, so it now goes to the object. The stub keeps the
+ * insert-once semantics the assertions depend on — a repeated `id` is not
+ * inserted twice — and hands the row back in the shape the caller parses.
+ */
+function roomNamespace(created: Map<string, Record<string, unknown>>): DurableObjectNamespace {
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
       publishEvent: async () => ({ status: 200, bodyJson: "null" }),
+      createRuntimeSuggestion: async (request: {
+        input: {
+          id: string; activityId: string; title: string; summary: string;
+          confidence: number; reason: string;
+        };
+        workstreamId: string;
+      }) => {
+        const inserted = !created.has(request.input.id);
+        const suggestion = {
+          id: request.input.id,
+          activityId: request.input.activityId,
+          workstreamId: request.workstreamId,
+          title: request.input.title,
+          summary: request.input.summary,
+          confidence: request.input.confidence,
+          reason: request.input.reason,
+          status: "pending",
+          createdAt: "2026-08-12T00:00:00.000Z",
+          resolvedAt: null,
+        };
+        if (inserted) created.set(request.input.id, suggestion);
+        return {
+          status: 200,
+          bodyJson: JSON.stringify({ suggestion: created.get(request.input.id), inserted }),
+        };
+      },
     }),
     jurisdiction: () => namespace,
   };
   return createCloudflareTestBinding<DurableObjectNamespace>(namespace);
 }
 
-function workspaceNamespace(): Env["WORKSPACE_DOS"] {
+/**
+ * The workspace object, answering from this test's own fixture.
+ *
+ * `suggestionAdmission` used to read resolved suggestions out of D1 directly;
+ * that arm only ran when the authority was closed and is deleted. It asks the
+ * object now, so the stub answers the same question over the same seeded rows.
+ * These tests are about what admission *decides* from that feedback — the bars,
+ * the floors, the windows, whose cards count — and every one of those
+ * assertions is unchanged. What WorkspaceDO's own query does with its own
+ * tables is its business, and belongs on real workerd.
+ */
+function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
   const hashes = new Map<string, string>();
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
+      suggestionFeedback: async (input: {
+        source: string; since: string; provider: string; eventType: string;
+      }) => ({
+        items: database.prepare(
+          `SELECT s.workstream_id, s.activity_id, s.status, s.resolved_at,
+                  s.resolved_by_user_id
+             FROM activity_suggestions s
+             JOIN activities a ON a.id = s.activity_id
+            WHERE s.source = ? AND s.status IN ('accepted', 'dismissed')
+              AND s.resolved_at >= ? AND a.provider = ? AND a.event_type = ?
+            ORDER BY s.resolved_at, s.workstream_id, s.id`,
+        ).all(input.source, input.since, input.provider, input.eventType)
+          .map((row) => {
+            const item = row as Record<string, unknown>;
+            return {
+              workstreamId: String(item.workstream_id),
+              activityId: String(item.activity_id),
+              status: String(item.status) as "accepted" | "dismissed",
+              resolvedAt: String(item.resolved_at),
+              resolvedByUserId: item.resolved_by_user_id == null
+                ? null
+                : String(item.resolved_by_user_id),
+            };
+          }),
+      }),
+      /**
+       * Eligibility and ordering only.
+       *
+       * The object's own query also applies the dismissal run, the
+       * producer scoping and the already-routed exclusion — deliberately not
+       * reproduced here, because a stub that reproduced them would let a test
+       * of those rules pass while asserting nothing but this function. They are
+       * asserted against a real WorkspaceDO in
+       * `test-workers/durable-object-runtime.test.ts`.
+       */
+      routingCandidates: async (input: { limit: number }) => ({
+        items: database.prepare(
+          `SELECT w.id, w.title, w.objective, w.last_activity_at
+             FROM workstreams w
+            WHERE w.archived_at IS NULL
+              AND w.harness_status IN ('idle', 'running', 'needs_input', 'scheduled')
+            ORDER BY w.last_activity_at DESC, w.id
+            LIMIT ?`,
+        ).all(input.limit).map((row) => {
+          const item = row as Record<string, unknown>;
+          return {
+            workstreamId: String(item.id),
+            title: String(item.title),
+            description: String(item.objective ?? ""),
+            lastActivityAt: String(item.last_activity_at),
+          };
+        }),
+      }),
       ingestConnectorEvent: async (input: { ingressEventId: string; payloadHash: string }) => {
         const prior = hashes.get(input.ingressEventId);
         if (prior && prior !== input.payloadHash) throw new Error("connector_event_ingress_idempotency_conflict");
@@ -83,11 +180,15 @@ function workspaceNamespace(): Env["WORKSPACE_DOS"] {
  * the connector is unregistered in this region — which is itself asserted once,
  * deliberately, below.
  */
+/** Cards the object accepted this test, keyed by id so a replay stays one card. */
+const createdSuggestions = new Map<string, Record<string, unknown>>();
+
 function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknown>> = {}): Env {
+  createdSuggestions.clear();
   return createTestEnv({
     DB: sqliteD1(database),
-    SUBSTREAM_AGENTS: roomNamespace(),
-    WORKSPACE_DOS: workspaceNamespace(),
+    SUBSTREAM_AGENTS: roomNamespace(createdSuggestions),
+    WORKSPACE_DOS: workspaceNamespace(database),
     CONNECTOR_EVENT_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -234,16 +335,16 @@ function modelAnswers(input: { workstreamId?: string; confidence: number; sugges
   });
 }
 
-/** The candidate ids the model was actually offered. */
-function offeredCandidates(): string[] {
-  const [, request] = runStructuredInference.mock.calls[0] as [unknown, { messages: Array<{ content: string }> }];
-  const payload = JSON.parse(request.messages[1]!.content) as { candidates: Array<{ id: string }> };
-  return payload.candidates.map((candidate) => candidate.id);
-}
-
-function suggestionCount(database: DatabaseSync): number {
-  return (database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions WHERE status = 'pending'")
-    .get() as { count: number }).count;
+/**
+ * Cards this run offered.
+ *
+ * Read from what the object accepted rather than from D1: admission writes
+ * through the work-stream object now, and the `activity_suggestions` rows these
+ * tests still seed are *resolved* feedback, which is a different thing that
+ * happens to share a table name in the fixture.
+ */
+function suggestionCount(): number {
+  return createdSuggestions.size;
 }
 
 describe("connector event Queue boundary", () => {
@@ -317,7 +418,7 @@ describe("connector event Queue boundary", () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it("commits to WorkspaceDO and starts a Workflow without processing the event in the Queue consumer", async () => {
+  it("acks a legacy activity-queue message without reading the frozen D1 row behind it", async () => {
     const database = seededDatabase();
     const env = envFor(database);
     const activityId = "00000000-0000-7000-8000-0000000000f1";
@@ -343,32 +444,18 @@ describe("connector event Queue boundary", () => {
 
     await consumeActivityQueue(batch, env);
 
-    expect(runStructuredInference).not.toHaveBeenCalled();
-    expect(suggestionCount(database)).toBe(0);
-    expect(database.prepare(
-      "SELECT source_id, status FROM opportunity_batch_events WHERE source_kind = 'activity'",
-    ).get()).toBeUndefined();
-    expect(database.prepare("SELECT processing_status FROM activities WHERE id = ?").get(activityId))
-      .toEqual({ processing_status: "processing" });
-    expect(env.CONNECTOR_EVENT_WORKFLOW.create).toHaveBeenCalledWith({
-      id: `connector-event:${activityId}:0`,
-      params: {
-        region: "global",
-        workspaceId: WORKSPACE,
-        eventId: activityId,
-        workflowInstanceId: `connector-event:${activityId}:0`,
-        attempt: 0,
-      },
-    });
+    // Every producer of this message shape returns before sending it once
+    // WORKSPACE_DOS is bound, so one can only be in flight from before the
+    // cutover. Admitting it would hand WorkspaceDO a second connector-event
+    // authority built from a D1 row nothing has written since; leaving it
+    // unacked would redeliver it forever. It is acked, and nothing else.
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
-
-    // The first handoff adds host-owned Workflow pointers to D1 metadata. A
-    // Queue replay must strip those before hashing, or the WorkspaceDO receipt
-    // would reject the same ingress UUID as changed content.
-    await consumeActivityQueue(batch, env);
-    expect(ack).toHaveBeenCalledTimes(2);
-    expect(retry).not.toHaveBeenCalled();
+    expect(env.CONNECTOR_EVENT_WORKFLOW.create).not.toHaveBeenCalled();
+    expect(runStructuredInference).not.toHaveBeenCalled();
+    expect(suggestionCount()).toBe(0);
+    expect(database.prepare("SELECT processing_status FROM activities WHERE id = ?").get(activityId))
+      .toEqual({ processing_status: "pending" });
   });
 });
 
@@ -380,7 +467,7 @@ describe("contextual routing: where the bar starts", () => {
 
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f1", eventType: NEWS }), new Set()))
       .resolves.toBe(true);
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("holds activity its connector calls machinery to a higher bar", async () => {
@@ -393,7 +480,7 @@ describe("contextual routing: where the bar starts", () => {
 
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f2", eventType: MACHINERY }), new Set()))
       .resolves.toBe(false);
-    expect(suggestionCount(database)).toBe(0);
+    expect(suggestionCount()).toBe(0);
 
     runStructuredInference.mockReset();
     modelAnswers({ confidence: 0.95 });
@@ -416,7 +503,7 @@ describe("contextual routing: where the bar starts", () => {
 
     await expect(routeContextually(env, { ...webhook, connector_type: "generic_webhook", provider: "generic_webhook" }, new Set()))
       .resolves.toBe(true);
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("keeps the base bar when the registry cannot answer at all", async () => {
@@ -431,114 +518,13 @@ describe("contextual routing: where the bar starts", () => {
   });
 });
 
-describe("contextual routing: a work stream's run of dismissals", () => {
-  it("stops offering a work stream after three dismissals", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    // A different event type, so this exercises the work stream's run rather
-    // than the event-type score.
-    for (const [index, day] of [1, 2, 3].entries()) {
-      recordResolution(database, {
-        suffix: `1${index}`, workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "dismissed", resolvedAt: daysAgo(day),
-      });
-    }
-    modelAnswers({ workstreamId: STREAM_B, confidence: 0.9 });
-
-    await routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f4", eventType: NEWS }), new Set());
-
-    expect(offeredCandidates()).not.toContain(STREAM_A);
-    expect(offeredCandidates()).toContain(STREAM_B);
-  });
-
-  it("keeps a work stream whose dismissals came from another producer", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    // A work stream must not lose its place in this module's candidate pool
-    // over three dismissals of suggested-work's cards.
-    for (const [index, day] of [1, 2, 3].entries()) {
-      recordResolution(database, {
-        suffix: `c${index}`, workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "dismissed", resolvedAt: daysAgo(day),
-        source: "suggested_work",
-      });
-    }
-    modelAnswers({ confidence: 0.9 });
-
-    await routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000103", eventType: NEWS }), new Set());
-
-    expect(offeredCandidates()).toContain(STREAM_A);
-  });
-
-  it("lets one acceptance clear the run", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    for (const [index, day] of [3, 4, 5].entries()) {
-      recordResolution(database, {
-        suffix: `2${index}`, workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "dismissed", resolvedAt: daysAgo(day),
-      });
-    }
-    recordResolution(database, {
-      suffix: "29", workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "accepted", resolvedAt: daysAgo(1),
-    });
-    modelAnswers({ confidence: 0.9 });
-
-    await routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f5", eventType: NEWS }), new Set());
-
-    expect(offeredCandidates()).toContain(STREAM_A);
-  });
-
-  it("replaces an already-routed work stream instead of spending its slot", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    // Thirteen candidates for twelve slots, so the LIMIT actually bites — with
-    // three work streams this assertion would hold whether the exclusion runs
-    // in the query or in JavaScript afterwards, and prove nothing.
-    for (let index = 0; index < 10; index += 1) {
-      database.prepare(
-        `INSERT INTO workstreams
-           (id, workspace_id, title, objective, origin_type, created_by_user_id,
-            harness_status, last_activity_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'Filler', 'ad_hoc', ?, 'idle', ?, '2026-01-01', '2026-01-01')`,
-      ).run(
-        `00000000-0000-7000-8000-0000000e${String(index).padStart(4, "0")}`,
-        WORKSPACE,
-        `Filler ${index}`,
-        MEMBER,
-        `2026-08-0${index % 9}T09:00:00.000Z`,
-      );
-    }
-    modelAnswers({ workstreamId: STREAM_B, confidence: 0.9 });
-
-    // A watch already delivered this activity to STREAM_A. Excluding it after
-    // the LIMIT leaves the model eleven candidates; excluding it inside the
-    // query hands it the twelfth it would otherwise have lost.
-    await routeContextually(
-      env,
-      insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fe", eventType: NEWS }),
-      new Set([STREAM_A]),
-    );
-
-    expect(offeredCandidates()).not.toContain(STREAM_A);
-    expect(offeredCandidates()).toContain(STREAM_B);
-    expect(offeredCandidates()).toHaveLength(12);
-  });
-
-  it("forgets dismissals older than the window", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
-    // Nobody has offered this work stream a suggestion in over a month, so it
-    // has had no chance to earn the acceptance that would clear its run.
-    for (const [index, day] of [40, 45, 50].entries()) {
-      recordResolution(database, {
-        suffix: `3${index}`, workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "dismissed", resolvedAt: daysAgo(day),
-      });
-    }
-    modelAnswers({ confidence: 0.9 });
-
-    await routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f6", eventType: NEWS }), new Set());
-
-    expect(offeredCandidates()).toContain(STREAM_A);
-  });
-});
+// The "a work stream's run of dismissals" suite is gone with the D1 candidate
+// query it covered. The dismissal run, its producer scoping, its window and the
+// already-routed exclusion are all subqueries inside WorkspaceDO's
+// `routingCandidates` now, so they are asserted against a real object in
+// `test-workers/durable-object-runtime.test.ts`. Reproducing them in the stub
+// above would have kept these five green while proving only that the stub
+// reproduced them.
 
 describe("contextual routing: an event type's record in this workspace", () => {
   it("stops asking about an event type two people have only ever dismissed", async () => {
@@ -602,13 +588,13 @@ describe("contextual routing: an event type's record in this workspace", () => {
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f8", eventType: NEWS }), new Set()))
       .resolves.toBe(false);
     expect(runStructuredInference).toHaveBeenCalledOnce();
-    expect(suggestionCount(database)).toBe(0);
+    expect(suggestionCount()).toBe(0);
 
     runStructuredInference.mockReset();
     modelAnswers({ confidence: 0.95 });
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f9", eventType: NEWS }), new Set()))
       .resolves.toBe(true);
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("lets a workspace's acceptances lower a bar its connector raised", async () => {
@@ -629,7 +615,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
 
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000ff", eventType: MACHINERY }), new Set()))
       .resolves.toBe(true);
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("keeps the base floor while the sample is too small to mean anything", async () => {
@@ -644,7 +630,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     // suppressing on it would remove the only way the type can earn a record.
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fa", eventType: NEWS }), new Set()))
       .resolves.toBe(true);
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("ignores another producer's cards when scoring an event type", async () => {
@@ -667,7 +653,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000101", eventType: NEWS }), new Set()))
       .resolves.toBe(true);
     expect(runStructuredInference).toHaveBeenCalledOnce();
-    expect(suggestionCount(database)).toBe(1);
+    expect(suggestionCount()).toBe(1);
   });
 
   it("ignores resolutions written before the producer was recorded", async () => {

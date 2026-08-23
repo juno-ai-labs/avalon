@@ -76,6 +76,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -111,6 +112,11 @@ import {
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
+import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
+import {
+  ToolReceiptOperationRequestSchema,
+  type ToolReceiptOperationRequest,
+} from "./workstream-tool-receipt-protocol";
 import {
   TerminalOperationRequestSchema,
   terminalOperationAffectsDirectory,
@@ -507,6 +513,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private objectName: string | null = null;
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
+  private toolReceipts!: WorkstreamToolReceiptStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -560,6 +567,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ));
       this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
       this.terminal = new WorkstreamTerminalStorage(state.storage);
+      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -714,6 +722,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.acceptRuntimeSql(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
+      return this.acceptToolReceiptOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/terminal") {
       return this.acceptTerminalOperation(request);
     }
@@ -813,6 +824,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
+  }
+
+  async executeToolReceiptOperation(
+    input: ToolReceiptOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
   }
 
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
@@ -956,6 +974,36 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * sequence crossed the Worker boundary between its two statements, so the
    * lease it took could be decided on state that had already moved.
    */
+  /**
+   * Settle one durable tool receipt inside the event that owns this object.
+   *
+   * No `commitRuntimeMutation` wrapper, unlike the Terminal endpoint: receipts
+   * move no deadline `workspace_workstream_directory` projects, so there is no
+   * `directory_common` effect to enqueue. That is asserted rather than assumed,
+   * against this object's real outbox, in `test-workers/tool-receipt-authority.test.ts`
+   * — with a publishing Terminal operation beside it as the control, because
+   * inference is what let the Terminal port silently stop publishing once
+   * already.
+   */
+  private async acceptToolReceiptOperation(request: Request): Promise<Response> {
+    const parsed = ToolReceiptOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
+    }
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return jsonResponse({ ok: false, error: "workstream_tool_receipt_identity_mismatch" }, 409);
+    }
+    const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.toolReceipts, parsed.data.args);
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
   private async acceptTerminalOperation(request: Request): Promise<Response> {
     const parsed = TerminalOperationRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -1800,6 +1848,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     await reapStaleHarnessRuns(executionEnv.DB, {
+      receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
@@ -1927,7 +1976,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
       memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    });
+    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);

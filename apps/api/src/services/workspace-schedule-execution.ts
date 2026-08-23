@@ -57,7 +57,6 @@ import { createDaytonaTerminalProvider } from "./terminal/daytona-provider";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { reapSettledWorkspaceNotificationIntents } from "./workstream-regional-effect-service";
 import {
@@ -146,11 +145,6 @@ interface AutomationRunRow {
   workstream_id: string;
   status: string;
   workflow_instance_id: string | null;
-}
-
-interface PlannedWorkstreamRow {
-  id: string;
-  automation_run_id: string | null;
 }
 
 export interface ScheduleTiming {
@@ -619,7 +613,6 @@ async function startAutomation(
   const subscriptionId = schedule.automation_subscription_id;
   if (!subscriptionId) throw new Error("missing_automation_subscription");
   const emailRouting = new WorkstreamEmailRoutingService(ctx.env);
-  const authority = await readWorkstreamAuthorityControl(ctx.env);
   const workspaceEnv = ctx.workspaceEnv;
 
   const source = await workspaceEnv.DB.prepare(
@@ -653,25 +646,15 @@ async function startAutomation(
     .first<AutomationRunRow>();
 
   if (!run) {
-    const planned = authority.phase === "durable_object_open"
-      ? await ctx.directory.plannedWorkstream({
-        workspaceId: schedule.workspace_id,
-        userId: null,
-        automationSubscriptionId: subscriptionId,
-        plannedFor: schedule.next_run_at,
-      }).then((workstream) => workstream ? ({
-        id: workstream.id,
-        automation_run_id: workstream.automationRunId,
-      }) : null)
-      : await ctx.env.DB.prepare(`SELECT id, automation_run_id
-         FROM workstreams
-        WHERE workspace_id = ?1
-          AND automation_subscription_id = ?2
-          AND planned_for = ?3
-          AND archived_at IS NULL
-        LIMIT 1`)
-      .bind(schedule.workspace_id, subscriptionId, schedule.next_run_at)
-      .first<PlannedWorkstreamRow>();
+    const planned = await ctx.directory.plannedWorkstream({
+      workspaceId: schedule.workspace_id,
+      userId: null,
+      automationSubscriptionId: subscriptionId,
+      plannedFor: schedule.next_run_at,
+    }).then((workstream) => workstream ? ({
+      id: workstream.id,
+      automation_run_id: workstream.automationRunId,
+    }) : null);
 
     const workstreamId = planned?.id ?? uuidV7(now.getTime());
     const createdWorkstreamId = planned ? null : workstreamId;
@@ -740,18 +723,6 @@ async function startAutomation(
       )
         .bind(subscriptionId, schedule.next_run_at)
         .first<AutomationRunRow>();
-      if (
-        authority.phase !== "durable_object_open"
-        && createdWorkstreamId
-        && run?.workstream_id !== createdWorkstreamId
-      ) {
-        // A concurrent scheduler won the unique run claim. The losing Global
-        // address remains a permanent non-routable reservation tombstone.
-        await ctx.env.DB.prepare(
-          `DELETE FROM workstreams
-           WHERE id = ? AND workspace_id = ? AND automation_run_id IS NULL`,
-        ).bind(createdWorkstreamId, schedule.workspace_id).run();
-      }
     } else {
       run = {
         id: runId,

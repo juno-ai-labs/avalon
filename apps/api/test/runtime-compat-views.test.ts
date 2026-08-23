@@ -134,6 +134,14 @@ describe("the runtime messages insert trigger", () => {
     }]);
   });
 
+  // The tool-position allocation spec that lived here is gone with the view it
+  // drove. Object schema migration 16 repaired `_runtime_tool_invocations_insert`
+  // so a deleted receipt could not wedge a run, and migration 17 drops that
+  // trigger outright; the same claim is now made against the typed path, in
+  // `workstream-tool-receipt-storage.test.ts` — "allocates a fresh position
+  // after a receipt is deleted", asserting the same gapped `0, 2, 3`. Migration
+  // 16 still has to exist for objects that applied it before 17 arrived.
+
   it("repairs a terminal tool row stranded before schema v11", () => {
     const database = new DatabaseSync(":memory:");
     const sql = createTestSqlStorage(database);

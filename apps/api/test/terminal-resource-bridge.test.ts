@@ -15,6 +15,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   testTerminalPortFactory,
+  seedToolReceipt,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -63,14 +64,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
             VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
       params: [R, W, S, JSON.stringify({ type: "user", userId: U })],
     },
-    {
-      // Terminal reads the receipt id off the tool context, but publication
-      // still records its effect against this row.
-      sql: `INSERT INTO tool_invocations
-              (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
-            VALUES (?, ?, ?, ?, 'resource-call', 'terminal_publish_resource', 'hash', '{}', 'started')`,
-      params: [I, W, S, R],
-    },
+
     {
       sql: `INSERT INTO terminal_workspace
               (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
@@ -85,6 +79,11 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
       ],
     },
   ]);
+  // Terminal reads the receipt id off the tool context, but publication still
+  // records its effect against this row.
+  seedToolReceipt(objectStore, {
+    id: I, runId: R, toolCallId: "resource-call", toolName: "terminal_publish_resource",
+  });
   const objects = new Map<string, Uint8Array>();
   const put = vi.fn(async (key: string, value: Uint8Array | string) => {
     objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value);

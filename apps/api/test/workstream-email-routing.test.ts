@@ -10,7 +10,7 @@ import {
   type WorkstreamEmailRouteInput,
   type WorkstreamEmailRouterRpcResult,
 } from "../src/services/workstream-email-routing-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
@@ -111,6 +111,12 @@ class FakeDatabase {
         row.region === region
         && row.workspace_id === workspaceId
         && row.workstream_id === workstreamId) ?? null;
+    }
+    if (sql.includes("SELECT placement_affinity FROM workspaces")) {
+      // The routed owner read resolves the work stream's object, which asks
+      // where this workspace is placed first. One placement per region is
+      // enough: nothing here turns on which of a region's two it is.
+      return { placement_affinity: values[1] === "eu" ? "weur" : "wnam" } as unknown as RouteRow;
     }
     throw new Error(`Unexpected first query: ${sql}`);
   }
@@ -607,11 +613,30 @@ describe("WorkstreamEmailRoutingService", () => {
   });
 });
 
+/**
+ * Real UUIDs, keyed by a readable label.
+ *
+ * Activation routes the owner read at the work stream's own object, which parses
+ * both ids — so a label like `workstream-owner-gate` fails as a malformed UUID
+ * before the 404 this asserts. The label is kept because the assertions read by
+ * it; only its wire form changed.
+ */
+const routeIds = new Map<string, string>();
+function routeId(label: string): string {
+  const existing = routeIds.get(label);
+  if (existing) return existing;
+  const id = `00000000-0000-7000-8000-${String(routeIds.size + 1).padStart(12, "0")}`;
+  routeIds.set(label, id);
+  return id;
+}
+
+const WORKSPACE_UUID = "00000000-0000-7000-8000-0000000000ff";
+
 function routeInput(workstreamId: string, region: Region = "global"): WorkstreamEmailRouteInput {
   return {
     region,
-    workspaceId: "workspace-1",
-    workstreamId,
+    workspaceId: WORKSPACE_UUID,
+    workstreamId: routeId(workstreamId),
   };
 }
 
@@ -650,6 +675,35 @@ function environment(database: FakeDatabase, overrides: Partial<Env> = {}): Env 
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: createTestD1Database(database),
+    // Activation reads the owning work stream from its own object. The stub
+    // runs those statements back through the fake, so the assertions stay on
+    // what the service reads and writes rather than on which side carried it.
+    SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      idFromName: () => createTestDurableObjectId("substream"),
+      get: () => createTestDurableObjectInstance({
+        executeRuntimeSql: async (input: {
+          statements: Array<{ sql: string; params: unknown[] }>;
+        }) => ({
+          status: 200,
+          bodyJson: JSON.stringify({
+            results: await Promise.all(input.statements.map(async ({ sql, params }) => {
+              const statement = database.prepare(sql).bind(...params);
+              if (/^\s*SELECT/iu.test(sql) || /\bRETURNING\b/iu.test(sql)) {
+                const row = await statement.first<Record<string, string | number | null>>();
+                return {
+                  columns: row ? Object.keys(row) : [],
+                  rows: row ? [row] : [],
+                  changes: row ? 1 : 0,
+                };
+              }
+              const executed = await statement.run();
+              return { columns: [], rows: [], changes: Number(executed.meta.changes ?? 0) };
+            })),
+          }),
+        }),
+      }),
+      jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
+    }),
     SESSION_SIGNING_KEY: "s".repeat(32),
     WORKSTREAM_EMAIL_ADDRESS_KEY: ADDRESS_KEY,
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,

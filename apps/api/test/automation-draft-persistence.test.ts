@@ -37,6 +37,7 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 
 import { AutomationService } from "../src/services/automation-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -80,6 +81,16 @@ function serviceFor(database: DatabaseSync, as: AuthContext = auth): AutomationS
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    // A promoted automation carries a schedule, so reading it asks the
+    // workspace object for the work stream planned against the next run.
+    // Nothing here ever opens one, and these tests are about the draft's own
+    // lifecycle, so the object answers as it would: nothing is planned.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        plannedWorkstream: async () => null,
+        refreshSchedule: async () => ({ alarmAt: null }),
+      },
+    }),
   });
   return new AutomationService(env, as);
 }
