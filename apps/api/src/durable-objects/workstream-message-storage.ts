@@ -208,9 +208,15 @@ export class WorkstreamMessageStorage {
    * The members a page of messages names, as participants of this work stream.
    *
    * The shape the retired `_runtime_users` view had: a participant row and
-   * nothing else, because that is all the object holds. A member who authored a
-   * message and has since been removed has no row, and the view's `LEFT JOIN`
-   * produced nothing for them — so neither does this.
+   * nothing else, because that is all the object holds.
+   *
+   * Unfiltered on purpose, and not because a removed member has no row. The
+   * retired `_runtime_workstream_participants` upsert kept a removed member and
+   * set `status = 'removed'`, and `_runtime_users` selected `FROM participants`
+   * with no status or `removed_at` predicate at all — so a removed author did
+   * produce a join row, carrying the same fabricated name and empty email as a
+   * current one. The only author with no row here is someone who was never a
+   * participant. Adding a filter would be a behaviour change, not a fix.
    */
   authorsFor(input: { userIds: readonly string[] }): MessageAuthorRow[] {
     if (input.userIds.length === 0) return [];
@@ -237,6 +243,12 @@ export class WorkstreamMessageStorage {
    * ordinal — the retired trigger's `CASE WHEN message_type = 'tool'` had one
    * live arm and one that the tool path never reached, and splitting the two
    * operations is what makes that visible rather than a branch nothing runs.
+   *
+   * `messageType` is the retired vocabulary minus `tool`, so that split is a
+   * type error at the call site rather than a sentence here. The body depends
+   * on it: `kind` is hardcoded `'text'`, an attention ordinal is always
+   * consumed, and the people clock always moves — a `'tool'` slipping through
+   * would write a row the retired trigger would have branched away from.
    */
   appendMessage(input: {
     messageId: string;
@@ -244,7 +256,7 @@ export class WorkstreamMessageStorage {
     authorType: "human" | "agent" | "external" | "system";
     authorUserId: string | null;
     externalActorJson: string | null;
-    messageType: string;
+    messageType: "text" | "system" | "elicitation";
     text: string;
     structuredContentJson: string | null;
     producedByRunId: string | null;
@@ -322,7 +334,15 @@ export class WorkstreamMessageStorage {
    *
    * A tool card takes no attention ordinal and does not move the people clock.
    * It is machinery a member did not do, and the retired trigger made that
-   * distinction rather than any caller.
+   * distinction rather than any caller. It does move `workstream.updated_at`,
+   * on both paths: the trigger's counter update ran whenever the upsert changed
+   * a row, and a refresh changes one.
+   *
+   * `produced_by_run_id` and `attempt_epoch` are NULL rather than threaded
+   * through, unlike `appendMessage`. The trigger set both from
+   * `NEW.harness_run_id`, and the routed tool insert never named that column —
+   * so NULL is what production has stored for every tool card there is. Giving
+   * the card its run would be a change, and belongs to whoever needs it.
    */
   upsertToolMessage(input: {
     messageId: string;
@@ -332,7 +352,19 @@ export class WorkstreamMessageStorage {
     editedAt: number | null;
   }): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
     return this.storage.transactionSync(() => {
-      const existing = this.message({ messageId: input.messageId });
+      // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
+      // update, so the answer is about a row that exists. The routed
+      // `DO UPDATE … WHERE parts.message_type = 'tool'` matched nothing when a
+      // non-tool row held this id and still reported a write; here that case
+      // falls to the insert and fails on the primary key instead. Neither is a
+      // path production takes — the id is the invocation's own UUIDv7 and no
+      // message carries it — so this is about the operation answering truly
+      // rather than about a state to handle.
+      const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
+        `SELECT sequence_number FROM parts
+          WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
+        input.messageId,
+      ));
       if (existing) {
         this.sql.exec(
           `UPDATE parts
@@ -343,6 +375,12 @@ export class WorkstreamMessageStorage {
           input.editedAt,
           input.editedAt ?? input.createdAt,
           input.messageId,
+        );
+        // What the trigger's counter update did on the conflict path: the work
+        // stream's own clock moves, its sequence and attention counters do not.
+        this.sql.exec(
+          `UPDATE workstream SET updated_at = ? WHERE id = 1`,
+          input.editedAt ?? input.createdAt,
         );
         return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
       }

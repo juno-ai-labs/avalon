@@ -224,7 +224,6 @@ async function noteDeliveryInTranscript(
   deliveryId: string,
   destinations: number,
 ): Promise<void> {
-  const at = nowIso();
   const delivery = await env.DB.prepare(
     `SELECT workspace_id, workstream_id FROM digest_deliveries WHERE id = ?`,
   ).bind(deliveryId).first<{ workspace_id: string; workstream_id: string | null }>();
@@ -240,6 +239,10 @@ async function noteDeliveryInTranscript(
       text: `Delivered to ${destinations} destination${destinations === 1 ? "" : "s"}.`,
       structuredContentJson: null,
       producedByRunId: null,
-      now: Date.parse(at),
+      now: Date.now(),
     });
+  // The outcome is not read, unlike the other four converted appends. This row
+  // is the delivery's own announcement rather than a member-visible write, and
+  // nothing downstream is conditioned on whether the redelivery was the first:
+  // there is no event to publish and no run to start.
 }
