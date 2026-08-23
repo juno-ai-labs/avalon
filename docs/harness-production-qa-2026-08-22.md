@@ -175,15 +175,19 @@ cancellation request while the attempt still owns its exact live lease. The
 shared settlement predicate still requires the exact run, current attempt,
 lease owner, running status, unexpired lease, and no prior terminalization; only
 the cancellation-null check is relaxed. This covers a cancellation failure and
-a tool that completes or fails naturally inside the stop poll window. Parent
-`stopped` terminalization is rejected while any receipt for the run remains
-`pending` or `started`, including a receipt left by an expired prior attempt.
+a tool that completes or fails naturally inside the stop poll window. Any
+receipt still `pending` or `started` when the leased owner commits `stopped` is
+classified and closed in that same batch, whether it came from the current
+executor or survived an expired attempt: an unresolved write becomes ambiguous
+and a read fails. A definite completion or failure that wins first remains
+terminal. An obsolete executor defers its local dispatch to adopt the
+successor's result instead of writing an unfenced product failure.
 
 Runtime regressions drive the production root completion and failure helpers:
 they cover a record-before-execute Terminal write settling ambiguous after
 cancellation and a returned read result reaching R2 and D1 after the member
-stop. They also prove the parent cannot stop before those receipts settle, a
-successor cannot stop around an unsettled effect that survived an expired claim,
+stop. They also prove stopped terminalization atomically closes a residual
+effect that survived an expired claim,
 and attachment dependency registration happens only after completion ownership
 is accepted and only while the invocation remains `completed` at that exact
 `output_ref`. The successor replan also repeats the absence of both attachment
@@ -217,8 +221,12 @@ valid resource or report the boundary without inventing file contents.
 
 Bind now emits `phase: validation` for declared argument errors. The grounding
 guard always removes and ignores validation-phase access, even when a started
-record exists. Harness and host regressions assert both halves. Each test failed
-for the expected reason when its corresponding repair was deliberately reverted.
+record exists. Root and inline-child hosts distinguish a failure emitted after
+`tool_started` from one rejected before start: the former settles the exact
+real-input receipt recorded in memory, while only the latter creates a
+validation-only empty-input receipt. Harness and host regressions assert all
+three boundaries. Each test failed for the expected reason when its
+corresponding repair was deliberately reverted.
 
 Status: fixed locally; deployment and fresh malformed-call UI retest pending.
 
@@ -241,9 +249,12 @@ Search now normalizes Unicode, case, punctuation, hyphens, and whitespace;
 preserves meaningful one-character searches such as X; ranks exact field/phrase
 matches above distinct-token overlap; includes OR-token matches; breaks ties by
 canonical id; returns no results for a normalized-empty query; and caps results
-at twenty. The regression returns X before Web for the production query. Forcing
-token overlap to zero made that test fail with an empty result before the
-implementation was restored.
+at twenty while returning the full `totalMatches` count so the model can narrow
+a truncated search. The regressions return X before Web for the production query
+and expose 26 total broad matches alongside the top twenty. Forcing token
+overlap to zero made the first test fail with an empty result, and replacing the
+full count with the slice count made the second report 20 instead of 26, before
+both implementations were restored.
 
 Status: fixed locally; deployment and production discovery retest pending.
 
@@ -310,8 +321,8 @@ defects were coverage gaps rather than already-failing gates.
 | Repository script tests | 357 passed. |
 | Desktop release invariants | 110 passed. |
 
-After the repairs, the focused harness suites pass 112 tests, the focused API
-durability, wake-up, attachment, and cancellation suites pass 124 tests, and the
+After the repairs, the focused harness suites pass 114 tests, the focused API
+durability, wake-up, attachment, and cancellation suites pass 127 tests, and the
 six-test attachment-receipt suite and the new database migration test pass. The
 new search, failure-classification,
 wake-up, attachment, cancellation, and migration regressions were each proven

@@ -72,6 +72,7 @@ import {
 import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
+  RunOwnershipLostError,
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
@@ -305,6 +306,13 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
+export function agentRunExecutionFailureDisposition(
+  error: unknown,
+): "defer_and_stop_drain" | "fail" {
+  return error instanceof RunOwnershipLostError ? "defer_and_stop_drain" : "fail";
+}
+
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -1611,6 +1619,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           Date.now(),
         );
       } catch (error) {
+        if (agentRunExecutionFailureDisposition(error) === "defer_and_stop_drain") {
+          logWarn(this.env, "agent_run_executor_lost_ownership", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+          });
+          // The successor owns the authoritative outcome. Retrying this local
+          // dispatch lets it adopt that terminal result; marking the product
+          // failed here would be an unfenced stale-executor write.
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
+            Date.now() + 1_000,
+            "run_ownership_lost",
+            Date.now(),
+          );
+          // This drain may itself have been abandoned and replaced after its
+          // keep-alive stranded. It must not claim another row alongside the
+          // successor drain after losing the authority that fenced this one.
+          return;
+        }
         const safe = {
           code: error instanceof Error && "code" in error && typeof error.code === "string"
             ? error.code

@@ -230,11 +230,14 @@ function normalizedPluginSearchText(value: string): string {
 function searchAvailablePlugins(
   plugins: ReturnType<typeof availablePluginCatalog>,
   rawQuery: string,
-): ReturnType<typeof availablePluginCatalog> {
+): {
+  plugins: ReturnType<typeof availablePluginCatalog>;
+  totalMatches: number;
+} {
   const query = normalizedPluginSearchText(rawQuery);
-  if (!query) return [];
+  if (!query) return { plugins: [], totalMatches: 0 };
   const queryTokens = [...new Set(query.split(" "))];
-  return plugins
+  const ranked = plugins
     .map((plugin) => {
       const fields = [
         plugin.id,
@@ -254,9 +257,11 @@ function searchAvailablePlugins(
     })
     .filter((entry): entry is { plugin: ReturnType<typeof availablePluginCatalog>[number]; score: number } => entry !== null)
     .sort((left, right) => right.score - left.score
-      || (left.plugin.id < right.plugin.id ? -1 : left.plugin.id > right.plugin.id ? 1 : 0))
-    .slice(0, PLUGIN_SEARCH_RESULT_LIMIT)
-    .map((entry) => entry.plugin);
+      || (left.plugin.id < right.plugin.id ? -1 : left.plugin.id > right.plugin.id ? 1 : 0));
+  return {
+    plugins: ranked.slice(0, PLUGIN_SEARCH_RESULT_LIMIT).map((entry) => entry.plugin),
+    totalMatches: ranked.length,
+  };
 }
 
 /**
@@ -1670,10 +1675,15 @@ async function createPluginRuntime(
           const query = typeof raw === "object" && raw !== null && "query" in raw
             ? String(raw.query)
             : "";
-          const matches = searchAvailablePlugins(availablePluginCatalog(activeRegistry), query);
+          const { plugins, totalMatches } = searchAvailablePlugins(
+            availablePluginCatalog(activeRegistry),
+            query,
+          );
           return {
-            output: { plugins: matches },
-            summary: `Found ${matches.length} available plugins`,
+            output: { plugins, totalMatches },
+            summary: plugins.length < totalMatches
+              ? `Found ${plugins.length} of ${totalMatches} available plugins; narrow the query to see the rest`
+              : `Found ${totalMatches} available plugins`,
           };
         }
         const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
