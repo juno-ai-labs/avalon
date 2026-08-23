@@ -97,7 +97,7 @@ export function AttachmentLightbox({ preview, onClose }: {
             {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
             {mode === 'image' && src && <img alt={preview.name} src={src} />}
             {mode === 'markdown' && current?.text !== undefined && (
-              <article className="attachment-lightbox-document"><MarkdownBody>{current.text}</MarkdownBody></article>
+              <article className="attachment-lightbox-document"><MarkdownBody verbatim>{current.text}</MarkdownBody></article>
             )}
             {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
           </div>

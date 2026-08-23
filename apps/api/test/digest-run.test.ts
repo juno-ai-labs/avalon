@@ -561,6 +561,13 @@ describe("the brief a digest run is triggered with", () => {
     expect(brief).toContain("### Pricing — workstream");
   });
 
+  it("does not restate the formatting policy the run's system prompt already carries", () => {
+    // A digest run is an ordinary work-stream run, so its system prompt has
+    // RESPONSE_FORMATTING_POLICY. A second copy here once sat right under the
+    // brief's own output shape and invited tables where a bullet was asked for.
+    expect(renderDigestBrief(schedule, [event()])).not.toContain("# Response formatting");
+  });
+
   it("marks the items that name the reader so the model can lead with them", () => {
     const brief = renderDigestBrief(schedule, [
       event(),
