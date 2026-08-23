@@ -17,22 +17,18 @@ import {
   type TerminalNetworkMode,
 } from "./network-policy";
 import type { TerminalPortFactory } from "./object-port";
+import {
+  TERMINAL_OPERATION_LEASE_MS,
+  type TerminalSandboxRecord,
+} from "../../durable-objects/workstream-terminal-storage";
 import type {
   TerminalObjectPort,
 } from "../../durable-objects/workstream-terminal-protocol";
-import type {
-  TerminalSandboxRecord,
-} from "../../durable-objects/workstream-terminal-storage";
 import { TerminalToolError } from "./tools";
 
 const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
 const EXPIRE_DAYS = 30;
-const OPERATION_RECOVERY_TASK_BATCH = 20;
-// Each recovery mutation is one Daytona request bounded at two minutes. The
-// extra minute absorbs local settlement without making a crashed cleanup hold
-// an interactive workspace for the normal sixteen-minute operation lease.
-const OPERATION_RECOVERY_CLAIM_TTL_MS = 3 * 60_000;
 
 export interface TerminalClock {
   now(): Date;
@@ -320,7 +316,7 @@ export class TerminalSandboxCoordinator {
     now: number,
   ): Promise<TerminalSandboxRecord> {
     const terminal = this.terminal(context);
-    const leaseExpiresAt = plusMinutes(this.clock.now(), 16);
+    const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
     let claimed = await terminal.claimOperation({
       runId: context.harnessRunId,
       generation: row.generation,
@@ -368,7 +364,7 @@ export class TerminalSandboxCoordinator {
         generation: row.generation,
         sandboxId,
         claimId,
-        claimExpiresAt: renewedAt + OPERATION_RECOVERY_CLAIM_TTL_MS,
+        claimExpiresAt: renewedAt + TERMINAL_OPERATION_LEASE_MS,
         now: renewedAt,
       });
       if (!renewed) throw new Error("terminal_operation_recovery_claim_lost");
@@ -379,7 +375,7 @@ export class TerminalSandboxCoordinator {
       sandboxId,
       version: row.version,
       claimId,
-      claimExpiresAt: now + OPERATION_RECOVERY_CLAIM_TTL_MS,
+      claimExpiresAt: now + TERMINAL_OPERATION_LEASE_MS,
       now,
     });
     if (!recoveryClaimed) return null;
@@ -417,7 +413,7 @@ export class TerminalSandboxCoordinator {
       return recovered;
     };
     try {
-      for (let index = 0; index < OPERATION_RECOVERY_TASK_BATCH; index += 1) {
+      while (true) {
         const task = await terminal.unsettledTask(row.generation);
         if (!task) return finishRecovery();
 
@@ -492,17 +488,6 @@ export class TerminalSandboxCoordinator {
           throw new Error("terminal_task_cleanup_fence_lost");
         }
       }
-
-      if (await terminal.unsettledTask(row.generation)) {
-        await terminal.failLifecycleClaim({
-          lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
-          failureCode: "operation_recovery_batch_remaining",
-          claimId,
-          now,
-        });
-        return null;
-      }
-      return finishRecovery();
     } catch {
       let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
       try {
@@ -600,7 +585,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
-      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
     });
@@ -704,7 +689,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
-      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
     });
