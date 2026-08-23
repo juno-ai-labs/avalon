@@ -128,6 +128,7 @@ import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import {
   type MessageOperationRequest,
   MessageOperationRequestSchema,
+  mutatesTranscript,
 } from "./workstream-message-protocol";
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
@@ -1176,8 +1177,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_message_identity_mismatch");
     if (refusal) return refusal;
     const method = this.messages[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const mutates = parsed.data.operation === "appendMessage"
-      || parsed.data.operation === "upsertToolMessage";
+    const mutates = mutatesTranscript(parsed.data.operation);
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => method.apply(this.messages, parsed.data.args),
