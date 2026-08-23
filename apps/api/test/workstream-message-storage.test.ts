@@ -57,7 +57,7 @@ function message(overrides: Record<string, unknown> = {}) {
     authorType: "human" as const,
     authorUserId: "user-1",
     externalActorJson: null,
-    messageType: "text",
+    messageType: "text" as const,
     text: "What changed?",
     structuredContentJson: null,
     producedByRunId: null,
@@ -226,8 +226,20 @@ describe("a tool card in the transcript", () => {
     expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
     expect(sql.exec(`SELECT tool_status, edited_at FROM parts`).toArray())
       .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
-    expect(sql.exec(`SELECT next_sequence_number FROM workstream`).one().next_sequence_number)
-      .toBe(2);
+
+    // The work stream's own clock moves and its two counters do not. The
+    // retired trigger's counter update ran on the conflict path too — its guard
+    // was `changes() > 0`, and a refresh changes a row — with
+    // `next_attention_ordinal + 0` and the people clock preserved.
+    expect(sql.exec(
+      `SELECT next_sequence_number, next_attention_ordinal, last_people_activity_at, updated_at
+         FROM workstream`,
+    ).toArray()).toEqual([{
+      next_sequence_number: 2,
+      next_attention_ordinal: 1,
+      last_people_activity_at: 1,
+      updated_at: NOW + 5_000,
+    }]);
   });
 
   it("treats a started call as still pending, as the retired trigger did", () => {
@@ -337,7 +349,7 @@ describe("reading a page of transcript", () => {
     expect(storage.mentionsFor({ messageIds: [] })).toEqual([]);
   });
 
-  it("answers with a member's participant row, and nothing for one who has left", () => {
+  it("answers for a removed member as well as a current one, and for no one else", () => {
     const { storage, sql } = open();
     sql.exec(
       `INSERT INTO participants
@@ -347,12 +359,23 @@ describe("reading a page of transcript", () => {
       NOW,
       NOW,
     );
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, updated_at)
+       VALUES ('user-2', 'message', 'user-1', 'removed', 0, ?, ?, ?)`,
+      NOW,
+      NOW,
+      NOW,
+    );
 
-    // The shape the retired `_runtime_users` view had, which is all the object
-    // holds: a participant row. A member who authored a message and has since
-    // been removed produced nothing through that view's `LEFT JOIN`, so they
-    // produce nothing here either.
-    expect(storage.authorsFor({ userIds: ["user-1", "user-2"] }))
-      .toEqual([{ user_id: "user-1", added_at: NOW }]);
+    // `user-2` is the case that matters. The retired
+    // `_runtime_workstream_participants` upsert kept a removed member's row and
+    // set `status = 'removed'`, and `_runtime_users` selected `FROM
+    // participants` with no status predicate — so a removed author did join,
+    // and rendered with the same fabricated name as anyone else. `user-3` never
+    // joined at all, and is the only author the view answered nothing for.
+    expect(storage.authorsFor({ userIds: ["user-1", "user-2", "user-3"] }))
+      .toEqual([{ user_id: "user-1", added_at: NOW }, { user_id: "user-2", added_at: NOW }]);
   });
 });

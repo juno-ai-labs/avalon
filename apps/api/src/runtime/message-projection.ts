@@ -1,4 +1,5 @@
-import type { Message } from "@avalon/contracts";
+import { ExternalActorSchema } from "@avalon/contracts";
+import type { Message, User } from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 
 import type {
@@ -60,25 +61,31 @@ function projectMessage(
   authors: ReadonlyMap<string, MessageAuthorRow>,
   sources: MessagePageSources,
 ): Message {
-  const externalActor = parseJson<Record<string, unknown> | null>(row.external_actor_json, null);
-  const author = externalActor
-    ? { type: "external" as const, actor: externalActor }
+  // Parsed rather than trusted, which is what the retired `toMessage` did with
+  // this column and the one thing in this projection that is a real boundary:
+  // the JSON comes from a connector's own payload, and `publishWorkstreamEvent`
+  // puts the result in front of clients. A malformed actor falls through to the
+  // `author_type` branch, exactly as the retired reader's `safeParse` did.
+  const externalActor = ExternalActorSchema
+    .safeParse(parseJson<Record<string, unknown> | null>(row.external_actor_json, null));
+  const author: Message["author"] = externalActor.success
+    ? { type: "external", actor: externalActor.data }
     : row.author_type === "human" && row.author_user_id
-      ? { type: "human" as const, user: fabricatedUser(row.author_user_id, authors) }
+      ? { type: "human", user: fabricatedUser(row.author_user_id, authors) }
       : row.author_type === "agent"
-        ? { type: "agent" as const }
-        : { type: "system" as const };
-  return {
+        ? { type: "agent" }
+        : { type: "system" };
+  const message: Message = {
     id: row.id,
     clientMessageId: row.client_message_id,
     workspaceId: sources.workspaceId,
     workstreamId: sources.workstreamId,
     author,
-    messageType: row.message_type as Message["messageType"],
+    messageType: messageTypeOf(row.message_type),
     textContent: row.text_content,
     structuredContent: parseJson<Record<string, unknown> | null>(row.structured_content_json, null),
     mentions: mentions.map((mention) => ({
-      type: mention.mention_kind as Message["mentions"][number]["type"],
+      type: mention.mention_kind === "connector" ? "connector" as const : "person" as const,
       userId: mention.target_user_id,
       connectorType: mention.connector_type,
       // What the retired join produced: the mentioned member's `users.name`,
@@ -87,7 +94,7 @@ function projectMessage(
       avatarUrl: null,
       startOffset: mention.start_offset,
       endOffset: mention.end_offset,
-    })) as Message["mentions"],
+    })),
     attachments: attachments.map((attachment) => {
       const metadata = parseJson<{ size?: number }>(attachment.metadata_json, {});
       return {
@@ -106,7 +113,25 @@ function projectMessage(
     sequenceNumber: row.sequence_number,
     createdAt: new Date(row.created_at).toISOString(),
     editedAt: row.edited_at == null ? null : new Date(row.edited_at).toISOString(),
-  } as Message;
+  };
+  return message;
+}
+
+/**
+ * The published spelling of a stored message type.
+ *
+ * `parts.message_type` is constrained by the object's schema to this exact set,
+ * so the fallback is unreachable — but it is a fallback rather than a cast,
+ * because the alternative is asserting over the one column whose vocabulary the
+ * retired trigger branched on.
+ */
+function messageTypeOf(stored: string): Message["messageType"] {
+  switch (stored) {
+    case "text": case "system": case "tool": case "elicitation": case "suggestion":
+      return stored;
+    default:
+      return "system";
+  }
 }
 
 /**
@@ -122,16 +147,23 @@ function projectMessage(
 function fabricatedUser(
   userId: string,
   authors: ReadonlyMap<string, MessageAuthorRow>,
-): Message["author"] extends { type: "human"; user: infer U } ? U : never {
+): User {
   const participant = authors.get(userId);
   return {
     id: userId,
+    // `UserSchema` requires a deliverable address and this is not one, so a
+    // human-authored message assembled here has never satisfied its own
+    // published contract — not since the cutover, and not before it either,
+    // because `_runtime_users` answered with the same empty string. Nothing
+    // parses a `Message` on the way out, which is why it has gone unnoticed.
+    // Recorded rather than papered over: the identity slice is where this stops
+    // being fabricated, and this is the field that proves it has to.
     email: "",
     name: userId,
     avatarUrl: null,
     timezone: "UTC",
     createdAt: new Date(participant?.added_at ?? 0).toISOString(),
-  } as never;
+  };
 }
 
 /** Every message in a page, with its mentions, attachments and authors read once each. */
