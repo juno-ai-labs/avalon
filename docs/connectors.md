@@ -206,7 +206,12 @@ somebody's name, so nothing weaker than a link may authorize one. A `verified_em
 enough to credit somebody and enough to seat them in a private room; it is not enough to spend
 their credentials. Two consecutive messages in one conversation can therefore run under
 different principals, exactly as they do when two members type into the same work stream in
-Avalon.
+Avalon. How "runs as themselves" reaches the work-stream object is the connector
+principal — `principal: "connector"` on the shared auth context, set only after verifying the
+link on the delivered message; the mechanics and the invariant behind it live in
+[`slack-integration.md`](slack-integration.md#who-a-slack-work-stream-belongs-to) and the product-auth bullet of
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants), and the next adapter
+that runs a member as themselves goes through the same marker.
 
 Conversation rosters resolve as a batch. The connector asks D1 once for every identity it already
 knows, enriches only the unresolved provider members, and bounds that provider work by concurrency

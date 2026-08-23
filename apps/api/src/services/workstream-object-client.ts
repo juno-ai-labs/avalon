@@ -193,10 +193,12 @@ export class WorkstreamObjectClient {
           workspaceId: this.auth.workspaceId,
           region: this.auth.region,
           role: this.auth.role,
-          // Spread conditionally rather than sent as `undefined`: the room's
-          // auth schema is strict, and a session-principal payload should be
-          // byte-identical to what it was before connector principals existed.
-          ...(this.auth.principal === "connector" ? { principal: "connector" as const } : {}),
+          // Spread conditionally so a session-principal payload never gains a
+          // key it did not carry before connector principals existed: absence
+          // is the wire's way of saying "verify my session". (Not a schema
+          // necessity — the room declares the key as optional and JSON would
+          // drop an `undefined` anyway; the point is the contract.)
+          ...(this.auth.principal === "connector" ? { principal: "connector" } : {}),
         },
       } as SubstreamProductRequest,
       this.traced,

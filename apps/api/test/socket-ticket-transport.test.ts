@@ -105,6 +105,42 @@ describe("socket ticket transport", () => {
     expect(roomFetch).toHaveBeenCalledOnce();
   });
 
+  it("refuses to mint any socket ticket for a connector principal", async () => {
+    // A socket ticket is a session credential: admission stores its `sid`, and
+    // the access-revocation queue closes sockets by matching that id against
+    // real `sessions` rows. A connector principal's correlation id matches no
+    // session, so a ticket minted from one would open a read feed that no
+    // session revocation could ever close. The documented invariant — sockets
+    // never carry a connector principal — is enforced at the mint, and this is
+    // the assertion behind it.
+    const env = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
+    });
+    const connector = {
+      sessionId: "slack:T123:U456",
+      userId: asUserId("00000000-0000-7000-8000-000000000722"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000723"),
+      region: "global" as const,
+      role: "member" as const,
+      principal: "connector" as const,
+    };
+    const refusal = { status: 403, code: "connector_principal_cannot_hold_socket" };
+
+    await expect(issueSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
+      .rejects.toMatchObject(refusal);
+    await expect(issueWorkspaceSocketTicket(env, connector)).rejects.toMatchObject(refusal);
+    await expect(issueWorkstreamControlSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
+      .rejects.toMatchObject(refusal);
+    await expect(issueBlockDashboardBlockSocketTicket(
+      env,
+      connector,
+      "00000000-0000-7000-8000-000000000724",
+      "00000000-0000-7000-8000-000000000725",
+    )).rejects.toMatchObject(refusal);
+  });
+
   it("routes one workspace-scoped sync and command ticket to WorkspaceDO", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000711";
     const userId = asUserId("00000000-0000-7000-8000-000000000712");
