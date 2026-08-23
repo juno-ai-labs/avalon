@@ -91,7 +91,7 @@ An automation run's final message is what Avalon delivers, so the run is told wh
 
 ### Automation compilation
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself.
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
@@ -681,6 +681,38 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-23 — The compiler reports the destinations it was asked for, and its ceiling stays at 10,000
+
+**What changed:** `requestedDelivery` became a required field of the
+submit-draft tool schema, closed to `email` and `slack_agent_dm`, normalized to
+a sorted de-duplicated list with unknown members dropped. The delivery rule in
+the compiler policy was scoped to the owner and given an answer for its two
+ambiguous readings. A stack-ranked-briefing recipe was deleted from that policy,
+and the prompt's byte ceiling — briefly raised to 10,500 — is back at 10,000.
+
+**Why:** The create screen was deciding whether to pre-tick email by pattern-
+matching the draft's prose, and the compiler had already parsed that sentence.
+The guess was wrong in the expensive direction — the compiler's own worked
+example is a briefing about an inbox — and, until the same change made
+destinations editable, wrong permanently. Sorting is not cosmetic: the
+normalized draft is re-rendered into the compiler's own cached prefix on every
+later turn, so the model's word order would otherwise cost a cache hit per turn.
+
+**Considered and rejected:** Leaving the ceiling at 10,500. The comment written
+to justify that raise named the sentence that should move out first, and
+deleting the sentence it named came in at 9,946 — under the original bound with
+room to spare. Raising a defensive limit around something already identified as
+removable is backwards, and `docs/writing-prompts.md` asks for the removal
+first. The recipe was one workflow's output shape sitting in standing policy
+charged to every compile.
+
+**Consequences:** An email-briefing automation drafted from now on gets no
+built-in formatting recipe; if that guidance is wanted back it belongs in a
+skill, which needs the compiler given a skill surface first — `compileAutomation`
+does not pass `skills` to `runHarness` today. Anything reading `requestedDelivery`
+must keep treating it as a *request*: it is model output, it selects among
+Avalon's own fixed channels, and it never carries an address.
 
 ### 2026-08-23 — Terminal receipt reconciliation survives a transient object failure
 

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "../middleware/validation";
 import {
-  AutomationDeliveryTargetInputSchema,
+  AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
   AutomationDraftSchema,
   AutomationDraftStateSchema,
@@ -27,7 +27,7 @@ import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).optional(), activitySourcePluginIds: ActivitySourcePluginIdsSchema.optional(), overrides: z.record(z.string(), z.unknown()).optional(), deliveryTargets: z.array(AutomationDeliveryTargetInputSchema).max(2).optional() });
+const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).optional(), activitySourcePluginIds: ActivitySourcePluginIdsSchema.optional(), overrides: z.record(z.string(), z.unknown()).optional(), deliveryTargets: AutomationDeliveryTargetSetSchema.optional() });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });

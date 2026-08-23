@@ -156,7 +156,7 @@ may not write through to, inserts a new automation exactly as it always did.
   ticks a destination for a briefing that merely *mentions* email. It stays a
   request: what delivers is the set of rows on the created automation.
 - **A destination is not a step.** Avalon sends each run's final message to the
-  destinations frozen on the automation, so the compiler writes "email me the
+  destinations chosen on the automation, so the compiler writes "email me the
   briefing" into `expectedOutputs` and never into `instructions` as a
   `gmail.send` call. An automation whose instructions do the sending delivers
   the result twice, from two senders, and the second copy is the one nobody

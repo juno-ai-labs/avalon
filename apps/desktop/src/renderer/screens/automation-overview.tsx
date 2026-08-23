@@ -287,12 +287,18 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const detail = automation.data;
   const automationEmailAddress = detail.emailAddress;
   const deliveryTargets = detail.deliveryTargets ?? [];
-  // A connector destination can only be offered while its connection is still
-  // linked; one already frozen on the automation is offered whatever the
-  // connection list says, so a destination cannot become impossible to turn off.
   const availableDeliveryConnections = (connections.data ?? []).filter((connection) =>
     connection.userDelivery);
   const ownerEmail = session?.user.email ?? '';
+  // A destination frozen on the automation is offered whatever the connection
+  // list says. Without this a connection that is unlinked or disabled — which
+  // retains its delivery-target row rather than cascading it away — leaves a
+  // destination that is still delivering, has no row on screen to untick, and
+  // is replayed inside every set this screen sends, so the API rejects the lot
+  // and no destination can be changed at all.
+  const orphanedDeliveryTargets = deliveryTargets.filter((target) =>
+    target.type !== 'email'
+    && !availableDeliveryConnections.some((connection) => connection.id === target.connectionId));
   const deliveryChoices = [
     ...(ownerEmail || deliveryTargets.some((target) => target.type === 'email')
       ? [{
@@ -301,27 +307,42 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         label: deliveryTargets.find((target) => target.type === 'email')?.displayName ?? ownerEmail,
         checked: deliveryTargets.some((target) => target.type === 'email'),
         status: deliveryTargets.find((target) => target.type === 'email')?.status,
+        available: true,
       }]
       : []),
     ...availableDeliveryConnections.map((connection) => ({
       key: connection.id,
-      type: 'slack_agent_dm' as const,
+      // The connector declares its own surface, so this list grows with the
+      // connector catalog rather than with this file.
+      type: connection.userDelivery!.targetType,
       label: `${connection.userDelivery!.label} · ${connection.displayName}`,
       checked: deliveryTargets.some((target) => target.connectionId === connection.id),
       status: deliveryTargets.find((target) => target.connectionId === connection.id)?.status,
-      connectionId: connection.id,
+      available: true,
+    })),
+    ...orphanedDeliveryTargets.map((target) => ({
+      key: target.connectionId!,
+      type: target.type,
+      label: target.displayName,
+      checked: true,
+      status: target.status,
+      available: false,
     })),
   ].map((choice) => ({
     ...choice,
     // The whole set as it would be after this box moves: the API replaces the
     // set, so a payload carrying only the toggled destination drops the other.
+    // Turning one on drops any other of the same type first — the table holds
+    // one row per type, so two connections offering the same surface are one
+    // destination, and appending the second would compose a set the API refuses.
     next: (choice.checked
       ? deliveryTargets.filter((target) => choice.type === 'email'
         ? target.type !== 'email'
         : target.connectionId !== choice.key)
-      : [...deliveryTargets, choice.type === 'email'
-        ? { type: 'email' as const, connectionId: null }
-        : { type: 'slack_agent_dm' as const, connectionId: choice.key }]
+      : [...deliveryTargets.filter((target) => target.type !== choice.type),
+        choice.type === 'email'
+          ? { type: 'email' as const, connectionId: null }
+          : { type: choice.type, connectionId: choice.key }]
     ).map((target) => target.type === 'email'
       ? { type: 'email' as const }
       : { type: 'slack_agent_dm' as const, connectionId: target.connectionId! }),
@@ -443,14 +464,18 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                           type="checkbox"
                         />
                         {choice.type === 'email' ? <Mail size={13} /> : <MessageSquare size={13} />}
-                        <span>{choice.label}</span>
+                        <span title={choice.label}>{choice.label}</span>
                       </label>
-                      {choice.status === 'needs_input' && <small className="is-warning">Last delivery failed</small>}
+                      {!choice.available
+                        ? <small className="is-warning">Disconnected — turn off to stop trying</small>
+                        : choice.status === 'needs_input' && <small className="is-warning">Last delivery failed</small>}
                     </li>
                   ))}
                 </ul>
                 {setDelivery.error && <InlineError>{setDelivery.error.message}</InlineError>}
-                <small>Every run is saved to its own work stream whatever else is chosen.</small>
+                {deliveryChoices.some((choice) => choice.checked)
+                  ? <small>Every run is saved to its own work stream, whatever else is chosen.</small>
+                  : <small className="is-warning">Results now only go to the work stream — nothing will be sent to you.</small>}
               </section>
             )}
             <section><h2>Execution</h2><p><Users size={14} />{detail.executionScope}</p><small>{detail.scope === 'you' ? 'Uses your authorized connections' : 'Uses explicitly bound workspace connections'}</small></section>

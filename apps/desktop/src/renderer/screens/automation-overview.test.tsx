@@ -239,6 +239,74 @@ describe('Automation template updates', () => {
     }));
   });
 
+  it('still offers a destination whose connection is gone, so it can be turned off', async () => {
+    // Unlinking or disabling a connection retains the delivery-target row. Built
+    // from the live connection list alone the row vanished from the screen while
+    // still delivering, and — because every payload this screen sends carries
+    // the whole set — it was replayed into each one and rejected, so no
+    // destination could be changed at all until the automation was deleted.
+    api.getConnections.mockResolvedValue([]);
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [
+        { type: 'email', connectionId: null, displayName: 'owner@example.com', status: 'active' },
+        { type: 'slack_agent_dm', connectionId: 'connection-slack', displayName: 'Slack DM · Acme', status: 'active' },
+      ],
+    });
+    api.updateAutomation.mockResolvedValue(detail);
+    renderScreen();
+
+    const orphan = await screen.findByRole('checkbox', { name: /Slack DM · Acme/ });
+    expect(orphan).toBeChecked();
+    expect(screen.getByText('Disconnected — turn off to stop trying')).toBeInTheDocument();
+
+    fireEvent.click(orphan);
+
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, {
+      deliveryTargets: [{ type: 'email' }],
+    }));
+  });
+
+  it('replaces a same-kind destination rather than composing a set the API refuses', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      },
+      {
+        id: 'connection-slack-2',
+        modelPluginId: 'plugin_slack_personal',
+        connectorType: 'slack',
+        displayName: 'Side project',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      },
+    ]);
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [{ type: 'slack_agent_dm', connectionId: 'connection-slack', displayName: 'Slack DM · Acme', status: 'active' }],
+    });
+    api.updateAutomation.mockResolvedValue(detail);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Slack DM · Side project/ }));
+
+    // The table holds one row per kind, so two installations offering the same
+    // surface are one destination. Appending the second composed a set the API
+    // rejects, and the reader got an unexplained failure for a plain click.
+    await waitFor(() => expect(api.updateAutomation).toHaveBeenCalledWith(automationId, {
+      deliveryTargets: [{ type: 'slack_agent_dm', connectionId: 'connection-slack-2' }],
+    }));
+  });
+
   it('says when a destination stopped delivering', async () => {
     api.getAutomation.mockResolvedValue({
       ...detail,
