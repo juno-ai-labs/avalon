@@ -54,6 +54,7 @@ const DISPATCHED_OPERATIONS = [
   "complete",
   "fail",
   "abandonRunReceipts",
+  "settleResidualReceipts",
   "receiptForCall",
   "receiptsByIds",
   "attachmentDependencies",

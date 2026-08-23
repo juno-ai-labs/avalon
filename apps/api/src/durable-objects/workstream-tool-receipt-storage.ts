@@ -754,6 +754,137 @@ export class WorkstreamToolReceiptStorage {
    * into "it definitely failed" for exactly the receipts whose provider request
    * may have landed — the wrong direction for the only case that matters.
    */
+  /**
+   * Close every receipt a run still has open, because the run is ending now.
+   *
+   * The stop and the reap both reach this. A run may not terminalize while any
+   * receipt of its is still admitted or executing — a member who stopped a run
+   * and is left looking at a tool card that never resolves has been told the
+   * work ended when its record says it did not — so the classification has to
+   * happen before the terminal event, and has to be atomic with nothing.
+   *
+   * A receipt that was *executing* a write is `ambiguous`, not `failed`: the
+   * provider may already have performed it, and the run ending is not evidence
+   * either way. Everything else — admitted but never started, or a read — takes
+   * the caller's own outcome, because the caller knows whether this was a
+   * member stopping the work or a lease that lapsed.
+   */
+  settleResidualReceipts(input: {
+    runId: string;
+    attemptId: string;
+    /** The phase and payload for a receipt that was not mid-write. */
+    phase: string;
+    errorJson: string;
+    payloadJson: string;
+    /** The message an ambiguous receipt carries, which differs by caller. */
+    ambiguousMessage: string;
+    /**
+     * How the caller's claim on the lease is proved, which differs by caller.
+     *
+     * Both callers settle *after* their terminal write lands, and name the
+     * instant it stamped. That ordering is forced: the run row and these
+     * receipts are in the same object, but the caller reaches them through two
+     * different paths and cannot hold one transaction across both. Of the two
+     * orderings only this one fails safe — a settle that never runs leaves a
+     * terminal run with open receipts, which the next sweep's
+     * `abandonRunReceipts` closes, whereas settling first and then failing to
+     * terminalize would close the receipts of a run that is still live and may
+     * have just been taken over.
+     */
+    lease: { kind: "terminalized"; at: number };
+    now: number;
+  }): { settled: number; open: number } {
+    return this.storage.transactionSync(() => {
+      // The terminal stamp alone, as `abandonRunReceipts` does: the write that
+      // set it also cleared `lease_owner` and `lease_expires_at`, so there is
+      // no lease left to name. Matching the exact instant is what ties this
+      // call to that write rather than to some earlier terminalization.
+      const owned = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
+        `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
+        input.runId,
+        input.lease.at,
+      ));
+      if (!owned) return { settled: 0, open: this.#residualReceipts(input.runId).length };
+      const residual = this.#residualReceipts(input.runId);
+      let settled = 0;
+      for (const receipt of residual) {
+        const ambiguous = receipt.ambiguous === 1;
+        const errorJson = ambiguous
+          ? JSON.stringify({ code: "ambiguous_external_write", message: input.ambiguousMessage })
+          : input.errorJson;
+        const index = this.#appendCheckpoint({
+          effectIntentId: receipt.effect_intent_id,
+          runId: input.runId,
+          attemptId: input.attemptId,
+          index: receipt.checkpoint_index + 1,
+          phase: ambiguous ? "ambiguous_external_write" : input.phase,
+          payloadJson: ambiguous ? '{"code":"ambiguous_external_write"}' : input.payloadJson,
+          now: input.now,
+        });
+        // Null means the index was already taken — an older partially admitted
+        // settlement left a checkpoint there. Advancing past it rather than
+        // conflicting on it is what keeps a stop from wedging on its own debris.
+        const settledIndex = index ?? this.#appendCheckpoint({
+          effectIntentId: receipt.effect_intent_id,
+          runId: input.runId,
+          attemptId: input.attemptId,
+          index: this.#highestCheckpointIndex(receipt.effect_intent_id) + 1,
+          phase: ambiguous ? "ambiguous_external_write" : input.phase,
+          payloadJson: ambiguous ? '{"code":"ambiguous_external_write"}' : input.payloadJson,
+          now: input.now,
+        });
+        if (settledIndex === null) continue;
+        this.sql.exec(
+          `UPDATE tool_effects
+              SET status = ?, settled_at = ?, error_json = ?, checkpoint_index = ?
+            WHERE effect_intent_id = ?`,
+          ambiguous ? "ambiguous" : "failed",
+          input.now,
+          errorJson,
+          settledIndex,
+          receipt.effect_intent_id,
+        );
+        this.#projectSettledPart(
+          receipt.effect_intent_id,
+          ambiguous ? "ambiguous" : "failed",
+          errorJson,
+          input.now,
+        );
+        settled += 1;
+      }
+      // `open` is what the caller's terminal event is fenced on. It is normally
+      // zero, and is not only when a receipt could not take a checkpoint index
+      // at all — in which case the run must not terminalize claiming its tools
+      // are finished.
+      return { settled, open: this.#residualReceipts(input.runId).length };
+    });
+  }
+
+  /** Receipts still open on a run, and whether each was mid-write. */
+  #residualReceipts(runId: string): Array<{
+    effect_intent_id: string; ambiguous: number; checkpoint_index: number;
+  } & Record<string, SqlStorageValue>> {
+    return this.sql.exec<{
+      effect_intent_id: string; ambiguous: number; checkpoint_index: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT effect_intent_id, checkpoint_index,
+              CASE WHEN status = 'executing'
+                     AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
+                   THEN 1 ELSE 0 END AS ambiguous
+         FROM tool_effects
+        WHERE run_id = ? AND status IN ('admitted', 'executing')`,
+      runId,
+    ).toArray();
+  }
+
+  #highestCheckpointIndex(effectIntentId: string): number {
+    return first(this.sql.exec<{ index: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT MAX(checkpoint_index) AS "index" FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ?`,
+      effectIntentId,
+    ))?.index ?? 0;
+  }
+
   abandonRunReceipts(input: { runId: string; terminalizedAt: number }): number {
     return this.storage.transactionSync(() => {
       // The guard, once, as its own question. The routed statement restated it
@@ -779,9 +910,8 @@ export class WorkstreamToolReceiptStorage {
       ).toArray();
       if (abandoned.length === 0) return 0;
 
-      const settledAtIso = new Date(input.terminalizedAt).toISOString();
       for (const receipt of abandoned) {
-        const status = receipt.ambiguous === 1 ? "ambiguous" : "failed";
+        const status = receipt.ambiguous === 1 ? "ambiguous" as const : "failed" as const;
         const errorJson = JSON.stringify(receipt.ambiguous === 1
           ? {
             code: "ambiguous_external_write",
@@ -800,42 +930,58 @@ export class WorkstreamToolReceiptStorage {
           errorJson,
           receipt.effect_intent_id,
         );
-        // And the tool card the member is looking at.
-        //
-        // This is not bookkeeping: it is the only thing that stops a reaped
-        // run's tool card spinning forever. Normal execution settles the
-        // receipt and then writes the transcript row again, but the sweep has
-        // no event publisher and no second write — so object schema migration
-        // 14 taught the *compatibility trigger* to project a terminal receipt
-        // into the same-id part inside the settling transaction. That made a
-        // piece of real product behavior, added after the cutover, live inside
-        // a compatibility object. It moves here, where it is visible, and it is
-        // the reason dropping that trigger is not a pure deletion.
-        this.sql.exec(
-          `UPDATE parts SET
-             structured_content_json = json_set(
-               parts.structured_content_json,
-               '$.invocation.status', ?1,
-               '$.invocation.activityName', json('null'),
-               '$.invocation.outputSummary', (
-                 SELECT output_summary FROM tool_effects WHERE effect_intent_id = ?4
-               ),
-               '$.invocation.completedAt', ?2,
-               '$.invocation.error', json(?5)
-             ),
-             tool_status = ?1,
-             edited_at = COALESCE(?3, parts.edited_at, parts.updated_at),
-             updated_at = MAX(parts.updated_at, ?3)
-           WHERE parts.id = ?4 AND parts.message_type = 'tool'`,
-          status,
-          settledAtIso,
-          input.terminalizedAt,
+        this.#projectSettledPart(
           receipt.effect_intent_id,
+          status,
           errorJson,
+          input.terminalizedAt,
         );
       }
       return abandoned.length;
     });
+  }
+
+  /**
+   * The tool card the member is looking at.
+   *
+   * Not bookkeeping: it is the only thing that stops a stopped or reaped run's
+   * tool card spinning forever. Ordinary execution settles the receipt and then
+   * writes the transcript row again, but neither the stop nor the sweep has an
+   * event publisher or a second write — so object schema migration 14 taught
+   * the *compatibility trigger* to project a terminal receipt into the same-id
+   * part inside the settling transaction. That put a piece of real product
+   * behavior, added after the cutover, inside a compatibility object. It lives
+   * here now, where it is visible, and it is why dropping that trigger was not
+   * a pure deletion.
+   */
+  #projectSettledPart(
+    effectIntentId: string,
+    status: "failed" | "ambiguous",
+    errorJson: string,
+    settledAt: number,
+  ): void {
+    this.sql.exec(
+      `UPDATE parts SET
+         structured_content_json = json_set(
+           parts.structured_content_json,
+           '$.invocation.status', ?1,
+           '$.invocation.activityName', json('null'),
+           '$.invocation.outputSummary', (
+             SELECT output_summary FROM tool_effects WHERE effect_intent_id = ?4
+           ),
+           '$.invocation.completedAt', ?2,
+           '$.invocation.error', json(?5)
+         ),
+         tool_status = ?1,
+         edited_at = COALESCE(?3, parts.edited_at, parts.updated_at),
+         updated_at = MAX(parts.updated_at, ?3)
+       WHERE parts.id = ?4 AND parts.message_type = 'tool'`,
+      status,
+      new Date(settledAt).toISOString(),
+      settledAt,
+      effectIntentId,
+      errorJson,
+    );
   }
 
   // ----------------------------------------------------------------- settle
@@ -920,13 +1066,14 @@ export class WorkstreamToolReceiptStorage {
     providerOperationId: string | null;
     payloadJson: string;
     allowAmbiguousReconciliation: boolean;
-    allowCancellationRequested: boolean;
+    /** Optional, and absent means the ordinary cancellation fence applies. */
+    allowCancellationRequested?: boolean;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptSettlement {
     const summary = input.outputSummary.slice(0, 4_000);
     return this.storage.transactionSync(() => {
-      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested);
+      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested === true);
       if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
       const moved = this.#settle({
         effectIntentId: input.effectIntentId,
@@ -978,12 +1125,13 @@ export class WorkstreamToolReceiptStorage {
     phase: string;
     errorJson: string;
     payloadJson: string;
-    allowCancellationRequested: boolean;
+    /** Optional, and absent means the ordinary cancellation fence applies. */
+    allowCancellationRequested?: boolean;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptSettlement {
     return this.storage.transactionSync(() => {
-      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested);
+      const held = this.#fence(input.fence, input.now, input.allowCancellationRequested === true);
       if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
       const moved = this.#settle({
         effectIntentId: input.effectIntentId,

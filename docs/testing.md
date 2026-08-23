@@ -467,6 +467,31 @@ touch this area or a change worth making that has not been made.
   could run both regional Workers in-process and make the smoke check a gate
   rather than a manual step.
 
+## Staging a race against an object operation
+
+A receipt or terminal operation used to be a D1 batch, and a test staged a race
+by intercepting `batch` and writing between its statements. Those operations are
+now one `transactionSync` inside the object, so there is no gap to write into and
+that instrument silently never fires — the test still passes, asserting nothing.
+Two hooks on `testToolReceiptPort` replace it:
+
+- `beforeTransaction` runs as the transaction opens, before any fence is read.
+  The latest a competing write can still be *seen* by the operation.
+- `afterStatement` runs after each statement, with its SQL. The earliest a
+  competing write lands *behind* a decision the operation has already made.
+
+Between them they cover what the two-batch interception used to: "does the
+decision repeat against current rows" and "does an admitted operation finish".
+Assert the hook fired — an interception that never runs is the failure mode this
+whole section exists for.
+
+**When the property itself is gone, say so rather than simulating it.** Some of
+these tests asserted a compensation for a hazard the single transaction removed
+— a settlement surviving a lease that lapsed between two statements, a CAS
+repeating a predicate a stale read had already answered. Rewriting them to
+re-create the old two-step shape would be testing a structure the code no longer
+has. Assert the property that replaced it, and put the reason in the test.
+
 ## What the objects' RPC surface has, and has not
 
 Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, `WorkstreamDO`
@@ -487,6 +512,12 @@ The nineteen with no workerd exercise, so nobody has to rediscover the list:
 | `SubstreamAgent` | `createRuntimeSuggestion`, `publishEvent`, `requestBlockDashboardRefresh` |
 | `WorkstreamDO` | `acknowledgeRegionalEffect`, `authorizeBlockDashboardBlockViewer`, `controlBlockDashboard`, `loadRegionalEffect` |
 | `BlockDashboardAgent` | `initializeBlock`, `revalidateViewerAccess` |
+
+The receipt storage class is covered differently, and better: `tool-receipt-authority.test.ts`
+reflects over `WorkstreamToolReceiptStorage`'s own methods and drives each one
+through the real endpoint, so a method added without a dispatch entry fails there
+without anyone remembering to add a case. That is worth copying for the next
+typed port rather than maintaining another hand-written list.
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

@@ -704,6 +704,24 @@ converts them whole. The sweep did become an operation, but not a variant of an
 existing one: every other method is fenced on a live lease, and an expired lease
 is the sweep's entire premise.
 
+**Rebasing onto the entry below changed one thing it decided.** That change made
+a stopped or reaped run settle its residual receipts and write its terminal
+lifecycle row in a single D1 batch, receipts first, and fenced the terminal event
+on there being none still open. Those two writes are now in different stores —
+the lifecycle row in the regional database, the receipts in the work stream's
+object — and no transaction spans them, so one of the two orderings had to be
+chosen rather than avoided. The settlement runs *after* the terminal write, in
+`settleResidualReceipts`, fenced on the exact `terminalized_at` that write
+stamped.
+
+The reason is which failure each ordering leaves behind. Settling first and then
+failing to terminalize closes the receipts of a run that is still live and may
+have just been taken over by a successor — corrupting a running run. Terminalizing
+first and then failing to settle leaves a terminal run with open receipts, which
+the next sweep's `abandonRunReceipts` closes; the tool card resolves late instead
+of wrongly. A future change must keep that order for that reason, and must not
+"restore atomicity" by moving the settlement back ahead of the terminal write.
+
 Two fences the entry below added to the D1 statements moved with the code
 rather than being lost to the conversion. A lease owner may settle a receipt
 Bind already returned after a member stop — `#fence` takes

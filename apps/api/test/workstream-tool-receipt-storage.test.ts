@@ -553,10 +553,28 @@ describe("reading receipts by id", () => {
  * derivative changed has no cross-object successor, because receipts and
  * resources now live in different Durable Objects.
  */
+/**
+ * Complete the admitted receipt, because a dependency may only attach to one.
+ *
+ * The caller registers *after* completing, so the row it names may already have
+ * been replanned onto another call and completed again; matching `output_ref` is
+ * what ties the dependency to the result the caller actually saw.
+ */
+const OUTPUT_REF = "tool-results/effect-1";
+
+function settle(storage: WorkstreamToolReceiptStorage, outputRef = OUTPUT_REF): void {
+  storage.complete({
+    effectIntentId: "effect-1", checkpointIndex: 1, outputRef,
+    outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+    allowAmbiguousReconciliation: false, fence, now: NOW,
+  });
+}
+
 describe("recording what an attachment read depended on", () => {
-  it("records one row per resource against a live receipt", () => {
+  it("records one row per resource against a completed receipt", () => {
     const { storage, sql } = open();
     storage.admit(plan());
+    settle(storage);
 
     expect(storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
@@ -565,6 +583,7 @@ describe("recording what an attachment read depended on", () => {
         { resourceId: "resource-b", derivativeSha256: "sha-b" },
         { resourceId: "resource-a", derivativeSha256: "sha-a" },
       ],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     })).toBe("recorded");
 
@@ -583,6 +602,7 @@ describe("recording what an attachment read depended on", () => {
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
       dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     })).toBe("receipt_missing");
     expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
@@ -591,10 +611,12 @@ describe("recording what an attachment read depended on", () => {
   it("overwrites the digest when the same resource is recorded again", () => {
     const { storage, sql } = open();
     storage.admit(plan());
+    settle(storage);
     const record = (sha: string) => storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
       dependencies: [{ resourceId: "resource-a", derivativeSha256: sha }],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     });
     record("sha-old");
@@ -605,9 +627,78 @@ describe("recording what an attachment read depended on", () => {
       .toEqual([{ derivative_sha256: "sha-new" }]);
   });
 
+  it("refuses a dependency against a completion the caller did not see", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    settle(storage, "tool-results/a-later-call");
+
+    // The caller completed, then registered. Between the two the receipt can be
+    // replanned onto another call and completed again, and attaching the first
+    // call's dependency to the second call's result would make a replay claim a
+    // resource version that result never read.
+    expect(storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
+      now: NOW,
+    })).toBe("receipt_missing");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
+  });
+
+  it("refuses to record against a receipt that has not been completed", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    // The ref is planted on a receipt still in flight, so that matching it is
+    // not what refuses — the status is. Asserting against an ordinary admitted
+    // receipt would pass on its null `output_ref` whether the completion
+    // scoping existed or not.
+    sql.exec(
+      `UPDATE tool_effects SET output_ref = ? WHERE effect_intent_id = ?`,
+      OUTPUT_REF,
+      "effect-1",
+    );
+
+    expect(storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
+      now: NOW,
+    })).toBe("receipt_missing");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
+  });
+
+  it("unwinds nothing when the completion it was told to unwind has moved on", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    settle(storage);
+    storage.recordAttachmentDependencies({
+      workspaceId: WORKSPACE,
+      effectIntentId: "effect-1",
+      dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
+      now: NOW,
+    });
+    sql.exec(
+      `UPDATE tool_effects SET output_ref = ? WHERE effect_intent_id = ?`,
+      "tool-results/a-later-call",
+      "effect-1",
+    );
+
+    // The compensating delete carries the same fence as the write: a stale
+    // executor rolling back its own failed check must not take a successor's
+    // dependencies with it.
+    expect(storage.clearAttachmentDependencies({
+      workspaceId: WORKSPACE, effectIntentId: "effect-1", expectedOutputRef: OUTPUT_REF,
+    })).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(1);
+  });
+
   it("clears every dependency of one receipt", () => {
     const { storage, sql } = open();
     storage.admit(plan());
+    settle(storage);
     storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
@@ -615,11 +706,12 @@ describe("recording what an attachment read depended on", () => {
         { resourceId: "resource-a", derivativeSha256: "sha-a" },
         { resourceId: "resource-b", derivativeSha256: "sha-b" },
       ],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     });
 
     expect(storage.clearAttachmentDependencies({
-      workspaceId: WORKSPACE, effectIntentId: "effect-1",
+      workspaceId: WORKSPACE, effectIntentId: "effect-1", expectedOutputRef: OUTPUT_REF,
     })).toBe(2);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM attachment_tool_receipts`).one().count).toBe(0);
   });
@@ -629,6 +721,7 @@ describe("reading what an attachment replay depends on", () => {
   it("lists dependencies of a completed receipt, in resource order", () => {
     const { storage } = open();
     storage.admit(plan());
+    settle(storage);
     storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
@@ -636,6 +729,7 @@ describe("reading what an attachment replay depends on", () => {
         { resourceId: "resource-b", derivativeSha256: "sha-b" },
         { resourceId: "resource-a", derivativeSha256: "sha-a" },
       ],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     });
     storage.complete({
@@ -653,14 +747,22 @@ describe("reading what an attachment replay depends on", () => {
   });
 
   it("returns nothing while the receipt is still executing", () => {
-    const { storage } = open();
+    const { storage, sql } = open();
     storage.admit(plan());
+    settle(storage);
     storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
       dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     });
+    // Written directly, because no operation puts a receipt back in flight once
+    // it carries dependencies — recording requires a completion and rebinding
+    // refuses a receipt anything depends on. The state is still worth asserting
+    // on: it is what the reader sees mid-replan, and the scoping is what keeps
+    // "in flight" and "nothing to replay" indistinguishable to the caller.
+    sql.exec(`UPDATE tool_effects SET status = 'executing' WHERE effect_intent_id = ?`, "effect-1");
 
     // The caller reads an empty list as "not replayable". An in-flight receipt
     // has nothing to replay, so the two answers must not be distinguishable
@@ -700,10 +802,12 @@ describe("discarding a receipt whose replay is no longer valid", () => {
   it("takes the receipt's attachment dependencies with it", () => {
     const { storage, sql } = open();
     storage.admit(plan());
+    settle(storage);
     storage.recordAttachmentDependencies({
       workspaceId: WORKSPACE,
       effectIntentId: "effect-1",
       dependencies: [{ resourceId: "resource-a", derivativeSha256: "sha-a" }],
+      expectedOutputRef: OUTPUT_REF,
       now: NOW,
     });
 
