@@ -66,6 +66,8 @@ function mainAgent(): DurableObjectStub {
 
 const RUN_A = "00000000-0000-7000-8000-00000000ra01";
 const RUN_B = "00000000-0000-7000-8000-00000000rb02";
+const EFFECT_A = "terminal-effect-a";
+const TASK_A = "terminal-task-a";
 
 /** Call the real endpoint, exactly as the Worker's port does. */
 async function terminal(
@@ -641,6 +643,474 @@ describe("Terminal authority on real workerd", () => {
       expect((reclaimed.value as { operationRunId: string }).operationRunId).toBe(RUN_B);
     });
 
+    it("reclaims a lease from a run waiting for human input", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+      });
+      await reserve(stub, RUN_A);
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+          1_500,
+          RUN_A,
+        );
+      });
+
+      // A reply never resumes the same execution: it admits a new linked run.
+      // The yielded run must therefore not retain Terminal's exclusive lease
+      // until the otherwise unrelated sixteen-minute deadline.
+      const reclaimed = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_000,
+      });
+
+      expect((reclaimed.value as { operationRunId: string }).operationRunId).toBe(RUN_B);
+    });
+
+    it("keeps a yielded run fenced until provider cleanup settles its retained task", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A, { operationLeaseExpiresAt: 1_500 });
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-retained",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-retained",
+        providerTaskName: "retained-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 5_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+          1_500,
+          RUN_A,
+        );
+      });
+
+      // Neither the caller's nominal command deadline nor the broader lease
+      // expiry proves that Daytona has stopped the retained process.
+      const blocked = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 6_000,
+      });
+      expect(blocked.value).toBeNull();
+
+      const beforeRecovery = await terminal(stub, "sandbox");
+      const recoveryClaim = await terminal(stub, "claimYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-retained",
+        version: (beforeRecovery.value as { version: number }).version,
+        claimId: "recovery-claim",
+        claimExpiresAt: 9_000_000,
+        now: 6_001,
+      });
+      expect(recoveryClaim.value).toBe(true);
+      const duringCleanup = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 6_001,
+      });
+      expect(duringCleanup.value).toBeNull();
+      const claimedSnapshot = await terminal(stub, "sandbox");
+      const duplicateRecovery = await terminal(stub, "claimYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-retained",
+        version: (claimedSnapshot.value as { version: number }).version,
+        claimId: "duplicate-recovery-claim",
+        claimExpiresAt: 9_000_000,
+        now: 6_001,
+      });
+      expect(duplicateRecovery.value).toBe(false);
+      const wrongClaim = await terminal(stub, "cancelTaskAfterProviderCleanup", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        providerTaskName: "retained-command",
+        claimId: "duplicate-recovery-claim",
+        now: 6_002,
+      });
+      expect(wrongClaim.value).toBe(false);
+      const settled = await terminal(stub, "cancelTaskAfterProviderCleanup", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        providerTaskName: "retained-command",
+        claimId: "recovery-claim",
+        now: 6_002,
+      });
+      expect(settled.value).toBe(true);
+
+      // A late provider continuation cannot rewrite the task after cleanup.
+      await terminal(stub, "settleTask", {
+        effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-retained",
+        state: "completed",
+        exitCode: 0,
+        terminationReason: "exited",
+        stdoutHead: "late",
+        stdoutTail: "",
+        stderrHead: "",
+        stderrTail: "",
+        stdoutBytes: 4,
+        stderrBytes: 0,
+        completedAt: 6_003,
+        now: 6_003,
+      });
+      expect(await terminal(stub, "attachTaskOutputResource", {
+        effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        state: "completed",
+        completedAt: 6_003,
+        outputResourceId: "late-log",
+        now: 6_004,
+      })).toMatchObject({ value: false });
+      const task = await terminal(stub, "taskByEffect", EFFECT_A);
+      expect(task.value).toMatchObject({ state: "cancelled", stdoutHead: "" });
+      const lateSubmission = await terminal(stub, "markTaskRunning", {
+        effectIntentId: EFFECT_A,
+        providerTaskId: "late-provider-command",
+        commandDeadlineAt: 9_000,
+        now: 6_003,
+      });
+      expect(lateSubmission.value).toBe(false);
+
+      const afterCleanup = await terminal(stub, "settleYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-retained",
+        claimId: "recovery-claim",
+        leaseExpiresAt: 9_000_000,
+        sandboxStopped: false,
+        now: 6_004,
+      });
+      expect((afterCleanup.value as { operationRunId: string }).operationRunId).toBe(RUN_B);
+    });
+
+    it("renews exact submission authority and token-fences fresh-generation retirement", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A, { operationLeaseExpiresAt: 1_500 });
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-submitting",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-submitting",
+        providerTaskName: "submitting-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 2_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+      const renewed = await terminal(stub, "renewTaskSubmissionAuthority", {
+        effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-submitting",
+        commandDeadlineAt: 5_000,
+        now: 1_100,
+      });
+      expect(renewed.value).toBe(true);
+      expect(await terminal(stub, "taskByEffect", EFFECT_A)).toMatchObject({
+        value: { state: "submitting", commandDeadlineAt: 5_000 },
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+          1_500,
+          RUN_A,
+        );
+      });
+      const staleRenewal = await terminal(stub, "renewTaskSubmissionAuthority", {
+        effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-submitting",
+        commandDeadlineAt: 8_000,
+        now: 5_001,
+      });
+      expect(staleRenewal.value).toBe(false);
+
+      const beforeRecovery = await terminal(stub, "sandbox");
+      expect(await terminal(stub, "claimYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-submitting",
+        version: (beforeRecovery.value as { version: number }).version,
+        claimId: "retirement-claim",
+        claimExpiresAt: 9_000_000,
+        now: 5_001,
+      })).toMatchObject({ value: true });
+      expect(await terminal(stub, "cancelTaskAfterProviderCleanup", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        providerTaskName: "submitting-command",
+        claimId: "retirement-claim",
+        now: 5_002,
+      })).toMatchObject({ value: true });
+      expect(await terminal(stub, "retireYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-submitting",
+        claimId: "wrong-claim",
+        leaseExpiresAt: 9_000_000,
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 5_003,
+      })).toMatchObject({ value: null });
+      const retired = await terminal(stub, "retireYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-submitting",
+        claimId: "retirement-claim",
+        leaseExpiresAt: 9_000_000,
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 5_004,
+      });
+      expect(retired.value).toMatchObject({
+        generation: 2,
+        sandboxId: null,
+        lifecycleState: "starting",
+        operationRunId: RUN_B,
+      });
+    });
+
+    it("token-fences generation retirement after lifecycle proves the sandbox absent", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        lifecycleState: "archived",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        providerTaskName: "missing-sandbox-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 2_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+          2_500,
+          RUN_A,
+        );
+      });
+      const beforeClaim = await terminal(stub, "sandbox");
+      const claim = await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "expiring",
+        claimId: "missing-sandbox-claim",
+        claimExpiresAt: 9_000_000,
+        generation: 1,
+        version: (beforeClaim.value as { version: number }).version,
+        now: 3_000,
+      });
+      expect(claim.value).toEqual({ sandboxId: "daytona-lifecycle-missing" });
+      expect(await terminal(stub, "renewLifecycleClaim", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        claimId: "wrong-claim",
+        claimExpiresAt: 10_000_000,
+        now: 3_000,
+      })).toMatchObject({ value: false });
+      expect(await terminal(stub, "renewLifecycleClaim", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        claimId: "missing-sandbox-claim",
+        claimExpiresAt: 10_000_000,
+        now: 3_000,
+      })).toMatchObject({ value: true });
+      expect(await terminal(stub, "cancelTaskAfterProviderCleanup", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        providerTaskName: "missing-sandbox-command",
+        claimId: "missing-sandbox-claim",
+        now: 3_001,
+      })).toMatchObject({ value: true });
+      expect(await terminal(stub, "retireMissingSandboxAfterLifecycleClaim", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        claimId: "wrong-claim",
+        now: 3_002,
+      })).toMatchObject({ value: null });
+      const retired = await terminal(stub, "retireMissingSandboxAfterLifecycleClaim", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-missing",
+        claimId: "missing-sandbox-claim",
+        now: 3_003,
+      });
+      expect(retired.value).toMatchObject({
+        generation: 2,
+        sandboxId: null,
+        lifecycleState: "starting",
+        operationRunId: RUN_A,
+      });
+    });
+
+    it("does not revive an expired lifecycle cleanup token", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "needs_input");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-expired-lifecycle-claim",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      const beforeClaim = await terminal(stub, "sandbox");
+      expect(await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "stopping",
+        claimId: "expired-lifecycle-claim",
+        claimExpiresAt: 4_000,
+        generation: 1,
+        version: (beforeClaim.value as { version: number }).version,
+        now: 3_000,
+      })).toMatchObject({ value: { sandboxId: "daytona-expired-lifecycle-claim" } });
+
+      expect(await terminal(stub, "renewLifecycleClaim", {
+        generation: 1,
+        sandboxId: "daytona-expired-lifecycle-claim",
+        claimId: "expired-lifecycle-claim",
+        claimExpiresAt: 10_000,
+        now: 4_000,
+      })).toMatchObject({ value: false });
+    });
+
+    it("exposes a failed holder's retained task for provider cleanup", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A, { operationLeaseExpiresAt: 1_500 });
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-failed-holder",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-failed-holder",
+        providerTaskName: "failed-holder-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 2_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET status = 'failed' WHERE run_id = ?`, RUN_A);
+      });
+
+      const blocked = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 3_000,
+      });
+      expect(blocked.value).toBeNull();
+      const beforeRecovery = await terminal(stub, "sandbox");
+      const recovery = await terminal(stub, "claimYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-failed-holder",
+        version: (beforeRecovery.value as { version: number }).version,
+        claimId: "failed-holder-recovery",
+        claimExpiresAt: 9_000_000,
+        now: 3_001,
+      });
+      expect(recovery.value).toBe(true);
+    });
+
     it("treats a waiting run as still holding the workspace", async () => {
       const stub = agent();
       await boot(stub);
@@ -661,6 +1131,107 @@ describe("Terminal authority on real workerd", () => {
         now: 2_000,
       });
       expect(contender.value).toBeNull();
+    });
+
+    it("prevents a stopped holder from admitting a command after lease handoff", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-admission-race",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+          1_500,
+          RUN_A,
+        );
+      });
+      const successor = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_000,
+      });
+      expect(successor.value).toMatchObject({ operationRunId: RUN_B });
+
+      const staleAdmission = await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-admission-race",
+        providerTaskName: "stale-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 5_000,
+        startedAt: 1_000,
+        now: 2_001,
+      });
+      expect(staleAdmission.value).toBe(false);
+      expect((await terminal(stub, "taskByEffect", EFFECT_A)).value).toBeNull();
+    });
+
+    it("does not convert an expired lifecycle transition into operation ownership", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "needs_input");
+        seedRunRow(state, RUN_B, "admitted");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-race",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      const beforeLifecycle = await terminal(stub, "sandbox");
+      await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "stopping",
+        claimId: "expired-lifecycle-claim",
+        claimExpiresAt: 1_500,
+        generation: 1,
+        version: (beforeLifecycle.value as { version: number }).version,
+        now: 1_100,
+      });
+      const transitional = await terminal(stub, "sandbox");
+      const recovery = await terminal(stub, "claimYieldedOperationRecovery", {
+        runId: RUN_B,
+        generation: 1,
+        sandboxId: "daytona-lifecycle-race",
+        version: (transitional.value as { version: number }).version,
+        claimId: "operation-recovery",
+        claimExpiresAt: 9_000_000,
+        now: 2_000,
+      });
+      expect(recovery.value).toBe(false);
+      expect(await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_001,
+      })).toMatchObject({ value: null });
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({
+        lifecycleState: "stopping",
+        lifecycleClaimId: "expired-lifecycle-claim",
+        operationRunId: RUN_A,
+      });
     });
 
     it("reclaims an expired lease even while its holder still runs", async () => {
@@ -1097,11 +1668,21 @@ describe("Terminal authority on real workerd", () => {
         seedEffect(state, effect, RUN_A);
       });
       await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-command-tasks",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
       await terminal(stub, "insertTask", {
         taskId: "00000000-0000-7000-8000-0000000000t1",
         runId: RUN_A,
         effectIntentId: effect,
         sandboxGeneration: 1,
+        sandboxId: "daytona-command-tasks",
         providerTaskName: "avalon-task-one",
         commandSha256: "c".repeat(64),
         commandDeadlineAt: 9_000_000,
@@ -1118,6 +1699,7 @@ describe("Terminal authority on real workerd", () => {
         runId: RUN_A,
         effectIntentId: effect,
         sandboxGeneration: 1,
+        sandboxId: "daytona-command-tasks",
         providerTaskName: "avalon-task-one",
         commandSha256: "c".repeat(64),
         commandDeadlineAt: 9_000_000,
@@ -1146,11 +1728,21 @@ describe("Terminal authority on real workerd", () => {
         seedEffect(state, effect, RUN_A);
       });
       await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-live-task",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
       await terminal(stub, "insertTask", {
         taskId: "00000000-0000-7000-8000-0000000000t3",
         runId: RUN_A,
         effectIntentId: effect,
         sandboxGeneration: 1,
+        sandboxId: "daytona-live-task",
         providerTaskName: "avalon-task-two",
         commandSha256: "c".repeat(64),
         commandDeadlineAt: 9_000_000,
@@ -1163,6 +1755,68 @@ describe("Terminal authority on real workerd", () => {
       // though the row is still `running`; that is what stops a lost command
       // from pinning the workspace.
       expect((await terminal(stub, "hasLiveTask", 1, 9_000_001)).value).toBe(false);
+    });
+
+    it("does not settle a command while lifecycle owns provider authority", async () => {
+      const stub = agent();
+      const effect = "00000000-0000-7000-8000-0000000000f5";
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedEffect(state, effect, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-result",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: "00000000-0000-7000-8000-0000000000a5",
+        runId: RUN_A,
+        effectIntentId: effect,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-lifecycle-result",
+        providerTaskName: "avalon-task-lifecycle-result",
+        commandSha256: "c".repeat(64),
+        commandDeadlineAt: 2_000,
+        startedAt: 1_500,
+        now: 1_500,
+      });
+      const beforeClaim = await terminal(stub, "sandbox");
+      await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "stopping",
+        claimId: "lifecycle-result-claim",
+        claimExpiresAt: 9_000_000,
+        generation: 1,
+        version: (beforeClaim.value as { version: number }).version,
+        now: 3_000,
+      });
+
+      expect(await terminal(stub, "settleTask", {
+        effectIntentId: effect,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-lifecycle-result",
+        state: "completed",
+        exitCode: 0,
+        terminationReason: "exited",
+        stdoutHead: "late",
+        stdoutTail: "",
+        stderrHead: "",
+        stderrTail: "",
+        stdoutBytes: 4,
+        stderrBytes: 0,
+        completedAt: 3_001,
+        now: 3_001,
+      })).toMatchObject({ value: false });
+      expect((await terminal(stub, "taskByEffect", effect)).value)
+        .toMatchObject({ state: "submitting", stdoutHead: "" });
     });
   });
 

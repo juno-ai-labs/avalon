@@ -154,8 +154,9 @@ auto-restart it.
 
 The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
-15-minute auto-stop is only a provider backstop. Due transitions use a short
-object-local claim and reconcile observed provider state after ambiguous calls. Before stop
+15-minute auto-stop is only a provider backstop. Due transitions use a bounded
+object-local claim that outlives the provider request limit and reconcile
+observed provider state after ambiguous calls. Before stop
 or deletion Avalon saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
@@ -443,6 +444,91 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-22 — A yielded harness run no longer holds Terminal for sixteen minutes
+
+**What changed:** The work-stream operation lease now distinguishes a harness
+execution that can still run (`admitted`, `running`, `waiting`, or `steering`)
+from one that yielded as `needs_input`. A linked run may take over from the
+yielded holder before the lease's sixteen-minute safety deadline, but no foreign
+run may take over while that holder has a `planned`, `submitting`, or `running`
+Terminal task. Task admission is fenced on the exact live run, operation owner,
+generation, and provider sandbox. It is recorded as `submitting` until Daytona
+returns the exact command ID; during the provider-request window,
+that state is exclusive provider-await authority and cleanup cannot begin.
+Daytona revalidates and renews that exact authority immediately before every
+provider session-create, replacement, and command-submit mutation. Once Daytona
+accepts the command, the same atomic update changes the task to `running` and
+moves its deadline to the requested command-plus-observation horizon. A linked run
+then deletes the exact retained Daytona session, or confirms the whole sandbox
+stopped, before it settles that durable task and atomically takes the lease. A
+`submitting` task with no visible session is different: Avalon deletes the old
+sandbox and advances to a fresh generation so a late request targets only the
+retired provider id. Before final expiry, provider-level 404 follows the same
+token-fenced task cancellation and generation-retirement path; once expiry is
+due, the same evidence settles `expired` and preserves the recorded final diff
+instead of creating a replacement generation. An exact object-local cleanup
+token excludes competing tools and lifecycle work across each provider await;
+that token is renewed before every provider mutation and cannot be revived
+after expiry, so a stale cleanup continuation cannot stop or delete a
+successor's sandbox. Foreground and scheduled recovery reuse Terminal's
+established sixteen-minute operation-authority window rather than introducing
+another defensive timeout. Each claim is renewed before another provider
+mutation. Scheduled lifecycle cleanup retires a `submitting` task whose named
+session is missing without waiting for a later human-linked run;
+ordinary successful-command cleanup never stops the whole sandbox on a session
+deletion error. Aborted commands remain unsettled until recovery confirms
+quiescence. A transient recovery failure releases its internal claim without
+publishing a stale member-facing lifecycle failure. If a late provider call
+returns a definitive result after recovery settled first, the obsolete runtime
+keeps the bounded value locally, but the harness receipt fence discards it. It
+publishes no command-log attachment, performs no provider cleanup, and cannot
+rewrite the durable cancellation. Automatic command-log publication begins
+only after the exact active task wins terminal settlement. The lifecycle sweep never clears a missing sandbox reference while
+an unsettled task survives. The five-second
+`sandbox_busy.retryAfterMs` remains retry cadence, not a promise that the
+exclusive lease has already become available.
+
+**Why:** Fresh post-deployment Computer Use stopped a command, then deliberately
+submitted a different command rather than replaying the ambiguous write. That
+second command lost provider observation, retained its named Daytona session,
+and terminalized its harness run as `needs_input`. The lease liveness query had
+preserved the retired compatibility vocabulary in which `needs_input` counted
+as active. Because answering or following up admits a new linked run, the old
+execution had no path that could release its lease; five later read attempts
+received `sandbox_busy` for more than four minutes and would have remained
+blocked until the fixed sixteen-minute deadline.
+
+**Considered and rejected:** Treating every `needs_input` row as immediately
+free, or using the nominal execution deadline as a quiescence boundary.
+`command_outcome_unknown` is raised before its durable Terminal task is settled,
+and Daytona retains that named session for exact-receipt recovery. Before
+acceptance, the deadline covers only the bounded provider request; after
+acceptance, the task moves to a command-plus-observation horizon. Neither clock
+is accepted as quiescence evidence: a lost response can outlive Avalon's local
+observation while the named provider session remains authoritative. The repair
+still requires provider-
+confirmed session deletion, whole-sandbox stop, or deletion and fresh-generation
+replacement. It never replays or declares the ambiguous command resolved.
+
+**Consequences:** A linked run may inspect or repair a Terminal workspace once
+provider cleanup is confirmed, without waiting for an unrelated sixteen-minute
+operation lease. Active harness executions still return `sandbox_busy` while
+their operation lease is valid; every unsettled retained task does so regardless
+of task or lease expiry. Exact-token task settlement blocks a late continuation
+from rewriting the cancellation or deleting the successor's provider session.
+Cleanup has no item cap: the input is the finite set of durable tasks already
+present, and each successful iteration settles one before handoff. An unexpired
+lifecycle token blocks operation acquisition, and expiry does not convert it
+into operation authority. Scheduled lifecycle reconciliation remains the only
+successor for that transitional state. Exact renewal before each provider
+mutation cannot revive an expired token, so the obsolete continuation cannot
+start another provider mutation after the scheduler replaces its claim. Real-
+workerd tests pin the lease/task/claim predicates, runtime
+tests pin pre-admission and pre-provider-confirmation races, contender
+exclusion, confirmed-stop fallback, and cleanup-failure behavior, and Daytona
+provider tests pin cancellation rechecks plus exact idempotent named-session
+deletion without a hidden whole-sandbox stop.
 
 ### 2026-08-22 — Member stop closes the in-flight Terminal receipt first
 

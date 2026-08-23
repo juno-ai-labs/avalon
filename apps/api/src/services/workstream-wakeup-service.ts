@@ -75,7 +75,7 @@ export class WakeupInputError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly hint: string,
+    reason: string,
     available?: string[],
   ) {
     super(message);
@@ -84,7 +84,7 @@ export class WakeupInputError extends Error {
       .filter((candidate) => candidate.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
       .slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES);
     this.details = {
-      reason: hint,
+      reason,
       ...(boundedAvailable.length ? { available: boundedAvailable } : {}),
     };
   }
