@@ -30,8 +30,8 @@ The call sites, each on the path from stored text to a reader:
 | Surface | Call site | Entry point |
 | --- | --- | --- |
 | Markdown surfaces in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
-| The digest email's HTML | `services/digest-email-content.ts` (`digestMarkdownToHtml`) | `normalizeModelMarkdown` |
-| The digest email's plain-text alternative | `services/digest-email-content.ts` (`digestMarkdownToText`) | `normalizeModelText` |
+| Every Avalon email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
+| Every Avalon email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
 | An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
 | A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 | A generated work-stream title | `services/workstream-naming-service.ts` (`normalizeGeneratedTitle`) | `normalizeModelText` |
@@ -233,7 +233,7 @@ halves are kept.
 
 ```bash
 pnpm --filter @avalon/contracts exec vitest run src/model-markdown.test.ts
-pnpm --filter @avalon/api exec vitest run test/digest-email-content.test.ts
+pnpm --filter @avalon/api exec vitest run test/email-markdown.test.ts
 pnpm --filter @avalon/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 ```
 
@@ -252,10 +252,12 @@ escaping rule is visible as a difference rather than stated only in prose.
 
 **What changed:** `normalizeModelMarkdown` and `normalizeModelText` in
 `@avalon/contracts/model-markdown`, called from `MarkdownBody` (with a
-`verbatim` opt-out for the human bubble and the attachment preview), the digest
-email renderer on both its HTML and plain-text halves, the elicitation panel's
-question, options and answered label, tool-card summaries, the export file
-name, and the two API services that generate a title and a description.
+`verbatim` opt-out for the human bubble and the attachment preview), the shared
+email renderer on all three of its outputs — HTML, plain-text alternative, and
+preheader, covering the digest and automation-result emails alike — the
+elicitation panel's question, options and answered label, tool-card summaries,
+the export file name, and the two API services that generate a title and a
+description.
 `RESPONSE_FORMATTING_POLICY` was added to the work-stream system prompt and
 both meeting prompts.
 
@@ -283,6 +285,11 @@ reads `frac a b` rather than `fracab`. Slack was in the original branch as a
 `markdown_text` delivery commit and was dropped when main's #241 landed the
 same rendering repair more thoroughly; the TeX gap it leaves is recorded under
 failure modes rather than fixed blind against an unverifiable Slack behaviour.
+The branch's enriched digest-local renderer met the same fate when the shared
+`email-markdown.ts` landed on main mid-flight: the enrichment was dropped, and
+the repair — normalization plus the escape-consuming pass its contract
+requires — moved onto the shared renderer, where the automation result email
+inherits it too; `digests.md`'s changelog carries that story.
 
 **Consequences:** A surface that shows model text now has to pick an entry point,
 and picking the wrong one fails visibly — a backslash in a title, or an

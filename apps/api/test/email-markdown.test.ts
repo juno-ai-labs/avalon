@@ -128,6 +128,44 @@ describe("email markdown rendering", () => {
     expect(html).toContain("3 * 4");
   });
 
+  it("shows the character a model meant instead of the TeX it wrote, in all three outputs", () => {
+    expect(markdownToEmailHtml("Backlog $\\rightarrow$ Done")).toContain("Backlog → Done");
+    expect(markdownToEmailText("Backlog $\\rightarrow$ Done")).toBe("Backlog → Done");
+    expect(markdownToEmailPreheader("Backlog $\\rightarrow$ Done")).toBe("Backlog → Done");
+    // And leaves money and shell variables alone, which is the reason the
+    // math rule is written the way it is.
+    expect(markdownToEmailHtml("Seats cost $50 and $70")).toContain("Seats cost $50 and $70");
+    expect(markdownToEmailText("Set $DATABASE_URL first")).toBe("Set $DATABASE_URL first");
+  });
+
+  // The normalizer escapes what it unwraps on the contract that a Markdown
+  // parser downstream consumes the backslash. This renderer *is* that parser,
+  // so the escape is parked and restored as its character — and the plain-text
+  // alternative uses the entry point that manufactures no escapes at all.
+  it("consumes a Markdown escape instead of showing the backslash", () => {
+    expect(markdownToEmailHtml("Range $\\text{a\\_b}$ done")).toContain("Range a_b done");
+    expect(markdownToEmailText("Range $\\text{a\\_b}$ done")).toBe("Range a_b done");
+    // A model's own escape means the literal character, not emphasis.
+    const literal = markdownToEmailHtml("A \\*literal\\* star");
+    expect(literal).toContain("A *literal* star");
+    expect(literal).not.toContain("<em");
+  });
+
+  it("refuses to read escaped brackets as a link", () => {
+    // What the normalizer escaped is literal text; a link pass reading through
+    // the escapes would hide a target behind a label it promised was plain.
+    const html = markdownToEmailHtml("$\\text{[a](https://evil.example/x)}$");
+
+    expect(html).not.toMatch(/<a [^>]*>a<\/a>/u);
+    expect(html).toContain("[a](");
+  });
+
+  it("keeps a backslash inside a code span, where it is code and not an escape", () => {
+    const html = markdownToEmailHtml("Match `\\d+\\.` exactly");
+
+    expect(html).toContain("\\d+\\.");
+  });
+
   it("cannot be made to splice markup into a link's own href", () => {
     // The emphasis and code passes run after the link pass, over the whole
     // string. An emphasis pair inside a URL used to match there and splice this
