@@ -9,6 +9,7 @@ import {
   type ScheduleTiming,
 } from "../src/services/workspace-schedule-execution";
 import {
+  agentRunExecutionFailureDisposition,
   applyActiveStreamCheckpointEvent,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
@@ -16,6 +17,7 @@ import {
   splitActiveStreamCheckpointText,
   substreamAgentName,
 } from "../src/durable-objects/substream-agent";
+import { RunOwnershipLostError } from "../src/runtime/harness-run-runtime";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import {
   assertDurableObjectJurisdiction,
@@ -51,6 +53,12 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it("defers an obsolete executor instead of letting it fail the successor", () => {
+    expect(agentRunExecutionFailureDisposition(new RunOwnershipLostError()))
+      .toBe("defer_and_stop_drain");
+    expect(agentRunExecutionFailureDisposition(new Error("provider failed"))).toBe("fail");
+  });
+
   it.each([
     ["global", "-122.4194", "wnam"],
     ["global", "-73.9857", "enam"],

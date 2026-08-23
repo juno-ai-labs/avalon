@@ -13,7 +13,11 @@ import {
   type SkillSummary,
 } from "@juno-ai/bind/skills";
 import { utf8ByteLength } from "@juno-ai/bind/skills";
-import type { ToolDefinition } from "@avalon/contracts";
+import {
+  MAXIMUM_FAILURE_AVAILABLE_VALUES,
+  MAXIMUM_FAILURE_VALUE_LENGTH,
+  type ToolDefinition,
+} from "@avalon/contracts";
 import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
 
 /**
@@ -246,7 +250,6 @@ export async function createSkillRuntime(input: {
               `Cannot load ${summary.name}: ${decision.reason}. Continue with the skills already active or start a new run with a narrower skill set.`,
               {
                 reason: decision.reason,
-                available: [...activeRefs].map(refName).sort(),
               },
             );
           }
@@ -292,12 +295,16 @@ export async function createSkillRuntime(input: {
       const path = stringArgument(raw, "path");
       const resource = registered(summary)?.def.resources?.find((entry) => entry.path === path);
       if (!resource) {
+        const available = (registered(summary)?.def.resources ?? [])
+          .map((entry) => entry.path)
+          .filter((candidate) => candidate.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+          .slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES);
         throw skillToolFailure(
           "resource_not_found",
           `Skill ${summary.name} has no resource ${path || "(unnamed)"}. Retry with one of its listed resource paths.`,
           {
             reason: "Use a resource path returned when the skill was loaded.",
-            available: (registered(summary)?.def.resources ?? []).map((entry) => entry.path),
+            ...(available.length ? { available } : {}),
           },
         );
       }
@@ -326,10 +333,6 @@ export async function createSkillRuntime(input: {
       };
     },
   }));
-
-  function refName(ref: string): string {
-    return isCodeSkillRef(ref) ? codeSkillNameFromRef(ref) : ref;
-  }
 
   if (input.activationHints?.length) {
     await runtime.activation.activateSkills(input.activationHints);

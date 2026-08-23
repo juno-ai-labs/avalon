@@ -13,7 +13,14 @@
  * neither of those has to import the other through here.
  */
 import type { ExecutionPrincipal } from "@avalon/contracts";
-import { ExecutionPrincipalSchema, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import {
+  ExecutionPrincipalSchema,
+  MAXIMUM_FAILURE_AVAILABLE_VALUES,
+  MAXIMUM_FAILURE_VALUE_LENGTH,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -74,7 +81,13 @@ export class WakeupInputError extends Error {
   ) {
     super(message);
     this.name = "WakeupInputError";
-    this.details = { reason: hint, ...(available ? { available } : {}) };
+    const boundedAvailable = (available ?? [])
+      .filter((candidate) => candidate.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+      .slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES);
+    this.details = {
+      reason: hint,
+      ...(boundedAvailable.length ? { available: boundedAvailable } : {}),
+    };
   }
 
   readonly details: { reason: string; available?: string[] };

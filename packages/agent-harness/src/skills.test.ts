@@ -263,6 +263,41 @@ describe("skills in a run", () => {
     expect(systemPrompt(observed[1] as Record<string, unknown>)).not.toContain(huge.body);
   });
 
+  it("reports an active-skill cap without calling already-loaded skills available", async () => {
+    const responses = [
+      toolCallResponse("load_skill", { name: handover.name }),
+      textResponse("worked from the active skill"),
+    ];
+    const observed: unknown[] = [];
+    const events: HarnessEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    const base = runInput(fetcher);
+    await runHarness({
+      ...base,
+      config: { ...base.config, maxActiveSkills: 1 },
+      skills: [triage, handover],
+      skillActivationHints: ["platform:triaging-inbound-work"],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    const toolMessage = messagesOf(observed[1]).find((message) => message.role === "tool");
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      data: { code: string; details: { reason: string; available?: string[] } };
+    };
+    expect(result).toMatchObject({
+      success: false,
+      data: { code: "skill_limit_reached", details: { reason: expect.any(String) } },
+    });
+    expect(result.data.details).not.toHaveProperty("available");
+    expect(events.filter((event) => event.type === "tool_failed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "tool_completed")).toHaveLength(0);
+  });
+
   it("does not offer a skill whose owner plugin is outside the run's scope", async () => {
     const owned: HarnessSkill = { ...triage, name: "drafting-with-web", ownerPlugin: "avalon:web" };
     const bodies: Array<Record<string, unknown>> = [];
@@ -334,6 +369,51 @@ describe("skills in a run", () => {
     expect(payload).toContain("exceeds the 1000-byte read limit");
     // The cap holds: the whole 5,000-byte body never reaches the transcript.
     expect(payload.length).toBeLessThan(3_000);
+  });
+
+  it("bounds missing-resource recovery paths without dropping the recovery reason", async () => {
+    const longPath = `references/${"x".repeat(170)}.md`;
+    const resources = [
+      { path: longPath, body: "too long to forward" },
+      ...Array.from({ length: 21 }, (_, index) => ({
+        path: `references/example-${String(index).padStart(2, "0")}.md`,
+        body: `example ${index}`,
+      })),
+    ];
+    const crowded: HarnessSkill = { ...handover, name: "crowded-resources", resources };
+    const responses = [
+      toolCallResponse("load_skill", { name: crowded.name }),
+      toolCallResponse("read_skill_resource", { name: crowded.name, path: "references/missing.md" }),
+      textResponse("used a listed path"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    const base = runInput(fetcher);
+    await runHarness({
+      ...base,
+      config: { ...base.config, maxIterations: 6 },
+      skills: [crowded],
+    });
+
+    const toolMessage = messagesOf(observed[2]).filter((message) => message.role === "tool").pop();
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      data: { code: string; details: { reason: string; available: string[] } };
+    };
+    expect(result).toMatchObject({
+      success: false,
+      data: {
+        code: "resource_not_found",
+        details: { reason: "Use a resource path returned when the skill was loaded." },
+      },
+    });
+    expect(result.data.details.available).toHaveLength(20);
+    expect(result.data.details.available).not.toContain(longPath);
+    expect(result.data.details.available[0]).toBe("references/example-00.md");
   });
 
   it("adds no skill surface at all to a run without skills", async () => {

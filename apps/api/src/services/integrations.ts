@@ -688,6 +688,30 @@ function classifyHarnessToolFailure(
   };
 }
 
+async function resolveValidationFailureInvocation(
+  toolCallId: string,
+  resolveStartedInvocationId: (toolCallId: string) => string | undefined,
+  persistValidationReceipt: () => Promise<{
+    invocationId: string;
+    state: "created" | "resume_read" | "replay_completed" | "ambiguous_external_write";
+  }>,
+): Promise<{ invocationId: string; planAlreadyAmbiguous: boolean }> {
+  // A schema/refinement error may be emitted before `tool_started` (invalid
+  // JSON or host authorization) or after it (the executor rejected its parsed
+  // arguments). Only the first case needs a validation-only receipt. Looking
+  // up any row by coordinate is not enough: a resumed pass may find an older
+  // receipt that this validation event never started against.
+  const startedInvocationId = resolveStartedInvocationId(toolCallId);
+  if (startedInvocationId) {
+    return { invocationId: startedInvocationId, planAlreadyAmbiguous: false };
+  }
+  const receipt = await persistValidationReceipt();
+  return {
+    invocationId: receipt.invocationId,
+    planAlreadyAmbiguous: receipt.state === "ambiguous_external_write",
+  };
+}
+
 function createConnectorToolContext(
   connection: AuthorizedConnectorConnection,
   principal: ExecutionPrincipal,
@@ -2969,36 +2993,39 @@ export async function runWorkstreamHarness(
           }, harnessTools);
           const { ambiguous, errorCode, checkpointPhase } = classifyHarnessToolFailure(event);
           if (ambiguous) ambiguousToolOutcome = true;
-          const inputHash = await canonicalToolInputHash({});
           let invocationId: string;
           let planAlreadyAmbiguous = false;
           if (event.phase === "validation") {
-            const mode = receiptPolicy.definition.mode;
-            const executionPlan = {
-              pluginId: receiptPolicy.pluginId,
-              canonicalToolName: receiptPolicy.definition.name,
-              capability: receiptPolicy.definition.capability,
-              connectionId: receiptPolicy.connectionId,
-              phase: "validation",
-              mode,
-              idempotency: receiptPolicy.definition.idempotency,
-              toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-            };
-            const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
-              harnessRunId: input.harnessRunId,
-              workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
-              inputHash,
-              input: {},
-              plan: executionPlan,
-              compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
-              mode,
-            });
-            invocationId = receipt.invocationId;
-            planAlreadyAmbiguous = receipt.state === "ambiguous_external_write";
+            ({ invocationId, planAlreadyAmbiguous } = await resolveValidationFailureInvocation(
+              event.toolCallId,
+              toolEffectIntents.resolve,
+              async () => {
+                const mode = receiptPolicy.definition.mode;
+                const executionPlan = {
+                  pluginId: receiptPolicy.pluginId,
+                  canonicalToolName: receiptPolicy.definition.name,
+                  capability: receiptPolicy.definition.capability,
+                  connectionId: receiptPolicy.connectionId,
+                  phase: "validation",
+                  mode,
+                  idempotency: receiptPolicy.definition.idempotency,
+                  toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+                };
+                return persistToolExecutionPlan(env.DB, liveness.lease, {
+                  harnessRunId: input.harnessRunId,
+                  workspaceId: input.workspaceId,
+                  workstreamId: input.workstreamId,
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
+                  inputHash: await canonicalToolInputHash({}),
+                  input: {},
+                  plan: executionPlan,
+                  compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
+                  mode,
+                });
+              },
+            ));
             if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
           } else {
             const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
@@ -4040,40 +4067,52 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 if (receiptPolicy.definition.mode !== "read") {
                   throw new ConnectorError("unauthorized", "Child write tool rejected");
                 }
-                const inputHash = await canonicalToolInputHash({});
-                let invocation = await loadToolInvocation(options.env, childInput.harnessRunId, event.toolCallId);
-                if (!invocation && event.phase === "validation") {
-                  const executionPlan = {
-                    pluginId: receiptPolicy.pluginId,
-                    canonicalToolName: receiptPolicy.definition.name,
-                    capability: receiptPolicy.definition.capability,
-                    connectionId: receiptPolicy.connectionId,
-                    phase: "validation",
-                    mode: receiptPolicy.definition.mode,
-                    idempotency: receiptPolicy.definition.idempotency,
-                    toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-                  };
-                  const receipt = await persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
-                    harnessRunId: childInput.harnessRunId,
-                    workspaceId: childInput.workspaceId,
-                    workstreamId: childInput.workstreamId,
-                    toolCallId: event.toolCallId,
-                    toolName: event.toolName,
-                    ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
-                    inputHash,
-                    input: {},
-                    plan: executionPlan,
-                    compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
-                    mode: receiptPolicy.definition.mode,
-                  });
-                  invocation = await loadToolInvocation(options.env, childInput.harnessRunId, event.toolCallId);
-                  if (receipt.state === "ambiguous_external_write") throw new Error("tool_receipt_input_mismatch");
+                let invocationId: string;
+                if (event.phase === "validation") {
+                  const resolved = await resolveValidationFailureInvocation(
+                    event.toolCallId,
+                    childToolEffectIntents.resolve,
+                    async () => {
+                      const executionPlan = {
+                        pluginId: receiptPolicy.pluginId,
+                        canonicalToolName: receiptPolicy.definition.name,
+                        capability: receiptPolicy.definition.capability,
+                        connectionId: receiptPolicy.connectionId,
+                        phase: "validation",
+                        mode: receiptPolicy.definition.mode,
+                        idempotency: receiptPolicy.definition.idempotency,
+                        toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+                      };
+                      return persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
+                        harnessRunId: childInput.harnessRunId,
+                        workspaceId: childInput.workspaceId,
+                        workstreamId: childInput.workstreamId,
+                        toolCallId: event.toolCallId,
+                        toolName: event.toolName,
+                        ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
+                        inputHash: await canonicalToolInputHash({}),
+                        input: {},
+                        plan: executionPlan,
+                        compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
+                        mode: receiptPolicy.definition.mode,
+                      });
+                    },
+                  );
+                  if (resolved.planAlreadyAmbiguous) throw new Error("tool_receipt_input_mismatch");
+                  invocationId = resolved.invocationId;
+                } else {
+                  const invocation = await loadToolInvocation(
+                    options.env,
+                    childInput.harnessRunId,
+                    event.toolCallId,
+                  );
+                  if (!invocation) throw new Error("tool_execution_plan_missing");
+                  invocationId = invocation.id;
                 }
-                if (!invocation) throw new Error("tool_execution_plan_missing");
                 const failure = classifyHarnessToolFailure(event);
                 await finalizeToolInvocationFailure(options.env.DB, childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
-                  invocationId: invocation.id,
+                  invocationId,
                   status: "failed",
                   phase: failure.checkpointPhase,
                   error: {
@@ -4088,7 +4127,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   workspaceId: childInput.workspaceId,
                   workstreamId: childInput.workstreamId,
                   harnessRunId: childInput.harnessRunId,
-                  invocationId: invocation.id,
+                  invocationId,
                 }).catch(() => undefined);
                 break;
               }
@@ -6498,19 +6537,13 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           context.providerIdempotencyKey,
         );
         const zones = await runLocalTimezones(env, input);
-        let resolved;
-        try {
-          resolved = resolveWakeupInstant({
-            delay: args.delay,
-            at: args.at,
-            timezone: args.timezone,
-            defaultTimezone: zones.local,
-            now: new Date(),
-          });
-        } catch (error) {
-          if (!(error instanceof WakeupInputError)) throw error;
-          throw error;
-        }
+        const resolved = resolveWakeupInstant({
+          delay: args.delay,
+          at: args.at,
+          timezone: args.timezone,
+          defaultTimezone: zones.local,
+          now: new Date(),
+        });
 
         // A replay resolves to the wake-up the first attempt persisted. Check it
         // before the cap, so a retry cannot be refused by a limit its own first
@@ -7489,6 +7522,7 @@ export const __integrationTesting = {
   reauthorizeFrozenPlugin,
   createTextDeltaBatcher,
   classifyHarnessToolFailure,
+  resolveValidationFailureInvocation,
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,
   reconcileRecoverableTerminalWrite,

@@ -1,4 +1,10 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import {
+  asHarnessRunId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  readStructuredFailure,
+} from "@avalon/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -676,6 +682,27 @@ describe("wake-up tools", () => {
       details: {
         reason: expect.stringContaining("cancel one pending wake-up"),
         available: expect.arrayContaining([expect.any(String)]),
+      },
+    });
+  });
+
+  it("bounds wake-up recovery IDs before structured-failure sanitization", () => {
+    const valid = Array.from(
+      { length: MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM + 5 },
+      (_, index) => `wakeup-${String(index).padStart(2, "0")}`,
+    );
+    const failure = new WakeupInputError(
+      "wakeup_limit_reached",
+      "Too many wake-ups",
+      "Cancel one pending wake-up before retrying.",
+      [`wakeup-${"x".repeat(170)}`, ...valid],
+    );
+
+    expect(readStructuredFailure(failure)).toEqual({
+      code: "wakeup_limit_reached",
+      details: {
+        reason: "Cancel one pending wake-up before retrying.",
+        available: valid.slice(0, MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM),
       },
     });
   });
