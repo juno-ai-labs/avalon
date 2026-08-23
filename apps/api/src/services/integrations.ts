@@ -183,6 +183,7 @@ import {
 } from "./workstream-wakeup-service";
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
+import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
   admitInlineChildAttempt,
@@ -2042,20 +2043,8 @@ export async function runWorkstreamHarness(
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "stopped") return { status: "stopped" };
   const blockDashboardRun = initialRun.origin === "block_dashboard_block"
-    ? await env.DB.prepare(
-        `SELECT id, block_id, configuration_version_id, prompt, status, markdown, error_json, created_at
-           FROM block_dashboard_block_runs
-          WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-      ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
-        id: string;
-        block_id: string;
-        configuration_version_id: string;
-        prompt: string;
-        status: string;
-        markdown: string | null;
-        error_json: string | null;
-        created_at: string;
-      }>()
+    ? await createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId)
+      .blockRunForHarnessRun({ harnessRunId: input.harnessRunId })
     : null;
   if (initialRun.origin === "block_dashboard_block" && !blockDashboardRun) {
     return { status: "failed", error: { code: "block_dashboard_run_not_found", message: "HyperSight block run not found" } };
@@ -2157,7 +2146,7 @@ export async function runWorkstreamHarness(
     harnessTools.corePlugins.push(blockDashboardSubmissionPlugin(
       blockDashboardBlock,
       async (markdown) => {
-        await persistBlockDashboardBlockMarkdown(env, input, liveness.lease, blockDashboardRun.id, markdown);
+        await persistBlockDashboardBlockMarkdown(env, input, liveness.lease, blockDashboardRun.block_run_id, markdown);
       },
     ));
   }
@@ -3109,40 +3098,37 @@ export async function runWorkstreamHarness(
   // so `blockDashboardBlock` can be empty on an attempt that nonetheless has a
   // block — reading it back is what stops that becoming a lost block.
   const submitted = blockDashboardRun
-    ? attachmentBoundary ?? blockDashboardBlock.markdown ?? await readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.id)
+    ? attachmentBoundary ?? blockDashboardBlock.markdown ?? await readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.block_run_id)
     : null;
-  const finalTerminalResult = blockDashboardRun
+  // Held separately from `finalTerminalResult` so its narrower status type
+  // survives: `blockDashboardBlockOutcome` has already turned `needs_input`
+  // into a failure, which is what lets the block row's status be written
+  // without a cast. The two are non-null together by construction.
+  const blockOutcome = blockDashboardRun
     ? blockDashboardBlockOutcome(terminalResult, submitted)
-    : terminalResult;
-  if (blockDashboardRun) {
+    : null;
+  const finalTerminalResult = blockOutcome ?? terminalResult;
+  if (blockDashboardRun && blockOutcome) {
     const at = nowIso();
-    const { status: blockStatus, error } = finalTerminalResult;
-    const result = await env.DB.prepare(
-      `UPDATE block_dashboard_block_runs
-          SET status = ?, markdown = ?, error_json = ?, completed_at = ?
-        WHERE id = ? AND harness_run_id = ? AND status IN ('queued', 'running')
-          AND EXISTS (
-            SELECT 1 FROM harness_runs
-             WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-               AND status = 'running' AND terminalized_at IS NULL
-               AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          )`,
-    ).bind(
-      blockStatus,
-      submitted,
-      error ? JSON.stringify(error) : null,
-      at,
-      blockDashboardRun.id,
-      input.harnessRunId,
-      input.harnessRunId,
-      liveness.lease.attemptId,
-      liveness.lease.owner,
-    ).run();
-    if (Number(result.meta.changes ?? 0) !== 1) throw new Error("block_dashboard_result_ownership_lost");
-    const latest = await env.DB.prepare(
-      `SELECT id FROM block_dashboard_configuration_versions
-       WHERE workspace_id = ? AND workstream_id = ? ORDER BY version_number DESC LIMIT 1`,
-    ).bind(input.workspaceId, input.workstreamId).first<{ id: string }>();
+    const { status: blockStatus, error } = blockOutcome;
+    const blocks = createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId);
+    // The lease fence and the write are one transaction on the object now, so
+    // "did this land" is the operation's answer rather than a `meta.changes`
+    // count read back from a statement that restated the fence in SQL.
+    const settled = await blocks.settleBlockRun({
+      blockRunId: blockDashboardRun.block_run_id,
+      status: blockStatus,
+      markdown: submitted,
+      errorJson: error ? JSON.stringify(error) : null,
+      fence: {
+        harnessRunId: input.harnessRunId,
+        attemptId: liveness.lease.attemptId,
+        owner: liveness.lease.owner,
+      },
+      now: Date.parse(at),
+    });
+    if (settled !== "written") throw new Error("block_dashboard_result_ownership_lost");
+    const latestConfigurationVersionId = await blocks.latestConfigurationVersionId();
     await emitProductUsageTelemetry(env, {
       workspaceId: input.workspaceId,
       ...(input.executionPrincipal.type === 'user'
@@ -3155,8 +3141,8 @@ export async function runWorkstreamHarness(
         result: blockStatus === 'completed'
           ? 'success'
           : blockStatus === 'stopped' ? 'cancelled' : 'failed',
-        duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(blockDashboardRun.created_at))),
-        staleAtCompletion: latest?.id !== blockDashboardRun.configuration_version_id,
+        duration: telemetryJourneyDuration(Math.max(0, Date.now() - blockDashboardRun.created_at)),
+        staleAtCompletion: latestConfigurationVersionId !== blockDashboardRun.configuration_version_id,
       },
       operationId: input.harnessRunId,
       eventId: resourceTelemetryEventId(input.harnessRunId, 7),
@@ -3207,24 +3193,18 @@ async function persistBlockDashboardBlockMarkdown(
   blockRunId: string,
   markdown: string,
 ): Promise<void> {
-  const result = await env.DB.prepare(
-    `UPDATE block_dashboard_block_runs SET markdown = ?
-      WHERE id = ? AND harness_run_id = ? AND status IN ('queued', 'running')
-        AND EXISTS (
-          SELECT 1 FROM harness_runs
-           WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-             AND status = 'running' AND terminalized_at IS NULL
-             AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        )`,
-  ).bind(
-    markdown,
-    blockRunId,
-    input.harnessRunId,
-    input.harnessRunId,
-    lease.attemptId,
-    lease.owner,
-  ).run();
-  if (Number(result.meta.changes ?? 0) !== 1) throw new Error("block_dashboard_block_ownership_lost");
+  const written = await createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId)
+    .submitMarkdown({
+      blockRunId,
+      markdown,
+      fence: {
+        harnessRunId: input.harnessRunId,
+        attemptId: lease.attemptId,
+        owner: lease.owner,
+      },
+      now: Date.now(),
+    });
+  if (written !== "written") throw new Error("block_dashboard_block_ownership_lost");
 }
 
 /** What an earlier attempt of this run already submitted, if anything. */
@@ -3233,9 +3213,8 @@ async function readBlockDashboardBlockMarkdown(
   input: WorkstreamWorkflowInput,
   blockRunId: string,
 ): Promise<string | null> {
-  const row = await env.DB.prepare(
-    `SELECT markdown FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?`,
-  ).bind(blockRunId, input.harnessRunId).first<{ markdown: string | null }>();
+  const row = await createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId)
+    .blockRun({ blockRunId, harnessRunId: input.harnessRunId });
   return row?.markdown ?? null;
 }
 

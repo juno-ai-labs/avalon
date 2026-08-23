@@ -1061,6 +1061,43 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The block dashboard leaves the compatibility layer
+
+**What changed:** `WorkstreamBlockDashboardStorage` owns
+`block_dashboard_block_runs`, `block_dashboard_configuration_versions` and
+`block_dashboard_user_preferences`, reached through a typed port and an
+`/internal/block-dashboard` endpoint. Object schema migration 18 drops the three
+`_runtime_block_dashboard_*` views and their four triggers, and the routing
+tables lose all three entries. This is slice 2 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same reason slice 1 gives, plus one specific to these rows. Every
+member-visible write here had to hold the run's lease, and a routed statement has
+no transaction to hold that answer in — so each restated the fence as an
+`EXISTS (SELECT 1 FROM harness_runs …)` subquery and then compared `meta.changes`
+to tell a lost lease from a no-op. The fence is now read once and the write
+follows in the same `transactionSync`.
+
+**The decision worth recording** is that `admitDispatch` writes the *run* row as
+well as the two block rows, which belongs to the harness-runs slice by the PRD's
+table. It had to: the routed dispatch was a three-statement batch spanning both
+slices, and the object executed it atomically only because the router happened to
+send it as one batch. Converting the two block statements and leaving the run
+statement routed would have turned that into two round trips with a real window
+between them, in which a block run exists whose `run_id` foreign key points at
+nothing. The PRD anticipates this — it lists `block-dashboard + harness-runs` as
+a cross-slice pair, and says such statements "decide method ownership rather than
+order".
+
+**What a future change has to respect:** `recordBlockRunProgress` is
+deliberately unfenced and `settleBlockRun` is deliberately fenced. They are two
+authorities, not an inconsistency — `BlockDashboardAgent` owns the dispatch and
+writes `running` before any executor holds a lease, while the executor's claim on
+the *result* must prove it is still the attempt entitled to make one. And
+`abandonBlockRun`, like `abandonRunReceipts`, is tied to the exact
+`terminalized_at` the reaper stamped rather than to a live lease, because an
+expired lease is the reaper's whole premise.
+
 ### 2026-08-23 — The router learns `tool_effects`, the name migration 17 left it without
 
 **What changed:** `LOCAL_TABLES` in `workstream-runtime-database.ts` gains

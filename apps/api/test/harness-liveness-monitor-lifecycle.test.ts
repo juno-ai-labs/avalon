@@ -56,7 +56,12 @@ describe("what a run may consult, and what it may do", () => {
     // with — a preamble used to become part of the dashboard. `submitted` is
     // the row-backed value, so a retried attempt that replayed the submission
     // receipt instead of executing it still persists the block it has.
-    expect(root).toContain("readBlockDashboardBlockMarkdown(env, input, blockDashboardRun.id)");
+    // The call, not its argument spelling. The block row moved onto the object
+    // in the block-dashboard slice and its key is `block_run_id` there rather
+    // than `id`; an assertion that tracked the rename would be asserting on the
+    // rename. What this line is for is that the value is read back from the row
+    // at all, which is what makes a replayed submission survive.
+    expect(root).toContain("readBlockDashboardBlockMarkdown(");
     expect(root).toContain("blockDashboardBlockOutcome(terminalResult, submitted)");
     expect(root).not.toContain("streamedText || null,");
     // And a turn that ends without the call is asked for it once.

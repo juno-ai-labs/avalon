@@ -42,6 +42,11 @@ import {
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import {
+  createBlockDashboardObjectPort,
+  createBlockDashboardPortFactory,
+} from "../runtime/block-dashboard-port";
+import type { BlockRunRow } from "./workstream-block-dashboard-storage";
 import { resolveAgentModelRouting } from "../services/agent-model-flags";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import {
@@ -173,18 +178,7 @@ function terminalDispatchState(run: BlockDashboardBlockRun): "completed" | "fail
   return run.status === "failed" ? "failed" : "completed";
 }
 
-interface RuntimeBlockRow {
-  id: string;
-  block_id: string;
-  configuration_version_id: string;
-  trigger_sequence: number;
-  status: BlockDashboardBlockRun["status"];
-  markdown: string | null;
-  error_json: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-}
+
 
 export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -277,18 +271,28 @@ function parseError(value: string | null): { code: string; message: string } | n
   }
 }
 
-function blockRunFromRow(row: RuntimeBlockRow): BlockDashboardBlockRun {
+/**
+ * The object's row, in the contract's vocabulary.
+ *
+ * The translation the retired compatibility view used to perform, now done once
+ * at the wire boundary where it is visible: the object stores unix milliseconds
+ * and calls the key `block_run_id`, while `BlockDashboardBlockRunSchema`
+ * publishes ISO-8601 and `id`. Neither is wrong — one is what a client reads,
+ * the other is what SQLite sorts and compares on.
+ */
+function blockRunFromObjectRow(row: BlockRunRow): BlockDashboardBlockRun {
+  const iso = (at: number | null) => (at === null ? null : new Date(at).toISOString());
   return BlockDashboardBlockRunSchema.parse({
-    id: row.id,
+    id: row.block_run_id,
     blockId: row.block_id,
     configurationVersionId: row.configuration_version_id,
     triggerSequence: row.trigger_sequence,
     status: row.status,
     markdown: row.markdown,
     error: parseError(row.error_json),
-    createdAt: row.created_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
+    createdAt: new Date(row.created_at).toISOString(),
+    startedAt: iso(row.started_at),
+    completedAt: iso(row.completed_at),
   });
 }
 
@@ -1187,6 +1191,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     const input = await this.initializeRuntimeRun(executionEnv, dispatch);
     await reapStaleHarnessRuns(executionEnv.DB, {
       receipts: createToolReceiptPortFactory(executionEnv),
+      blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       limit: 25,
@@ -1266,7 +1271,9 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       status,
       ...(error ? { error } : {}),
       memberSafePayload: error ? { code: error.code } : {},
-    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    },
+    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     const terminal = await this.updateRuntimeBlockRun(executionEnv, dispatch, status, error);
     return this.persistAndSettle(dispatch, { run: terminal }, leaseToken);
   }
@@ -1302,65 +1309,32 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
     });
-    try {
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT OR IGNORE INTO block_dashboard_configuration_versions
-             (id, workspace_id, workstream_id, version_number, blocks_json,
-              created_by_user_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          dispatch.configurationVersionId,
-          dispatch.workspaceId,
-          dispatch.workstreamId,
-          dispatch.configurationVersionNumber,
-          JSON.stringify([{ id: dispatch.blockId, prompt: dispatch.prompt }]),
-          dispatch.workspaceId,
-          dispatch.createdAt,
-        ),
-        env.DB.prepare(
-          `INSERT INTO harness_runs
-             (id, workspace_id, workstream_id, origin, execution_principal_json,
-              status, model, created_at)
-           VALUES (?, ?, ?, 'block_dashboard_block', ?, 'scheduled', ?, ?)`,
-        ).bind(
-          dispatch.harnessRunId,
-          dispatch.workspaceId,
-          dispatch.workstreamId,
-          JSON.stringify(input.executionPrincipal),
-          model,
-          dispatch.createdAt,
-        ),
-        env.DB.prepare(
-          `INSERT INTO block_dashboard_block_runs
-             (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
-              trigger_sequence, harness_run_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
-        ).bind(
-          dispatch.blockRunId,
-          dispatch.workspaceId,
-          dispatch.workstreamId,
-          dispatch.configurationVersionId,
-          dispatch.blockId,
-          dispatch.prompt,
-          dispatch.triggerSequence,
-          dispatch.harnessRunId,
-          dispatch.createdAt,
-        ),
-      ]);
-    } catch (error) {
-      if (!(error instanceof Error) || !/UNIQUE|constraint/iu.test(error.message)) throw error;
-      const existing = await env.DB.prepare(
-        `SELECT id FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
-          AND workspace_id = ? AND workstream_id = ? AND block_id = ?`,
-      ).bind(
-        dispatch.blockRunId,
-        dispatch.harnessRunId,
-        dispatch.workspaceId,
-        dispatch.workstreamId,
-        dispatch.blockId,
-      ).first<{ id: string }>();
-      if (!existing) throw new Error("block_dashboard_runtime_initialization_conflict", { cause: error });
+    // One operation, not a three-statement batch. The configuration version, the
+    // harness run and the block row are one fact, and the object writes them in
+    // a single transaction — so the UNIQUE-constraint rescue this needed, which
+    // caught an exception and re-read to decide whether a redelivery had already
+    // landed, is now the operation's own answer.
+    const admitted = await createBlockDashboardObjectPort(
+      env,
+      dispatch.workspaceId,
+      dispatch.workstreamId,
+    ).admitDispatch({
+      configurationVersionId: dispatch.configurationVersionId,
+      versionNumber: dispatch.configurationVersionNumber,
+      blocksJson: JSON.stringify([{ id: dispatch.blockId, prompt: dispatch.prompt }]),
+      createdByUserId: dispatch.workspaceId,
+      configurationCreatedAt: Date.parse(dispatch.createdAt),
+      blockRunId: dispatch.blockRunId,
+      blockId: dispatch.blockId,
+      prompt: dispatch.prompt,
+      triggerSequence: dispatch.triggerSequence,
+      harnessRunId: dispatch.harnessRunId,
+      executionPrincipalJson: JSON.stringify(input.executionPrincipal),
+      model,
+      createdAt: Date.parse(dispatch.createdAt),
+    });
+    if (admitted !== "admitted" && admitted !== "already_admitted") {
+      throw new Error("block_dashboard_runtime_initialization_conflict");
     }
     return input;
   }
@@ -1371,41 +1345,22 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     status: BlockDashboardBlockRun["status"],
     error?: { code: string; message: string },
   ): Promise<BlockDashboardBlockRun> {
-    const now = new Date().toISOString();
-    await env.DB.prepare(
-      `UPDATE block_dashboard_block_runs SET status = ?, error_json = ?,
-         started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
-         completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN ? ELSE completed_at END
-       WHERE id = ? AND harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(
-      status,
-      error ? JSON.stringify(error) : null,
-      status,
-      now,
-      status,
-      now,
-      dispatch.blockRunId,
-      dispatch.harnessRunId,
-      dispatch.workspaceId,
-      dispatch.workstreamId,
-    ).run();
+    await createBlockDashboardObjectPort(env, dispatch.workspaceId, dispatch.workstreamId)
+      .recordBlockRunProgress({
+        blockRunId: dispatch.blockRunId,
+        harnessRunId: dispatch.harnessRunId,
+        status,
+        errorJson: error ? JSON.stringify(error) : null,
+        now: Date.now(),
+      });
     return this.readRuntimeBlockRun(env, dispatch);
   }
 
   private async readRuntimeBlockRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<BlockDashboardBlockRun> {
-    const row = await env.DB.prepare(
-      `SELECT id, block_id, configuration_version_id, trigger_sequence, status,
-              markdown, error_json, created_at, started_at, completed_at
-         FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
-          AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(
-      dispatch.blockRunId,
-      dispatch.harnessRunId,
-      dispatch.workspaceId,
-      dispatch.workstreamId,
-    ).first<RuntimeBlockRow>();
+    const row = await createBlockDashboardObjectPort(env, dispatch.workspaceId, dispatch.workstreamId)
+      .blockRun({ blockRunId: dispatch.blockRunId, harnessRunId: dispatch.harnessRunId });
     if (!row) throw new Error("block_dashboard_runtime_block_run_missing");
-    return blockRunFromRow(row);
+    return blockRunFromObjectRow(row);
   }
 
   private async persistAndSettle(

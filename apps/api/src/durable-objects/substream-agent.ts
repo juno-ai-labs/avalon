@@ -78,6 +78,10 @@ import {
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import {
+  createBlockDashboardObjectPort,
+  createBlockDashboardPortFactory,
+} from "../runtime/block-dashboard-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -1916,6 +1920,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     await reapStaleHarnessRuns(executionEnv.DB, {
       receipts: createToolReceiptPortFactory(executionEnv),
+      blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
@@ -2051,7 +2056,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
       memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    },
+    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);
