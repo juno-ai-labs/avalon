@@ -124,6 +124,11 @@ import {
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
+import { WorkstreamMessageStorage } from "./workstream-message-storage";
+import {
+  type MessageOperationRequest,
+  MessageOperationRequestSchema,
+} from "./workstream-message-protocol";
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
   type SchedulingOperationRequest,
@@ -528,6 +533,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private toolReceipts!: WorkstreamToolReceiptStorage;
   private blockDashboard!: WorkstreamBlockDashboardStorage;
   private scheduling!: WorkstreamSchedulingStorage;
+
+  private messages!: WorkstreamMessageStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -584,6 +591,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
+      this.messages = new WorkstreamMessageStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -744,6 +752,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/scheduling") {
       return this.acceptSchedulingOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/messages") {
+      return this.acceptMessageOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -853,6 +864,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
+  }
+
+  async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptMessageOperation(this.rpcRequest(input)));
   }
 
   async executeSchedulingOperation(
@@ -1139,6 +1155,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       }
     }
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
+  /**
+   * Dispatch one transcript operation against this object's own storage.
+   *
+   * Every write here appends to the transcript a member reads, so it runs
+   * inside `commitRuntimeMutation`: the row and the directory projection that
+   * shows its preview are one commit. The routed path reached the same place by
+   * matching `messages` in statement text, which is the rule this replaces.
+   */
+  private async acceptMessageOperation(request: Request): Promise<Response> {
+    const parsed = MessageOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_message_operation" }, 400);
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_message_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.messages[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const mutates = parsed.data.operation === "appendMessage"
+      || parsed.data.operation === "upsertToolMessage";
+    const value = mutates
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.messages, parsed.data.args),
+        true,
+      )
+      : method.apply(this.messages, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
   }
 
