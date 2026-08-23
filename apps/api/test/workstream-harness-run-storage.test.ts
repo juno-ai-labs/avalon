@@ -41,20 +41,42 @@ function open() {
 function seedRun(
   sql: SqlStorage,
   runId: string,
-  overrides: { status?: string; origin?: string; startedAt?: number } = {},
+  overrides: {
+    status?: string;
+    origin?: string;
+    startedAt?: number;
+    parentRunId?: string;
+    parentToolCallId?: string;
+  } = {},
 ): void {
+  // A delegated sub-agent gets its own substream, which is why a running child
+  // does not collide with its running parent under `runs_mutating_substream_uq`.
+  const substreamId = overrides.parentToolCallId ? `run:${runId}` : "0";
+  if (substreamId !== "0") {
+    sql.exec(
+      `INSERT OR IGNORE INTO substreams
+         (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq, depth,
+          return_mode, audience, tool_policy, status, created_at)
+       VALUES (?, 'agent', 'fork', '0', 0, 1, 'tool_result', 'system', 'read_only', 'open', 1)`,
+      substreamId,
+    );
+  }
   sql.exec(
     `INSERT INTO runs
        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
         next_action_cursor, input_fence_seq, revision, started_at,
         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-        origin, execution_principal_json, chain_depth, created_at, updated_at)
-     VALUES (?, '0', ?, '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, '{}', 0, 1, 1)`,
+        origin, execution_principal_json, chain_depth, parent_run_id,
+        parent_tool_call_id, created_at, updated_at)
+     VALUES (?, ?, ?, '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, '{}', 0, ?, ?, 1, 1)`,
     runId,
+    substreamId,
     overrides.status ?? "admitted",
     overrides.startedAt ?? 0,
     overrides.origin ?? "member_message",
+    overrides.parentRunId ?? null,
+    overrides.parentToolCallId ?? null,
   );
 }
 
@@ -445,5 +467,94 @@ describe("recording a plugin activation", () => {
       `SELECT COUNT(*) AS count FROM run_plugin_activations WHERE run_id = ?`,
       RUN,
     ).one()).toMatchObject({ count: 0 });
+  });
+});
+
+describe("the inline child's double fence", () => {
+  const CHILD = "00000000-0000-7000-8000-0000000000a3";
+
+  const childFence = {
+    parentRunId: RUN,
+    parentAttemptId: "attempt-1",
+    parentOwner: "owner-1",
+    childRunId: CHILD,
+    childAttemptId: "attempt-child",
+    childOwner: "owner-child",
+    now: NOW,
+  };
+
+  function delegated() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    seedRun(opened.sql, CHILD, { parentRunId: RUN, parentToolCallId: "call-1" });
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-parent",
+    });
+    // A child run is claimed directly: `claimAttempt` refuses anything with a
+    // parent tool call, because a sub-agent's lease is granted by its parent
+    // rather than taken from the work stream.
+    opened.sql.exec(
+      `UPDATE runs SET status = 'running', legacy_attempt_id = ?, lease_owner = ?,
+              lease_expires_at = ? WHERE run_id = ?`,
+      "attempt-child",
+      "owner-child",
+      NOW + 60_000,
+      CHILD,
+    );
+    return opened;
+  }
+
+  it("holds while both leases are live", () => {
+    const { storage } = delegated();
+
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "owned" });
+  });
+
+  it("refuses a child whose parent's lease has lapsed", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET lease_expires_at = ? WHERE run_id = ?`, NOW - 1, RUN);
+
+    // The whole point of the double fence: a sub-agent must not outlive the
+    // run that delegated to it, even while its own lease is still good.
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "ownership_lost" });
+  });
+
+  it("reports a parent's stop to the child", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
+
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "cancelled" });
+  });
+
+  it("calls a lost lease lost even when the other side was also stopped", () => {
+    const { storage, sql } = delegated();
+    sql.exec(
+      `UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`,
+      NOW,
+      RUN,
+    );
+    sql.exec(`UPDATE runs SET lease_owner = 'someone-else' WHERE run_id = ?`, CHILD);
+
+    // Precedence, and it is load-bearing: a caller that no longer owns the run
+    // has not observed the cancellation — it is reading a row someone else now
+    // controls, so it must be told it lost the run rather than told to settle.
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "ownership_lost" });
+  });
+
+  it("refuses a run that is not this parent's child", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET parent_run_id = NULL WHERE run_id = ?`, CHILD);
+
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "ownership_lost" });
+  });
+
+  it("refuses a root run wearing the child's lease", () => {
+    const { storage, sql } = delegated();
+    sql.exec(`UPDATE runs SET parent_tool_call_id = NULL WHERE run_id = ?`, CHILD);
+
+    // `parent_tool_call_id IS NOT NULL` is what distinguishes a delegated
+    // sub-agent from a chained run that merely records its parent. Only the
+    // former may be fenced by someone else's lease.
+    expect(storage.inlineChildOwnership(childFence)).toEqual({ outcome: "ownership_lost" });
   });
 });
