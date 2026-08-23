@@ -74,6 +74,39 @@ The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
 model's text cannot impersonate one.
 
+### Streaming
+
+A message that is still growing renders through `MarkdownBody`'s `streaming`
+mode: `splitStreamingMarkdown` cuts the source into settled segments — at
+blank-line boundaries, outside code fences, never before a line that could
+continue the previous block — plus an open tail, and each settled segment
+renders through a memoised component keyed on its source string. A commit that
+only appended to the tail re-parses the tail alone; the settled body's
+elements are reused untouched. The commit that ends the stream renders the
+source whole again, which also heals the seams segmentation cannot preserve —
+a reference link or a GFM footnote whose definition arrives in a later
+segment renders literally until then.
+
+This exists because the paced reveal
+([`streaming-reveal.md`](streaming-reveal.md)) commits up to once per painted
+frame, and re-parsing and re-highlighting a whole reply per commit grows with
+its length: measured before the change, a 20,000-character streaming reply
+held the main thread for ~27 of every 30 seconds and dropped the transcript to
+17 frames per second. With segmentation the per-commit cost is flat in reply
+length — frame-duration p95 stays at 16.8ms from 500 through 20,000
+characters. The cost is guarded by
+`workstream-blocks-streaming-cost.test.tsx`, which asserts that ten tail
+appends together cost less than one initial parse.
+
+The memoisation is only as good as its inputs' identity, and the trap that
+has already bitten — twice, in the same change that introduced this — is a
+`mentions = []` parameter default: a new array per render invalidates the
+memoised component config and silently turns every commit back into a
+whole-body re-parse, in the client only, where the message flows through
+`AssistantMessageContent`. Both defaults now share the hoisted `NO_MENTIONS`
+constant; anything feeding `MarkdownBody` per-render object identities gets
+the same failure back.
+
 ### Styling
 
 The `.markdown-body` group in `app.css` styles every element markdown produces.
@@ -218,6 +251,44 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-23 — A streaming body re-parses its tail, not its length
+
+**What changed:** `MarkdownBody` gained a `streaming` mode: the source is
+split at settled-block boundaries (`splitStreamingMarkdown`) and every settled
+segment renders through a memoised component, so a commit that appends
+streamed text re-parses only the open tail. A settled body's rendered element
+is also memoised on its source, so commits elsewhere on the screen skip
+finished messages entirely. Both `mentions` parameter defaults were hoisted to
+one `NO_MENTIONS` constant.
+
+**Why:** The paced reveal ([`streaming-reveal.md`](streaming-reveal.md))
+commits up to once per painted frame, and the whole-body re-parse made that
+cost O(reply length) per commit. Measured in the running client: at 20,000
+characters the pre-change renderer spent ~27s of a 30s window in long tasks
+and painted at 17fps — and a plain-text control at the same length painted at
+59fps with zero long tasks, which is what attributed the entire length-scaling
+cost to this pipeline. After segmentation the same measurement shows 57fps and
+zero long tasks, flat from 500 to 20,000 characters.
+
+**Considered and rejected:** Rendering the streaming message as plain text
+until the turn settles — cheapest and seamless-proof, but the reply would
+visibly snap from unformatted to formatted at completion, and live markdown is
+the norm this product is judged against. A second react-markdown mount for the
+streaming path was never on the table; the mode lives inside `MarkdownBody`
+and the single-renderer guard still passes.
+
+**Consequences:** While a message streams, its rendering is an approximation
+healed at completion: a loose list can momentarily render as two lists at a
+segment boundary, and reference-link or footnote definitions later in the
+stream do not reach earlier segments until the settled re-render. The memo
+chain is identity-fragile by nature — the `NO_MENTIONS` hoist exists because a
+`= []` default two components up silently restored the whole-body re-parse,
+observable only as client-side jank — and
+`workstream-blocks-streaming-cost.test.tsx` pins the cost ratio so the next
+such regression fails a test instead of a reader.
+
+Shipped with `streaming-reveal.md`'s introduction.
 
 ### 2026-08-13 — A saved message is this renderer's DOM, rendered off-screen
 
