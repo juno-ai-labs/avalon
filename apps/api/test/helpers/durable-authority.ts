@@ -11,6 +11,11 @@ import {
   TOOL_RECEIPT_OPERATIONS,
   type ToolReceiptObjectPort,
 } from "../../src/durable-objects/workstream-tool-receipt-protocol";
+import { WorkstreamSchedulingStorage } from "../../src/durable-objects/workstream-scheduling-storage";
+import {
+  SCHEDULING_OPERATIONS,
+  type SchedulingObjectPort,
+} from "../../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
 import {
@@ -523,6 +528,40 @@ export function testSubstreamAgentsBinding(
         };
       }
     }),
+    /**
+     * The scheduling port's counterpart, on the same object database.
+     *
+     * Same shape and reasoning as the two above. A refused claim comes back as
+     * a 200 carrying its own outcome, because a wake-up someone else took is an
+     * ordinary answer rather than a fault.
+     */
+    executeSchedulingOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamSchedulingStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "scheduling_operation_failed",
+          }),
+        };
+      }
+    }),
     executeRuntimeSql: vi.fn((input: {
       workspaceId: string;
       workstreamId?: string;
@@ -685,6 +724,32 @@ export function testToolReceiptPort(
         (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
     ]),
   ) as ToolReceiptObjectPort;
+}
+
+/**
+ * A scheduling port over a real storage instance in this isolate.
+ *
+ * The seam the other two ports take, for the same reason — and one more here:
+ * the owning object fires its own wake-up alarms, so this is also what a test
+ * uses to stand where the object stands, with its storage in hand rather than
+ * a stub addressed to itself.
+ */
+export function testSchedulingPort(database: DatabaseSync): SchedulingObjectPort {
+  const storage = new WorkstreamSchedulingStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    SCHEDULING_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as SchedulingObjectPort;
 }
 
 /**
