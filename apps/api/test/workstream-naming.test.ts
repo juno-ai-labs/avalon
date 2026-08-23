@@ -445,6 +445,11 @@ describe("work-stream naming", () => {
     expect(normalizeGeneratedTitle('"Avalon download link email to Danny."'))
       .toBe("Avalon download link email to Danny");
     expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("Mucker intro thread");
+    // The title is stored, so a model's TeX is repaired here — once, at the
+    // write — rather than by every surface that shows the sidebar row.
+    expect(normalizeGeneratedTitle("Migrate billing $\\rightarrow$ Stripe"))
+      .toBe("Migrate billing → Stripe");
+    expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("Renew the $50 plan");
     expect(normalizeGeneratedTitle("   ")).toBeNull();
     // A name that starts mid-sentence is capitalized; one that starts on
     // something that spells itself is not.

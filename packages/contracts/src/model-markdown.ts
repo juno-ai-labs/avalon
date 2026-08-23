@@ -40,11 +40,13 @@ const COMMAND_TO_CHARACTER: Readonly<Record<string, string>> = {
   rightarrow: "→",
   longrightarrow: "→",
   Rightarrow: "⇒",
+  Longrightarrow: "⇒",
   implies: "⇒",
   gets: "←",
   leftarrow: "←",
   longleftarrow: "←",
   Leftarrow: "⇐",
+  Longleftarrow: "⇐",
   leftrightarrow: "↔",
   Leftrightarrow: "⇔",
   iff: "⇔",
@@ -62,8 +64,10 @@ const COMMAND_TO_CHARACTER: Readonly<Record<string, string>> = {
   circ: "∘",
   leq: "≤",
   le: "≤",
+  lt: "<",
   geq: "≥",
   ge: "≥",
+  gt: ">",
   neq: "≠",
   ne: "≠",
   equiv: "≡",
@@ -254,12 +258,24 @@ function texToPlainText(body: string): string {
       ? mapped.join("")
       : match;
   });
-  // Grouping braces carry no meaning once the commands they grouped are gone.
+  // Grouping braces carry no meaning once the commands they grouped are gone —
+  // but their *boundaries* often do. `\frac{a}{b}` has already become
+  // `frac{a}{b}` by here, and deleting the braces outright runs the operands
+  // into one nonsense word, `fracab`, which reads as Avalon garbling a word
+  // rather than as unrendered math. A brace pair closing against the next, or
+  // opening after a word, becomes a space; a brace against punctuation (the
+  // subscript case `a_{key}`, already handled above) is simply dropped.
+  value = value.replace(/\}\{/gu, " ");
+  value = value.replace(/([A-Za-z0-9])\{/gu, "$1 ");
   value = value.replace(/[{}]/gu, "");
   return value.replace(/\s+/gu, " ").trim();
 }
 
-/** `$…$`, `$$…$$`, `\(…\)` and `\[…\]`, none of them spanning a blank line. */
+/**
+ * `$…$`, `$$…$$`, `\(…\)` and `\[…\]`. Only the single-dollar form refuses a
+ * newline — that is what keeps a price at the end of one line from pairing
+ * with a price on the next; the explicit delimiters have no such ambiguity.
+ */
 const MATH_SPAN = /\$\$([^$]+?)\$\$|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/gu;
 
 /**
@@ -281,17 +297,34 @@ const CODE_OR_TEXT = /(^|\n)([ \t]*(?:```|~~~)[\s\S]*?(?:\n[ \t]*(?:```|~~~)[^\n
 function normalizeProse(value: string, escape: (plain: string) => string): string {
   let result = value.replace(MATH_SPAN, (match, display?: string, inline?: string, paren?: string, bracket?: string) => {
     const body = display ?? inline ?? paren ?? bracket;
-    if (body === undefined || !looksLikeMath(body)) return match;
+    if (body === undefined) return match;
+    // The `\(…\)` and `\[…\]` forms demand a real command, not merely a
+    // punctuation escape: `escapeForMarkdown` writes `\[` and `\]` itself, so
+    // a body whose only backslashes are escapes is this function's own output
+    // being read back — unwrapping it a second time eats the brackets, which
+    // is exactly the non-idempotence the invariant forbids.
+    const isMath = paren !== undefined || bracket !== undefined
+      ? /\\[A-Za-z]/u.test(body)
+      : looksLikeMath(body);
+    if (!isMath) return match;
     const plain = texToPlainText(body);
     return plain.length > 0 ? escape(plain) : match;
   });
   // Commands the model wrote without any delimiters around them at all. Only
-  // the named ones, and never the punctuation escapes: `\_` outside math is a
-  // Markdown escape already doing exactly what it says.
-  result = result.replace(/\\([A-Za-z]+)(?![A-Za-z])/gu, (match, command: string) => {
-    const character = COMMAND_TO_CHARACTER[command];
-    return character === undefined ? match : escape(character);
-  });
+  // the named ones, never the punctuation escapes (`\_` outside math is a
+  // Markdown escape already doing exactly what it says), and only standing as
+  // their own token — beginning after a space, a bracket, or an orphaned `$`,
+  // and ending before space, closing punctuation, or the end. Without the
+  // boundary, `C:\to\dist` is a path with an arrow in it and `\in-flight` is a
+  // hyphenation with a set operator — and two call sites *store* what this
+  // returns, where a wrong repair outlives the render that made it.
+  result = result.replace(
+    /(?<=^|[\s([{$])\\([A-Za-z]+)(?=$|[\s)\]}$.,;:!?])/gu,
+    (match, command: string) => {
+      const character = COMMAND_TO_CHARACTER[command];
+      return character === undefined ? match : escape(character);
+    },
+  );
   return result;
 }
 

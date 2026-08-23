@@ -321,7 +321,7 @@ Four log events are emitted:
 
 ## Changelog
 
-### 2026-08-22 — A proposed description is repaired before it is judged
+### 2026-08-23 — A proposed description is repaired before it is judged
 
 **What changed:** `judgeDescriptionProposal` runs the proposal through
 `normalizeModelText` before the length, genericness and divergence rules see it.

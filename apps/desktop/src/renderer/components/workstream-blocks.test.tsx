@@ -97,6 +97,25 @@ const singleSelectElicitation: ElicitationData = {
 };
 
 describe('ElicitationPanel', () => {
+  it('repairs TeX in the question and in the option labels beside it', () => {
+    // The options come from the same model call as the question: a repaired
+    // heading above an unrepaired option reads as a bug in the repair itself.
+    const elicitation: ElicitationData = {
+      ...singleSelectElicitation,
+      prompt: 'Move Backlog $\\rightarrow$ Review now?',
+      options: [
+        { value: 'yes', label: 'Backlog $\\rightarrow$ Review', description: 'Runs the checks $\\times$ two, and costs $50.' },
+        { value: 'no', label: 'Hold', description: 'Wait for sign-off.' },
+      ],
+    };
+
+    render(<ElicitationPanel elicitation={elicitation} onAnswer={vi.fn(async () => undefined)} />);
+
+    expect(screen.getByText('Move Backlog → Review now?')).toBeInTheDocument();
+    expect(screen.getByText('Backlog → Review')).toBeInTheDocument();
+    expect(screen.getByText('Runs the checks × two, and costs $50.')).toBeInTheDocument();
+  });
+
   it('submits a numbered single selection with the keyboard shortcut', async () => {
     const onAnswer = vi.fn(async () => undefined);
     const { container } = render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={onAnswer} />);
@@ -420,10 +439,12 @@ describe('MessageBlock markdown', () => {
 
   it('repairs a model\'s TeX without disturbing the mention offsets beside it', () => {
     // The offsets are measured against the stored text, so normalization has to
-    // run after the links are injected. Reversing the two shifts every offset
-    // past the first repair and chips the wrong words.
+    // run after the links are injected. Reversing the two shifts the offsets
+    // past the first repair, so a slice no longer starts with `@` and its
+    // mention is silently dropped rather than chipped.
     const message: Message = {
       ...baseMessage,
+      authorType: 'agent',
       id: 'message-connector-mention-tex',
       text: 'Ask @Google Drive to move Backlog $\\rightarrow$ Done, and @Linear to log it.',
       mentions: [
@@ -440,6 +461,37 @@ describe('MessageBlock markdown', () => {
       .toHaveAttribute('data-connector-type', 'linear');
     expect(document.querySelector('.markdown-body')).toHaveTextContent('Backlog → Done');
     expect(document.querySelector('.markdown-body')?.textContent).not.toContain('rightarrow');
+  });
+
+  it('shows a person\'s own message exactly as they typed it, TeX and all', () => {
+    // The repair is of what a model wrote. A member who types `$\rightarrow$`
+    // gets a bubble that agrees with their keyboard, not a rewrite.
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-human-tex',
+      text: 'I typed $\\rightarrow$ deliberately, and paid $50.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.human-message-bubble')?.textContent)
+      .toContain('$\\rightarrow$ deliberately, and paid $50.');
+  });
+
+  it('renders a person: target that is not an id as text, never as a link', () => {
+    // `defaultUrlTransform` would empty the href; the urlTransform whitelist
+    // is what lets the fallback branch see the scheme and refuse the anchor.
+    const message: Message = {
+      ...baseMessage,
+      authorType: 'agent',
+      id: 'message-person-not-an-id',
+      text: 'Ask [@Ada](person:ada-lovelace) please.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Ada').closest('.mention-text-fallback')).not.toBeNull();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('leaves connection text alone when its offsets do not name a mention', () => {
