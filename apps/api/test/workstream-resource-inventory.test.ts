@@ -20,9 +20,11 @@ import {
 } from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
+  testResourcePort,
   testSchedulingPort,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
+import type { ResourceObjectPort } from "../src/durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
 
 const AS_OF = "2026-08-12T18:30:00.000Z";
@@ -66,6 +68,33 @@ const WORKSPACE = "1629dee4-8cc4-4531-81f9-b2be8614e062";
 const WORKSTREAM = "8f2e1d40-5c3b-4a9e-9d21-6f7c8b0a1234";
 const CHECKPOINT_RUN = "00000000-0000-4000-8000-0000000000a1";
 
+/** Attach one resource to the object, as the product service would have. */
+function seedResourceLink(
+  store: DatabaseSync,
+  input: { resourceId: string; onMessage?: boolean },
+): void {
+  store.prepare(
+    `INSERT INTO workstream_resource_links
+       (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+        resource_json, attached_at, updated_at)
+     VALUES (?, NULL, 0, 'explicit', '{}', ?, ?)`,
+  ).run(input.resourceId, Date.parse(AS_OF), Date.parse(AS_OF));
+  if (!input.onMessage) return;
+  store.prepare(
+    `INSERT INTO parts
+       (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+        author_user_id, content, client_message_id, visibility, pinned, message_type,
+        created_at, updated_at)
+     VALUES (?, '0', 1, 1, 'user', 'text', 'member',
+             '4b2a1529-867b-4d69-8685-b1722ccd0149', 'here', ?, 'both', 0, 'text', ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(`part-${input.resourceId}`, `client-${input.resourceId}`, Date.parse(AS_OF), Date.parse(AS_OF));
+  store.prepare(
+    `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+     VALUES (?, ?, 0, '{}')`,
+  ).run(`part-${input.resourceId}`, input.resourceId);
+}
+
 const openObjectStores: DatabaseSync[] = [];
 
 afterEach(() => {
@@ -81,7 +110,11 @@ afterEach(() => {
  * resource-inventory reads beside them are still routed, and still faked,
  * because that table belongs to a later slice.
  */
-function objectStore(): { store: DatabaseSync; scheduling: SchedulingObjectPort } {
+function objectStore(): {
+  store: DatabaseSync;
+  scheduling: SchedulingObjectPort;
+  attachments: ResourceObjectPort;
+} {
   const store = testWorkstreamObjectStore();
   openObjectStores.push(store);
   seedWorkstreamObjectRoot(store, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
@@ -95,7 +128,7 @@ function objectStore(): { store: DatabaseSync; scheduling: SchedulingObjectPort 
      VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              'member_message', '{}', 0, 'test/model', 1, 1)`,
   ).run(CHECKPOINT_RUN);
-  return { store, scheduling: testSchedulingPort(store) };
+  return { store, scheduling: testSchedulingPort(store), attachments: testResourcePort(store) };
 }
 
 /** Put the object's resource-inventory revision where a fence will accept it. */
@@ -191,9 +224,13 @@ describe("work-stream compaction resource inventory", () => {
 
   it("rebuilds a stored current-version checkpoint from its raw summary and current principal visibility", async () => {
     let currentRows = [resource("current-id", "current-private.png", "image/png", true)];
-    let revision = 1;
     const storedFingerprint = "inventory:1";
-    const { store, scheduling } = objectStore();
+    const { store, scheduling, attachments } = objectStore();
+    // The link half is the object's now, so it is seeded rather than faked. The
+    // resource half is still the workspace's and still comes from the double
+    // below — which is the whole point of the split this slice makes.
+    setInventoryRevision(store, 1);
+    seedResourceLink(store, { resourceId: "current-id", onMessage: true });
     seedCheckpoint(store, {
       executionPrincipalKey: "user:4b2a1529-867b-4d69-8685-b1722ccd0149",
       resourceVisibilityFingerprint: storedFingerprint,
@@ -203,23 +240,18 @@ describe("work-stream compaction resource inventory", () => {
       summary: "# Request\nContinue the exact work.",
     });
     const database = createTestD1Database({
-      prepare(sql: string) {
+      prepare() {
         return createTestD1PreparedStatement({
           bind() { return this; },
-          async first<T>() {
-            return { revision } as T;
-          },
+          async first<T>() { return null as T; },
           async all<T>() {
-            const results = sql.includes("FROM workstream_resources wr")
-              ? currentRows.map((row) => ({
-                resource_id: row.id,
-                relationship_type: row.relationship_type,
-                attached_at: row.attached_at,
-                attached_watch_enabled: row.attached_watch_enabled,
-                message_attachment: row.message_attachment,
-              }))
-              : currentRows.map((row) => ({ ...row, visibility_version: row.updated_at }));
-            return createTestD1Result<T>({ success: true, results: results as T[] });
+            return createTestD1Result<T>({
+              success: true,
+              results: currentRows.map((row) => ({
+                ...row,
+                visibility_version: row.updated_at,
+              })) as T[],
+            });
           },
         });
       },
@@ -228,6 +260,7 @@ describe("work-stream compaction resource inventory", () => {
     const checkpoint = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
@@ -243,11 +276,15 @@ describe("work-stream compaction resource inventory", () => {
     expect(replay).not.toContain("stale principal inventory");
     expect(replay).not.toMatch(/current-id|current-private|image\/png/u);
 
+    // The resource is gone from the workspace and the object's revision moved
+    // with it, so the stored fingerprint no longer describes what is visible.
     currentRows = [];
-    revision = 2;
+    store.prepare(`DELETE FROM workstream_resource_links WHERE resource_id = 'current-id'`).run();
+    setInventoryRevision(store, 2);
     const replayAfterRemoval = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
@@ -257,7 +294,7 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("never replays a raw attachment summary for a different execution principal", async () => {
-    const { store, scheduling } = objectStore();
+    const { store, scheduling, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: "user:original-viewer",
       resourceVisibilityFingerprint: "inventory:1",
@@ -288,6 +325,7 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "user", userId: asUserId("df345be8-2f51-49ed-873d-bd48ada54749") },
@@ -346,27 +384,37 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("rejects a visibility change between inventory preparation and appendix rendering", async () => {
-    let revisionReads = 0;
+    const { store, attachments } = objectStore();
     const database = createTestD1Database({
-      prepare(sql: string) {
+      prepare() {
         return createTestD1PreparedStatement({
           bind() { return this; },
-          async first<T>() {
-            if (!sql.includes("workstream_resource_inventory_revisions")) return null;
-            revisionReads += 1;
-            return { revision: revisionReads } as T;
-          },
+          async first<T>() { return null as T; },
           async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
         });
       },
     });
+    // Somebody attaches or detaches a resource while this read is in flight.
+    // The revision is read twice, once on each side of the rows, and a test
+    // cannot have a genuinely concurrent writer — so the second read is what
+    // stands in, layered over the object's real one.
+    setInventoryRevision(store, 1);
+    let reads = 0;
+    const shifting: ResourceObjectPort = {
+      ...attachments,
+      inventoryRevision: async () => {
+        reads += 1;
+        return reads === 1 ? attachments.inventoryRevision() : 2;
+      },
+    };
 
-    await expect(loadVisibleWorkstreamResourceInventory(database, {
+    await expect(loadVisibleWorkstreamResourceInventory(database, shifting, {
       workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      workstreamId: "workstream",
+      workstreamId: WORKSTREAM,
       principal: { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       expectedFingerprint: "inventory:1",
     })).rejects.toThrow("resource inventory changed");
+    expect(reads).toBe(2);
   });
 
   it("does not persist a summary when visibility changes at the final fenced insert", async () => {
@@ -406,7 +454,7 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
-    const { store, scheduling } = objectStore();
+    const { store, scheduling, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: `workspace:${WORKSPACE}`,
       resourceVisibilityFingerprint: "inventory:0",
@@ -428,6 +476,7 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
@@ -450,7 +499,7 @@ describe("work-stream compaction resource inventory", () => {
       summary: "# Request\nContinue from the frozen point.",
       model: "test/model",
     };
-    const { store, scheduling } = objectStore();
+    const { store, scheduling, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: stored.executionPrincipalKey,
       resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
@@ -491,6 +540,7 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
@@ -501,6 +551,7 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
@@ -510,6 +561,7 @@ describe("work-stream compaction resource inventory", () => {
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
       scheduling,
+      attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },

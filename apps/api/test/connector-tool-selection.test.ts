@@ -7,6 +7,11 @@ import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -87,7 +92,31 @@ class ToolSelectionDatabase {
     this.binding = createTestD1Database({
       prepare: (sql: string) => createTestD1PreparedStatement(new ToolSelectionStatement(this, sql)),
     });
+    // Which resources this work stream has attached is the object's answer now,
+    // and which connection owns each of them is the workspace's. The fixture
+    // still names connections, because that is what these tests are about; one
+    // attached resource stands for each, seeded where the port will read it.
+    seedWorkstreamObjectRoot(this.objectStore, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    });
+    for (const connectionId of this.attachedConnectionIds) {
+      this.objectStore.prepare(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES (?, NULL, 0, 'explicit', '{}', 1, 1)`,
+      ).run(resourceFor(connectionId));
+    }
   }
+
+  readonly objectStore = testWorkstreamObjectStore();
+  readonly agents = testSubstreamAgentsBinding(this.objectStore);
+}
+
+/** The one resource standing in for an attached connection. */
+function resourceFor(connectionId: string): string {
+  return `resource-for-${connectionId}`;
 }
 
 class ToolSelectionStatement {
@@ -109,9 +138,11 @@ class ToolSelectionStatement {
     if (sql.includes("json_each(s.connector_bindings_json)")) {
       expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
       results = this.database.automationBindings;
-    } else if (sql.includes("FROM workstream_resources wr")) {
-      expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
-      results = this.database.attachedConnectionIds.map((connection_id) => ({ connection_id }));
+    } else if (sql.includes("SELECT DISTINCT connection_id FROM resources")) {
+      const requested = new Set(this.values.slice(1).map(String));
+      results = this.database.attachedConnectionIds
+        .filter((connectionId) => requested.has(resourceFor(connectionId)))
+        .map((connection_id) => ({ connection_id }));
     } else if (sql.includes("FROM connector_connections")) {
       if (sql.includes("(scope = 'workspace' OR (scope = 'personal'")) {
         expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
@@ -194,6 +225,7 @@ afterEach(() => {
 function env(database: ToolSelectionDatabase): Env {
   return createTestEnv({
     DB: database.binding,
+    SUBSTREAM_AGENTS: database.agents,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",

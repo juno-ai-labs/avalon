@@ -16,6 +16,7 @@ import {
   TERMINAL_NETWORK_MANIFEST_VERSION,
   type TerminalNetworkMode,
 } from "./network-policy";
+import type { ResourcePortFactory } from "../../runtime/resource-port";
 import type { TerminalPortFactory } from "./object-port";
 import {
   TERMINAL_OPERATION_LEASE_MS,
@@ -130,6 +131,8 @@ export class TerminalSandboxCoordinator {
      */
     private readonly database: D1Database,
     private readonly terminalPort: TerminalPortFactory,
+    /** The work stream's attachment authority, for the revoked-import check. */
+    private readonly resourcePort: ResourcePortFactory,
     private readonly provider: TerminalSandboxProvider,
     private readonly clock: TerminalClock = systemClock,
     private readonly lifecycleChanged?: (workspaceId: string) => Promise<void>,
@@ -529,13 +532,9 @@ export class TerminalSandboxCoordinator {
     // The attachment join used to ride along with the import rows. It cannot:
     // the imports are object-local and the relationship rows are not, so the
     // link check is its own statement against its own authority.
-    const attachedPlaceholders = links.map(() => "?").join(", ");
-    const attached = await this.database.prepare(
-      `SELECT resource_id FROM workstream_resources
-        WHERE workstream_id = ? AND resource_id IN (${attachedPlaceholders})`,
-    ).bind(context.workstreamId, ...links.map((candidate) => candidate.resourceId))
-      .all<{ resource_id: string }>();
-    if (new Set((attached.results ?? []).map((link) => link.resource_id)).size !== links.length) {
+    const attached = await this.resourcePort(context.workspaceId, context.workstreamId)
+      .attachedLinks({ resourceIds: links.map((candidate) => candidate.resourceId) });
+    if (new Set(attached.map((link: { resource_id: string }) => link.resource_id)).size !== links.length) {
       return true;
     }
     const placeholders = links.map(() => "?").join(", ");

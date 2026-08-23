@@ -17,6 +17,7 @@ import {
   testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
+  testResourcePortFactory,
   testTerminalPortFactory,
 } from "./helpers/durable-authority";
 
@@ -113,7 +114,7 @@ describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
     const { objectStore, db,  provider, clock } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider,
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
       clock,
       undefined,
       false,
@@ -142,7 +143,7 @@ describe("Terminal sandbox coordinator", () => {
       state: "running" as const,
       domainAllowList: expectedDomainAllowList,
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).resolves.toMatchObject({
       providerSandboxId: "sandbox-recovered",
@@ -163,7 +164,7 @@ describe("Terminal sandbox coordinator", () => {
       state: "running",
       domainAllowList: [],
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).rejects.toMatchObject({
       code: "network_policy_unverified",
@@ -180,7 +181,7 @@ describe("Terminal sandbox coordinator", () => {
 
   it("destroys and reprovisions before reuse when execution authority changes", async () => {
     const { database, db, objectStore, provider, clock } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -197,7 +198,7 @@ describe("Terminal sandbox coordinator", () => {
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {
     const { objectStore, db, provider, clock, advance } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     workstreamObjectRun(
       objectStore,
@@ -231,7 +232,7 @@ describe("Terminal sandbox coordinator", () => {
        VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
       otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
     );
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
 
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))
@@ -255,6 +256,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       db,
       testTerminalPortFactory(objectStore),
+      testResourcePortFactory(objectStore),
       provider,
       clock,
     );
@@ -314,6 +316,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       db,
       testTerminalPortFactory(objectStore),
+      testResourcePortFactory(objectStore),
       provider,
       clock,
     );
@@ -377,6 +380,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       db,
       testTerminalPortFactory(objectStore),
+      testResourcePortFactory(objectStore),
       provider,
       clock,
     );
@@ -463,6 +467,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       db,
       testTerminalPortFactory(objectStore),
+      testResourcePortFactory(objectStore),
       provider,
       clock,
     );
@@ -543,7 +548,13 @@ describe("Terminal sandbox coordinator", () => {
         },
       };
     }) satisfies typeof baseFactory;
-    const coordinator = new TerminalSandboxCoordinator(db, interceptingFactory, provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      interceptingFactory,
+      testResourcePortFactory(objectStore),
+      provider,
+      clock,
+    );
     await coordinator.acquire(context());
     seedToolReceipt(objectStore, {
       id: effectId,

@@ -255,12 +255,11 @@ describe("Terminal resource bridge", () => {
          FROM resources WHERE id = ? AND workspace_id = ?`,
     ).get(resourceId, W);
     expect(row).toMatchObject({ provider: "avalon_generated", title: "Analysis", mime_type: "text/markdown", attachment_status: "attached" });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT relationship_type FROM workstream_resources WHERE workstream_id = ? AND resource_id = ?",
-      S,
-      resourceId,
-    )).toEqual({ relationship_type: "generated" });
+    // The object's own table, in its own vocabulary: the compatibility view
+    // that let a test read it as `workstream_resources` is retired.
+    expect(objectStore.prepare(
+      "SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?",
+    ).get(resourceId)).toEqual({ relationship_type: "generated" });
     expect(objects.has(String((row as { content_ref: string }).content_ref))).toBe(true);
     expect(put).toHaveBeenCalledOnce();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get()).toEqual({ count: 0 });
