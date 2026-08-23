@@ -192,6 +192,21 @@ export interface IdentityAuthContext {
   region: Region;
   role: "owner" | "admin" | "member" | null;
   /**
+   * How this authority was established. Absent means a login session:
+   * `sessionId` names a `sessions` row and the product objects re-verify it
+   * there. `"connector"` means a connector ingress resolved a linked member —
+   * an active `slack_user_links` row joined to an active membership, checked
+   * by the Worker on the very message being delivered — and `sessionId` is a
+   * correlation value only, not a row anywhere. The objects verify a connector
+   * principal against current workspace membership instead of `sessions`;
+   * see `SubstreamAgent.connectorPrincipalAuth`.
+   *
+   * Only connector ingress constructs this value. The auth middleware builds
+   * its context from verified token claims and never sets it, so a client
+   * cannot claim the connector path from outside.
+   */
+  principal?: "connector";
+  /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
    * They ride the session query that authenticates the request rather than

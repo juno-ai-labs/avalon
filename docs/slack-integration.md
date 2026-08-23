@@ -205,6 +205,14 @@ than a link authorizes a run — a `users.lookupByEmail`-grade match seats and c
 and cannot spend their credentials — so two replies in one thread can run under different
 principals, exactly as they do when two members type into the same work stream in Avalon.
 
+How "runs as themselves" reaches the work-stream object is the **connector principal**: the
+ingress verifies the active `slack_user_links` row and active membership on the very message
+being delivered (`linkedAccount`), then marks the auth `principal: "connector"` and carries a
+`slack:{team}:{user}` correlation id in place of a session id. The object re-checks current
+membership itself and refuses a stale principal as `connector_member_revoked`; it does not look
+the correlation id up in `sessions`, because a Slack message is not a login and no session row
+exists for it. A login session, by contrast, is always re-verified against its `sessions` row.
+
 The triggering Slack member travels with the workflow input through delivery. If a run needs
 input that requires a connected account, Avalon sends the connect prompt to that member rather
 than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
@@ -706,6 +714,31 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-23 — A linked member's message stopped impersonating a login
+
+**What changed:** The auth a linked member's ingress presents to the work-stream
+object now carries `principal: "connector"`. The object verifies that principal
+against current active membership in its region (`connectorPrincipalAuth`) and
+refuses a stale one as `connector_member_revoked`; the synthesized
+`slack:{team}:{user}` id stays on the context as a correlation label that
+nothing looks up. Session-principal requests are unchanged, byte for byte.
+
+**Why:** The Slack connector predates the object cutover of 2026-08-17. Before
+it, nothing verified the synthesized session id; after it, every product
+request was re-verified against `sessions`, where `slack:{team}:{user}` never
+existed — so from the cutover on, every linked member's `@Avalon` mention and
+thread reply died on its first attempt as `session_revoked` (the incident of
+2026-08-22; the unlinked path survived because the workspace principal writes
+through the runtime port, which never consulted `sessions`). The alternative —
+minting real `sessions` rows for Slack links — was rejected because a link is
+not a login: it would have needed its own lifecycle (mint, renew, revoke with
+the link) to mirror facts the link row already owns, and an expiring mirror row
+would reintroduce this same failure intermittently. What a future change has to
+respect: the ingress's `linkedAccount` check *is* the link verification — the
+object deliberately re-checks only membership, so a path that hands out
+`principal: "connector"` without verifying the link first has no second gate
+behind it.
 
 ### 2026-08-22 — The reaction became a status, and agent output started rendering
 

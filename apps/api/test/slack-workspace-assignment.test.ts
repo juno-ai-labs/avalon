@@ -840,6 +840,110 @@ describe("Slack public channel membership", () => {
     });
   });
 
+  it("presents the connector principal to the work-stream object, not a login session", async () => {
+    // The regression this pins (2026-08-22): a linked member's ingress carried
+    // a synthesized `slack:{team}:{user}` session id with no principal marker,
+    // the object looked it up in `sessions`, and every mention died as
+    // `session_revoked`. The product stub here fabricates the object's answer,
+    // so what this proves is the Worker's half of the contract: the ingress
+    // presents the connector principal and the correlation id, byte for byte —
+    // the object's half, verifying that principal, is proved in
+    // `workstream-room-authorization.test.ts`.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('44444444-4444-4444-8444-444444444444', 'google-linked',
+              'linked@example.com', 'Linked User', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES ('22222222-2222-4222-8222-222222222222',
+              '44444444-4444-4444-8444-444444444444', 'member', 'active', '2026-01-01');
+      INSERT INTO slack_user_links
+        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+         status, created_at, updated_at)
+      VALUES ('33333333-3333-4333-8333-333333333333',
+              '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111',
+              '44444444-4444-4444-8444-444444444444', 'T123', 'U456',
+              'active', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_installation_routes
+        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
+    `);
+    insertSlackEventJob(database, "event:principal", appMention("EvPrincipal"));
+    const { fetcher } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+    let initializeAuth: unknown = null;
+    const env = createTestEnv({
+      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      APP_ENV: "test",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
+        product: {
+          initialize: (request) => {
+            initializeAuth = request.auth;
+            const input = request.input as Record<string, unknown>;
+            return {
+              workstream: testWorkstreamContract({
+                id: input.workstreamId,
+                workspaceId: input.workspaceId,
+                title: input.title,
+                objective: input.objective,
+                titleStatus: input.titleStatus,
+                createdByUserId: input.creatorUserId,
+                emailAddress: input.emailAddress,
+              }),
+              messageId: crypto.randomUUID(),
+              harnessRunId: crypto.randomUUID(),
+            };
+          },
+          attach_resource: (request) => ({
+            id: request.resourceId,
+            workspaceId: "22222222-2222-4222-8222-222222222222",
+            connectionId: null,
+            resourceType: "slack_thread",
+            provider: "slack",
+            providerResourceId: null,
+            title: "Slack thread",
+            mimeType: null,
+            canonicalUrl: null,
+            watchEnabled: false,
+            watchStatus: "unsupported",
+            lastHydratedAt: null,
+            createdAt: "2026-01-02T00:00:00.000Z",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+          }),
+        },
+      }),
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+      }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+      }),
+    });
+
+    await new SlackAgentService(env).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:principal",
+    );
+
+    // `toEqual`, not `toMatchObject`: the payload the object authorizes on is
+    // exactly this — nothing weaker, and no extra field the strict schema
+    // would refuse.
+    expect(initializeAuth).toEqual({
+      sessionId: "slack:T123:U456",
+      userId: "44444444-4444-4444-8444-444444444444",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      region: "global",
+      role: "member",
+      principal: "connector",
+    });
+  });
+
   it("makes deterministic ingress failures terminal in the durable job row", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
