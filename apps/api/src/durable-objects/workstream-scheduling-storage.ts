@@ -40,6 +40,23 @@ export interface WakeupRow extends Record<string, SqlStorageValue> {
   created_at: number;
 }
 
+export interface ElicitationRow extends Record<string, SqlStorageValue> {
+  elicitation_id: string;
+  run_id: string;
+  prompt: string;
+  response_type: string;
+  options_json: string;
+  minimum_selections: number;
+  maximum_selections: number | null;
+  target_user_id: string | null;
+  status: string;
+  answer_json: string | null;
+  answered_by_user_id: string | null;
+  external_actor_json: string | null;
+  created_at: number;
+  answered_at: number | null;
+}
+
 export interface DescriptionRefreshRow extends Record<string, SqlStorageValue> {
   rest_until: number;
   consecutive_keeps: number;
@@ -241,6 +258,56 @@ export class WorkstreamSchedulingStorage {
       this.sql.exec(`DELETE FROM workstream_wakeups WHERE wakeup_id = ?`, input.wakeupId);
       return true;
     });
+  }
+
+  // --------------------------------------------------------- elicitations
+
+  /**
+   * The question a person has been waiting on longest, if there is one.
+   *
+   * One operation for four routed reads. They differed only in which columns
+   * they asked for — Slack's delivery wanted the prompt and the target, its
+   * answer path wanted the response type and options, the workspace path
+   * wanted all of it — and every one of them was the same
+   * `status = 'open' ORDER BY created_at ASC LIMIT 1`. A caller takes what it
+   * needs from the row rather than restating the query to narrow it.
+   *
+   * `pending`, not `open`: the retired view renamed the status in both
+   * directions, and `pending` is what the object stores.
+   */
+  oldestOpenElicitation(): ElicitationRow | undefined {
+    return first(this.sql.exec<ElicitationRow>(
+      `SELECT elicitation_id, run_id, prompt, response_type, options_json,
+              minimum_selections, maximum_selections, target_user_id, status,
+              answer_json, answered_by_user_id, external_actor_json, created_at, answered_at
+         FROM elicitation_requests
+        WHERE status = 'pending'
+        ORDER BY created_at ASC
+        LIMIT 1`,
+    ));
+  }
+
+  /** How many questions this work stream is still waiting on. */
+  openElicitationCount(): number {
+    return this.sql.exec<{ open: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS open FROM elicitation_requests WHERE status = 'pending'`,
+    ).one().open;
+  }
+
+  /**
+   * Whether a run already asked this exact question.
+   *
+   * The replay check in front of the elicitation tool: the id is derived from
+   * the provider idempotency key, so a retried receipt names the row its first
+   * attempt wrote. Scoped to the run as well as the id, because a question
+   * belongs to the run that asked it.
+   */
+  elicitationExistsForRun(input: { elicitationId: string; runId: string }): boolean {
+    return first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
+      `SELECT 1 AS ok FROM elicitation_requests WHERE elicitation_id = ? AND run_id = ?`,
+      input.elicitationId,
+      input.runId,
+    )) !== undefined;
   }
 
   // ----------------------------------------------------- plugin activation
