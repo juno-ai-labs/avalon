@@ -49,6 +49,7 @@ const DISPATCHED_OPERATIONS = [
   "latestConfigurationVersionId",
   "submitMarkdown",
   "settleBlockRun",
+  "recordBlockRunProgress",
   "abandonBlockRun",
 ] as const satisfies readonly BlockDashboardOperation[];
 

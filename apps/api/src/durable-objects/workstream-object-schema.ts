@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 17;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 18;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1305,7 +1305,46 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "adopt the tool-receipt objects the compat schema owns, then retire its receipt views",
     statements: toolReceiptAuthorityPromotion(),
   },
+  {
+    version: 18,
+    description: "retire the block-dashboard compatibility views and their triggers",
+    statements: blockDashboardAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires the three `_runtime_block_dashboard_*` views and their triggers.
+ *
+ * Nothing is adopted, unlike the receipt promotion: every object the compat
+ * schema creates for the block dashboard is a view or a trigger over tables the
+ * object's own schema already declares. That is worth stating rather than
+ * assuming — the receipt slice found a real `STRICT` table and a load-bearing
+ * unique index hiding in that file, and the rule it left behind is to derive a
+ * drop set from what each object *is*, never from the file it lives in. These
+ * three are views, and the four are their triggers.
+ *
+ * The count is asserted for the reason migration 17 asserts its own: a reshaped
+ * compat schema should fail the build rather than produce a migration that
+ * quietly patches nothing.
+ */
+function blockDashboardAuthorityPromotion(): string[] {
+  const names = /^_runtime_block_dashboard_/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 7) {
+    throw new Error(`expected seven block-dashboard compat objects, found ${compatObjects.length}`);
+  }
+  // Triggers first: dropping a view out from under its own INSTEAD OF trigger
+  // is legal but leaves the trigger orphaned in `sqlite_schema`.
+  return [
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Promotes the Terminal lifecycle out of a JSON blob and retires the

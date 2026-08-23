@@ -74,10 +74,7 @@ const LOCAL_TABLES = [
   "workstream_plugin_activation_hints",
   "workstream_resource_inventory_revisions",
   "workstream_description_refreshes",
-  "block_dashboard_configuration_versions",
-  "block_dashboard_user_preferences",
   "workstream_resources",
-  "block_dashboard_block_runs",
   // The object's own receipt table, not a legacy name: when migration 17
   // retired `tool_invocations` from this list, the dev seed moved to writing
   // `tool_effects` directly — and a statement naming only that table fell
