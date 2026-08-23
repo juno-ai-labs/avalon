@@ -629,13 +629,48 @@ export function testSubstreamAgentsBinding(
  * fence is exercised. What the *runtime* decides — that the operation is atomic
  * against a concurrent caller — is proved in `test-workers/` instead.
  */
-export function testToolReceiptPort(database: DatabaseSync): ToolReceiptObjectPort {
+export function testToolReceiptPort(
+  database: DatabaseSync,
+  /**
+   * Run inside `transactionSync`, immediately before the operation's body.
+   *
+   * The only way for a test to land competing state at the last instant an
+   * operation could still observe it. Every receipt operation reads its fences
+   * and writes its rows in one transaction, so this is where a race that used
+   * to fit between two D1 batches now has to be staged from.
+   */
+  beforeTransaction?: () => void,
+  /**
+   * Run after each statement an operation executes, with that statement's SQL.
+   *
+   * The counterpart to `beforeTransaction` for the other half of an operation:
+   * competing state that lands *after* a decision has been read, to prove the
+   * decision is not re-derived from a source that has since moved.
+   */
+  afterStatement?: (sql: string) => void,
+): ToolReceiptObjectPort {
+  const objectSql = objectSqlStorage(database);
+  const sql = afterStatement
+    ? new Proxy(objectSql, {
+      get(target, property, receiver) {
+        if (property !== "exec") return Reflect.get(target, property, receiver) as unknown;
+        return (statement: string, ...values: unknown[]) => {
+          const result = (target.exec as (...rest: unknown[]) => unknown)(statement, ...values);
+          afterStatement(statement);
+          return result;
+        };
+      },
+    })
+    : objectSql;
   const storage = new WorkstreamToolReceiptStorage(
     createCloudflareTestBinding<DurableObjectStorage>({
       getAlarm: async () => null,
       setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => body(),
-      sql: objectSqlStorage(database),
+      transactionSync: (body: () => unknown) => {
+        beforeTransaction?.();
+        return body();
+      },
+      sql,
     }),
   );
   return Object.fromEntries(

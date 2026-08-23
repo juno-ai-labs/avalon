@@ -41,7 +41,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
-import { createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { resolveAgentModelRouting } from "../services/agent-model-flags";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import {
@@ -1258,7 +1258,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       status,
       ...(error ? { error } : {}),
       memberSafePayload: error ? { code: error.code } : {},
-    });
+    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     const terminal = await this.updateRuntimeBlockRun(executionEnv, dispatch, status, error);
     return this.persistAndSettle(dispatch, { run: terminal }, leaseToken);
   }

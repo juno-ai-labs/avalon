@@ -1949,6 +1949,7 @@ export async function terminalizeHarnessAttempt(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
   outcome: TerminalOutcome,
+  receipts: ToolReceiptObjectPort,
 ): Promise<"terminalized" | "already_terminal"> {
   const target = await db.prepare(
     `SELECT origin FROM harness_runs
@@ -1988,99 +1989,7 @@ export async function terminalizeHarnessAttempt(
   const lifecycleId = uuidV7();
   const payload = stableJson(outcome.memberSafePayload ?? {});
   const workstreamStatus = outcome.status === "stopped" ? "idle" : outcome.status;
-  const stoppedReceiptStatements: D1PreparedStatement[] = [];
-  if (outcome.status === "stopped") {
-    const checkpointPrefix = `${uuidV7()}:stopped:`;
-    stoppedReceiptStatements.push(
-      db.prepare(
-        `INSERT INTO tool_invocation_checkpoints
-         (id, tool_invocation_id, harness_run_id, attempt_id, checkpoint_index,
-          phase, member_safe_payload_json, created_at)
-         SELECT ?1 || ti.id, ti.id, ti.harness_run_id, ?5,
-                COALESCE((
-                  SELECT MAX(existing.checkpoint_index)
-                    FROM tool_invocation_checkpoints existing
-                   WHERE existing.tool_invocation_id = ti.id
-                ), ti.checkpoint_index) + 1,
-                CASE
-                  WHEN ti.status = 'started'
-                    AND COALESCE(json_extract(ti.execution_plan_json, '$.mode'), '') != 'read'
-                    THEN 'ambiguous_external_write'
-                  ELSE 'cancelled'
-                END,
-                CASE
-                  WHEN ti.status = 'started'
-                    AND COALESCE(json_extract(ti.execution_plan_json, '$.mode'), '') != 'read'
-                    THEN '{"code":"ambiguous_external_write"}'
-                  ELSE '{"code":"run_cancelled"}'
-                END,
-                ?7
-           FROM tool_invocations ti
-           JOIN harness_runs parent ON parent.id = ti.harness_run_id
-          WHERE ti.harness_run_id = ?2 AND ti.attempt_id = ?5
-            AND ti.status IN ('pending', 'started')
-            AND parent.workspace_id = ?3 AND parent.workstream_id = ?4
-            AND parent.attempt_id = ?5 AND parent.lease_owner = ?6
-            AND parent.status = 'running' AND parent.terminalized_at IS NULL
-            AND parent.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
-      ).bind(
-        checkpointPrefix,
-        input.harnessRunId,
-        input.workspaceId,
-        input.workstreamId,
-        lease.attemptId,
-        lease.owner,
-        now,
-      ),
-      db.prepare(
-        `UPDATE tool_invocations
-            SET status = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN 'ambiguous'
-                  ELSE 'failed'
-                END,
-                completed_at = ?2,
-                error_json = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN '{"code":"ambiguous_external_write","message":"The run stopped while an external write was unresolved"}'
-                  ELSE '{"code":"run_cancelled","message":"The run stopped before the tool produced a result"}'
-                END,
-                checkpoint_index = (
-                  SELECT checkpoint_index FROM tool_invocation_checkpoints
-                   WHERE id = ?1 || tool_invocations.id
-                ),
-                last_checkpoint_at = ?2, lease_expires_at = NULL
-          WHERE harness_run_id = ?3 AND attempt_id = ?6
-            AND status IN ('pending', 'started')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs parent
-               WHERE parent.id = ?3 AND parent.workspace_id = ?4
-                 AND parent.workstream_id = ?5 AND parent.attempt_id = ?6
-                 AND parent.lease_owner = ?7 AND parent.status = 'running'
-                 AND parent.terminalized_at IS NULL
-            )
-            AND EXISTS (
-              SELECT 1 FROM tool_invocation_checkpoints checkpoint
-               WHERE checkpoint.id = ?1 || tool_invocations.id
-                 AND checkpoint.tool_invocation_id = tool_invocations.id
-                 AND checkpoint.attempt_id = ?6
-            )`,
-      ).bind(
-        checkpointPrefix,
-        now,
-        input.harnessRunId,
-        input.workspaceId,
-        input.workstreamId,
-        lease.attemptId,
-        lease.owner,
-      ),
-    );
-  }
   const results = await db.batch([
-    ...stoppedReceiptStatements,
     db.prepare(
       `INSERT INTO harness_run_lifecycle_events
        (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
@@ -2091,11 +2000,6 @@ export async function terminalizeHarnessAttempt(
           AND parent_tool_call_id IS NULL
           AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
           AND (?7 = 'stopped' OR cancellation_requested_at IS NULL)
-          AND (?7 != 'stopped' OR NOT EXISTS (
-            SELECT 1 FROM tool_invocations unsettled
-             WHERE unsettled.harness_run_id = ?1
-               AND unsettled.status IN ('pending', 'started')
-          ))
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
     ).bind(
@@ -2119,11 +2023,6 @@ export async function terminalizeHarnessAttempt(
           AND parent_tool_call_id IS NULL
           AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
           AND (?6 = 'stopped' OR cancellation_requested_at IS NULL)
-          AND (?6 != 'stopped' OR NOT EXISTS (
-            SELECT 1 FROM tool_invocations unsettled
-             WHERE unsettled.harness_run_id = ?1
-               AND unsettled.status IN ('pending', 'started')
-          ))
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
     ).bind(
       input.harnessRunId,
@@ -2179,7 +2078,35 @@ export async function terminalizeHarnessAttempt(
           )`,
     ).bind(now, input.harnessRunId, lease.attemptId),
   ]);
-  if (d1Changes(results[stoppedReceiptStatements.length + 1]) > 0) return "terminalized";
+  if (d1Changes(results[1]) > 0) {
+    // Every receipt this run still had open is classified and closed now that
+    // the run is terminal, because a stopped run must not leave a tool card
+    // spinning. A write caught mid-flight becomes `ambiguous` rather than
+    // `failed`: the provider may already have performed it, and stopping is not
+    // evidence either way.
+    //
+    // After the terminal write rather than before it, and in a second call
+    // rather than the same transaction, because the lifecycle row is in this
+    // database and the receipts are in the work stream's object. Of the two
+    // possible orderings only this one fails safe — see
+    // `settleResidualReceipts`.
+    if (outcome.status === "stopped") {
+      await receipts.settleResidualReceipts({
+        runId: input.harnessRunId,
+        attemptId: lease.attemptId,
+        lease: { kind: "terminalized", at: Date.parse(now) },
+        phase: "cancelled",
+        errorJson: JSON.stringify({
+          code: "run_cancelled",
+          message: "The run stopped before the tool produced a result",
+        }),
+        payloadJson: JSON.stringify({ code: "run_cancelled" }),
+        ambiguousMessage: "The run stopped while an external write was unresolved",
+        now: Date.parse(now),
+      });
+    }
+    return "terminalized";
+  }
   const existing = await db.prepare(
     `SELECT attempt_id, status, terminalized_at FROM harness_runs
       WHERE id = ? AND parent_tool_call_id IS NULL`,
@@ -2437,7 +2364,6 @@ export async function reapStaleHarnessRuns(
     const childResultHash = await sha256Hex(childResultJson);
     const memberPayload = stableJson({ code: error.code });
     const errorJson = safeErrorJson(error);
-    const receiptCheckpointPrefix = `${uuidV7()}:reaped:`;
     const receiptFallbackPhase = status === "stopped" ? "cancelled" : "failed";
     const invalidParentPredicate = `(
       child.cancellation_requested_at IS NOT NULL
@@ -2452,99 +2378,6 @@ export async function reapStaleHarnessRuns(
     )`;
     const results = await db.batch([
       db.prepare(
-        `INSERT INTO tool_invocation_checkpoints
-         (id, tool_invocation_id, harness_run_id, attempt_id, checkpoint_index,
-          phase, member_safe_payload_json, created_at)
-         SELECT ?1 || ti.id, ti.id, ti.harness_run_id, ?3,
-                COALESCE((
-                  SELECT MAX(existing.checkpoint_index)
-                    FROM tool_invocation_checkpoints existing
-                   WHERE existing.tool_invocation_id = ti.id
-                ), ti.checkpoint_index) + 1,
-                CASE
-                  WHEN ti.status = 'started'
-                    AND COALESCE(json_extract(ti.execution_plan_json, '$.mode'), '') != 'read'
-                    THEN 'ambiguous_external_write'
-                  ELSE ?7
-                END,
-                CASE
-                  WHEN ti.status = 'started'
-                    AND COALESCE(json_extract(ti.execution_plan_json, '$.mode'), '') != 'read'
-                    THEN '{"code":"ambiguous_external_write"}'
-                  ELSE ?8
-                END,
-                ?9
-           FROM tool_invocations ti
-           JOIN harness_runs child ON child.id = ti.harness_run_id
-          WHERE ti.harness_run_id = ?2 AND ti.attempt_id = ?3
-            AND ti.status IN ('pending', 'started')
-            AND child.attempt_id = ?3 AND child.lease_expires_at = ?4
-            AND child.lease_owner = ?5 AND child.parent_harness_run_id = ?6
-            AND child.parent_tool_call_id IS NOT NULL
-            AND child.status = 'running' AND child.terminalized_at IS NULL
-            AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            AND ${invalidParentPredicate}
-         ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
-      ).bind(
-        receiptCheckpointPrefix,
-        row.id,
-        row.attempt_id,
-        row.lease_expires_at,
-        row.lease_owner,
-        row.parent_harness_run_id,
-        receiptFallbackPhase,
-        memberPayload,
-        now,
-      ),
-      db.prepare(
-        `UPDATE tool_invocations
-            SET status = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN 'ambiguous'
-                  ELSE 'failed'
-                END,
-                completed_at = ?2,
-                error_json = CASE
-                  WHEN status = 'started'
-                    AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                    THEN '{"code":"ambiguous_external_write","message":"The child run ended while an external write was unresolved"}'
-                  ELSE ?8
-                END,
-                checkpoint_index = (
-                  SELECT checkpoint_index FROM tool_invocation_checkpoints
-                   WHERE id = ?1 || tool_invocations.id
-                ),
-                last_checkpoint_at = ?2, lease_expires_at = NULL
-          WHERE harness_run_id = ?3 AND attempt_id = ?4
-            AND status IN ('pending', 'started')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs child
-               WHERE child.id = ?3 AND child.attempt_id = ?4
-                 AND child.lease_expires_at = ?5 AND child.lease_owner = ?6
-                 AND child.parent_harness_run_id = ?7
-                 AND child.parent_tool_call_id IS NOT NULL
-                 AND child.status = 'running' AND child.terminalized_at IS NULL
-                 AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                 AND ${invalidParentPredicate}
-            )
-            AND EXISTS (
-              SELECT 1 FROM tool_invocation_checkpoints checkpoint
-               WHERE checkpoint.id = ?1 || tool_invocations.id
-                 AND checkpoint.tool_invocation_id = tool_invocations.id
-                 AND checkpoint.attempt_id = ?4
-            )`,
-      ).bind(
-        receiptCheckpointPrefix,
-        now,
-        row.id,
-        row.attempt_id,
-        row.lease_expires_at,
-        row.lease_owner,
-        row.parent_harness_run_id,
-        errorJson,
-      ),
-      db.prepare(
         `INSERT INTO harness_run_lifecycle_events
          (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
           event_type, status, member_safe_payload_json, created_at)
@@ -2557,11 +2390,6 @@ export async function reapStaleHarnessRuns(
             AND child.status = 'running' AND child.terminalized_at IS NULL
             AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             AND ${invalidParentPredicate}
-            AND NOT EXISTS (
-              SELECT 1 FROM tool_invocations unsettled
-               WHERE unsettled.harness_run_id = child.id
-                 AND unsettled.status IN ('pending', 'started')
-            )
          ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
       ).bind(
         eventId,
@@ -2588,11 +2416,6 @@ export async function reapStaleHarnessRuns(
             AND harness_runs.status = 'running' AND harness_runs.terminalized_at IS NULL
             AND harness_runs.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             AND ${invalidParentPredicate.replaceAll("child.", "harness_runs.")}
-            AND NOT EXISTS (
-              SELECT 1 FROM tool_invocations unsettled
-               WHERE unsettled.harness_run_id = harness_runs.id
-                 AND unsettled.status IN ('pending', 'started')
-            )
             AND EXISTS (
               SELECT 1 FROM harness_run_lifecycle_events lifecycle
                WHERE lifecycle.id = ?11 AND lifecycle.harness_run_id = harness_runs.id
@@ -2614,7 +2437,21 @@ export async function reapStaleHarnessRuns(
         row.lease_owner,
       ),
     ]);
-    if (d1Changes(results[3]) === 0) continue;
+    if (d1Changes(results[1]) === 0) continue;
+    // Same rule, and the same ordering, as a stopped parent: the child's own
+    // receipts are classified and closed once it is terminal.
+    await options.receipts(row.workspace_id, row.workstream_id).settleResidualReceipts({
+      runId: row.id,
+      attemptId: row.attempt_id,
+      lease: { kind: "terminalized", at: Date.parse(now) },
+      phase: receiptFallbackPhase,
+      // Non-null here by construction — the reaper always has an outcome —
+      // but restated rather than asserted, because the object needs a string.
+      errorJson: errorJson ?? JSON.stringify({ code: error.code, message: error.message }),
+      payloadJson: memberPayload,
+      ambiguousMessage: "The child run ended while an external write was unresolved",
+      now: Date.parse(now),
+    });
     const persisted = await db.prepare(
       `SELECT child_result_json, child_result_hash
          FROM harness_runs

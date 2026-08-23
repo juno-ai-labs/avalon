@@ -76,7 +76,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
-import { createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -1975,7 +1975,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
       memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    });
+    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);

@@ -200,7 +200,4 @@ function attachmentReceiptDependencies(canonicalToolName: string, output: unknow
   return [];
 }
 
-export const __attachmentToolReceiptTesting = {
-  attachmentReceiptDependencies,
-  registerObjectAttachmentToolReceipt,
-};
+export const __attachmentToolReceiptTesting = { attachmentReceiptDependencies };

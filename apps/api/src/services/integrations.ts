@@ -4032,6 +4032,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 // mutate shared dependency state before its completion fence.
                 await registerAttachmentToolReceipt(options.env, {
                   workspaceId: childInput.workspaceId,
+                  workstreamId: childInput.workstreamId,
                   invocationId: invocation.id,
                   expectedOutputRef: outputRef,
                   canonicalToolName: receiptPolicy.definition.name,
@@ -4650,6 +4651,9 @@ async function settleRootHarnessToolCompletion(
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
   },
+  /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
+  receipts: ToolReceiptObjectPort
+    = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const outputRef = await persistSuccessfulToolResult(env, input, lease, {
     invocationId: result.invocationId,
@@ -4666,7 +4670,7 @@ async function settleRootHarnessToolCompletion(
     // requires this exact live attempt and rejects parent terminalization while
     // any receipt from any attempt remains pending or started.
     allowCancellationRequested: true,
-  });
+  }, undefined, receipts);
   // The invocation completion is the authority for this dependency. If the
   // Worker disappears between these writes, replay finds no dependency,
   // invalidates the receipt, and executes again instead of trusting the JSON.
@@ -4677,7 +4681,7 @@ async function settleRootHarnessToolCompletion(
     expectedOutputRef: outputRef,
     canonicalToolName: result.canonicalToolName,
     output: result.attachmentOutput,
-  });
+  }, receipts);
   return outputRef;
 }
 
