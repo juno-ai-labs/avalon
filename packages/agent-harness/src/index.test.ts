@@ -207,6 +207,7 @@ describe("agent harness", () => {
       recommendedPlugins: [],
       memoryTables: [],
       expectedOutputs: ["Project summary"],
+      requestedDelivery: [],
       defaultBehavior: "{}",
       suggestedScope: "personal",
       followUpQuestion: null,

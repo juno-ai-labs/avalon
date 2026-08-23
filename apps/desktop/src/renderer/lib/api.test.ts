@@ -173,13 +173,11 @@ afterEach(() => {
 
 describe('Avalon API wire adapter', () => {
   it.each([
-    ['The briefing, emailed to you each morning', true],
-    ['A summary sent to you by email', true],
-    ['Email me the three items that matter', true],
-    ['A ranked list of your five most important emails', false],
-    ['A Slack message naming the emails that need a reply', false],
-    ['A weekly changelog in Avalon', false],
-  ])('reads %j as an email destination: %s', async (expectedOutput, expected) => {
+    [['email'], true, false],
+    [['slack_agent_dm'], false, true],
+    [['email', 'slack_agent_dm'], true, true],
+    [[], false, false],
+  ])('carries the compiler\'s own %j through to the destination choices', async (requested, email, slack) => {
     const draft = {
       name: 'Morning briefing',
       description: 'Summarizes the morning.',
@@ -187,7 +185,10 @@ describe('Avalon API wire adapter', () => {
       instructions: 'Write the briefing.',
       triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
       requiredCapabilities: [],
-      expectedOutputs: [expectedOutput],
+      // Deliberately prose that a regex would read as a delivery request: the
+      // point of the structured field is that this no longer decides anything.
+      expectedOutputs: ['A ranked list of your five most important emails'],
+      requestedDelivery: requested,
       defaultBehavior: {},
       recommendedPlugins: [],
       suggestedScope: 'personal' as const,
@@ -200,11 +201,10 @@ describe('Avalon API wire adapter', () => {
     ], 47)));
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    // Avalon is the only sender now, so this flag decides whether the create
-    // screen offers the destination at all — and a destination frozen by
-    // mistake cannot be changed afterwards.
     const result = await api.compileAutomation({ message: 'Brief me.' });
-    expect(result.summary?.requiresEmailDelivery).toBe(expected);
+
+    expect(result.summary?.requiresEmailDelivery).toBe(email);
+    expect(result.summary?.requiresSlackDelivery).toBe(slack);
   });
 
   it('streams automation assistant tokens and returns the final typed draft', async () => {
