@@ -44,6 +44,10 @@ const DISPATCHED_OPERATIONS = [
   "releaseClaimedWakeup",
   "cancelWakeup",
   "deleteUnarmedWakeup",
+  "activationHints",
+  "recordPluginActivation",
+  "compactionCheckpoint",
+  "persistCompactionCheckpoint",
 ] as const satisfies readonly SchedulingOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
