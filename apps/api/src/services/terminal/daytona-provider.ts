@@ -64,7 +64,7 @@ interface DaytonaSandboxLike {
   domainAllowList?: string;
   refreshData?: () => Promise<void>;
   start?: (timeout?: number) => Promise<void>;
-  stop?: () => Promise<void>;
+  stop?: (timeout?: number, force?: boolean) => Promise<void>;
   archive?: () => Promise<void>;
   delete?: (timeout?: number, wait?: boolean) => Promise<void>;
   updateNetworkSettings?: (settings: { domainAllowList?: string; networkBlockAll?: boolean }) => Promise<void>;
@@ -518,7 +518,7 @@ export function createDaytonaTerminalProvider(
     async stopSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.stop) throw new Error("Daytona sandbox does not support stop");
-      await sandbox.stop();
+      await sandbox.stop(60);
     },
     async archiveSandbox(idOrName) {
       const sandbox = await load(idOrName);
@@ -574,7 +574,7 @@ export function createDaytonaTerminalProvider(
           attachedNewSecret = true;
         }
       }
-      if (attachedNewSecret && sandbox.state === "started" && sandbox.stop) await sandbox.stop();
+      if (attachedNewSecret && sandbox.state === "started" && sandbox.stop) await sandbox.stop(60);
       await sandbox.updateSecrets(Object.fromEntries(specifications.map((specification) => [specification.env, specification.name])));
       if (attachedNewSecret && sandbox.start) await sandbox.start(60);
     },

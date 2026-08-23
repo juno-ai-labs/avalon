@@ -34,7 +34,7 @@ function isDue(value: number | null, now: Date): boolean {
 }
 
 /**
- * Make every expired durable command task quiescent at Daytona before a
+ * Make every unsettled durable command task quiescent at Daytona before a
  * lifecycle transition runs preservation or another provider operation.
  */
 async function quiesceUnsettledTasks(
@@ -62,69 +62,51 @@ async function quiesceUnsettledTasks(
     const task = await terminal.unsettledTask(generation);
     if (!task) return { sandboxStopped, sandboxAbsent };
 
-    if (!sandboxStopped && !sandboxAbsent) {
-      // A `submitting` task has no accepted provider command id yet. A missing
-      // named session therefore cannot exclude a late in-flight submission,
-      // and stop/restart of the same sandbox would let that request overlap a
-      // successor. Retire the whole sandbox and generation under the lifecycle
-      // token; scheduled cleanup must not depend on a later human-linked run.
-      if (task.state === "submitting") {
-        if (!provider.cleanupCommand) {
-          throw new Error("terminal_submitting_task_requires_sandbox_retirement");
-        }
-        let cleanup: "deleted" | "missing" | void = undefined;
-        try {
-          await renewClaim();
-          cleanup = await provider.cleanupCommand(providerSandboxId, task.providerTaskName);
-        } catch (error) {
-          if (!isTerminalProviderNotFound(error)) throw error;
-          sandboxAbsent = true;
-        }
-        if (cleanup === "missing") {
+    if (!sandboxAbsent && task.state !== "running") {
+      // Stop/restart cannot exclude pre-acceptance work that may still reach
+      // the provider. Retire the sandbox so any stale request targets only the
+      // old generation; `planned` stays fail-safe if admission ever moves
+      // before provider submission.
+      try {
+        await renewClaim();
+        await provider.deleteSandbox(providerSandboxId);
+      } catch (error) {
+        if (!isTerminalProviderNotFound(error)) {
           try {
-            await renewClaim();
-            await provider.deleteSandbox(providerSandboxId);
-          } catch (error) {
-            if (!isTerminalProviderNotFound(error)) throw error;
+            await provider.getSandbox(providerSandboxId);
+          } catch (observationError) {
+            if (isTerminalProviderNotFound(observationError)) sandboxAbsent = true;
+            else throw error;
           }
-          sandboxAbsent = true;
+          if (!sandboxAbsent) throw error;
         }
-      } else {
-        try {
-          if (provider.cleanupCommand) {
-            await renewClaim();
-            await provider.cleanupCommand(providerSandboxId, task.providerTaskName);
-          } else {
-            await renewClaim();
-            await provider.stopSandbox(providerSandboxId);
-            sandboxStopped = true;
+      }
+      // Successful deletion and provider-confirmed absence both retire this generation.
+      sandboxAbsent = true;
+      sandboxStopped = false;
+    } else if (!sandboxAbsent && !sandboxStopped && task.state === "running") {
+      // Removing a Daytona session is not process-quiescence evidence: a live
+      // accepted command can keep mutating after the session handle disappears.
+      // Whole-sandbox stop is the provider boundary scheduled cleanup needs.
+      try {
+        await renewClaim();
+        await provider.stopSandbox(providerSandboxId);
+        sandboxStopped = true;
+      } catch (error) {
+        if (isTerminalProviderNotFound(error)) {
+          sandboxAbsent = true;
+        } else {
+          let observed = null;
+          try {
+            observed = await provider.getSandbox(providerSandboxId);
+          } catch (observationError) {
+            if (isTerminalProviderNotFound(observationError)) sandboxAbsent = true;
+            else throw error;
           }
-        } catch (error) {
-          if (isTerminalProviderNotFound(error)) {
-            sandboxAbsent = true;
-          } else {
-            try {
-              await renewClaim();
-              await provider.stopSandbox(providerSandboxId);
-              sandboxStopped = true;
-            } catch (stopError) {
-              if (isTerminalProviderNotFound(stopError)) {
-                sandboxAbsent = true;
-              } else {
-                let observed = null;
-                try {
-                  observed = await provider.getSandbox(providerSandboxId);
-                } catch (observationError) {
-                  if (isTerminalProviderNotFound(observationError)) sandboxAbsent = true;
-                  else throw error;
-                }
-                if (!sandboxAbsent && observed?.state !== "stopped" && observed?.state !== "archived") {
-                  throw error;
-                }
-                sandboxStopped = !sandboxAbsent;
-              }
-            }
+          if (!sandboxAbsent && observed?.state !== "stopped" && observed?.state !== "archived") {
+            throw error;
           }
+          sandboxStopped = !sandboxAbsent;
         }
       }
     }
@@ -203,11 +185,16 @@ export async function reconcileDueTerminalSandbox(
   const claimedSandboxId = claimed.sandboxId;
   const settleMissingSandbox = async (): Promise<{ transition: TerminalLifecycleTransition }> => {
     if (desired === "expired") {
-      await terminal.settleLifecycleTransition({
+      const settled = await terminal.settleLifecycleTransition({
         lifecycleState: "expired",
         claimId,
         now: now.getTime(),
       });
+      if (!settled) {
+        throw new Error(
+          `terminal_lifecycle_expiry_tasks_unsettled: generation=${row.generation} claim=${claimId}`,
+        );
+      }
       return { transition: "expired" };
     }
     const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
@@ -308,11 +295,12 @@ export async function reconcileDueTerminalSandbox(
     }
   }
 
-  await terminal.settleLifecycleTransition({
+  const settled = await terminal.settleLifecycleTransition({
     lifecycleState: desired,
     claimId,
     now: now.getTime(),
   });
+  if (!settled) throw new Error("terminal_lifecycle_settlement_lost");
   return { transition: desired };
 }
 
