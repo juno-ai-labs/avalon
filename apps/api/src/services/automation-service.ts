@@ -778,6 +778,7 @@ export class AutomationService {
          FROM automation_delivery_targets dt
          LEFT JOIN connector_connections cc ON cc.id = dt.connection_id
          WHERE dt.automation_subscription_id = ? AND dt.workspace_id = ?
+           AND dt.status <> 'disabled'
          ORDER BY dt.created_at`,
       ).bind(id, this.auth.workspaceId).all<{
         target_type: "slack_agent_dm" | "email";
@@ -837,12 +838,15 @@ export class AutomationService {
     // address is their own. Somebody else administering the automation may
     // change what it does, never where it reaches this person.
     //
-    // Defence behind a fence that already holds: only a personal automation can
-    // carry a destination, and `loadSubscription` does not return one to
-    // anybody but its owner, so this cannot fire today. It is here so that a
-    // change making automations visible more widely — a shared workspace
-    // automation with per-member delivery, say — fails closed rather than
-    // silently letting an administrator redirect somebody else's mail.
+    // Two cases, and only one of them is defence. A *personal* automation is
+    // returned by `loadSubscription` to nobody but its owner, so for that scope
+    // this cannot fire — it is here so that a change making automations visible
+    // more widely fails closed rather than letting an administrator redirect
+    // somebody else's mail. A *workspace* automation has no `owner_user_id` at
+    // all, so this does fire, for any member and for any value including an
+    // empty set. That is the right outcome by a less obvious route than the
+    // scope check below, and it is why a workspace automation shows no delivery
+    // section: there is no owner whose address it could be frozen to.
     if (input.deliveryTargets !== undefined && row.owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "delivery_owner_required", "Only the automation's owner can change where its results are delivered");
     }
@@ -925,16 +929,35 @@ export class AutomationService {
 
   /**
    * The statements that make an automation's destinations match what was asked
-   * for, leaving the ones that are already right alone.
+   * for.
    *
-   * A target that survives keeps its row, and with it
-   * `last_delivered_workstream_id` — the fence that stops a workflow retry
-   * mailing the same result twice. Deleting and reinserting every target on
-   * every edit would clear that fence, so an edit between a run finishing and
-   * its delivery settling could send the result again.
+   * Written as an upsert per requested type plus one retirement of the types
+   * that were not requested, so the statements *describe the end state* rather
+   * than a diff against a set read a moment earlier. Three things follow from that,
+   * each of which was a defect when this reconciled against a prior read:
    *
-   * An address is still resolved when the target is created rather than per
-   * run, so this re-resolves only for a destination that was not there before.
+   * - **A row is never replaced by an equivalent row.** The delivery fences are
+   *   keyed on the target's own id — `last_delivered_workstream_id`
+   *   (`automation-email-service.ts`), the Resend idempotency key, and the
+   *   Slack `client_msg_id` are all derived from it. `ON CONFLICT … DO UPDATE`
+   *   keeps the id even when the owner turns a destination off and back on, so
+   *   a retry landing in that window still recognizes the result as delivered.
+   *   Delete-then-insert clears all three at once, which is the duplicate this
+   *   whole change exists to remove — which is also why turning a destination
+   *   off retires its row rather than removing it.
+   * - **No statement order can violate the unique index.** Swapping a Slack
+   *   destination onto a reconnected connection is one upsert on the row that
+   *   is already there, not an insert racing a delete of the row it replaces.
+   * - **Two concurrent edits cannot lose one.** Each request states the whole
+   *   set, so the later one wins outright instead of deleting a row the earlier
+   *   one had just added.
+   *
+   * An address is resolved when a destination is added rather than per run, so
+   * a type already present keeps the identity frozen on it; only a type that is
+   * new, or one whose connection changed, is resolved here. That matters beyond
+   * cost: re-resolving a destination the owner is not touching fails the whole
+   * edit once their Slack link lapses, which left the dead destination
+   * impossible to remove.
    */
   private async deliveryTargetStatements(
     subscriptionId: string,
@@ -942,36 +965,44 @@ export class AutomationService {
     requested: CreateAutomationInput["deliveryTargets"],
     at: string,
   ): Promise<D1PreparedStatement[]> {
-    const resolved = await this.resolveDeliveryTargets(scope, requested);
+    // Asked here rather than left to `resolveDeliveryTargets`, which answers
+    // early for an empty list — and the list it is handed below is filtered, so
+    // a set that is entirely unchanged would reach it empty and skip the check.
+    if (requested.length > 0 && scope !== "personal") {
+      throw new ApiError(422, "personal_automation_required", "Result delivery outside Avalon requires a personal automation");
+    }
     const existing = await this.env.DB.prepare(
-      `SELECT id, target_type, connection_id FROM automation_delivery_targets
-        WHERE workspace_id = ? AND automation_subscription_id = ?`,
-    ).bind(this.auth.workspaceId, subscriptionId).all<{
-      id: string;
+      `SELECT target_type, connection_id FROM automation_delivery_targets
+        WHERE workspace_id = ? AND automation_subscription_id = ? AND user_id = ?
+          AND status <> 'disabled'`,
+    ).bind(this.auth.workspaceId, subscriptionId, this.auth.userId).all<{
       target_type: string;
       connection_id: string | null;
     }>();
-    const keep = new Set<string>();
+    // Only what this edit actually changes needs an identity resolved. A stale
+    // read here can cost a resolution that was not needed; it cannot produce a
+    // wrong write, because the statements below do not reference it.
+    const unchanged = new Set((existing.results ?? [])
+      .map((row) => `${row.target_type}:${row.connection_id ?? ""}`));
+    const resolved = await this.resolveDeliveryTargets(
+      scope,
+      requested.filter((target) =>
+        !unchanged.has(`${target.type}:${target.type === "email" ? "" : target.connectionId}`)),
+    );
     const statements: D1PreparedStatement[] = [];
     for (const target of resolved) {
-      const match = (existing.results ?? []).find((candidate) =>
-        candidate.target_type === target.type
-        && (target.type === "email" || candidate.connection_id === target.connectionId));
-      if (match) {
-        keep.add(match.id);
-        // A target the owner has just chosen again is one they want delivering,
-        // whatever a past failure left on it.
-        statements.push(this.env.DB.prepare(
-          `UPDATE automation_delivery_targets SET status = 'active', last_error_json = NULL, updated_at = ?
-            WHERE id = ? AND workspace_id = ?`,
-        ).bind(at, match.id, this.auth.workspaceId));
-        continue;
-      }
       statements.push(this.env.DB.prepare(
         `INSERT INTO automation_delivery_targets
           (id, workspace_id, automation_subscription_id, target_type, connection_id,
            user_id, slack_team_id, slack_user_id, email_address, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT (automation_subscription_id, target_type) DO UPDATE SET
+           connection_id = excluded.connection_id,
+           slack_team_id = excluded.slack_team_id,
+           slack_user_id = excluded.slack_user_id,
+           status = 'active',
+           last_error_json = NULL,
+           updated_at = excluded.updated_at`,
       ).bind(
         newId(),
         this.auth.workspaceId,
@@ -986,12 +1017,31 @@ export class AutomationService {
         at,
       ));
     }
-    for (const candidate of existing.results ?? []) {
-      if (keep.has(candidate.id)) continue;
+    // A destination the owner chose again is one they want delivering, whatever
+    // a past failure left on it — so a type that is staying but was not
+    // resolved above still has its failure state cleared.
+    for (const target of requested) {
+      if (resolved.some((entry) => entry.type === target.type)) continue;
       statements.push(this.env.DB.prepare(
-        "DELETE FROM automation_delivery_targets WHERE id = ? AND workspace_id = ?",
-      ).bind(candidate.id, this.auth.workspaceId));
+        `UPDATE automation_delivery_targets
+            SET status = 'active', last_error_json = NULL, updated_at = ?
+          WHERE workspace_id = ? AND automation_subscription_id = ? AND target_type = ?`,
+      ).bind(at, this.auth.workspaceId, subscriptionId, target.type));
     }
+    // Switched off, not deleted. Both dedupe layers are keyed on the row's id,
+    // so removing it and inserting an equivalent row later is the one way an
+    // owner can still make a retry re-send a result already delivered — and
+    // turning a destination off and back on is a plainly reasonable thing to
+    // do. A retired row delivers nowhere (every sender's predicate names the
+    // statuses it will send to, and `disabled` is in none of them) and is not
+    // returned to the client, so it is off in every sense except forgetting.
+    const keptTypes = requested.map((target) => target.type);
+    statements.push(this.env.DB.prepare(
+      `UPDATE automation_delivery_targets
+          SET status = 'disabled', updated_at = ?
+        WHERE workspace_id = ? AND automation_subscription_id = ?
+          ${keptTypes.length > 0 ? `AND target_type NOT IN (${keptTypes.map(() => "?").join(", ")})` : ""}`,
+    ).bind(at, this.auth.workspaceId, subscriptionId, ...keptTypes));
     return statements;
   }
 
