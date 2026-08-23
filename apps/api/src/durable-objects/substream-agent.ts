@@ -123,6 +123,11 @@ import {
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
+import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
+import {
+  type SchedulingOperationRequest,
+  SchedulingOperationRequestSchema,
+} from "./workstream-scheduling-protocol";
 import {
   type BlockDashboardOperationRequest,
   BlockDashboardOperationRequestSchema,
@@ -525,6 +530,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
   private blockDashboard!: WorkstreamBlockDashboardStorage;
+  private scheduling!: WorkstreamSchedulingStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -580,6 +586,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
+      this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -737,6 +744,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/scheduling") {
+      return this.acceptSchedulingOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -846,6 +856,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
+  }
+
+  async executeSchedulingOperation(
+    input: SchedulingOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptSchedulingOperation(this.rpcRequest(input)));
   }
 
   async executeBlockDashboardOperation(
@@ -1025,15 +1042,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Dispatch one block-dashboard operation against this object's own storage.
-   *
-   * Identity is re-checked against the object's own before anything executes,
-   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
-   * fail rather than settle another work stream's blocks. The main child holds
-   * these rows, so a non-main substream is refused here rather than answering
-   * from an empty table.
-   */
-  /**
    * Refuse an object-port request the routed path would have refused.
    *
    * `executeWorkstreamRuntimeSql` checked two things before running a
@@ -1065,6 +1073,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return null;
   }
 
+  /**
+   * Dispatch one scheduling operation against this object's own storage.
+   */
+  private async acceptSchedulingOperation(request: Request): Promise<Response> {
+    const parsed = SchedulingOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.scheduling, parsed.data.args);
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
+  /**
+   * Dispatch one block-dashboard operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes,
+   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
+   * fail rather than settle another work stream's blocks. The main child holds
+   * these rows, so a non-main substream is refused here rather than answering
+   * from an empty table.
+   */
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
     const parsed = BlockDashboardOperationRequestSchema.safeParse(
       await request.json().catch(() => null),
