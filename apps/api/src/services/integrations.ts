@@ -2466,7 +2466,7 @@ export async function runWorkstreamHarness(
           : failure?.includes("defect") || failure?.includes("empty") || failure?.includes("trunc")
             ? "defect" as const
             : "failed" as const);
-      await recordInferenceAttempt(env.DB, {
+      await recordInferenceAttempt(runs, {
         harnessRunId: input.harnessRunId,
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
@@ -3590,7 +3590,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       );
       const assertChildOwned = async () => {
         await assertInlineChildAttemptOwned(
-          options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admission.childInput,
@@ -4171,39 +4171,42 @@ async function recordOpenRouterInferenceAttempt(
       : failure?.includes("defect") || failure?.includes("empty") || failure?.includes("trunc")
         ? "defect" as const
         : "failed" as const);
-  await recordInferenceAttempt(env.DB, {
-    harnessRunId: input.harnessRunId,
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    attemptId: lease.attemptId,
-    turnId: attempt.turnId,
-    endpointAttempt: attempt.cursor.endpointAttempt + 1,
-    fallbackAttempt: attempt.cursor.candidateIndex,
-    provider: attempt.provider,
-    model: attempt.model,
-    credentialSourceHash: await sha256(`openrouter:${env.AVALON_REGION}`),
-    workspaceIdentityHash: await sha256(`${env.AVALON_REGION}:${input.workspaceId}`),
-    routingDecision: {
-      routingPolicyVersion,
-      stageIndex: attempt.cursor.stageIndex,
-      candidateIndex: attempt.cursor.candidateIndex,
-      structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
-      disposition: ledgerOutcome,
-      success: attempt.success,
+  await recordInferenceAttempt(
+    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    {
+      harnessRunId: input.harnessRunId,
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      attemptId: lease.attemptId,
+      turnId: attempt.turnId,
+      endpointAttempt: attempt.cursor.endpointAttempt + 1,
+      fallbackAttempt: attempt.cursor.candidateIndex,
+      provider: attempt.provider,
+      model: attempt.model,
+      credentialSourceHash: await sha256(`openrouter:${env.AVALON_REGION}`),
+      workspaceIdentityHash: await sha256(`${env.AVALON_REGION}:${input.workspaceId}`),
+      routingDecision: {
+        routingPolicyVersion,
+        stageIndex: attempt.cursor.stageIndex,
+        candidateIndex: attempt.cursor.candidateIndex,
+        structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
+        disposition: ledgerOutcome,
+        success: attempt.success,
+      },
+      outcome: ledgerOutcome,
+      ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
+      latencyMs: attempt.latencyMs,
+      ...(attempt.ttftMs != null ? { ttftMs: attempt.ttftMs } : {}),
+      ...(attempt.inputTokens != null ? { inputTokens: attempt.inputTokens } : {}),
+      ...(attempt.outputTokens != null ? { outputTokens: attempt.outputTokens } : {}),
+      ...(attempt.reasoningTokens != null ? { reasoningTokens: attempt.reasoningTokens } : {}),
+      ...(attempt.cachedInputTokens != null ? { cachedTokens: attempt.cachedInputTokens } : {}),
+      ...(attempt.costCents != null ? { costMicrousd: Math.max(0, Math.round(attempt.costCents * 10_000)) } : {}),
+      ...(attempt.responseBytes != null ? { responseBytes: attempt.responseBytes } : {}),
+      startedAt: new Date(Math.max(0, completedAtMs - attempt.latencyMs)).toISOString(),
+      completedAt,
     },
-    outcome: ledgerOutcome,
-    ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
-    latencyMs: attempt.latencyMs,
-    ...(attempt.ttftMs != null ? { ttftMs: attempt.ttftMs } : {}),
-    ...(attempt.inputTokens != null ? { inputTokens: attempt.inputTokens } : {}),
-    ...(attempt.outputTokens != null ? { outputTokens: attempt.outputTokens } : {}),
-    ...(attempt.reasoningTokens != null ? { reasoningTokens: attempt.reasoningTokens } : {}),
-    ...(attempt.cachedInputTokens != null ? { cachedTokens: attempt.cachedInputTokens } : {}),
-    ...(attempt.costCents != null ? { costMicrousd: Math.max(0, Math.round(attempt.costCents * 10_000)) } : {}),
-    ...(attempt.responseBytes != null ? { responseBytes: attempt.responseBytes } : {}),
-    startedAt: new Date(Math.max(0, completedAtMs - attempt.latencyMs)).toISOString(),
-    completedAt,
-  });
+  );
 }
 
 interface ConnectorTriggerContext {

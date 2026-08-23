@@ -30,6 +30,8 @@ const DISPATCHED_OPERATIONS = [
   "persistScope",
   "scope",
   "persistPluginActivation",
+  "recordInferenceAttempt",
+  "inlineChildOwnership",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

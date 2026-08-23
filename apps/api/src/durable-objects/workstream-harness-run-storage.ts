@@ -496,6 +496,132 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
+   * Record one inference attempt against a run.
+   *
+   * The only write in this family with no lease fence, and deliberately so: an
+   * attempt row is telemetry about a provider call that already happened, and
+   * losing it because the lease lapsed mid-call would delete the record of
+   * exactly the failure worth knowing about. `INSERT OR IGNORE` on the id keeps
+   * a retry idempotent.
+   */
+  recordInferenceAttempt(input: {
+    inferenceAttemptId: string;
+    runId: string;
+    attemptId: string;
+    turnId: string;
+    endpointAttempt: number;
+    fallbackAttempt: number;
+    provider: string;
+    model: string;
+    credentialSourceHash: string | null;
+    workspaceIdentityHash: string;
+    routingDecisionJson: string;
+    outcome: string;
+    failureClassification: string | null;
+    latencyMs: number | null;
+    ttftMs: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    reasoningTokens: number | null;
+    cachedTokens: number | null;
+    costMicros: number | null;
+    responseBytes: number | null;
+    startedAt: number;
+    completedAt: number;
+    now: number;
+  }): void {
+    this.sql.exec(
+      `INSERT OR IGNORE INTO inference_attempts
+         (inference_attempt_id, run_id, attempt_id, turn_id, endpoint_attempt,
+          fallback_attempt, provider, model, credential_source_hash,
+          workspace_identity_hash, routing_decision_json, outcome, failure_classification,
+          latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens,
+          cached_tokens, cost_micros, response_bytes, started_at, completed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.inferenceAttemptId,
+      input.runId,
+      input.attemptId,
+      input.turnId,
+      input.endpointAttempt,
+      input.fallbackAttempt,
+      input.provider,
+      input.model,
+      input.credentialSourceHash,
+      input.workspaceIdentityHash,
+      input.routingDecisionJson,
+      input.outcome,
+      input.failureClassification,
+      input.latencyMs,
+      input.ttftMs,
+      input.inputTokens,
+      input.outputTokens,
+      input.reasoningTokens,
+      input.cachedTokens,
+      input.costMicros,
+      input.responseBytes,
+      input.startedAt,
+      input.completedAt,
+      input.now,
+    );
+  }
+
+  /**
+   * Whether a sub-agent's attempt may still write, fenced by its parent too.
+   *
+   * The routed version was a self-join on `harness_runs` with eight bound
+   * parameters and two `lease_expires_at > now` predicates — the double fence
+   * that stops a child from outliving the parent that delegated to it. Both
+   * rows are this object's, so the join is two reads.
+   *
+   * The precedence is the routed statement's and is load-bearing: a lease that
+   * has been lost or a link that does not hold answers `ownership_lost` even if
+   * the other side was also cancelled, because a caller that no longer owns the
+   * run must not report a cancellation as though it had observed one. Only once
+   * both leases are good does a stop on either side answer `cancelled`.
+   */
+  inlineChildOwnership(input: {
+    parentRunId: string;
+    parentAttemptId: string;
+    parentOwner: string;
+    childRunId: string;
+    childAttemptId: string;
+    childOwner: string;
+    now: number;
+  }): AttemptOutcome {
+    const child = this.run({ runId: input.childRunId });
+    const parent = this.run({ runId: input.parentRunId });
+    if (!child
+      || !parent
+      || child.parent_run_id !== input.parentRunId
+      || child.parent_tool_call_id === null) {
+      return { outcome: "ownership_lost" };
+    }
+    const held = (
+      row: RunRow,
+      attemptId: string,
+      owner: string,
+    ): boolean => row.legacy_attempt_id === attemptId
+      && row.lease_owner === owner
+      && row.terminalized_at === null
+      && row.lease_expires_at !== null
+      && row.lease_expires_at > input.now;
+    if (!held(child, input.childAttemptId, input.childOwner)
+      || !held(parent, input.parentAttemptId, input.parentOwner)) {
+      return { outcome: "ownership_lost" };
+    }
+    if (child.status === "cancelled"
+      || child.cancellation_requested_at !== null
+      || parent.status === "cancelled"
+      || parent.cancellation_requested_at !== null) {
+      return { outcome: "cancelled" };
+    }
+    if (child.status !== "running" || parent.status !== "running") {
+      return { outcome: "ownership_lost" };
+    }
+    return { outcome: "owned" };
+  }
+
+  /**
    * Record one immutable lifecycle event.
    *
    * `ON CONFLICT DO NOTHING` on `(run_id, event_key)` is the whole idempotency

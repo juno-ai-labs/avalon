@@ -1305,6 +1305,39 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — The sub-agent's double fence, and a substream the fixture forgot
+
+**What changed:** `assertInlineChildAttemptOwned` and `recordInferenceAttempt`
+moved onto the port. The first became `inlineChildOwnership` on the storage
+class; the second is a plain `INSERT OR IGNORE`.
+
+**Why:** the inline-child assert was a self-join on `harness_runs` with eight
+bound parameters and two `lease_expires_at > now` predicates — the fence that
+stops a sub-agent outliving the run that delegated to it. Both rows belong to
+this object, so the join is two reads and the answer is one of three named
+outcomes.
+
+Its **precedence** is the part worth preserving deliberately. A lost lease
+answers `ownership_lost` even when the other side was also stopped, because a
+caller that no longer owns the run has not *observed* a cancellation — it is
+reading a row someone else now controls, and must be told it lost the run rather
+than told to settle. Checking cancellation first would invert that, and a
+mutation test now holds the order in place.
+
+`recordInferenceAttempt` is the one write in this family with no lease fence,
+and deliberately: an attempt row is telemetry about a provider call that already
+happened, so dropping it because the lease lapsed mid-call would delete the
+record of exactly the failure worth having.
+
+**What a future change has to respect:** a delegated sub-agent runs in **its own
+substream**, `run:<id>`, created by the same write that creates the run. That is
+not incidental — `runs_mutating_substream_uq` allows one mutating run per
+substream, so a child sharing its parent's substream is a `UNIQUE` violation
+rather than a queued run. The first version of this change's fixture put the
+child in substream `0` and the constraint caught it; `admitInlineChildAttempt`
+must create the substream row when it converts.
+
+
 ### 2026-08-23 — The lease stops being a join, and the sidebar write it had lost
 
 **What changed:** the harness-run lease family moved onto the typed port.

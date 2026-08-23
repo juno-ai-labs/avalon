@@ -865,7 +865,7 @@ export async function persistInlineChildScope(
 ): Promise<{ scopeHash: string; reused: boolean }> {
   await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
   await assertInlineChildAttemptOwned(
-    db,
+    runs,
     parentInput,
     parentLease,
     childInput,
@@ -920,7 +920,7 @@ export async function persistInlineChildScope(
   // A scope persisted after the parent lost ownership is never exposed to the
   // child model: this final fence turns the call into an authoritative abort.
   await assertInlineChildAttemptOwned(
-    db,
+    runs,
     parentInput,
     parentLease,
     childInput,
@@ -1081,53 +1081,23 @@ export async function assertHarnessToolSettlementOwned(
 }
 
 export async function assertInlineChildAttemptOwned(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   parentInput: HarnessRunCoordinates,
   parentLease: AttemptLease,
   childInput: HarnessRunCoordinates,
   childLease: AttemptLease,
 ): Promise<void> {
-  const row = await db.prepare(
-    `SELECT child.status, child.cancellation_requested_at,
-            parent.status AS parent_status,
-            parent.cancellation_requested_at AS parent_cancellation_requested_at
-       FROM harness_runs child
-       JOIN harness_runs parent ON parent.id = child.parent_harness_run_id
-      WHERE child.id = ?4 AND child.workspace_id = ?2 AND child.workstream_id = ?3
-        AND child.parent_harness_run_id = ?1
-        AND child.parent_tool_call_id IS NOT NULL
-        AND child.attempt_id = ?5 AND child.lease_owner = ?6
-        AND child.terminalized_at IS NULL
-        AND child.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        AND parent.id = ?1 AND parent.workspace_id = ?2 AND parent.workstream_id = ?3
-        AND parent.attempt_id = ?7 AND parent.lease_owner = ?8
-        AND parent.terminalized_at IS NULL
-        AND parent.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(
-    parentInput.harnessRunId,
-    parentInput.workspaceId,
-    parentInput.workstreamId,
-    childInput.harnessRunId,
-    childLease.attemptId,
-    childLease.owner,
-    parentLease.attemptId,
-    parentLease.owner,
-  ).first<{
-    status: string;
-    cancellation_requested_at: string | null;
-    parent_status: string;
-    parent_cancellation_requested_at: string | null;
-  }>();
-  if (!row) throw new RunOwnershipLostError();
-  if (
-    row.status === "stopped"
-    || row.cancellation_requested_at
-    || row.parent_status === "stopped"
-    || row.parent_cancellation_requested_at
-  ) throw new RunCancelledError();
-  if (row.status !== "running" || row.parent_status !== "running") {
-    throw new RunOwnershipLostError();
-  }
+  const owned = await runs.inlineChildOwnership({
+    parentRunId: parentInput.harnessRunId,
+    parentAttemptId: parentLease.attemptId,
+    parentOwner: parentLease.owner,
+    childRunId: childInput.harnessRunId,
+    childAttemptId: childLease.attemptId,
+    childOwner: childLease.owner,
+    now: Date.now(),
+  });
+  if (owned.outcome === "cancelled") throw new RunCancelledError();
+  if (owned.outcome === "ownership_lost") throw new RunOwnershipLostError();
 }
 
 export async function persistHarnessFinalMessage(
@@ -2272,46 +2242,36 @@ export async function terminalizeHarnessAttempt(
 }
 
 export async function recordInferenceAttempt(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   record: InferenceAttemptRecord,
 ): Promise<string> {
   const id = record.id ?? uuidV7();
-  await db.prepare(
-    `INSERT INTO inference_attempts
-     (id, harness_run_id, workspace_id, workstream_id, attempt_id, turn_id,
-      endpoint_attempt, fallback_attempt, provider, model, credential_source_hash,
-      workspace_identity_hash, routing_decision_json, outcome, failure_classification,
-      latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
-      cost_microusd, response_bytes, started_at, completed_at, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-             ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?25)`,
-  ).bind(
-    id,
-    record.harnessRunId,
-    record.workspaceId,
-    record.workstreamId,
-    record.attemptId,
-    record.turnId,
-    record.endpointAttempt,
-    record.fallbackAttempt,
-    record.provider,
-    record.model,
-    record.credentialSourceHash ?? null,
-    record.workspaceIdentityHash,
-    stableJson(record.routingDecision ?? {}),
-    record.outcome,
-    record.failureClassification ?? null,
-    record.latencyMs ?? null,
-    record.ttftMs ?? null,
-    record.inputTokens ?? null,
-    record.outputTokens ?? null,
-    record.reasoningTokens ?? null,
-    record.cachedTokens ?? null,
-    record.costMicrousd ?? null,
-    record.responseBytes ?? null,
-    record.startedAt,
-    record.completedAt,
-  ).run();
+  await runs.recordInferenceAttempt({
+    inferenceAttemptId: id,
+    runId: record.harnessRunId,
+    attemptId: record.attemptId,
+    turnId: record.turnId,
+    endpointAttempt: record.endpointAttempt,
+    fallbackAttempt: record.fallbackAttempt,
+    provider: record.provider,
+    model: record.model,
+    credentialSourceHash: record.credentialSourceHash ?? null,
+    workspaceIdentityHash: record.workspaceIdentityHash,
+    routingDecisionJson: stableJson(record.routingDecision ?? {}),
+    outcome: record.outcome,
+    failureClassification: record.failureClassification ?? null,
+    latencyMs: record.latencyMs ?? null,
+    ttftMs: record.ttftMs ?? null,
+    inputTokens: record.inputTokens ?? null,
+    outputTokens: record.outputTokens ?? null,
+    reasoningTokens: record.reasoningTokens ?? null,
+    cachedTokens: record.cachedTokens ?? null,
+    costMicros: record.costMicrousd ?? null,
+    responseBytes: record.responseBytes ?? null,
+    startedAt: Date.parse(record.startedAt),
+    completedAt: Date.parse(record.completedAt),
+    now: Date.now(),
+  });
   return id;
 }
 
