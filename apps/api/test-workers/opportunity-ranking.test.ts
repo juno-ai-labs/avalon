@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   WorkspaceOpportunityRankingCandidatesResultSchema,
 } from "../src/durable-objects/workspace-opportunity-protocol";
@@ -493,17 +494,36 @@ describe("the ranking pipeline the workspace object owns", () => {
       // The fence is the whole point of a three-leg ledger: an attempt that
       // lost the claim and finished anyway must not stamp its work stream onto
       // the suggestion the winner is starting.
-      await expect(workspace().completeOpportunityStart({
-        workspaceId: WORKSPACE_ID,
-        userId: MEMBER,
-        opportunityId,
-        now: LATER,
-        version: 1,
-        idempotencyKey: "a-different-attempt",
-        workstreamId: "00000000-0000-7000-8000-0000000007e4",
-        messageId: "00000000-0000-7000-8000-0000000007e5",
-        snapshotId: "00000000-0000-7000-8000-0000000007e6",
+      //
+      // Asserted inside the object rather than across the RPC, deliberately.
+      // Called on a stub, this throw left *two* rejected promises — the one the
+      // caller awaits, and one the RPC layer holds for the remote call — and an
+      // assertion handles only the first. The second reached Vitest as an
+      // unhandled rejection, which fails the run under a summary reading
+      // "222 passed". The success path above covers the RPC hop; this covers
+      // what the fence decides.
+      await expect(runInDurableObject(workspace(), async (instance) => {
+        await (instance as WorkspaceDO).completeOpportunityStart({
+          workspaceId: WORKSPACE_ID,
+          userId: MEMBER,
+          opportunityId,
+          now: LATER,
+          version: 1,
+          idempotencyKey: "a-different-attempt",
+          workstreamId: "00000000-0000-7000-8000-0000000007e4",
+          messageId: "00000000-0000-7000-8000-0000000007e5",
+          snapshotId: "00000000-0000-7000-8000-0000000007e6",
+        });
       })).rejects.toThrow(/work_opportunity_start_fenced/u);
+
+      // And the winner's row is untouched by the loser's attempt.
+      const stored = await runInDurableObject(workspace(), (_instance, state) => (
+        state.storage.sql.exec<{ created_workstream_id: string | null }>(
+          `SELECT created_workstream_id FROM work_opportunities WHERE opportunity_id = ?`,
+          opportunityId,
+        ).one()
+      ));
+      expect(stored.created_workstream_id).toBeNull();
     });
   });
 });

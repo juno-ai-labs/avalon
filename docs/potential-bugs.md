@@ -47,6 +47,34 @@ everything above it that can return.
 
 ---
 
+## `completeOpportunityStart` throws across an RPC boundary its caller does not catch
+
+**Severity:** wrong-answer
+
+**Observed.** `workspace-product-storage.ts:1206-1212` throws
+`work_opportunity_start_fenced` when a completion arrives with a version or an
+idempotency key the claim does not hold. `WorkspaceDO.completeOpportunityStart`
+re-throws it across RPC, and `work-opportunity-service.ts`'s `startDurable`
+awaits it in both the replay branch and the success branch with no `catch`.
+
+**Why it is suspicious.** This is the shape the tool-receipt port was
+deliberately built *away* from, one slice earlier in this same branch: "a lost
+lease is a result, not an exception", because an exception crossing the RPC
+boundary arrives as an opaque string and the caller cannot tell a lost race
+from a broken object. Here the losing attempt is an ordinary outcome — two
+clicks, or a retry after a timeout — and it reaches the route as a raw error
+rather than a 409. The claim leg beside it already returns
+`{ outcome: "busy" | "stale" | "replay" }`; only the completion leg throws.
+
+**What would settle it.** Whether the losing attempt can reach this line at all
+in production: `claimOpportunityStart` returns `busy` for a live claim, so a
+completion carrying the wrong key means the caller held a claim that was
+released and re-taken between its own two calls. If that window is real, the
+fix is an outcome rather than a throw, matching the claim leg. If it is not,
+the throw is an assertion and should say so.
+
+---
+
 ## Three ordinary-run readers lost their only assertion when it stopped being one
 
 **Severity:** coverage-gap

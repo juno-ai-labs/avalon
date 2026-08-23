@@ -165,6 +165,23 @@ beforeEach(async () => {
   `abortAllDurableObjects()` is the one that keeps persisted data, but it aborts
   instances rather than retiring them: a test *about* eviction still wants
   `evictDurableObject`, which drains in flight work and hibernates sockets.
+- **A native RPC method that throws can leave an unhandled rejection, and that
+  fails the run while every test in it passes.** Calling one on a *stub*
+  (`stub.someMethod(…)`, not `exports.default.fetch` or a `worker.queue` call)
+  can leave two rejected promises — the one the caller awaits and one the RPC
+  layer holds for the remote call — and `await expect(…).rejects` handles only
+  the first. Vitest reports the other as `Unhandled Rejection` and exits
+  non-zero under a summary reading `222 passed`. The tell is the serialized
+  error: `{ durableObjectId: …, remote: true }`. Assert the throwing path inside
+  `runInDurableObject` instead, where it stays in one isolate, and cover the RPC
+  hop with a call that resolves. Not every `.rejects` on a stub does this —
+  `forced-migration.test.ts` and `queue-dispatch.test.ts` have several that do
+  not — so treat the unhandled-rejection report as the signal rather than
+  rewriting assertions pre-emptively.
+- **Read the exit code, not the summary.** The line above is the reason: `Tests
+  222 passed (222)` is printed by a run that exited 1. `grep`ping a vitest run
+  for `Tests ` proves the specs passed and nothing else — capture `$?`, or run
+  `pnpm --filter @avalon/api test` and let its failure surface.
 - **`reset()` is not confined to the file that calls it.** Storage is isolated
   per file, but the reset itself takes every object's input gate, so a file that
   never calls one can still be made to wait for a sibling's. That surfaces as a
