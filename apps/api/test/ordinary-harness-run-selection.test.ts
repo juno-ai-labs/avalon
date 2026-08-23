@@ -10,9 +10,12 @@ function source(relativePath: string): string {
 
 describe("ordinary harness-run selection", () => {
   it("keeps inline child and HyperSight rows out of automation and activity recovery", () => {
+    // The idempotency reader resolves a run's harness attempt against the
+    // work stream's own object, so the exclusion lives in that object's query
+    // rather than in a regional join.
     const automation = source("../src/services/automation-service.ts");
     expect(automation).toContain(
-      "LEFT JOIN harness_runs h ON h.workstream_id = r.workstream_id AND h.parent_tool_call_id IS NULL AND h.origin != 'block_dashboard_block'",
+      "SELECT id, status, workflow_instance_id FROM harness_runs WHERE workspace_id = ? AND workstream_id = ? AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block' ORDER BY created_at DESC LIMIT 1",
     );
 
     const activityConsumer = source("../src/queues/activity-consumer.ts");
