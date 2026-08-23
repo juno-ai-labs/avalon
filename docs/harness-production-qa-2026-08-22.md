@@ -546,7 +546,11 @@ retry checks that marker, and the existing bounded activation sweep repairs
 already-terminal stopped, stale-root, and stale-child rows missing it before
 claiming new expired work. A BlockDashboard-only sweep excludes ordinary roots
 because it intentionally lacks automation authority; the Substream sweep keeps
-receipt, automation-row, and marker settlement together. The older root-only
+receipt, eligible `scheduled`/`running` automation-row, and marker settlement
+together without overwriting a later `needs_input` continuation. A repair that
+cannot satisfy its exact object fence emits a warning and is skipped for that
+activation, so it remains retryable without blocking stale work behind it or a
+new run claim. The older root-only
 `abandonRunReceipts` operation was removed in favor of the one residual
 settlement path. This reuses the current ledger, receipt operation, and sweep
 limit; it adds no schema, queue, alarm, timer, or recovery owner.
@@ -556,12 +560,21 @@ prove a later retry or sweep closes the exact receipt and records the marker;
 the stopped case loses the response after settlement commits and proves retry
 does not add another checkpoint. A fourth regression proves the
 BlockDashboard-only sweep positively reaps and reconciles a stale HyperSight
-root while its ordinary-automation negative case remains fenced. The focused
-harness runtime file passes 52/52, and it passes 113/113 together with the
+root while its ordinary-automation negative case remains fenced. Two more
+causal cases prove an unsettleable oldest repair does not block the stale root
+behind it and an earlier root cannot fail a later automation elicitation. The
+payload-less stopped case also pins the existing receipt-scoped
+`{"code":"run_cancelled"}` checkpoint. The focused harness runtime file passes
+54/54, and it passes 115/115 together with the
 receipt-storage unit suite. Mutations disabling the direct
 retry or terminal-row scan made the named regressions fail with the receipt
 still `executing`; replacing the block-origin allowance made the positive
-BlockDashboard regression fail. The follow-up full root run passed 1,746 API Node tests, 234
+BlockDashboard regression fail. Mutations restoring the empty stopped payload,
+allowing `needs_input` automation settlement, or rethrowing a per-row repair
+failure made their causal regressions fail. Historical marker backfill is
+synchronous on run admission and may attempt up to 25 rows per activation; it
+drains as markers accumulate, while a warned failed attempt does not consume the
+ordinary stale-reaping budget. The follow-up full root run passed 1,748 API Node tests, 234
 API real-workerd tests, and 1,234 desktop tests. Root lint, typecheck,
 `docs:check`, all 357 script tests, all 110 desktop release invariants, both
 regional dry-run builds, and `git diff --check` also passed. Status: fixed and

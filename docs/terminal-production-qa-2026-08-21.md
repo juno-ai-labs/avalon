@@ -419,9 +419,11 @@ they are not evidence for rollback, post-commit alarm, or stale-write guidance.
 The post-PR #251 audit also found that a transient receipt RPC after a stopped or
 reaped run had terminalized was never retried, leaving the run terminal while
 its tool card remained `admitted` or `executing`. The branch-local repair uses
-an immutable settlement marker plus the existing bounded activation sweep; its
-stopped, stale-root, stale-child failure-first, and positive BlockDashboard
-authority regressions pass 52/52 in the
+an immutable settlement marker plus the existing bounded activation sweep. It
+also fails soft per warned repair row, preserves the receipt-scoped stopped
+payload, and cannot overwrite a later automation elicitation. Its stopped,
+stale-root, stale-child failure-first, positive BlockDashboard authority,
+unsettleable-row progress, and later-elicitation regressions pass 54/54 in the
 focused runtime file. Merge and deployment remain pending, and the durable
 error UX remains open for targeted production acceptance.
 

@@ -1145,6 +1145,13 @@ which the next marker-backed sweep retries through `settleResidualReceipts`,
 whereas settle-then-fail closes the receipts of a run that is still live and may
 already have a successor.
 
+The marker backfill runs synchronously before a new harness claim and attempts
+at most 25 historical rows in one activation. A row whose exact terminal fence
+or marker admission is rejected is warned and skipped rather than throwing out
+of run admission; its marker remains absent for a later retry. Stale automation
+settlement is limited to `scheduled` and `running`, because `needs_input` may
+belong to a newer continuation in the same automation work stream.
+
 **What a future change has to respect:** do not move the settlement back ahead of
 the terminal write in the name of atomicity — the atomicity is not available, and
 that order corrupts live runs rather than delaying dead ones.

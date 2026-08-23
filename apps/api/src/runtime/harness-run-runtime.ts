@@ -1974,7 +1974,9 @@ function receiptRepairFailure(row: TerminalizedReceiptRepair): {
       : child
         ? row.errorJson ?? JSON.stringify({ code: "run_failed", message: "The child run ended before the tool produced a result" })
         : JSON.stringify({ code: "parent_run_terminated", message: "The parent run lost its durable lease" }),
-    payloadJson: row.memberSafePayloadJson,
+    payloadJson: stopped && !child
+      ? '{"code":"run_cancelled"}'
+      : row.memberSafePayloadJson,
     ambiguousMessage: child
       ? "The child run ended while an external write was unresolved"
       : stopped
@@ -2048,7 +2050,10 @@ async function settleStaleAutomationRun(
               'The harness executor lost its durable lease'
             )
       WHERE workstream_id = ?2 AND workspace_id = ?3
-        AND status IN ('scheduled', 'running', 'needs_input')`,
+        -- A later continuation legitimately owns needs_input. Historical
+        -- receipt backfill must not turn that newer member-visible wait into
+        -- failure for an earlier stale executor in the same work stream.
+        AND status IN ('scheduled', 'running')`,
   ).bind(row.terminalizedAt, row.workstreamId, row.workspaceId).run();
 }
 
@@ -2312,6 +2317,15 @@ export async function reapStaleHarnessRuns(
      * make that the quiet outcome of forgetting to wire it.
      */
     receipts: ToolReceiptPortFactory;
+    /** A terminal row that could not be reconciled must not block run admission. */
+    onReceiptRepairFailure?: (failure: {
+      phase: "terminal_repair" | "stale_root" | "stale_child";
+      runId: string;
+      workspaceId: string;
+      workstreamId: string;
+      attemptId: string;
+      reason: string;
+    }) => void;
   },
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
@@ -2386,18 +2400,29 @@ export async function reapStaleHarnessRuns(
       memberSafePayloadJson: row.member_safe_payload_json,
       parentToolCallId: row.parent_tool_call_id,
     } satisfies TerminalizedReceiptRepair;
-    await settleAndRecordResidualReceipts(
-      db,
-      options.receipts(row.workspace_id, row.workstream_id),
-      repair,
-      row.status === "failed" && row.parent_tool_call_id === null && row.origin !== "block_dashboard_block"
-        ? () => settleStaleAutomationRun(
-          options.automationDatabase === undefined ? db : options.automationDatabase,
-          repair,
-        )
-        : undefined,
-    );
-    processed += 1;
+    try {
+      await settleAndRecordResidualReceipts(
+        db,
+        options.receipts(row.workspace_id, row.workstream_id),
+        repair,
+        row.status === "failed" && row.parent_tool_call_id === null && row.origin !== "block_dashboard_block"
+          ? () => settleStaleAutomationRun(
+            options.automationDatabase === undefined ? db : options.automationDatabase,
+            repair,
+          )
+          : undefined,
+      );
+      processed += 1;
+    } catch (error) {
+      options.onReceiptRepairFailure?.({
+        phase: "terminal_repair",
+        runId: repair.runId,
+        workspaceId: repair.workspaceId,
+        workstreamId: repair.workstreamId,
+        attemptId: repair.attemptId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   if (processed >= limit) return reaped;
 
@@ -2513,24 +2538,36 @@ export async function reapStaleHarnessRuns(
         attemptId: row.attempt_id,
         status: "failed",
         terminalizedAt: now,
-        errorJson: JSON.stringify({
-          code: "stale_run_reaped",
-          message: "The prior executor lost its durable lease",
-        }),
+        // The stale-run error is already durable on `harness_runs`. Residual
+        // root receipts intentionally keep the predecessor's generic
+        // `parent_run_terminated` fallback, so there is no receipt error to
+        // thread through this shared shape.
+        errorJson: null,
         memberSafePayloadJson: '{"code":"stale_run_reaped"}',
         parentToolCallId: null,
       } satisfies TerminalizedReceiptRepair;
       const automationDatabase = options.automationDatabase === undefined
         ? db
         : options.automationDatabase;
-      await settleAndRecordResidualReceipts(
-        db,
-        options.receipts(row.workspace_id, row.workstream_id),
-        repair,
-        automationDatabase && row.origin !== "block_dashboard_block"
-          ? () => settleStaleAutomationRun(automationDatabase, repair)
-          : undefined,
-      );
+      try {
+        await settleAndRecordResidualReceipts(
+          db,
+          options.receipts(row.workspace_id, row.workstream_id),
+          repair,
+          automationDatabase && row.origin !== "block_dashboard_block"
+            ? () => settleStaleAutomationRun(automationDatabase, repair)
+            : undefined,
+        );
+      } catch (error) {
+        options.onReceiptRepairFailure?.({
+          phase: "stale_root",
+          runId: repair.runId,
+          workspaceId: repair.workspaceId,
+          workstreamId: repair.workstreamId,
+          attemptId: repair.attemptId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -2668,10 +2705,7 @@ export async function reapStaleHarnessRuns(
     if (d1Changes(results[1]) === 0) continue;
     // Same rule, and the same ordering, as a stopped parent: the child's own
     // receipts are classified and closed once it is terminal.
-    await settleAndRecordResidualReceipts(
-      db,
-      options.receipts(row.workspace_id, row.workstream_id),
-      {
+    const repair = {
         runId: row.id,
         workspaceId: row.workspace_id,
         workstreamId: row.workstream_id,
@@ -2681,8 +2715,23 @@ export async function reapStaleHarnessRuns(
         errorJson,
         memberSafePayloadJson: memberPayload,
         parentToolCallId: row.parent_tool_call_id,
-      },
-    );
+    } satisfies TerminalizedReceiptRepair;
+    try {
+      await settleAndRecordResidualReceipts(
+        db,
+        options.receipts(row.workspace_id, row.workstream_id),
+        repair,
+      );
+    } catch (receiptError) {
+      options.onReceiptRepairFailure?.({
+        phase: "stale_child",
+        runId: repair.runId,
+        workspaceId: repair.workspaceId,
+        workstreamId: repair.workstreamId,
+        attemptId: repair.attemptId,
+        reason: receiptError instanceof Error ? receiptError.message : String(receiptError),
+      });
+    }
     const persisted = await db.prepare(
       `SELECT child_result_json, child_result_hash
          FROM harness_runs
