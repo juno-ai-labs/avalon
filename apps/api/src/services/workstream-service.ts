@@ -356,10 +356,10 @@ export async function fireWorkstreamWakeup(
   /**
    * The scheduling authority to claim through.
    *
-   * Passed in rather than derived from `env`, because the one production caller
-   * is the owning object's own alarm: it has the storage in hand, and building
-   * a port here would send it an RPC addressed to itself. Callers outside the
-   * object build one with `createSchedulingObjectPort`.
+   * Passed in rather than derived from `env` so a test can stand where the
+   * owning object stands. Every caller — including the object's own alarm —
+   * hands it a port over the endpoint, because the endpoint is what commits the
+   * claim together with the sidebar projection it invalidates.
    */
   scheduling: SchedulingObjectPort,
 ): Promise<{ fired: boolean; harnessRunId?: string }> {
