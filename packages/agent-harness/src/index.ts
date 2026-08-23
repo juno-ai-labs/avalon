@@ -2307,7 +2307,7 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   },
   {
     name: "search_plugins",
-    description: "Search plugins available to this frozen run scope.",
+    description: "Search plugins available to this frozen run scope using ranked keywords across IDs, names, aliases, and descriptions.",
     capability: "avalon.plugins.search",
     mode: "read",
     idempotency: "safe",

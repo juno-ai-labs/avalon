@@ -160,6 +160,15 @@ or deletion Avalon saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
 
+A participant stop aborts the live harness observation, not a Daytona process
+out of band. The still-owning attempt first settles the in-flight Terminal
+receipt under its exact attempt, owner, and live lease even though the parent
+has a cancellation request. An interrupted `record_before_execute` command is
+therefore durably ambiguous before the parent becomes stopped; it cannot remain
+as a green or indefinitely started activity row, and it is never automatically
+replayed. Provider-task reconciliation remains the authority for the command's
+actual outcome.
+
 ### Product measurement
 
 Every authoritative Terminal lifecycle transition reports its work-stream UUID,
@@ -185,6 +194,9 @@ personless; it is not duplicated into these product events.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
   an ambiguous write could corrupt the sandbox or repeat a side effect.
+- **A stopped parent does not strand its in-flight tool receipt.** The live
+  lease owner settles that receipt before terminalizing the run, retaining
+  ambiguity for an interrupted command rather than guessing whether it ran.
 - **GitHub authority follows connector policy and branch choice follows the
   prepared workspace.** Read-only is enforced by GitHub token permissions.
   Full access intentionally trusts the model with a repository-scoped token;
@@ -431,6 +443,35 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-22 — Member stop closes the in-flight Terminal receipt first
+
+**What changed:** After durable cancellation, the current harness attempt may
+settle any terminal event already returned by Bind for that exact receipt,
+provided its attempt id, owner, running state, unexpired lease, and
+unterminalized parent still match. The parent cannot terminalize as stopped
+while any receipt for the run remains `pending` or `started`, including one left
+by an expired prior attempt.
+
+**Why:** Production Computer Use stopped a sleeping command and correctly
+prevented its late marker, but its tool row remained `started`; a follow-up
+reconciled the record-before-execute command as `command_outcome_unknown`.
+`finalizeToolInvocationFailure` used the ordinary ownership predicate, which
+rejects every write after `cancellation_requested_at` is set, including the
+failure event emitted by the owner that just observed that request.
+
+**Considered and rejected:** Inferring the receipt state from the stopped parent
+in the renderer, automatically retrying the command, or removing cancellation
+from all ownership fences. The first hides contradictory durable state, the
+second can duplicate a write, and the third would let ordinary post-cancel work
+continue. Only terminal receipt settlement by the exact live owner receives the
+narrow exception; ordinary tool work remains fenced.
+
+**Consequences:** A stopped command is displayed from its durable completed,
+failed, or ambiguous receipt rather than a stale started row. This includes a
+tool that naturally returns inside the stop poll window, not only the aborted
+path. Provider outcome remains conservative, and every other post-cancellation
+write stays fenced.
 
 ### 2026-08-22 — A held deadline is re-checked, not counted
 

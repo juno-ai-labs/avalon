@@ -637,16 +637,15 @@ describe("wake-up tools", () => {
     expect(count.n).toBe(1);
   });
 
-  it("returns a recoverable error with the hint in output, never a throw", async () => {
+  it("throws a classified recoverable error with model-visible guidance", async () => {
     const { env } = fixture();
     const { schedule } = wakeupTools(env);
 
-    const result = await schedule.execute({ prompt: "Too soon", delay: "5s" }, context());
-
-    expect(result.output).toMatchObject({
-      error: "wakeup_too_soon",
-      hint: expect.stringContaining("seconds from now"),
-    });
+    await expect(schedule.execute({ prompt: "Too soon", delay: "5s" }, context()))
+      .rejects.toMatchObject({
+        code: "wakeup_too_soon",
+        details: { reason: expect.stringContaining("seconds from now") },
+      });
   });
 
   it("refuses an undeclared parameter rather than dropping it", async () => {
@@ -669,14 +668,16 @@ describe("wake-up tools", () => {
       );
     }
 
-    const result = await schedule.execute(
+    await expect(schedule.execute(
       { prompt: "One too many", delay: "150 minutes" },
       context("receipt-overflow"),
-    );
-
-    const output = result.output as { error: string; pending: unknown[] };
-    expect(output.error).toBe("wakeup_limit_reached");
-    expect(output.pending).toHaveLength(MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM);
+    )).rejects.toMatchObject({
+      code: "wakeup_limit_reached",
+      details: {
+        reason: expect.stringContaining("cancel one pending wake-up"),
+        available: expect.arrayContaining([expect.any(String)]),
+      },
+    });
   });
 
   it("lists and cancels a pending wake-up, then refuses to cancel it twice", async () => {
@@ -694,8 +695,9 @@ describe("wake-up tools", () => {
     await expect(cancel.execute({ wakeupId }, context())).resolves.toMatchObject({
       output: { status: "cancelled" },
     });
-    await expect(cancel.execute({ wakeupId }, context())).resolves.toMatchObject({
-      output: { error: "wakeup_not_pending" },
+    await expect(cancel.execute({ wakeupId }, context())).rejects.toMatchObject({
+      code: "wakeup_not_pending",
+      details: { reason: expect.stringContaining("still pending") },
     });
     expect((await list.execute({}, context())).output).toMatchObject({ wakeups: [] });
   });
@@ -733,7 +735,10 @@ describe("wake-up tools", () => {
     await expect(cancel.execute(
       { wakeupId: "00000000-0000-4000-8000-00000000000a" },
       context(),
-    )).resolves.toMatchObject({ output: { error: "wakeup_not_found" } });
+    )).rejects.toMatchObject({
+      code: "wakeup_not_found",
+      message: expect.not.stringContaining("another work stream"),
+    });
   });
 });
 
