@@ -131,6 +131,12 @@ This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes exactly one thing: `MarkdownBody`, taking a markdown
 string and an optional `mentions` array.
 
+It does not own the repair applied to that string before it is parsed, either.
+`MarkdownBody` calls `normalizeModelMarkdown` on its children so a model's TeX
+becomes the characters it stood for;
+[`model-text-normalization.md`](model-text-normalization.md) owns what that maps
+and why it refuses to touch a price.
+
 It does not own the markdown itself. Where a briefing's text comes from is
 [`meeting-notes.md`](meeting-notes.md); a HyperSight block's is
 [`agent-harness.md`](agent-harness.md); an automation overview's is
@@ -218,6 +224,34 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-22 — The renderer repairs a model's TeX, and stops emitting a dead mention link
+
+**What changed:** `MarkdownBody` passes its children through
+`normalizeModelMarkdown` before `react-markdown` sees them, so `$\rightarrow$`
+renders as `→`. And a `person:` href that is not a person id now renders as
+`span.mention-text-fallback` rather than falling through to the ordinary link
+branch.
+
+**Why:** Several of the models Avalon routes to write TeX when they want a
+symbol, and this renderer has never rendered any — so the delimiters and the
+command name were shown to people verbatim, in the surface they read most. The
+repair is shared rather than local because the digest email and Slack had the
+identical gap, and three copies of it would drift the way the three renderers
+this module replaced did. [`model-text-normalization.md`](model-text-normalization.md)
+owns the mapping and, more importantly, the rule deciding what is math.
+
+The mention fix came out of auditing the same path. `defaultUrlTransform` empties
+a scheme it does not recognise instead of rejecting it, so a malformed
+`person:` link became `<a href="" target="_blank">` — a chip-shaped thing that
+opens a blank window. The documented behaviour was already the fallback span;
+only the well-formed-but-unknown id took it.
+
+**Consequences:** Normalization runs *after* `withConnectorMentionLinks`, and the
+order is load-bearing: connector mentions carry offsets measured against the
+stored text, and normalizing first would shift them under the offsets. The call
+site says so and points at the module document. Nothing here rewrites what is
+stored — a turn still exports and re-reads as the model wrote it.
 
 ### 2026-08-13 — A saved message is this renderer's DOM, rendered off-screen
 

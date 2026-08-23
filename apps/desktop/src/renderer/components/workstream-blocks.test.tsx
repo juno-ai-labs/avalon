@@ -411,6 +411,30 @@ describe('MessageBlock markdown', () => {
     expect(document.querySelector('.markdown-body')).toHaveTextContent(text);
   });
 
+  it('repairs a model\'s TeX without disturbing the mention offsets beside it', () => {
+    // The offsets are measured against the stored text, so normalization has to
+    // run after the links are injected. Reversing the two shifts every offset
+    // past the first repair and chips the wrong words.
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-mention-tex',
+      text: 'Ask @Google Drive to move Backlog $\\rightarrow$ Done, and @Linear to log it.',
+      mentions: [
+        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'linear', startOffset: 58, endOffset: 65 },
+      ],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Google Drive').closest('.mention-chip'))
+      .toHaveAttribute('data-connector-type', 'google_drive');
+    expect(screen.getByText('@Linear').closest('.mention-chip'))
+      .toHaveAttribute('data-connector-type', 'linear');
+    expect(document.querySelector('.markdown-body')).toHaveTextContent('Backlog → Done');
+    expect(document.querySelector('.markdown-body')?.textContent).not.toContain('rightarrow');
+  });
+
   it('leaves connection text alone when its offsets do not name a mention', () => {
     const message: Message = {
       ...baseMessage,
