@@ -1006,6 +1006,7 @@ describe("durable harness attempt runtime", () => {
     // fully-authorized sweep, both before and after terminalization.
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       automationDatabase: null,
@@ -1017,6 +1018,7 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       onReceiptRepairFailure: (failure) => repairFailures.push(failure),
@@ -1044,6 +1046,7 @@ describe("durable harness attempt runtime", () => {
     ).get(automationRunId)).toEqual({ status: "running" });
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       automationDatabase: null,
@@ -1052,6 +1055,7 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -1103,6 +1107,7 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => sqlite.receipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       automationDatabase: null,
@@ -1150,7 +1155,7 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), stopped.lease, {
       status: "stopped",
-    }, failBeforeSettlement)).rejects.toThrow("receipt_rpc_unavailable");
+    }, failBeforeSettlement, sqlite.blocks)).rejects.toThrow("receipt_rpc_unavailable");
 
     const stale = await claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
       attemptId: "attempt-behind-unsettleable-repair",
@@ -1172,6 +1177,7 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => refusingReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       limit: 1,
@@ -1237,6 +1243,7 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([RUN_ONE]);
@@ -1248,6 +1255,7 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -3014,6 +3022,7 @@ describe("durable harness attempt runtime", () => {
       claim.lease,
       outcome,
       flakyReceipts,
+      sqlite.blocks,
     )).rejects.toThrow("lost_receipt_rpc_response");
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
@@ -3041,6 +3050,7 @@ describe("durable harness attempt runtime", () => {
       claim.lease,
       outcome,
       flakyReceipts,
+      sqlite.blocks,
     )).resolves.toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -4219,6 +4229,7 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       onReceiptRepairFailure: (failure) => repairFailures.push(failure),
@@ -4244,6 +4255,7 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
