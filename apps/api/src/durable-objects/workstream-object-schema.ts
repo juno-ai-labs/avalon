@@ -1363,6 +1363,8 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
  * patches nothing.
  */
 function resourceAuthorityPromotion(): string[] {
+  // Five objects: three views, plus the update and delete triggers that only
+  // `_runtime_workstream_resources` carried.
   const names = /^_runtime_(?:workstream_resources|resources|resource_revisions)/;
   const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
     const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
