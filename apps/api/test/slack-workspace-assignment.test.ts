@@ -446,6 +446,241 @@ describe("Slack workspace workstream assignment", () => {
   });
 });
 
+
+async function seedLinkedSlackMember(database: DatabaseSync, credentialsKey: string): Promise<void> {
+  await seedSlackInstallation(database, credentialsKey);
+  database.exec(`
+    INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES ('019fc4e0-4444-7000-8000-000000000044', 'google-linked',
+            'linked@example.com', 'Linked User',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES ('22222222-2222-4222-8222-222222222222',
+            '019fc4e0-4444-7000-8000-000000000044', 'member', 'active', '2026-01-01');
+    INSERT INTO slack_user_links
+      (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+       status, created_at, updated_at)
+    VALUES ('33333333-3333-4333-8333-333333333333',
+            '22222222-2222-4222-8222-222222222222',
+            '11111111-1111-4111-8111-111111111111',
+            '019fc4e0-4444-7000-8000-000000000044', 'T123', 'U456',
+            'active', '2026-01-01', '2026-01-01');
+    INSERT INTO slack_installation_routes
+      (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+    VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
+            '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
+  `);
+}
+
+describe("Slack connector principal delivery", () => {
+  // The regression these pin (2026-08-22): a linked member's ingress carried a
+  // synthesized `slack:{team}:{user}` session id with no principal marker, the
+  // object looked it up in `sessions`, and every mention died as
+  // `session_revoked`. The product stubs here fabricate the object's answers,
+  // so what these prove is the Worker's half of the contract — the marker on
+  // the wire and the classification of the object's refusal. The object's
+  // half, verifying the principal, is proved in
+  // `workstream-room-authorization.test.ts`.
+  const connectorAuth = {
+    sessionId: "slack:T123:U456",
+    userId: "019fc4e0-4444-7000-8000-000000000044",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    region: "global",
+    role: "member",
+    principal: "connector",
+  };
+
+  function deliveryEnv(
+    database: DatabaseSync,
+    credentialsKey: string,
+    substreamAgents: DurableObjectNamespace,
+  ): Env {
+    return createTestEnv({
+      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      APP_ENV: "test",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
+      SUBSTREAM_AGENTS: substreamAgents,
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+      }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+      }),
+    });
+  }
+
+  it("presents the connector principal to the work-stream object, not a login session", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedLinkedSlackMember(database, credentialsKey);
+    insertSlackEventJob(database, "event:principal", appMention("EvPrincipal"));
+    const { fetcher } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+    let initializeAuth: unknown = null;
+    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+        product: {
+          initialize: (request) => {
+            initializeAuth = request.auth;
+            const input = request.input as Record<string, unknown>;
+            return {
+              workstream: testWorkstreamContract({
+                id: input.workstreamId,
+                workspaceId: input.workspaceId,
+                title: input.title,
+                objective: input.objective,
+                titleStatus: input.titleStatus,
+                createdByUserId: input.creatorUserId,
+                emailAddress: input.emailAddress,
+              }),
+              messageId: crypto.randomUUID(),
+              harnessRunId: crypto.randomUUID(),
+            };
+          },
+          attach_resource: (request) => ({
+            id: request.resourceId,
+            workspaceId: "22222222-2222-4222-8222-222222222222",
+            connectionId: null,
+            resourceType: "slack_thread",
+            provider: "slack",
+            providerResourceId: null,
+            title: "Slack thread",
+            mimeType: null,
+            canonicalUrl: null,
+            watchEnabled: false,
+            watchStatus: "unsupported",
+            lastHydratedAt: null,
+            createdAt: "2026-01-02T00:00:00.000Z",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+          }),
+      },
+    }));
+
+    await new SlackAgentService(env).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:principal",
+    );
+
+    // `toEqual`, not `toMatchObject`: the payload the object authorizes on is
+    // exactly this — nothing weaker, and no extra field the strict schema
+    // would refuse.
+    expect(initializeAuth).toEqual(connectorAuth);
+  });
+
+  it("keeps a refused connector principal retryable and the installation healthy", async () => {
+    // `connector_member_revoked` is reachable only as a race — a membership or
+    // role change landing between the ingress's link read and the object's
+    // re-check — so the durable retry is its resolution. Before this was
+    // pinned, the 401 was read as an installation-grant failure: the job was
+    // made terminal at the attempt ceiling, an operator was paged, and the
+    // whole workspace's connection flipped to `needs_reconnect`.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedLinkedSlackMember(database, credentialsKey);
+    insertSlackEventJob(database, "event:race", appMention("EvRace"));
+    const { fetcher } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+        extra: {
+          handleProductRequest: vi.fn(() => ({
+            status: 401,
+            bodyJson: JSON.stringify({
+              error: "connector_member_revoked",
+              message: "You are no longer an active member of this workspace",
+            }),
+          })),
+      },
+    }));
+
+    await expect(new SlackAgentService(env).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:race",
+    )).rejects.toMatchObject({ code: "connector_member_revoked" });
+
+    // Failed but retryable: the attempt count stays where the claim put it
+    // rather than being jumped to the ceiling.
+    expect(database.prepare(
+      "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:race'",
+    ).get()).toEqual({ status: "failed", attempt_count: 1, error_code: "connector_member_revoked" });
+    // One member's refusal says nothing about the installation's grant.
+    expect(database.prepare(
+      "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).get()).toEqual({ status: "healthy" });
+  });
+
+  it("carries the connector principal on a reply into an existing thread", async () => {
+    // The reply branch builds its own WorkstreamService, separately from the
+    // create branch — and the reply is the symptom the incident was reported
+    // under.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedLinkedSlackMember(database, credentialsKey);
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('7a000000-0000-4000-8000-0000000000aa', '22222222-2222-4222-8222-222222222222',
+              'Investigate', 'Investigate', 'ad_hoc', NULL, 'completed', 2,
+              '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-reply', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:opening',
+              '7a000000-0000-4000-8000-0000000000aa', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const objectStores = new Map<string, DatabaseSync>();
+    seedWorkstreamObject(
+      objectStores,
+      { workstreamId: "7a000000-0000-4000-8000-0000000000aa", workspaceId: "22222222-2222-4222-8222-222222222222" },
+      { title: "Investigate", objective: "Investigate", createdByUserId: null, harnessStatus: "completed" },
+    );
+    insertSlackEventJob(database, "event:reply", appMention("EvReply", { threadTs: "1.0", ts: "2.0" }));
+    const { fetcher } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+    const captured: Array<{ operation: string; auth: unknown }> = [];
+    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+        objectStores,
+        product: {
+          create_message: (request) => {
+            captured.push(request as { operation: string; auth: unknown });
+            return {
+              message: {
+                id: "019fc4e0-5555-7000-8000-000000000055",
+                clientMessageId: "slack:reply",
+                workspaceId: "22222222-2222-4222-8222-222222222222",
+                workstreamId: "7a000000-0000-4000-8000-0000000000aa",
+                author: { type: "agent" },
+                messageType: "text",
+                textContent: "which domains are available",
+                structuredContent: null,
+                mentions: [],
+                attachments: [],
+                sequenceNumber: 2,
+                createdAt: "2026-01-02T00:00:00.000Z",
+                editedAt: null,
+              },
+              agentInvoked: true,
+              harnessRunId: "019fc4e0-6666-7000-8000-000000000066",
+            };
+          },
+      },
+    }));
+
+    await new SlackAgentService(env).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:reply",
+    );
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.auth).toEqual(connectorAuth);
+  });
+});
+
 describe("Slack public channel membership", () => {
   it("durably schedules a full public-channel sync after workspace authorization", async () => {
     const database = migratedDatabase();
@@ -837,110 +1072,6 @@ describe("Slack public channel membership", () => {
     ).get()).toMatchObject({
       workspace_id: "22222222-2222-4222-8222-222222222222",
       do_identity_anchor: 1,
-    });
-  });
-
-  it("presents the connector principal to the work-stream object, not a login session", async () => {
-    // The regression this pins (2026-08-22): a linked member's ingress carried
-    // a synthesized `slack:{team}:{user}` session id with no principal marker,
-    // the object looked it up in `sessions`, and every mention died as
-    // `session_revoked`. The product stub here fabricates the object's answer,
-    // so what this proves is the Worker's half of the contract: the ingress
-    // presents the connector principal and the correlation id, byte for byte —
-    // the object's half, verifying that principal, is proved in
-    // `workstream-room-authorization.test.ts`.
-    const database = migratedDatabase();
-    const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('44444444-4444-4444-8444-444444444444', 'google-linked',
-              'linked@example.com', 'Linked User', '2026-01-01', '2026-01-01');
-      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-      VALUES ('22222222-2222-4222-8222-222222222222',
-              '44444444-4444-4444-8444-444444444444', 'member', 'active', '2026-01-01');
-      INSERT INTO slack_user_links
-        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
-         status, created_at, updated_at)
-      VALUES ('33333333-3333-4333-8333-333333333333',
-              '22222222-2222-4222-8222-222222222222',
-              '11111111-1111-4111-8111-111111111111',
-              '44444444-4444-4444-8444-444444444444', 'T123', 'U456',
-              'active', '2026-01-01', '2026-01-01');
-      INSERT INTO slack_installation_routes
-        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
-              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
-    `);
-    insertSlackEventJob(database, "event:principal", appMention("EvPrincipal"));
-    const { fetcher } = slackTaskApiFetcher(database, { ok: true });
-    vi.stubGlobal("fetch", fetcher);
-    let initializeAuth: unknown = null;
-    const env = createTestEnv({
-      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
-      APP_ENV: "test",
-      OPENROUTER_PRIMARY_MODEL: "test-model",
-      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
-        product: {
-          initialize: (request) => {
-            initializeAuth = request.auth;
-            const input = request.input as Record<string, unknown>;
-            return {
-              workstream: testWorkstreamContract({
-                id: input.workstreamId,
-                workspaceId: input.workspaceId,
-                title: input.title,
-                objective: input.objective,
-                titleStatus: input.titleStatus,
-                createdByUserId: input.creatorUserId,
-                emailAddress: input.emailAddress,
-              }),
-              messageId: crypto.randomUUID(),
-              harnessRunId: crypto.randomUUID(),
-            };
-          },
-          attach_resource: (request) => ({
-            id: request.resourceId,
-            workspaceId: "22222222-2222-4222-8222-222222222222",
-            connectionId: null,
-            resourceType: "slack_thread",
-            provider: "slack",
-            providerResourceId: null,
-            title: "Slack thread",
-            mimeType: null,
-            canonicalUrl: null,
-            watchEnabled: false,
-            watchStatus: "unsupported",
-            lastHydratedAt: null,
-            createdAt: "2026-01-02T00:00:00.000Z",
-            updatedAt: "2026-01-02T00:00:00.000Z",
-          }),
-        },
-      }),
-      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
-      }),
-      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
-      }),
-    });
-
-    await new SlackAgentService(env).processQueuedIngress(
-      "22222222-2222-4222-8222-222222222222",
-      "event:principal",
-    );
-
-    // `toEqual`, not `toMatchObject`: the payload the object authorizes on is
-    // exactly this — nothing weaker, and no extra field the strict schema
-    // would refuse.
-    expect(initializeAuth).toEqual({
-      sessionId: "slack:T123:U456",
-      userId: "44444444-4444-4444-8444-444444444444",
-      workspaceId: "22222222-2222-4222-8222-222222222222",
-      region: "global",
-      role: "member",
-      principal: "connector",
     });
   });
 
@@ -1810,7 +1941,10 @@ function seedSlackActivitySubscription(database: DatabaseSync, eventType: string
   );
 }
 
-function appMention(eventId: string): Record<string, unknown> {
+function appMention(
+  eventId: string,
+  overrides: { threadTs?: string; ts?: string } = {},
+): Record<string, unknown> {
   return {
     type: "event_callback",
     team_id: "T123",
@@ -1822,7 +1956,8 @@ function appMention(eventId: string): Record<string, unknown> {
       user: "U456",
       channel: "C123",
       channel_type: "channel",
-      ts: "1.0",
+      ...(overrides.threadTs ? { thread_ts: overrides.threadTs } : {}),
+      ts: overrides.ts ?? "1.0",
       text: "<@UBOT> investigate this",
     },
   };
