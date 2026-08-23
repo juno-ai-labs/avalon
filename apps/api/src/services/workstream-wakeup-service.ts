@@ -21,10 +21,11 @@ import {
   asWorkspaceId,
   asWorkstreamId,
 } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { newId } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
@@ -441,66 +442,70 @@ export function formatWakeupLocalTime(instant: Date, timezone: string): string {
   return `${parts.month} ${parts.day}, ${parts.year} at ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${timezone}`;
 }
 
+/**
+ * The scheduling rows, reached through the object rather than routed SQL.
+ *
+ * Every function below took a `D1Database` whose statements were rewritten onto
+ * `_runtime_wakeups`, a compatibility view whose INSTEAD OF triggers renamed
+ * `wakeup_id` to `id`, invented `workspace_id` and `workstream_id` from the
+ * object's identity row, and converted unix milliseconds to ISO-8601 in both
+ * directions. They take a port now: the same intents, one round trip each, and
+ * the compare-and-swap that used to be spelled out in a `WHERE … version = ?`
+ * clause is a read and a write inside one object transaction.
+ *
+ * The ISO strings survive at this boundary rather than in the rows. A wake-up's
+ * `due_at` reaches a member, an alarm and a tool result as text, so the object's
+ * unix milliseconds are formatted here, once, on the way out.
+ */
+
 export async function countPendingWorkstreamWakeups(
-  env: Pick<Env, "DB">,
-  workspaceId: string,
-  workstreamId: string,
+  scheduling: SchedulingObjectPort,
 ): Promise<number> {
-  const row = await env.DB.prepare(
-    `SELECT COUNT(*) AS pending FROM workstream_wakeups
-      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'`,
-  ).bind(workspaceId, workstreamId).first<{ pending: number }>();
-  return Number(row?.pending ?? 0);
+  return scheduling.pendingWakeupCount();
 }
 
 export async function listPendingWorkstreamWakeups(
-  env: Pick<Env, "DB">,
-  workspaceId: string,
-  workstreamId: string,
+  scheduling: SchedulingObjectPort,
 ): Promise<PendingWakeup[]> {
-  const rows = await env.DB.prepare(
-    `SELECT id, due_at, prompt FROM workstream_wakeups
-      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
-      ORDER BY due_at ASC
-      LIMIT ?`,
-  ).bind(workspaceId, workstreamId, MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM)
-    .all<{ id: string; due_at: string; prompt: string }>();
-  return (rows.results ?? []).map((row) => ({
-    wakeupId: row.id,
-    dueAt: row.due_at,
+  const rows = await scheduling.pendingWakeups({
+    limit: MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
+  });
+  return rows.map((row) => ({
+    wakeupId: row.wakeup_id,
+    dueAt: new Date(row.due_at).toISOString(),
     prompt: row.prompt,
   }));
 }
 
 export async function findWorkstreamWakeupByIdempotencyKey(
-  env: Pick<Env, "DB">,
-  workspaceId: string,
-  workstreamId: string,
+  scheduling: SchedulingObjectPort,
   idempotencyKey: string,
 ): Promise<{ wakeupId: string; dueAt: string; prompt: string; status: string } | null> {
-  const row = await env.DB.prepare(
-    `SELECT id, due_at, prompt, status FROM workstream_wakeups
-      WHERE workspace_id = ? AND workstream_id = ? AND idempotency_key = ?`,
-  ).bind(workspaceId, workstreamId, idempotencyKey)
-    .first<{ id: string; due_at: string; prompt: string; status: string }>();
+  const row = await scheduling.wakeupByIdempotencyKey({ idempotencyKey });
   return row
-    ? { wakeupId: row.id, dueAt: row.due_at, prompt: row.prompt, status: row.status }
+    ? {
+      wakeupId: row.wakeup_id,
+      dueAt: new Date(row.due_at).toISOString(),
+      prompt: row.prompt,
+      status: row.status,
+    }
     : null;
 }
 
 /**
  * Insert one pending wake-up.
  *
- * The unique `(workstream_id, idempotency_key)` makes a replayed tool receipt
- * resolve to the row the first attempt created instead of scheduling a second
- * wake-up, so the caller re-reads on conflict rather than treating the insert
- * as authoritative.
+ * The unique idempotency key makes a replayed tool receipt resolve to the row
+ * the first attempt created instead of scheduling a second wake-up. The routed
+ * statement learned which had happened by reading `meta.changes` and then
+ * re-reading the table; the operation answers it directly, and answers the
+ * third case — an archived work stream, which the routed version expressed as a
+ * `SELECT … FROM workstreams WHERE archived_at IS NULL` that simply inserted
+ * nothing — as its own outcome rather than as an indistinguishable zero.
  */
 export async function createWorkstreamWakeup(
-  env: Pick<Env, "DB">,
+  scheduling: SchedulingObjectPort,
   input: {
-    workspaceId: string;
-    workstreamId: string;
     harnessRunId: string;
     executionPrincipal: ExecutionPrincipal;
     prompt: string;
@@ -508,38 +513,18 @@ export async function createWorkstreamWakeup(
     idempotencyKey: string;
   },
 ): Promise<{ wakeupId: string; created: boolean }> {
-  const id = newId();
-  const at = nowIso();
-  const inserted = await env.DB.prepare(
-    `INSERT INTO workstream_wakeups
-       (id, workspace_id, workstream_id, created_by_harness_run_id, execution_principal_json,
-        prompt, due_at, status, idempotency_key, fired_at, cancelled_at, version,
-        created_at, updated_at)
-     SELECT ?1, ?2, w.id, ?4, ?5, ?6, ?7, 'pending', ?8, NULL, NULL, 1, ?9, ?9
-       FROM workstreams w
-      WHERE w.id = ?3 AND w.workspace_id = ?2 AND w.archived_at IS NULL
-     ON CONFLICT(workstream_id, idempotency_key) DO NOTHING`,
-  ).bind(
-    id,
-    input.workspaceId,
-    input.workstreamId,
-    input.harnessRunId,
-    JSON.stringify(input.executionPrincipal),
-    input.prompt,
-    input.dueAt.toISOString(),
-    input.idempotencyKey,
-    at,
-  ).run();
-  if ((inserted.meta.changes ?? 0) > 0) return { wakeupId: id, created: true };
-
-  const existing = await findWorkstreamWakeupByIdempotencyKey(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-    input.idempotencyKey,
-  );
-  if (existing) return { wakeupId: existing.wakeupId, created: false };
-  throw new Error("workstream_wakeup_target_unavailable");
+  const now = Date.now();
+  const { outcome, wakeupId } = await scheduling.scheduleWakeup({
+    wakeupId: newId(),
+    createdByRunId: input.harnessRunId,
+    executionPrincipalJson: JSON.stringify(input.executionPrincipal),
+    prompt: input.prompt,
+    dueAt: input.dueAt.getTime(),
+    idempotencyKey: input.idempotencyKey,
+    now,
+  });
+  if (outcome === "workstream_archived") throw new Error("workstream_wakeup_target_unavailable");
+  return { wakeupId, created: outcome === "scheduled" };
 }
 
 /**
@@ -551,32 +536,17 @@ export async function createWorkstreamWakeup(
  * was told so. A pending row with no alarm is the one outcome that lies.
  */
 export async function deleteUnarmedWorkstreamWakeup(
-  env: Pick<Env, "DB">,
-  input: { workspaceId: string; wakeupId: string },
+  scheduling: SchedulingObjectPort,
+  input: { wakeupId: string },
 ): Promise<void> {
-  await env.DB.prepare(
-    `DELETE FROM workstream_wakeups
-      WHERE id = ? AND workspace_id = ? AND status = 'pending'`,
-  ).bind(input.wakeupId, input.workspaceId).run();
+  await scheduling.deleteUnarmedWakeup({ wakeupId: input.wakeupId });
 }
 
 export async function cancelWorkstreamWakeup(
-  env: Pick<Env, "DB">,
-  input: { workspaceId: string; workstreamId: string; wakeupId: string },
+  scheduling: SchedulingObjectPort,
+  input: { wakeupId: string },
 ): Promise<"cancelled" | "not_pending" | "not_found"> {
-  const at = nowIso();
-  const cancelled = await env.DB.prepare(
-    `UPDATE workstream_wakeups
-        SET status = 'cancelled', cancelled_at = ?1, version = version + 1, updated_at = ?1
-      WHERE id = ?2 AND workspace_id = ?3 AND workstream_id = ?4 AND status = 'pending'`,
-  ).bind(at, input.wakeupId, input.workspaceId, input.workstreamId).run();
-  if ((cancelled.meta.changes ?? 0) > 0) return "cancelled";
-
-  const row = await env.DB.prepare(
-    `SELECT status FROM workstream_wakeups
-      WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-  ).bind(input.wakeupId, input.workspaceId, input.workstreamId).first<{ status: string }>();
-  return row ? "not_pending" : "not_found";
+  return scheduling.cancelWakeup({ wakeupId: input.wakeupId, now: Date.now() });
 }
 
 /**
@@ -588,43 +558,47 @@ export async function cancelWorkstreamWakeup(
  * it makes. A launch that fails cleanly releases the claim below.
  */
 export async function claimDueWorkstreamWakeup(
-  env: Pick<Env, "DB">,
-  row: Pick<WorkstreamWakeupRow, "id" | "workspace_id" | "version">,
+  scheduling: SchedulingObjectPort,
+  row: Pick<WorkstreamWakeupRow, "id" | "version">,
 ): Promise<boolean> {
-  const at = nowIso();
-  const claimed = await env.DB.prepare(
-    `UPDATE workstream_wakeups
-        SET status = 'fired', fired_at = ?1, version = version + 1, updated_at = ?1
-      WHERE id = ?2 AND workspace_id = ?3 AND status = 'pending' AND version = ?4`,
-  ).bind(at, row.id, row.workspace_id, row.version).run();
-  return (claimed.meta.changes ?? 0) > 0;
+  return scheduling.claimDueWakeup({
+    wakeupId: row.id,
+    expectedVersion: row.version,
+    now: Date.now(),
+  });
 }
 
 /** Undo a claim whose run never started, so the next alarm retries it. */
 export async function releaseClaimedWorkstreamWakeup(
-  env: Pick<Env, "DB">,
-  row: Pick<WorkstreamWakeupRow, "id" | "workspace_id">,
+  scheduling: SchedulingObjectPort,
+  row: Pick<WorkstreamWakeupRow, "id">,
 ): Promise<void> {
-  const at = nowIso();
-  await env.DB.prepare(
-    `UPDATE workstream_wakeups
-        SET status = 'pending', fired_at = NULL, version = version + 1, updated_at = ?1
-      WHERE id = ?2 AND workspace_id = ?3 AND status = 'fired'`,
-  ).bind(at, row.id, row.workspace_id).run();
+  await scheduling.releaseClaimedWakeup({ wakeupId: row.id, now: Date.now() });
 }
 
 export async function loadWorkstreamWakeup(
-  env: Pick<Env, "DB">,
+  scheduling: SchedulingObjectPort,
   workspaceId: string,
+  workstreamId: string,
   wakeupId: string,
 ): Promise<WorkstreamWakeupRow | null> {
-  const row = await env.DB.prepare(
-    `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-            due_at, status, version, created_at
-       FROM workstream_wakeups
-      WHERE id = ? AND workspace_id = ?`,
-  ).bind(wakeupId, workspaceId).first<unknown>();
-  return row === null ? null : WorkstreamWakeupRowSchema.parse(row);
+  const row = await scheduling.wakeup({ wakeupId });
+  if (!row) return null;
+  // The identity columns the view fabricated from the object's own root row.
+  // They are still the shape callers pass around, so they are supplied here
+  // from the identity the caller used to reach the object — which is the only
+  // place they were ever true.
+  return WorkstreamWakeupRowSchema.parse({
+    id: row.wakeup_id,
+    workspace_id: workspaceId,
+    workstream_id: workstreamId,
+    execution_principal_json: row.execution_principal_json,
+    prompt: row.prompt,
+    due_at: new Date(row.due_at).toISOString(),
+    status: row.status,
+    version: row.version,
+    created_at: new Date(row.created_at).toISOString(),
+  });
 }
 
 export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPrincipal {
