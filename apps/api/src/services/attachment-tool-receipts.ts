@@ -8,6 +8,7 @@ import {
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";
+import { createResourceObjectPort } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 
 interface ReceiptDependency {
@@ -126,7 +127,10 @@ export async function validateAttachmentToolReceiptReplay(
   // replayable.
   if (dependencies.length === 0) return "invalid";
 
-  const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
+  const visible = await loadVisibleWorkstreamResourcesByIds(
+    env.DB,
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.principal,

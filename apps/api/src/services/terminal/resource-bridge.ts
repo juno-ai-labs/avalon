@@ -9,6 +9,7 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
+import { createResourceObjectPort } from "../../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalResourceBridge } from "./runtime";
@@ -72,7 +73,10 @@ export function createTerminalResourceBridge(
     ?? ((input) => attachWorkstreamRuntimeResource(env, input));
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
-      const rows = await loadVisibleWorkstreamResourcesByIds(env.DB, {
+      const rows = await loadVisibleWorkstreamResourcesByIds(
+        env.DB,
+        createResourceObjectPort(env, context.workspaceId, context.workstreamId),
+        {
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
         principal: context.executionPrincipal,
@@ -256,11 +260,9 @@ export function createTerminalResourceBridge(
           WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
       ).bind(context.workspaceId, providerResourceId).first<PublishedRow>();
       if (existing) {
-        const link = await env.DB.prepare(
-          `SELECT 1 AS linked FROM workstream_resources
-            WHERE workstream_id = ? AND resource_id = ?`,
-        ).bind(context.workstreamId, existing.id).first<{ linked: number }>();
-        if (link) return publishedOutput(existing, bytes.byteLength);
+        const linked = await createResourceObjectPort(env, context.workspaceId, context.workstreamId)
+          .isAttached({ resourceId: existing.id });
+        if (linked) return publishedOutput(existing, bytes.byteLength);
         await attachResource({
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,

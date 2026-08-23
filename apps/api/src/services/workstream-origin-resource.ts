@@ -59,11 +59,6 @@ const BACKFILL_ORIGIN_RESOURCE_SQL = `UPDATE resources
   WHERE id = ? AND workspace_id = ?
     AND ((canonical_url IS NULL AND ? IS NOT NULL) OR (content_ref IS NULL AND ? IS NOT NULL))`;
 
-const ATTACH_ORIGIN_RESOURCE_SQL = `INSERT INTO workstream_resources
-  (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-  VALUES (?, ?, ?, 0, '${ORIGIN_RELATIONSHIP_TYPE}', ?)
-  ON CONFLICT(workstream_id, resource_id) DO NOTHING`;
-
 const ATTACHED_ORIGIN_RESOURCE_SQL = `SELECT * FROM resources WHERE id = ? AND workspace_id = ?`;
 
 /**
@@ -342,7 +337,6 @@ function originResourceEvent(row: Record<string, unknown>) {
 }
 
 export const __originResourceTesting = {
-  attachOriginResourceSql: ATTACH_ORIGIN_RESOURCE_SQL,
   originResourceLookupSql: ORIGIN_RESOURCE_LOOKUP_SQL,
   originRelationshipType: ORIGIN_RELATIONSHIP_TYPE,
 };

@@ -26,6 +26,7 @@ import {
   testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
+  testResourcePortFactory,
   testTerminalPortFactory,
   seedToolReceipt,
 } from "./helpers/durable-authority";
@@ -43,7 +44,7 @@ afterEach(() => { for (const database of openDatabases.splice(0)) database.close
 
 function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
-  acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[6],
+  acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[7],
 ) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
@@ -136,6 +137,7 @@ function fixture(
   const coordinator = new TerminalSandboxCoordinator(
     db,
     testTerminalPortFactory(objectStore),
+    testResourcePortFactory(objectStore),
     provider,
     clock,
     undefined,

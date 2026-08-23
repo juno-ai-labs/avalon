@@ -39,6 +39,7 @@ import {
   type AttachmentSummaryDraft,
   type AttachmentSummaryRunner,
 } from "./attachment-summary-service";
+import { createResourceObjectPort } from "../runtime/resource-port";
 import {
   executionPrincipalKey,
   loadVisibleWorkstreamResourcePage,
@@ -168,7 +169,10 @@ export function createWorkstreamAttachmentTools(
         }
         let result;
         try {
-          result = await loadVisibleWorkstreamResourcePage(env.DB, {
+          result = await loadVisibleWorkstreamResourcePage(
+            env.DB,
+            createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+            {
             workspaceId: input.workspaceId,
             workstreamId: input.workstreamId,
             principal: input.executionPrincipal,
@@ -572,7 +576,10 @@ export async function rehydrateWorkstreamViewReceipt(
   const parsedInput = AttachmentViewResourceArgumentsSchema.safeParse(rawInput);
   const parsedOutput = WorkstreamViewResourceOutputSchema.safeParse(rawOutput);
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
-  const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
+  const visible = await loadVisibleWorkstreamResourcesByIds(
+    env.DB,
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.executionPrincipal,
@@ -858,12 +865,16 @@ async function loadScopedResourceRows(
     const requested = new Set(resourceIds);
     return visible.rows.filter((row) => requested.has(row.id));
   }
-  return loadVisibleWorkstreamResourcesByIds(env.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-    resourceIds,
-  });
+  return loadVisibleWorkstreamResourcesByIds(
+    env.DB,
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+      resourceIds,
+    },
+  );
 }
 
 function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: string): string {

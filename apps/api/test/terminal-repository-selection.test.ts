@@ -21,6 +21,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  testResourcePortFactory,
   testTerminalPortFactory,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -230,7 +231,12 @@ async function fixture(input?: {
       env,
       provider,
       catalog,
-      new TerminalSandboxCoordinator(env.DB, testTerminalPortFactory(objectStore), provider),
+      new TerminalSandboxCoordinator(
+        env.DB,
+        testTerminalPortFactory(objectStore),
+        testResourcePortFactory(objectStore),
+        provider,
+      ),
       testTerminalPortFactory(objectStore),
       input?.residentResourceAttacher ? residentResourceAttacher : undefined,
     ),
@@ -284,11 +290,9 @@ describe("Terminal model repository selection", () => {
       objectStore,
       "SELECT connection_id, repository_full_name FROM terminal_repository WHERE id = 1",
     )).toEqual({ connection_id: PERSONAL, repository_full_name: "acme/widget" });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT COUNT(*) AS count FROM workstream_resources WHERE workstream_id = ?",
-      S,
-    )).toEqual({ count: 1 });
+    expect(objectStore.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_resource_links",
+    ).get()).toEqual({ count: 1 });
   });
 
   it("selects full remote authority only when the model explicitly requires it", async () => {
