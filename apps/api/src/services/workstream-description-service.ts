@@ -37,6 +37,8 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { runStructuredInference } from "./structured-inference";
 
 /**
@@ -296,12 +298,6 @@ interface ClaimRow {
   consecutive_keeps: number;
 }
 
-interface PreviousRefreshRow {
-  rest_until: string;
-  consecutive_keeps: number;
-  evaluated_through_sequence: number;
-}
-
 /** What one model proposal resolves to once the guards have run. */
 export type DescriptionVerdict =
   | { status: "kept" }
@@ -351,7 +347,7 @@ async function evaluate(
 ): Promise<DescriptionRefreshOutcome> {
   if (!env.OPENROUTER_API_KEY) return { status: "skipped", reason: "no_model_access" };
   const now = input.now ?? new Date();
-  const at = now.toISOString();
+  const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
 
   // Cheapest first, and each gate is a reason not to read what the next one
   // needs. Two single-row lookups decide most terminal runs; only a work stream
@@ -362,10 +358,7 @@ async function evaluate(
       `SELECT title, objective, description_source, origin_type, archived_at
          FROM workstreams WHERE id = ? AND workspace_id = ?`,
     ).bind(input.workstreamId, input.workspaceId).first<WorkstreamDescriptionRow>(),
-    env.DB.prepare(
-      `SELECT rest_until, consecutive_keeps, evaluated_through_sequence
-         FROM workstream_description_refreshes WHERE workstream_id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<PreviousRefreshRow>(),
+    scheduling.descriptionRefreshState(),
   ]);
   if (!workstream) return { status: "skipped", reason: "workstream_missing" };
   if (workstream.archived_at != null) return { status: "skipped", reason: "archived" };
@@ -376,7 +369,11 @@ async function evaluate(
 
   // Gate 1: the clock. A work stream that has not rested is not looked at,
   // whatever happened in it.
-  if (previous && String(previous.rest_until) > at) return { status: "skipped", reason: "resting" };
+  // Unix milliseconds against a parsed instant, where the routed read compared
+  // ISO-8601 strings lexically. The two orderings agree for this format, which
+  // is why the string comparison was safe; the object simply stores the
+  // instant, so there is nothing to compare lexically any more.
+  if (previous && previous.rest_until > now.getTime()) return { status: "skipped", reason: "resting" };
 
   const window = await loadWindow(env, input.workspaceId, input.workstreamId, now);
   if (window.messages.length === 0) return { status: "skipped", reason: "empty_window" };
@@ -415,7 +412,7 @@ async function evaluate(
     return { status: "skipped", reason: "nothing_new_discussed" };
   }
 
-  const claim = await claimEvaluation(env, input, window, now);
+  const claim = await claimEvaluation(scheduling, window, now);
   if (!claim) return { status: "skipped", reason: "resting" };
 
   let proposal: z.infer<typeof DescriptionDecisionSchema>;
@@ -444,7 +441,7 @@ async function evaluate(
     proposal = inference.result;
     evaluatedModel = inference.model;
   } catch (error) {
-    await recordOutcome(env, input, claim, {
+    await recordOutcome(env, input, scheduling, claim, {
       decision: "failed",
       rejectionCode: "model_unavailable",
       model: evaluatedModel,
@@ -460,7 +457,7 @@ async function evaluate(
 
   const verdict = judgeDescriptionProposal(proposal, workstream.objective);
   if (verdict.status === "kept") {
-    await recordOutcome(env, input, claim, {
+    await recordOutcome(env, input, scheduling, claim, {
       decision: "kept",
       rejectionCode: null,
       model: evaluatedModel,
@@ -480,7 +477,7 @@ async function evaluate(
       rejection_code: verdict.code,
       model: evaluatedModel,
     });
-    await recordOutcome(env, input, claim, {
+    await recordOutcome(env, input, scheduling, claim, {
       decision: "rejected",
       rejectionCode: verdict.code,
       model: evaluatedModel,
@@ -516,7 +513,7 @@ async function evaluate(
     const inForce = await env.DB.prepare(
       "SELECT objective FROM workstreams WHERE id = ? AND workspace_id = ?",
     ).bind(input.workstreamId, input.workspaceId).first<{ objective: string }>();
-    await recordOutcome(env, input, claim, {
+    await recordOutcome(env, input, scheduling, claim, {
       decision: "rejected",
       rejectionCode: "description_changed_during_evaluation",
       model: evaluatedModel,
@@ -530,7 +527,7 @@ async function evaluate(
     return { status: "rejected", code: "description_changed_during_evaluation" };
   }
 
-  await recordOutcome(env, input, claim, {
+  await recordOutcome(env, input, scheduling, claim, {
     decision: "rewritten",
     rejectionCode: null,
     model: evaluatedModel,
@@ -677,12 +674,12 @@ async function loadWindow(
  * stays on the floor. `keeps` is the count *after* the evaluation being
  * recorded, so the first confirmation already buys more than the floor.
  */
-export function restUntil(now: Date, keeps: number): string {
+export function restUntil(now: Date, keeps: number): number {
   const seconds = Math.min(
     DESCRIPTION_REFRESH_MAXIMUM_INTERVAL_SECONDS,
     DESCRIPTION_REFRESH_MINIMUM_INTERVAL_SECONDS * 2 ** Math.max(0, keeps),
   );
-  return new Date(now.getTime() + seconds * 1_000).toISOString();
+  return now.getTime() + seconds * 1_000;
 }
 
 /**
@@ -697,41 +694,24 @@ export function restUntil(now: Date, keeps: number): string {
  * write below replaces it with whatever the decision earned.
  */
 async function claimEvaluation(
-  env: Env,
-  input: RefreshWorkstreamDescriptionInput,
+  scheduling: SchedulingObjectPort,
   window: DescriptionWindow,
   now: Date,
 ): Promise<ClaimRow | null> {
-  const at = now.toISOString();
-  const claimed = await env.DB.prepare(
-    `INSERT INTO workstream_description_refreshes
-       (workstream_id, workspace_id, evaluated_at, rest_until, evaluated_through_sequence,
-        window_message_count, decision, version, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', 1, ?3, ?3)
-     ON CONFLICT(workstream_id) DO UPDATE SET
-       evaluated_at = ?3,
-       rest_until = ?4,
-       evaluated_through_sequence = ?5,
-       window_message_count = ?6,
-       decision = 'pending',
-       rejection_code = NULL,
-       version = workstream_description_refreshes.version + 1,
-       updated_at = ?3
-     WHERE workstream_description_refreshes.rest_until <= ?3`,
-  ).bind(
-    input.workstreamId,
-    input.workspaceId,
-    at,
-    restUntil(now, 0),
-    window.latestSequence,
-    window.messages.length,
-  ).run();
-  if ((claimed.meta?.changes ?? 0) === 0) return null;
-
-  return env.DB.prepare(
-    `SELECT version, consecutive_keeps FROM workstream_description_refreshes
-      WHERE workstream_id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<ClaimRow>();
+  // One operation where there were two. The routed upsert decided whether the
+  // claim landed inside a `WHERE rest_until <= ?3`, reported it as a `changes`
+  // count, and then had to re-select the row to learn the version it had just
+  // written — a read the claim could not hold on to because a routed statement
+  // has no transaction to hold it in.
+  const claimed = await scheduling.claimDescriptionEvaluation({
+    evaluatedAt: now.getTime(),
+    restUntil: restUntil(now, 0),
+    evaluatedThroughSequence: window.latestSequence,
+    windowMessageCount: window.messages.length,
+  });
+  return claimed
+    ? { version: claimed.version, consecutive_keeps: claimed.consecutiveKeeps }
+    : null;
 }
 
 
@@ -761,36 +741,29 @@ interface RecordedOutcome {
 async function recordOutcome(
   env: Env,
   input: RefreshWorkstreamDescriptionInput,
+  scheduling: SchedulingObjectPort,
   claim: ClaimRow,
   outcome: RecordedOutcome,
 ): Promise<void> {
   const keeps = outcome.decision === "kept" ? Number(claim.consecutive_keeps ?? 0) + 1 : 0;
-  const written = await env.DB.prepare(
-    `UPDATE workstream_description_refreshes
-        SET decision = ?, rejection_code = ?, confidence = ?, model = ?,
-            previous_description = ?, description = ?, reasoning = ?,
-            window_message_count = ?, consecutive_keeps = ?, rest_until = ?, updated_at = ?
-      WHERE workstream_id = ? AND workspace_id = ? AND version = ?`,
-  ).bind(
-    outcome.decision,
-    outcome.rejectionCode,
-    outcome.confidence,
-    outcome.model,
-    outcome.previousDescription,
-    outcome.description,
-    outcome.reasoning,
-    outcome.windowMessageCount,
-    keeps,
-    restUntil(outcome.now, keeps),
-    outcome.now.toISOString(),
-    input.workstreamId,
-    input.workspaceId,
-    claim.version,
-  ).run();
+  const written = await scheduling.recordDescriptionOutcome({
+    expectedVersion: claim.version,
+    decision: outcome.decision,
+    rejectionCode: outcome.rejectionCode,
+    confidence: outcome.confidence,
+    model: outcome.model,
+    previousDescription: outcome.previousDescription,
+    description: outcome.description,
+    reasoning: outcome.reasoning,
+    windowMessageCount: outcome.windowMessageCount,
+    consecutiveKeeps: keeps,
+    restUntil: restUntil(outcome.now, keeps),
+    now: outcome.now.getTime(),
+  });
   // The row moved on — a person edited the description while this evaluation
   // was running, and their write owns it. The decision is still worth knowing,
   // so it goes to the log rather than being lost with the discarded write.
-  if ((written.meta?.changes ?? 0) === 0) {
+  if (!written) {
     logStructuredEvent(env, "info", "workstream_description_outcome_superseded", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,

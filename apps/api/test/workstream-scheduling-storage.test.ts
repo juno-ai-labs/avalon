@@ -196,6 +196,85 @@ describe("scheduling a wake-up", () => {
   });
 });
 
+describe("the description-refresh cadence", () => {
+  const claim = (evaluatedAt: number, restUntil: number) => ({
+    evaluatedAt,
+    restUntil,
+    evaluatedThroughSequence: 10,
+    windowMessageCount: 4,
+  });
+
+  it("admits one evaluation per rest, and carries the keep count across claims", () => {
+    const { storage } = open();
+
+    expect(storage.claimDescriptionEvaluation(claim(NOW, NOW + 21_600_000)))
+      .toEqual({ version: 1, consecutiveKeeps: 0 });
+    // The floor is what stops two runs terminalizing together from both
+    // spending an inference call, and what stops a failing model being retried
+    // by every run behind it. It is written before the model is called, not
+    // after, so a second claimant inside the rest is refused rather than
+    // queued.
+    expect(storage.claimDescriptionEvaluation(claim(NOW + 60_000, NOW + 21_660_000)))
+      .toBeNull();
+
+    storage.recordDescriptionOutcome({
+      expectedVersion: 1,
+      decision: "kept",
+      rejectionCode: null,
+      confidence: 0.9,
+      model: "a-model",
+      previousDescription: "before",
+      description: null,
+      reasoning: "unchanged",
+      windowMessageCount: 4,
+      consecutiveKeeps: 1,
+      restUntil: NOW + 43_200_000,
+      now: NOW,
+    });
+
+    // Past the rest, the next claim lands — and inherits the keep count rather
+    // than zeroing it. The routed statement kept that by omitting the column so
+    // the trigger saw NULL and preserved the standing value; a claim that reset
+    // it would restart the backoff on every evaluation and the ratchet would
+    // never climb.
+    expect(storage.claimDescriptionEvaluation(claim(NOW + 43_200_001, NOW + 64_800_000)))
+      .toEqual({ version: 2, consecutiveKeeps: 1 });
+  });
+
+  it("refuses an outcome from an evaluation the row has moved past", () => {
+    const { storage, sql } = open();
+    const first = storage.claimDescriptionEvaluation(claim(NOW, NOW + 21_600_000))!;
+    // A person edited the description, or a later run claimed, while this
+    // evaluation was still waiting on its model.
+    storage.claimDescriptionEvaluation(claim(NOW + 21_600_001, NOW + 43_200_000));
+
+    const outcome = {
+      decision: "rewritten",
+      rejectionCode: null,
+      confidence: 0.95,
+      model: "a-model",
+      previousDescription: "before",
+      description: "the slow evaluation's answer",
+      reasoning: "the work moved",
+      windowMessageCount: 4,
+      consecutiveKeeps: 0,
+      restUntil: NOW + 21_600_000,
+      now: NOW + 30_000_000,
+    };
+    expect(storage.recordDescriptionOutcome({ ...outcome, expectedVersion: first.version }))
+      .toBe(false);
+    // Nothing written: the write that superseded it owns the row, and the rest
+    // it set must not be pulled back by a decision made against a state that no
+    // longer holds.
+    expect(sql.exec(`SELECT decision, description FROM description_refresh_state`).toArray())
+      .toEqual([{ decision: "pending", description: null }]);
+
+    expect(storage.recordDescriptionOutcome({ ...outcome, expectedVersion: 2 })).toBe(true);
+    expect(sql.exec(`SELECT decision, description FROM description_refresh_state`).toArray())
+      .toEqual([{ decision: "rewritten", description: "the slow evaluation's answer" }]);
+  });
+});
+
 describe("plugin activation hints", () => {
   it("keeps the first activation instant and moves only the last authorization", () => {
     const { storage, sql } = open();
