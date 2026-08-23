@@ -60,7 +60,8 @@ function fixture(state: "running" | "stopped" | "archived", deadlines: { warm: s
     createSandbox: vi.fn(), getSandbox: vi.fn(async () => ({ id: "provider-1", name: "sandbox-lifecycle", state, domainAllowList: [] })),
     startSandbox: vi.fn(), stopSandbox: vi.fn(async () => undefined), archiveSandbox: vi.fn(async () => undefined), deleteSandbox: vi.fn(async () => undefined),
     updateNetworkPolicy: vi.fn(), configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(async () => undefined),
-    readFile: vi.fn(), writeFile: vi.fn(), runCommand: vi.fn(), publishGitBundle: vi.fn(),
+    readFile: vi.fn(), writeFile: vi.fn(), runCommand: vi.fn(),
+    cleanupCommand: vi.fn(async () => undefined), publishGitBundle: vi.fn(),
   };
   return {
     database,
@@ -82,6 +83,98 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
   });
 
+  it("reconciles an active holder after its operation lease expires", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z",
+      archive: "2026-08-13T13:00:00.000Z",
+      expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES ('run-expired-active', ?, ?, 'test', ?, 'running', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-expired-active', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      NOW.getTime() - 1,
+    );
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("does not let an expired lifecycle continuation stop after a replacement scheduler settles", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    const baseFactory = testTerminalPortFactory(objectStore);
+    let renewalReached!: () => void;
+    let releaseRenewal!: () => void;
+    const renewalStarted = new Promise<void>((resolve) => { renewalReached = resolve; });
+    const renewalRelease = new Promise<void>((resolve) => { releaseRenewal = resolve; });
+    let firstRenewal = true;
+    const staleFactory = ((workspaceId: string, workstreamId: string) => {
+      const port = baseFactory(workspaceId, workstreamId);
+      return {
+        ...port,
+        renewLifecycleClaim: async (...args: Parameters<typeof port.renewLifecycleClaim>) => {
+          if (firstRenewal) {
+            firstRenewal = false;
+            renewalReached();
+            await renewalRelease;
+          }
+          return port.renewLifecycleClaim(...args);
+        },
+      };
+    }) satisfies typeof baseFactory;
+
+    const staleReconcile = reconcileDueTerminalSandbox(
+      db,
+      staleFactory,
+      provider,
+      W,
+      S,
+      NOW,
+    );
+    await renewalStarted;
+
+    const replacementNow = new Date(NOW.getTime() + 17 * 60_000);
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      baseFactory,
+      provider,
+      W,
+      S,
+      replacementNow,
+    )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+
+    releaseRenewal();
+    await expect(staleReconcile).rejects.toThrow("terminal_lifecycle_claim_lost");
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_state, lifecycle_claim_id, failure_code FROM terminal_workspace WHERE id = 1",
+    )).toEqual({
+      lifecycle_state: "stopped",
+      lifecycle_claim_id: null,
+      failure_code: null,
+    });
+  });
+
   it("archives stopped state and expires archived state without polling", async () => {
     const stopped = fixture("stopped", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:59:00.000Z", expire: "2026-09-12T12:00:00.000Z",
@@ -101,7 +194,7 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "expired", sandbox_id: null });
   });
 
-  it("defers lifecycle transitions while a command task is still running", async () => {
+  it("defers a yielded run's lifecycle until its retained command deadline", async () => {
     const { objectStore, db, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
@@ -112,9 +205,21 @@ describe("Terminal scheduled lifecycle", () => {
       VALUES ('run-lifecycle', ?, ?, 'test', ?, 'running', '2026-08-13')`,
       W, S, JSON.stringify({ type: "user", userId: U }),
     );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = 'run-lifecycle'`,
+      NOW.getTime(),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-lifecycle', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2026-08-13T12:16:00.000Z"),
+    );
     seedToolReceipt(objectStore, {
-      id: 'invocation-lifecycle', runId: 'run-lifecycle', toolCallId: 'call',
-      toolName: 'terminal_run_command',
+      id: "invocation-lifecycle", runId: "run-lifecycle", toolCallId: "call",
+      toolName: "terminal_run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -130,6 +235,291 @@ describe("Terminal scheduled lifecycle", () => {
     );
     await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "deferred" });
     expect(provider.stopSandbox).not.toHaveBeenCalled();
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      new Date("2026-08-13T12:10:00.001Z"),
+    )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.cleanupCommand).toHaveBeenCalledWith("provider-1", "task");
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+    expect(vi.mocked(provider.cleanupCommand!).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0]!);
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state, termination_reason FROM terminal_tasks WHERE task_id = 'task-lifecycle'",
+    )).toEqual({ state: "cancelled", termination_reason: "cancelled" });
+  });
+
+  it("retires an unconfirmed submitting sandbox without waiting for a linked run", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-submitting-lifecycle', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-submitting-lifecycle', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2026-08-13T12:16:00.000Z"),
+    );
+    seedToolReceipt(objectStore, {
+      id: "invocation-submitting-lifecycle",
+      runId: "run-submitting-lifecycle",
+      toolCallId: "call",
+      toolName: "terminal_run_command",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
+         command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
+         stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+      VALUES ('task-submitting-lifecycle', 'run-submitting-lifecycle',
+              'invocation-submitting-lifecycle', 1, 'task-submitting', 'submitting',
+              'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+    );
+    vi.mocked(provider.cleanupCommand!).mockResolvedValueOnce("missing");
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "deferred" });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state FROM terminal_tasks WHERE task_id = 'task-submitting-lifecycle'",
+    )).toEqual({ state: "cancelled" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ generation: 2, sandbox_id: null, lifecycle_state: "starting", failure_code: null });
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "none" });
+    expect(provider.deleteSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("expires after cancelling retained tasks when Daytona reports the sandbox absent", async () => {
+    const { objectStore, db, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-missing-sandbox', ?, ?, 'test', ?, 'needs_input', '2026-08-13'),
+             ('run-after-missing-sandbox', ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-missing-sandbox', operation_lease_expires_at = ?,
+              final_diff_resource_id = 'final-diff'
+        WHERE id = 1`,
+      Date.parse("2026-08-13T12:16:00.000Z"),
+    );
+    seedToolReceipt(objectStore, {
+      id: "invocation-missing-sandbox",
+      runId: "run-missing-sandbox",
+      toolCallId: "call",
+      toolName: "terminal_run_command",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
+         command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
+         stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+      VALUES ('task-missing-sandbox', 'run-missing-sandbox', 'invocation-missing-sandbox',
+              1, 'task-missing', 'submitting', 'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+    );
+    vi.mocked(provider.cleanupCommand!).mockRejectedValueOnce(
+      Object.assign(new Error("sandbox missing"), { statusCode: 404 }),
+    );
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "expired" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state FROM terminal_tasks WHERE task_id = 'task-missing-sandbox'",
+    )).toEqual({ state: "cancelled" });
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT generation, sandbox_id, lifecycle_state, final_diff_resource_id
+         FROM terminal_workspace WHERE id = 1`,
+    )).toEqual({
+      generation: 1,
+      sandbox_id: null,
+      lifecycle_state: "expired",
+      final_diff_resource_id: "final-diff",
+    });
+  });
+
+  it("keeps operation claims fenced while lifecycle cleanup owns the provider", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-lifecycle-race', ?, ?, 'test', ?, 'needs_input', '2026-08-13'),
+             ('run-linked-race', ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-lifecycle-race', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2026-08-13T12:16:00.000Z"),
+    );
+    seedToolReceipt(objectStore, {
+      id: "invocation-lifecycle-race",
+      runId: "run-lifecycle-race",
+      toolCallId: "call",
+      toolName: "terminal_run_command",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
+         command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
+         stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+      VALUES ('task-lifecycle-race', 'run-lifecycle-race', 'invocation-lifecycle-race', 1,
+              'task-race', 'running', 'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+    );
+    let finishStop!: () => void;
+    vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => (
+      new Promise<void>((resolve) => { finishStop = resolve; })
+    ));
+
+    const lifecycle = reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    );
+    await vi.waitFor(() => expect(provider.stopSandbox).toHaveBeenCalledOnce());
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state FROM terminal_tasks WHERE task_id = 'task-lifecycle-race'",
+    )).toEqual({ state: "cancelled" });
+    const terminal = testTerminalPortFactory(objectStore)(W, S);
+    await expect(terminal.claimOperation({
+      runId: "run-linked-race",
+      generation: 1,
+      leaseExpiresAt: Date.parse("2026-08-13T12:20:00.000Z"),
+      now: NOW.getTime(),
+    })).resolves.toBeNull();
+
+    finishStop();
+    await expect(lifecycle).resolves.toEqual({ transition: "stopped" });
+    await expect(terminal.claimOperation({
+      runId: "run-linked-race",
+      generation: 1,
+      leaseExpiresAt: Date.parse("2026-08-13T12:20:00.000Z"),
+      now: NOW.getTime() + 1,
+    })).resolves.toMatchObject({ operationRunId: "run-linked-race" });
+  });
+
+  it("settles every retained task after a fallback stop before lifecycle transition", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-lifecycle-batch', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-lifecycle-batch', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2026-08-13T12:16:00.000Z"),
+    );
+    for (let index = 0; index < 21; index += 1) {
+      const invocation = `lifecycle-batch-invocation-${index}`;
+      seedToolReceipt(objectStore, {
+        id: invocation,
+        runId: "run-lifecycle-batch",
+        toolCallId: `lifecycle-batch-call-${index}`,
+        toolName: "terminal_run_command",
+        position: index,
+      });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_tasks
+          (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
+           command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
+           stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+        VALUES (?, 'run-lifecycle-batch', ?, 1, ?, 'running', 'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+        `lifecycle-batch-task-${index}`,
+        invocation,
+        `lifecycle-batch-provider-${index}`,
+        Date.parse("2026-08-13T11:59:00.000Z"),
+        Date.parse("2026-08-13T11:00:00.000Z"),
+        Date.parse("2026-08-13T11:00:00.000Z"),
+      );
+    }
+    vi.mocked(provider.cleanupCommand!).mockRejectedValueOnce(new Error("session cleanup unavailable"));
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT COUNT(*) AS count FROM terminal_tasks WHERE state IN ('planned', 'submitting', 'running')`,
+    )).toEqual({ count: 0 });
   });
 
   it("restores a stable due state after a transient provider failure so the scheduler can retry", async () => {
@@ -151,18 +541,29 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
   });
 
-  it("finalizes expiry when a retry observes that Daytona already deleted the sandbox", async () => {
+  it("settles expiry when its retry observes Daytona already deleted the sandbox", async () => {
     const { objectStore, db, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
     const notFound = Object.assign(new Error("sandbox not found"), { response: { status: 404 } });
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET final_diff_resource_id = 'final-diff' WHERE id = 1",
+    );
     vi.mocked(provider.deleteSandbox).mockRejectedValueOnce(new Error("delete response lost"));
     vi.mocked(provider.getSandbox).mockRejectedValueOnce(notFound);
 
     await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "expired" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT lifecycle_state, sandbox_id, expire_due_at FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ lifecycle_state: "expired", sandbox_id: null, expire_due_at: null });
+      `SELECT generation, lifecycle_state, sandbox_id, expire_due_at, final_diff_resource_id
+         FROM terminal_workspace WHERE id = 1`,
+    )).toEqual({
+      generation: 1,
+      lifecycle_state: "expired",
+      sandbox_id: null,
+      expire_due_at: null,
+      final_diff_resource_id: "final-diff",
+    });
   });
 });

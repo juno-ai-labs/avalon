@@ -313,12 +313,6 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
-export function agentRunExecutionFailureDisposition(
-  error: unknown,
-): "defer_and_stop_drain" | "fail" {
-  return error instanceof RunOwnershipLostError ? "defer_and_stop_drain" : "fail";
-}
-
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -1671,7 +1665,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           Date.now(),
         );
       } catch (error) {
-        if (agentRunExecutionFailureDisposition(error) === "defer_and_stop_drain") {
+        if (error instanceof RunOwnershipLostError) {
           logWarn(this.env, "agent_run_executor_lost_ownership", {
             workspace_id: input.workspaceId,
             workstream_id: input.workstreamId,
